@@ -1,0 +1,12 @@
+config IPROC_GMAC
+	tristate "GMAC support "
+	select HND
+	select ET
+	select ET_47XX
+	select ET_ALL_PASSIVE_ON
+	depends on ARCH_IPROC
+	default n
+	help
+	  Add GMAC  support
+	
+	  If unsure, say N.

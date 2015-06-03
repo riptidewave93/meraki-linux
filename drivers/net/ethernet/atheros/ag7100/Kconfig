@@ -1,0 +1,103 @@
+config AG7100
+    tristate "Atheros AR7100 GigE"
+    depends on SOC_AR71XX
+    help
+        This enables the building of Atheros AR7100 gigE driver module.
+
+choice
+    prompt "port 0 interface"
+    depends on AG7100
+
+config AG7100_GE0_MII
+    bool "MII mode"
+
+config AG7100_GE0_RMII
+    bool "RMII mode"
+
+config AG7100_GE0_RGMII
+    bool "RGMII mode"
+
+config AG7100_GE0_GMII
+    bool "GMII mode"
+
+endchoice
+
+config  AG7100_GE1_IS_CONNECTED
+    bool "port 1 is connected to a PHY"
+    depends on AG7100
+
+choice
+    prompt "port 1 interface (depends on port0)"
+    depends on AG7100_GE1_IS_CONNECTED
+
+config AG7100_GE1_RMII
+    bool "RMII mode"
+
+config AG7100_GE1_RGMII
+    bool "RGMII mode"
+
+endchoice
+
+config AG7100_ATHRF1_PHY
+    bool "Atheros F1 GigE Phy"
+    depends on AG7100
+
+config AG7100_ATHRS16_PHY
+    bool "Atheros S16 Phy"
+    depends on AG7100
+
+config AG7100_ATHRS26_PHY
+    bool "Atheros S26 Phy"
+    depends on AG7100
+
+# config AG7100_VITESSE_PHY
+#    bool "Vitesse GigE Phy 8201"
+#    depends on AG7100
+
+config AG7100_VITESSE_8601_PHY
+    bool "Vitesse GigE Phy 8601"
+    depends on AG7100
+
+config AG7100_VITESSE_8601_7395_PHY
+    bool "Vitesse Gige Phy 8601 on MAC0 / VSC73XX Switch on MAC1"
+    depends on VITESSE_8601_PHY
+
+config AG7100_ICPLUS_PHY
+    bool "IP Icplus Phy"
+    depends on AG7100
+
+config AG7100_REALTEK_PHY
+    bool "Rtl8201"
+    select MII
+    depends on AG7100
+
+config AG7100_ADM6996FC_PHY
+    bool "AdmTek 6996FC"
+    depends on AG7100
+
+
+config  AG7100_LEN_PER_TX_DS
+        int "Len per tx descriptor"
+        default "1536"
+	depends on (AG7100_REALTEK_PHY || AG7100_ADM6996FC_PHY || AG7100_ICPLUS_PHY) && AG7100
+
+config  AG7100_LEN_PER_TX_DS
+        int "Len per tx descriptor"
+	default "512"
+	depends on !(AG7100_REALTEK_PHY || AG7100_ADM6996FC_PHY || AG7100_ICPLUS_PHY) && AG7100
+
+
+config  AG7100_NUMBER_TX_PKTS
+        int "Number tx pkts"
+        default "100"
+        depends on AG7100
+
+config  AG7100_NUMBER_RX_PKTS
+        int "Number rx pkts"
+        default "252"
+        depends on AG7100
+
+config  AG7100_USE_TRC
+	bool "Print realtime trace on asserts, this will negatively affect performance"
+	default 0
+	depends on AG7100

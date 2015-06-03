@@ -8,7 +8,7 @@
 #include <linux/proc_fs.h>
 #include <linux/capability.h>
 #include <linux/init.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
@@ -34,7 +34,6 @@
 #define CFG_CPU			2
 #define CFG_1SHOT		1
 
-static DEFINE_MUTEX(ds1620_mutex);
 static const char *fan_state[] = { "off", "on", "on (hardwired)" };
 
 /*
@@ -211,6 +210,7 @@ static void ds1620_read_state(struct therm *therm)
 
 static int ds1620_open(struct inode *inode, struct file *file)
 {
+	cycle_kernel_lock();
 	return nonseekable_open(inode, file);
 }
 
@@ -232,7 +232,7 @@ ds1620_read(struct file *file, char __user *buf, size_t count, loff_t *ptr)
 }
 
 static int
-ds1620_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+ds1620_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct therm therm;
 	union {
@@ -316,18 +316,6 @@ ds1620_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	return 0;
 }
 
-static long
-ds1620_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
-{
-	int ret;
-
-	mutex_lock(&ds1620_mutex);
-	ret = ds1620_ioctl(file, cmd, arg);
-	mutex_unlock(&ds1620_mutex);
-
-	return ret;
-}
-
 #ifdef THERM_USE_PROC
 static int
 proc_therm_ds1620_read(char *buf, char **start, off_t offset,
@@ -356,8 +344,7 @@ static const struct file_operations ds1620_fops = {
 	.owner		= THIS_MODULE,
 	.open		= ds1620_open,
 	.read		= ds1620_read,
-	.unlocked_ioctl	= ds1620_unlocked_ioctl,
-	.llseek		= no_llseek,
+	.ioctl		= ds1620_ioctl,
 };
 
 static struct miscdevice ds1620_miscdev = {

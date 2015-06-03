@@ -630,7 +630,7 @@ static void atp_complete_geyser_3_4(struct urb *urb)
 	/* Just update the base values (i.e. touchpad in untouched state) */
 	if (dev->data[dev->info->datalen - 1] & ATP_STATUS_BASE_UPDATE) {
 
-		dprintk("appletouch: updated base values\n");
+		dprintk(KERN_DEBUG "appletouch: updated base values\n");
 
 		memcpy(dev->xy_old, dev->xy_cur, sizeof(dev->xy_old));
 		goto exit;
@@ -806,8 +806,8 @@ static int atp_probe(struct usb_interface *iface,
 	if (!dev->urb)
 		goto err_free_devs;
 
-	dev->data = usb_alloc_coherent(dev->udev, dev->info->datalen, GFP_KERNEL,
-				       &dev->urb->transfer_dma);
+	dev->data = usb_buffer_alloc(dev->udev, dev->info->datalen, GFP_KERNEL,
+				     &dev->urb->transfer_dma);
 	if (!dev->data)
 		goto err_free_urb;
 
@@ -862,8 +862,8 @@ static int atp_probe(struct usb_interface *iface,
 	return 0;
 
  err_free_buffer:
-	usb_free_coherent(dev->udev, dev->info->datalen,
-			  dev->data, dev->urb->transfer_dma);
+	usb_buffer_free(dev->udev, dev->info->datalen,
+			dev->data, dev->urb->transfer_dma);
  err_free_urb:
 	usb_free_urb(dev->urb);
  err_free_devs:
@@ -881,8 +881,8 @@ static void atp_disconnect(struct usb_interface *iface)
 	if (dev) {
 		usb_kill_urb(dev->urb);
 		input_unregister_device(dev->input);
-		usb_free_coherent(dev->udev, dev->info->datalen,
-				  dev->data, dev->urb->transfer_dma);
+		usb_buffer_free(dev->udev, dev->info->datalen,
+				dev->data, dev->urb->transfer_dma);
 		usb_free_urb(dev->urb);
 		kfree(dev);
 	}
@@ -938,4 +938,15 @@ static struct usb_driver atp_driver = {
 	.id_table	= atp_table,
 };
 
-module_usb_driver(atp_driver);
+static int __init atp_init(void)
+{
+	return usb_register(&atp_driver);
+}
+
+static void __exit atp_exit(void)
+{
+	usb_deregister(&atp_driver);
+}
+
+module_init(atp_init);
+module_exit(atp_exit);

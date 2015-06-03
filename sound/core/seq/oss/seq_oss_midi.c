@@ -28,7 +28,6 @@
 #include <sound/seq_midi_event.h>
 #include "../seq_lock.h"
 #include <linux/init.h>
-#include <linux/slab.h>
 
 
 /*

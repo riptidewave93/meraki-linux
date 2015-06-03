@@ -10,7 +10,7 @@
  * 2 of the License, or (at your option) any later version.
  */
 
-#include <generated/utsrelease.h>
+#include <linux/utsrelease.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/delay.h>

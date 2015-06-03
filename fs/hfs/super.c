@@ -19,7 +19,7 @@
 #include <linux/nls.h>
 #include <linux/parser.h>
 #include <linux/seq_file.h>
-#include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/vfs.h>
 
 #include "hfs_fs.h"
@@ -78,11 +78,15 @@ static int hfs_sync_fs(struct super_block *sb, int wait)
  */
 static void hfs_put_super(struct super_block *sb)
 {
+	lock_kernel();
+
 	if (sb->s_dirt)
 		hfs_write_super(sb);
 	hfs_mdb_close(sb);
 	/* release the MDB's resources */
 	hfs_mdb_put(sb);
+
+	unlock_kernel();
 }
 
 /*
@@ -133,9 +137,9 @@ static int hfs_remount(struct super_block *sb, int *flags, char *data)
 	return 0;
 }
 
-static int hfs_show_options(struct seq_file *seq, struct dentry *root)
+static int hfs_show_options(struct seq_file *seq, struct vfsmount *mnt)
 {
-	struct hfs_sb_info *sbi = HFS_SB(root->d_sb);
+	struct hfs_sb_info *sbi = HFS_SB(mnt->mnt_sb);
 
 	if (sbi->s_creator != cpu_to_be32(0x3f3f3f3f))
 		seq_printf(seq, ",creator=%.4s", (char *)&sbi->s_creator);
@@ -167,22 +171,16 @@ static struct inode *hfs_alloc_inode(struct super_block *sb)
 	return i ? &i->vfs_inode : NULL;
 }
 
-static void hfs_i_callback(struct rcu_head *head)
-{
-	struct inode *inode = container_of(head, struct inode, i_rcu);
-	kmem_cache_free(hfs_inode_cachep, HFS_I(inode));
-}
-
 static void hfs_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, hfs_i_callback);
+	kmem_cache_free(hfs_inode_cachep, HFS_I(inode));
 }
 
 static const struct super_operations hfs_super_operations = {
 	.alloc_inode	= hfs_alloc_inode,
 	.destroy_inode	= hfs_destroy_inode,
 	.write_inode	= hfs_write_inode,
-	.evict_inode	= hfs_evict_inode,
+	.clear_inode	= hfs_clear_inode,
 	.put_super	= hfs_put_super,
 	.write_super	= hfs_write_super,
 	.sync_fs	= hfs_sync_fs,
@@ -386,8 +384,8 @@ static int hfs_fill_super(struct super_block *sb, void *data, int silent)
 	sbi = kzalloc(sizeof(struct hfs_sb_info), GFP_KERNEL);
 	if (!sbi)
 		return -ENOMEM;
-
 	sb->s_fs_info = sbi;
+	INIT_HLIST_HEAD(&sbi->rsrc_inodes);
 
 	res = -EINVAL;
 	if (!parse_options((char *)data, sbi)) {
@@ -428,15 +426,18 @@ static int hfs_fill_super(struct super_block *sb, void *data, int silent)
 	if (!root_inode)
 		goto bail_no_root;
 
-	sb->s_d_op = &hfs_dentry_operations;
 	res = -ENOMEM;
-	sb->s_root = d_make_root(root_inode);
+	sb->s_root = d_alloc_root(root_inode);
 	if (!sb->s_root)
-		goto bail_no_root;
+		goto bail_iput;
+
+	sb->s_root->d_op = &hfs_dentry_operations;
 
 	/* everything's okay */
 	return 0;
 
+bail_iput:
+	iput(root_inode);
 bail_no_root:
 	printk(KERN_ERR "hfs: get root inode failed.\n");
 bail:
@@ -444,16 +445,17 @@ bail:
 	return res;
 }
 
-static struct dentry *hfs_mount(struct file_system_type *fs_type,
-		      int flags, const char *dev_name, void *data)
+static int hfs_get_sb(struct file_system_type *fs_type,
+		      int flags, const char *dev_name, void *data,
+		      struct vfsmount *mnt)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, hfs_fill_super);
+	return get_sb_bdev(fs_type, flags, dev_name, data, hfs_fill_super, mnt);
 }
 
 static struct file_system_type hfs_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "hfs",
-	.mount		= hfs_mount,
+	.get_sb		= hfs_get_sb,
 	.kill_sb	= kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,
 };

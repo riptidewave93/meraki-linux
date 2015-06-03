@@ -17,8 +17,6 @@
 #include <asm/pgtable.h>
 #include <asm/ptrace.h>
 
-#include "proc-macros.S"
-
 	.text
 /*
  * cpu_arm740_proc_init()
@@ -38,18 +36,21 @@ ENTRY(cpu_arm740_switch_mm)
  * cpu_arm740_proc_fin()
  */
 ENTRY(cpu_arm740_proc_fin)
+	stmfd	sp!, {lr}
+	mov	ip, #PSR_F_BIT | PSR_I_BIT | SVC_MODE
+	msr	cpsr_c, ip
 	mrc	p15, 0, r0, c1, c0, 0
 	bic	r0, r0, #0x3f000000		@ bank/f/lock/s
 	bic	r0, r0, #0x0000000c		@ w-buffer/cache
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
-	mov	pc, lr
+	mcr	p15, 0, r0, c7, c0, 0		@ invalidate cache
+	ldmfd	sp!, {pc}
 
 /*
  * cpu_arm740_reset(loc)
  * Params  : r0 = address to jump to
  * Notes   : This sets up everything for a reset
  */
-	.pushsection	.idmap.text, "ax"
 ENTRY(cpu_arm740_reset)
 	mov	ip, #0
 	mcr	p15, 0, ip, c7, c0, 0		@ invalidate cache
@@ -57,10 +58,8 @@ ENTRY(cpu_arm740_reset)
 	bic	ip, ip, #0x0000000c		@ ............wc..
 	mcr	p15, 0, ip, c1, c0, 0		@ ctrl register
 	mov	pc, r0
-ENDPROC(cpu_arm740_reset)
-	.popsection
 
-	__CPUINIT
+	__INIT
 
 	.type	__arm740_setup, #function
 __arm740_setup:
@@ -120,14 +119,39 @@ __arm740_setup:
 
 	__INITDATA
 
-	@ define struct processor (see <asm/proc-fns.h> and proc-macros.S)
-	define_processor_functions arm740, dabort=v4t_late_abort, pabort=legacy_pabort, nommu=1
+/*
+ * Purpose : Function pointers used to access above functions - all calls
+ *	     come through these
+ */
+	.type	arm740_processor_functions, #object
+ENTRY(arm740_processor_functions)
+	.word	v4t_late_abort
+	.word	legacy_pabort
+	.word	cpu_arm740_proc_init
+	.word	cpu_arm740_proc_fin
+	.word	cpu_arm740_reset
+	.word   cpu_arm740_do_idle
+	.word	cpu_arm740_dcache_clean_area
+	.word	cpu_arm740_switch_mm
+	.word	0			@ cpu_*_set_pte
+	.size	arm740_processor_functions, . - arm740_processor_functions
 
 	.section ".rodata"
 
-	string	cpu_arch_name, "armv4"
-	string	cpu_elf_name, "v4"
-	string	cpu_arm740_name, "ARM740T"
+	.type	cpu_arch_name, #object
+cpu_arch_name:
+	.asciz	"armv4"
+	.size	cpu_arch_name, . - cpu_arch_name
+
+	.type	cpu_elf_name, #object
+cpu_elf_name:
+	.asciz	"v4"
+	.size	cpu_elf_name, . - cpu_elf_name
+
+	.type	cpu_arm740_name, #object
+cpu_arm740_name:
+	.ascii	"ARM740T"
+	.size	cpu_arm740_name, . - cpu_arm740_name
 
 	.align
 
@@ -147,3 +171,5 @@ __arm740_proc_info:
 	.long	0
 	.long	v3_cache_fns			@ cache model
 	.size	__arm740_proc_info, . - __arm740_proc_info
+
+

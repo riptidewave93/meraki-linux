@@ -28,7 +28,6 @@
 #include <linux/pci.h>
 #include <linux/uio_driver.h>
 #include <linux/io.h>
-#include <linux/slab.h>
 
 /* ID's for SERCOS III PCI card (PLX 9030) */
 #define SERCOS_SUB_VENDOR_ID  0x1971
@@ -154,7 +153,7 @@ static int __devinit sercos3_pci_probe(struct pci_dev *dev,
 	info->name = "Sercos_III_PCI";
 	info->version = "0.0.1";
 	info->irq = dev->irq;
-	info->irq_flags = IRQF_SHARED;
+	info->irq_flags = IRQF_DISABLED | IRQF_SHARED;
 	info->handler = sercos3_handler;
 	info->irqcontrol = sercos3_irqcontrol;
 

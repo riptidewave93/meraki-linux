@@ -45,9 +45,9 @@ Configuration options:
   [7] - AO 1 jumpered for 0=straight binary, 1=2's complement
   [8] - AI jumpered for 0=[-10,10]V, 1=[0,10], 2=[-5,5], 3=[0,5]
   [9] - AO 0 jumpered for 0=[-10,10]V, 1=[0,10], 2=[-5,5], 3=[0,5],
-	4=[-2.5,2.5]
+        4=[-2.5,2.5]
   [10]- A0 1 jumpered for 0=[-10,10]V, 1=[0,10], 2=[-5,5], 3=[0,5],
-	4=[-2.5,2.5]
+        4=[-2.5,2.5]
 
 Notes:
   - AO commands might be broken.
@@ -58,10 +58,8 @@ Notes:
 
 #include "../comedidev.h"
 
-#include <linux/gfp.h>
 #include <linux/ioport.h>
 #include <linux/interrupt.h>
-#include <linux/io.h>
 #include <asm/dma.h>
 #include "comedi_fc.h"
 
@@ -156,58 +154,79 @@ Notes:
 #define DT2821_XCLK	0x0002	/* (R/W) external clock enable            */
 #define DT2821_BDINIT	0x0001	/* (W)   initialize board         */
 
-static const struct comedi_lrange range_dt282x_ai_lo_bipolar = {
-	4, {
-		RANGE(-10, 10),
-		RANGE(-5, 5),
-		RANGE(-2.5, 2.5),
-		RANGE(-1.25, 1.25)
-	}
+static const struct comedi_lrange range_dt282x_ai_lo_bipolar = { 4, {
+								     RANGE(-10,
+									   10),
+								     RANGE(-5,
+									   5),
+								     RANGE(-2.5,
+									   2.5),
+								     RANGE
+								     (-1.25,
+								      1.25)
+								     }
 };
 
-static const struct comedi_lrange range_dt282x_ai_lo_unipolar = {
-	4, {
-		RANGE(0, 10),
-		RANGE(0, 5),
-		RANGE(0, 2.5),
-		RANGE(0, 1.25)
-	}
+static const struct comedi_lrange range_dt282x_ai_lo_unipolar = { 4, {
+								      RANGE(0,
+									    10),
+								      RANGE(0,
+									    5),
+								      RANGE(0,
+									    2.5),
+								      RANGE(0,
+									    1.25)
+								      }
 };
 
-static const struct comedi_lrange range_dt282x_ai_5_bipolar = {
-	4, {
-		RANGE(-5, 5),
-		RANGE(-2.5, 2.5),
-		RANGE(-1.25, 1.25),
-		RANGE(-0.625, 0.625)
-	}
+static const struct comedi_lrange range_dt282x_ai_5_bipolar = { 4, {
+								    RANGE(-5,
+									  5),
+								    RANGE(-2.5,
+									  2.5),
+								    RANGE(-1.25,
+									  1.25),
+								    RANGE
+								    (-0.625,
+								     0.625),
+								    }
 };
 
-static const struct comedi_lrange range_dt282x_ai_5_unipolar = {
-	4, {
-		RANGE(0, 5),
-		RANGE(0, 2.5),
-		RANGE(0, 1.25),
-		RANGE(0, 0.625),
-	}
+static const struct comedi_lrange range_dt282x_ai_5_unipolar = { 4, {
+								     RANGE(0,
+									   5),
+								     RANGE(0,
+									   2.5),
+								     RANGE(0,
+									   1.25),
+								     RANGE(0,
+									   0.625),
+								     }
 };
 
-static const struct comedi_lrange range_dt282x_ai_hi_bipolar = {
-	4, {
-		RANGE(-10, 10),
-		RANGE(-1, 1),
-		RANGE(-0.1, 0.1),
-		RANGE(-0.02, 0.02)
-	}
+static const struct comedi_lrange range_dt282x_ai_hi_bipolar = { 4, {
+								     RANGE(-10,
+									   10),
+								     RANGE(-1,
+									   1),
+								     RANGE(-0.1,
+									   0.1),
+								     RANGE
+								     (-0.02,
+								      0.02)
+								     }
 };
 
-static const struct comedi_lrange range_dt282x_ai_hi_unipolar = {
-	4, {
-		RANGE(0, 10),
-		RANGE(0, 1),
-		RANGE(0, 0.1),
-		RANGE(0, 0.02)
-	}
+static const struct comedi_lrange range_dt282x_ai_hi_unipolar = { 4, {
+								      RANGE(0,
+									    10),
+								      RANGE(0,
+									    1),
+								      RANGE(0,
+									    0.1),
+								      RANGE(0,
+									    0.02)
+								      }
 };
 
 struct dt282x_board {
@@ -350,7 +369,7 @@ static const struct dt282x_board boardtypes[] = {
 	 },
 };
 
-#define n_boardtypes (sizeof(boardtypes)/sizeof(struct dt282x_board))
+#define n_boardtypes sizeof(boardtypes)/sizeof(struct dt282x_board)
 #define this_board ((const struct dt282x_board *)dev->board_ptr)
 
 struct dt282x_private {
@@ -391,26 +410,21 @@ struct dt282x_private {
 #define update_adcsr(a)	outw(devpriv->adcsr|(a), dev->iobase+DT2821_ADCSR)
 #define mux_busy() (inw(dev->iobase+DT2821_ADCSR)&DT2821_MUXBUSY)
 #define ad_done() (inw(dev->iobase+DT2821_ADCSR)&DT2821_ADDONE)
-#define update_supcsr(a) outw(devpriv->supcsr|(a), dev->iobase+DT2821_SUPCSR)
+#define update_supcsr(a)	outw(devpriv->supcsr|(a), dev->iobase+DT2821_SUPCSR)
 
 /*
  *    danger! macro abuse... a is the expression to wait on, and b is
  *      the statement(s) to execute if it doesn't happen.
  */
-#define wait_for(a, b)						\
-	do {							\
-		int _i;						\
-		for (_i = 0; _i < DT2821_TIMEOUT; _i++) {	\
-			if (a) {				\
-				_i = 0;				\
-				break;				\
-			}					\
-			udelay(5);				\
-		}						\
-		if (_i) {					\
-			b					\
-		}						\
-	} while (0)
+#define wait_for(a, b)	 				\
+	do{						\
+		int _i;					\
+		for (_i=0;_i<DT2821_TIMEOUT;_i++){	\
+			if (a){_i=0;break;}		\
+			udelay(5);			\
+		}					\
+		if (_i){b}				\
+	}while (0)
 
 static int dt282x_attach(struct comedi_device *dev,
 			 struct comedi_devconfig *it);
@@ -425,18 +439,7 @@ static struct comedi_driver driver_dt282x = {
 	.offset = sizeof(struct dt282x_board),
 };
 
-static int __init driver_dt282x_init_module(void)
-{
-	return comedi_driver_register(&driver_dt282x);
-}
-
-static void __exit driver_dt282x_cleanup_module(void)
-{
-	comedi_driver_unregister(&driver_dt282x);
-}
-
-module_init(driver_dt282x_init_module);
-module_exit(driver_dt282x_cleanup_module);
+COMEDI_INITCLEANUP(driver_dt282x);
 
 static void free_resources(struct comedi_device *dev);
 static int prep_ai_dma(struct comedi_device *dev, int chan, int size);
@@ -458,16 +461,18 @@ static void dt282x_munge(struct comedi_device *dev, short *buf,
 	unsigned short sign = 1 << (boardtype.adbits - 1);
 	int n;
 
-	if (devpriv->ad_2scomp)
+	if (devpriv->ad_2scomp) {
 		sign = 1 << (boardtype.adbits - 1);
-	else
+	} else {
 		sign = 0;
+	}
 
 	if (nbytes % 2)
 		comedi_error(dev, "bug! odd number of bytes from dma xfer");
 	n = nbytes / 2;
-	for (i = 0; i < n; i++)
+	for (i = 0; i < n; i++) {
 		buf[i] = (buf[i] & mask) ^ sign;
+	}
 }
 
 static void dt282x_ao_dma_interrupt(struct comedi_device *dev)
@@ -480,7 +485,7 @@ static void dt282x_ao_dma_interrupt(struct comedi_device *dev)
 	update_supcsr(DT2821_CLRDMADNE);
 
 	if (!s->async->prealloc_buf) {
-		printk(KERN_ERR "async->data disappeared.  dang!\n");
+		printk("async->data disappeared.  dang!\n");
 		return;
 	}
 
@@ -493,7 +498,7 @@ static void dt282x_ao_dma_interrupt(struct comedi_device *dev)
 
 	size = cfc_read_array_from_buffer(s, ptr, devpriv->dma_maxsize);
 	if (size == 0) {
-		printk(KERN_ERR "dt282x: AO underrun\n");
+		printk("dt282x: AO underrun\n");
 		dt282x_ao_cancel(dev, s);
 		s->async->events |= COMEDI_CB_OVERFLOW;
 		return;
@@ -513,7 +518,7 @@ static void dt282x_ai_dma_interrupt(struct comedi_device *dev)
 	update_supcsr(DT2821_CLRDMADNE);
 
 	if (!s->async->prealloc_buf) {
-		printk(KERN_ERR "async->data disappeared.  dang!\n");
+		printk("async->data disappeared.  dang!\n");
 		return;
 	}
 
@@ -534,7 +539,7 @@ static void dt282x_ai_dma_interrupt(struct comedi_device *dev)
 	devpriv->nread -= size / 2;
 
 	if (devpriv->nread < 0) {
-		printk(KERN_INFO "dt282x: off by one\n");
+		printk("dt282x: off by one\n");
 		devpriv->nread = 0;
 	}
 	if (!devpriv->nread) {
@@ -645,7 +650,7 @@ static irqreturn_t dt282x_interrupt(int irq, void *d)
 		static int warn = 5;
 		if (--warn <= 0) {
 			disable_irq(dev->irq);
-			printk(KERN_INFO "disabling irq\n");
+			printk("disabling irq\n");
 		}
 #endif
 		comedi_error(dev, "D/A error");
@@ -660,13 +665,13 @@ static irqreturn_t dt282x_interrupt(int irq, void *d)
 
 		data = (short)inw(dev->iobase + DT2821_ADDAT);
 		data &= (1 << boardtype.adbits) - 1;
-
-		if (devpriv->ad_2scomp)
+		if (devpriv->ad_2scomp) {
 			data ^= 1 << (boardtype.adbits - 1);
+		}
 		ret = comedi_buf_put(s->async, data);
-
-		if (ret == 0)
+		if (ret == 0) {
 			s->async->events |= COMEDI_CB_OVERFLOW;
+		}
 
 		devpriv->nread--;
 		if (!devpriv->nread) {
@@ -679,8 +684,7 @@ static irqreturn_t dt282x_interrupt(int irq, void *d)
 	}
 #endif
 	comedi_event(dev, s);
-	/* printk("adcsr=0x%02x dacsr-0x%02x supcsr=0x%02x\n",
-		adcsr, dacsr, supcsr); */
+	/* printk("adcsr=0x%02x dacsr-0x%02x supcsr=0x%02x\n", adcsr, dacsr, supcsr); */
 	return IRQ_RETVAL(handled);
 }
 
@@ -771,12 +775,9 @@ static int dt282x_ai_cmdtest(struct comedi_device *dev,
 	if (err)
 		return 1;
 
-	/*
-	 * step 2: make sure trigger sources are unique
-	 * and mutually compatible
-	 */
+	/* step 2: make sure trigger sources are unique and mutually compatible */
 
-	/* note that mutual compatibility is not an issue here */
+	/* note that mutual compatiblity is not an issue here */
 	if (cmd->scan_begin_src != TRIG_FOLLOW &&
 	    cmd->scan_begin_src != TRIG_EXT)
 		err++;
@@ -857,8 +858,7 @@ static int dt282x_ai_cmd(struct comedi_device *dev, struct comedi_subdevice *s)
 
 	if (devpriv->usedma == 0) {
 		comedi_error(dev,
-			     "driver requires 2 dma channels"
-						" to execute command");
+			     "driver requires 2 dma channels to execute command");
 		return -EIO;
 	}
 
@@ -1048,12 +1048,9 @@ static int dt282x_ao_cmdtest(struct comedi_device *dev,
 	if (err)
 		return 1;
 
-	/*
-	 * step 2: make sure trigger sources are unique
-	 * and mutually compatible
-	 */
+	/* step 2: make sure trigger sources are unique and mutually compatible */
 
-	/* note that mutual compatibility is not an issue here */
+	/* note that mutual compatiblity is not an issue here */
 	if (cmd->stop_src != TRIG_COUNT && cmd->stop_src != TRIG_NONE)
 		err++;
 
@@ -1066,7 +1063,7 @@ static int dt282x_ao_cmdtest(struct comedi_device *dev,
 		cmd->start_arg = 0;
 		err++;
 	}
-	if (cmd->scan_begin_arg < 5000 /* XXX unknown */) {
+	if (cmd->scan_begin_arg < 5000 /* XXX unknown */ ) {
 		cmd->scan_begin_arg = 5000;
 		err++;
 	}
@@ -1117,7 +1114,7 @@ static int dt282x_ao_inttrig(struct comedi_device *dev,
 	size = cfc_read_array_from_buffer(s, devpriv->dma[0].buf,
 					  devpriv->dma_maxsize);
 	if (size == 0) {
-		printk(KERN_ERR "dt282x: AO underrun\n");
+		printk("dt282x: AO underrun\n");
 		return -EPIPE;
 	}
 	prep_ao_dma(dev, 0, size);
@@ -1125,7 +1122,7 @@ static int dt282x_ao_inttrig(struct comedi_device *dev,
 	size = cfc_read_array_from_buffer(s, devpriv->dma[1].buf,
 					  devpriv->dma_maxsize);
 	if (size == 0) {
-		printk(KERN_ERR "dt282x: AO underrun\n");
+		printk("dt282x: AO underrun\n");
 		return -EPIPE;
 	}
 	prep_ao_dma(dev, 1, size);
@@ -1143,8 +1140,7 @@ static int dt282x_ao_cmd(struct comedi_device *dev, struct comedi_subdevice *s)
 
 	if (devpriv->usedma == 0) {
 		comedi_error(dev,
-			     "driver requires 2 dma channels"
-						" to execute command");
+			     "driver requires 2 dma channels to execute command");
 		return -EIO;
 	}
 
@@ -1265,8 +1261,7 @@ static const struct comedi_lrange *opt_ao_range_lkup(int x)
 	return ao_range_table[x];
 }
 
-enum {  /* i/o base, irq, dma channels */
-	opt_iobase = 0, opt_irq, opt_dma1, opt_dma2,
+enum { opt_iobase = 0, opt_irq, opt_dma1, opt_dma2,	/* i/o base, irq, dma channels */
 	opt_diff,		/* differential */
 	opt_ai_twos, opt_ao0_twos, opt_ao1_twos,	/* twos comp */
 	opt_ai_range, opt_ao0_range, opt_ao1_range,	/* range */
@@ -1299,9 +1294,9 @@ static int dt282x_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	if (!iobase)
 		iobase = 0x240;
 
-	printk(KERN_INFO "comedi%d: dt282x: 0x%04lx", dev->minor, iobase);
+	printk("comedi%d: dt282x: 0x%04lx", dev->minor, iobase);
 	if (!request_region(iobase, DT2821_SIZE, "dt282x")) {
-		printk(KERN_INFO " I/O port conflict\n");
+		printk(" I/O port conflict\n");
 		return -EBUSY;
 	}
 	dev->iobase = iobase;
@@ -1309,7 +1304,7 @@ static int dt282x_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	outw(DT2821_BDINIT, dev->iobase + DT2821_SUPCSR);
 	i = inw(dev->iobase + DT2821_ADCSR);
 #ifdef DEBUG
-	printk(KERN_DEBUG " fingerprint=%x,%x,%x,%x,%x",
+	printk(" fingerprint=%x,%x,%x,%x,%x",
 	       inw(dev->iobase + DT2821_ADCSR),
 	       inw(dev->iobase + DT2821_CHANCSR),
 	       inw(dev->iobase + DT2821_DACSR),
@@ -1327,7 +1322,7 @@ static int dt282x_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	     != DT2821_SUPCSR_VAL) ||
 	    ((inw(dev->iobase + DT2821_TMRCTR) & DT2821_TMRCTR_MASK)
 	     != DT2821_TMRCTR_VAL)) {
-		printk(KERN_ERR " board not found");
+		printk(" board not found");
 		return -EIO;
 	}
 	/* should do board test */
@@ -1348,25 +1343,26 @@ static int dt282x_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 
 		irq = probe_irq_off(irqs);
 		restore_flags(flags);
-		if (0 /* error */)
-			printk(KERN_ERR " error probing irq (bad)");
+		if (0 /* error */ ) {
+			printk(" error probing irq (bad)");
+		}
 	}
 #endif
 	if (irq > 0) {
-		printk(KERN_INFO " ( irq = %d )", irq);
+		printk(" ( irq = %d )", irq);
 		ret = request_irq(irq, dt282x_interrupt, 0, "dt282x", dev);
 		if (ret < 0) {
-			printk(KERN_ERR " failed to get irq\n");
+			printk(" failed to get irq\n");
 			return -EIO;
 		}
 		dev->irq = irq;
 	} else if (irq == 0) {
-		printk(KERN_INFO " (no irq)");
+		printk(" (no irq)");
 	} else {
 #if 0
-		printk(KERN_INFO " (probe returned multiple irqs--bad)");
+		printk(" (probe returned multiple irqs--bad)");
 #else
-		printk(KERN_INFO " (irq probe not implemented)");
+		printk(" (irq probe not implemented)");
 #endif
 	}
 
@@ -1438,15 +1434,16 @@ static int dt282x_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	s->maxdata = 1;
 	s->range_table = &range_digital;
 
-	printk(KERN_INFO "\n");
+	printk("\n");
 
 	return 0;
 }
 
 static void free_resources(struct comedi_device *dev)
 {
-	if (dev->irq)
+	if (dev->irq) {
 		free_irq(dev->irq, dev);
+	}
 	if (dev->iobase)
 		release_region(dev->iobase, DT2821_SIZE);
 	if (dev->private) {
@@ -1463,7 +1460,7 @@ static void free_resources(struct comedi_device *dev)
 
 static int dt282x_detach(struct comedi_device *dev)
 {
-	printk(KERN_INFO "comedi%d: dt282x: remove\n", dev->minor);
+	printk("comedi%d: dt282x: remove\n", dev->minor);
 
 	free_resources(dev);
 
@@ -1477,7 +1474,7 @@ static int dt282x_grab_dma(struct comedi_device *dev, int dma1, int dma2)
 	devpriv->usedma = 0;
 
 	if (!dma1 && !dma2) {
-		printk(KERN_ERR " (no dma)");
+		printk(" (no dma)");
 		return 0;
 	}
 
@@ -1505,17 +1502,13 @@ static int dt282x_grab_dma(struct comedi_device *dev, int dma1, int dma2)
 	devpriv->dma[0].buf = (void *)__get_free_page(GFP_KERNEL | GFP_DMA);
 	devpriv->dma[1].buf = (void *)__get_free_page(GFP_KERNEL | GFP_DMA);
 	if (!devpriv->dma[0].buf || !devpriv->dma[1].buf) {
-		printk(KERN_ERR " can't get DMA memory");
+		printk(" can't get DMA memory");
 		return -ENOMEM;
 	}
 
-	printk(KERN_INFO " (dma=%d,%d)", dma1, dma2);
+	printk(" (dma=%d,%d)", dma1, dma2);
 
 	devpriv->usedma = 1;
 
 	return 0;
 }
-
-MODULE_AUTHOR("Comedi http://www.comedi.org");
-MODULE_DESCRIPTION("Comedi low-level driver");
-MODULE_LICENSE("GPL");

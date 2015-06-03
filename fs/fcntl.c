@@ -14,7 +14,6 @@
 #include <linux/dnotify.h>
 #include <linux/slab.h>
 #include <linux/module.h>
-#include <linux/pipe_fs_i.h>
 #include <linux/security.h>
 #include <linux/ptrace.h>
 #include <linux/signal.h>
@@ -32,20 +31,20 @@ void set_close_on_exec(unsigned int fd, int flag)
 	spin_lock(&files->file_lock);
 	fdt = files_fdtable(files);
 	if (flag)
-		__set_close_on_exec(fd, fdt);
+		FD_SET(fd, fdt->close_on_exec);
 	else
-		__clear_close_on_exec(fd, fdt);
+		FD_CLR(fd, fdt->close_on_exec);
 	spin_unlock(&files->file_lock);
 }
 
-static bool get_close_on_exec(unsigned int fd)
+static int get_close_on_exec(unsigned int fd)
 {
 	struct files_struct *files = current->files;
 	struct fdtable *fdt;
-	bool res;
+	int res;
 	rcu_read_lock();
 	fdt = files_fdtable(files);
-	res = close_on_exec(fd, fdt);
+	res = FD_ISSET(fd, fdt->close_on_exec);
 	rcu_read_unlock();
 	return res;
 }
@@ -90,15 +89,15 @@ SYSCALL_DEFINE3(dup3, unsigned int, oldfd, unsigned int, newfd, int, flags)
 	err = -EBUSY;
 	fdt = files_fdtable(files);
 	tofree = fdt->fd[newfd];
-	if (!tofree && fd_is_open(newfd, fdt))
+	if (!tofree && FD_ISSET(newfd, fdt->open_fds))
 		goto out_unlock;
 	get_file(file);
 	rcu_assign_pointer(fdt->fd[newfd], file);
-	__set_open_fd(newfd, fdt);
+	FD_SET(newfd, fdt->open_fds);
 	if (flags & O_CLOEXEC)
-		__set_close_on_exec(newfd, fdt);
+		FD_SET(newfd, fdt->close_on_exec);
 	else
-		__clear_close_on_exec(newfd, fdt);
+		FD_CLR(newfd, fdt->close_on_exec);
 	spin_unlock(&files->file_lock);
 
 	if (tofree)
@@ -131,7 +130,7 @@ SYSCALL_DEFINE2(dup2, unsigned int, oldfd, unsigned int, newfd)
 SYSCALL_DEFINE1(dup, unsigned int, fildes)
 {
 	int ret = -EBADF;
-	struct file *file = fget_raw(fildes);
+	struct file *file = fget(fildes);
 
 	if (file) {
 		ret = get_unused_fd();
@@ -159,7 +158,7 @@ static int setfl(int fd, struct file * filp, unsigned long arg)
 
 	/* O_NOATIME can only be set by the owner or superuser */
 	if ((arg & O_NOATIME) && !(filp->f_flags & O_NOATIME))
-		if (!inode_owner_or_capable(inode))
+		if (!is_owner_or_cap(inode))
 			return -EPERM;
 
 	/* required for strict SunOS emulation */
@@ -274,7 +273,7 @@ static int f_setown_ex(struct file *filp, unsigned long arg)
 
 	ret = copy_from_user(&owner, owner_p, sizeof(owner));
 	if (ret)
-		return -EFAULT;
+		return ret;
 
 	switch (owner.type) {
 	case F_OWNER_TID:
@@ -332,11 +331,8 @@ static int f_getown_ex(struct file *filp, unsigned long arg)
 	}
 	read_unlock(&filp->f_owner.lock);
 
-	if (!ret) {
+	if (!ret)
 		ret = copy_to_user(owner_p, &owner, sizeof(owner));
-		if (ret)
-			ret = -EFAULT;
-	}
 	return ret;
 }
 
@@ -348,7 +344,7 @@ static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
 	switch (cmd) {
 	case F_DUPFD:
 	case F_DUPFD_CLOEXEC:
-		if (arg >= rlimit(RLIMIT_NOFILE))
+		if (arg >= current->signal->rlim[RLIMIT_NOFILE].rlim_cur)
 			break;
 		err = alloc_fd(arg, cmd == F_DUPFD_CLOEXEC ? O_CLOEXEC : 0);
 		if (err >= 0) {
@@ -416,27 +412,10 @@ static long do_fcntl(int fd, unsigned int cmd, unsigned long arg,
 	case F_NOTIFY:
 		err = fcntl_dirnotify(fd, filp, arg);
 		break;
-	case F_SETPIPE_SZ:
-	case F_GETPIPE_SZ:
-		err = pipe_fcntl(filp, cmd, arg);
-		break;
 	default:
 		break;
 	}
 	return err;
-}
-
-static int check_fcntl_cmd(unsigned cmd)
-{
-	switch (cmd) {
-	case F_DUPFD:
-	case F_DUPFD_CLOEXEC:
-	case F_GETFD:
-	case F_SETFD:
-	case F_GETFL:
-		return 1;
-	}
-	return 0;
 }
 
 SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
@@ -444,16 +423,9 @@ SYSCALL_DEFINE3(fcntl, unsigned int, fd, unsigned int, cmd, unsigned long, arg)
 	struct file *filp;
 	long err = -EBADF;
 
-	filp = fget_raw(fd);
+	filp = fget(fd);
 	if (!filp)
 		goto out;
-
-	if (unlikely(filp->f_mode & FMODE_PATH)) {
-		if (!check_fcntl_cmd(cmd)) {
-			fput(filp);
-			goto out;
-		}
-	}
 
 	err = security_file_fcntl(filp, cmd, arg);
 	if (err) {
@@ -476,16 +448,9 @@ SYSCALL_DEFINE3(fcntl64, unsigned int, fd, unsigned int, cmd,
 	long err;
 
 	err = -EBADF;
-	filp = fget_raw(fd);
+	filp = fget(fd);
 	if (!filp)
 		goto out;
-
-	if (unlikely(filp->f_mode & FMODE_PATH)) {
-		if (!check_fcntl_cmd(cmd)) {
-			fput(filp);
-			goto out;
-		}
-	}
 
 	err = security_file_fcntl(filp, cmd, arg);
 	if (err) {
@@ -649,14 +614,8 @@ int send_sigurg(struct fown_struct *fown)
 	return ret;
 }
 
-static DEFINE_SPINLOCK(fasync_lock);
+static DEFINE_RWLOCK(fasync_lock);
 static struct kmem_cache *fasync_cache __read_mostly;
-
-static void fasync_free_rcu(struct rcu_head *head)
-{
-	kmem_cache_free(fasync_cache,
-			container_of(head, struct fasync_struct, fa_rcu));
-}
 
 /*
  * Remove a fasync entry. If successfully removed, return
@@ -666,110 +625,68 @@ static void fasync_free_rcu(struct rcu_head *head)
  * NOTE! It is very important that the FASYNC flag always
  * match the state "is the filp on a fasync list".
  *
+ * We always take the 'filp->f_lock', in since fasync_lock
+ * needs to be irq-safe.
  */
-int fasync_remove_entry(struct file *filp, struct fasync_struct **fapp)
+static int fasync_remove_entry(struct file *filp, struct fasync_struct **fapp)
 {
 	struct fasync_struct *fa, **fp;
 	int result = 0;
 
 	spin_lock(&filp->f_lock);
-	spin_lock(&fasync_lock);
+	write_lock_irq(&fasync_lock);
 	for (fp = fapp; (fa = *fp) != NULL; fp = &fa->fa_next) {
 		if (fa->fa_file != filp)
 			continue;
-
-		spin_lock_irq(&fa->fa_lock);
-		fa->fa_file = NULL;
-		spin_unlock_irq(&fa->fa_lock);
-
 		*fp = fa->fa_next;
-		call_rcu(&fa->fa_rcu, fasync_free_rcu);
+		kmem_cache_free(fasync_cache, fa);
 		filp->f_flags &= ~FASYNC;
 		result = 1;
 		break;
 	}
-	spin_unlock(&fasync_lock);
+	write_unlock_irq(&fasync_lock);
 	spin_unlock(&filp->f_lock);
 	return result;
-}
-
-struct fasync_struct *fasync_alloc(void)
-{
-	return kmem_cache_alloc(fasync_cache, GFP_KERNEL);
-}
-
-/*
- * NOTE! This can be used only for unused fasync entries:
- * entries that actually got inserted on the fasync list
- * need to be released by rcu - see fasync_remove_entry.
- */
-void fasync_free(struct fasync_struct *new)
-{
-	kmem_cache_free(fasync_cache, new);
-}
-
-/*
- * Insert a new entry into the fasync list.  Return the pointer to the
- * old one if we didn't use the new one.
- *
- * NOTE! It is very important that the FASYNC flag always
- * match the state "is the filp on a fasync list".
- */
-struct fasync_struct *fasync_insert_entry(int fd, struct file *filp, struct fasync_struct **fapp, struct fasync_struct *new)
-{
-        struct fasync_struct *fa, **fp;
-
-	spin_lock(&filp->f_lock);
-	spin_lock(&fasync_lock);
-	for (fp = fapp; (fa = *fp) != NULL; fp = &fa->fa_next) {
-		if (fa->fa_file != filp)
-			continue;
-
-		spin_lock_irq(&fa->fa_lock);
-		fa->fa_fd = fd;
-		spin_unlock_irq(&fa->fa_lock);
-		goto out;
-	}
-
-	spin_lock_init(&new->fa_lock);
-	new->magic = FASYNC_MAGIC;
-	new->fa_file = filp;
-	new->fa_fd = fd;
-	new->fa_next = *fapp;
-	rcu_assign_pointer(*fapp, new);
-	filp->f_flags |= FASYNC;
-
-out:
-	spin_unlock(&fasync_lock);
-	spin_unlock(&filp->f_lock);
-	return fa;
 }
 
 /*
  * Add a fasync entry. Return negative on error, positive if
  * added, and zero if did nothing but change an existing one.
+ *
+ * NOTE! It is very important that the FASYNC flag always
+ * match the state "is the filp on a fasync list".
  */
 static int fasync_add_entry(int fd, struct file *filp, struct fasync_struct **fapp)
 {
-	struct fasync_struct *new;
+	struct fasync_struct *new, *fa, **fp;
+	int result = 0;
 
-	new = fasync_alloc();
+	new = kmem_cache_alloc(fasync_cache, GFP_KERNEL);
 	if (!new)
 		return -ENOMEM;
 
-	/*
-	 * fasync_insert_entry() returns the old (update) entry if
-	 * it existed.
-	 *
-	 * So free the (unused) new entry and return 0 to let the
-	 * caller know that we didn't add any new fasync entries.
-	 */
-	if (fasync_insert_entry(fd, filp, fapp, new)) {
-		fasync_free(new);
-		return 0;
+	spin_lock(&filp->f_lock);
+	write_lock_irq(&fasync_lock);
+	for (fp = fapp; (fa = *fp) != NULL; fp = &fa->fa_next) {
+		if (fa->fa_file != filp)
+			continue;
+		fa->fa_fd = fd;
+		kmem_cache_free(fasync_cache, new);
+		goto out;
 	}
 
-	return 1;
+	new->magic = FASYNC_MAGIC;
+	new->fa_file = filp;
+	new->fa_fd = fd;
+	new->fa_next = *fapp;
+	*fapp = new;
+	result = 1;
+	filp->f_flags |= FASYNC;
+
+out:
+	write_unlock_irq(&fasync_lock);
+	spin_unlock(&filp->f_lock);
+	return result;
 }
 
 /*
@@ -787,33 +704,26 @@ int fasync_helper(int fd, struct file * filp, int on, struct fasync_struct **fap
 
 EXPORT_SYMBOL(fasync_helper);
 
-/*
- * rcu_read_lock() is held
- */
-static void kill_fasync_rcu(struct fasync_struct *fa, int sig, int band)
+void __kill_fasync(struct fasync_struct *fa, int sig, int band)
 {
 	while (fa) {
-		struct fown_struct *fown;
-		unsigned long flags;
-
+		struct fown_struct * fown;
 		if (fa->magic != FASYNC_MAGIC) {
 			printk(KERN_ERR "kill_fasync: bad magic number in "
 			       "fasync_struct!\n");
 			return;
 		}
-		spin_lock_irqsave(&fa->fa_lock, flags);
-		if (fa->fa_file) {
-			fown = &fa->fa_file->f_owner;
-			/* Don't send SIGURG to processes which have not set a
-			   queued signum: SIGURG has its own default signalling
-			   mechanism. */
-			if (!(sig == SIGURG && fown->signum == 0))
-				send_sigio(fown, fa->fa_fd, band);
-		}
-		spin_unlock_irqrestore(&fa->fa_lock, flags);
-		fa = rcu_dereference(fa->fa_next);
+		fown = &fa->fa_file->f_owner;
+		/* Don't send SIGURG to processes which have not set a
+		   queued signum: SIGURG has its own default signalling
+		   mechanism. */
+		if (!(sig == SIGURG && fown->signum == 0))
+			send_sigio(fown, fa->fa_fd, band);
+		fa = fa->fa_next;
 	}
 }
+
+EXPORT_SYMBOL(__kill_fasync);
 
 void kill_fasync(struct fasync_struct **fp, int sig, int band)
 {
@@ -821,33 +731,19 @@ void kill_fasync(struct fasync_struct **fp, int sig, int band)
 	 * the list is empty.
 	 */
 	if (*fp) {
-		rcu_read_lock();
-		kill_fasync_rcu(rcu_dereference(*fp), sig, band);
-		rcu_read_unlock();
+		read_lock(&fasync_lock);
+		/* reread *fp after obtaining the lock */
+		__kill_fasync(*fp, sig, band);
+		read_unlock(&fasync_lock);
 	}
 }
 EXPORT_SYMBOL(kill_fasync);
 
-static int __init fcntl_init(void)
+static int __init fasync_init(void)
 {
-	/*
-	 * Please add new bits here to ensure allocation uniqueness.
-	 * Exceptions: O_NONBLOCK is a two bit define on parisc; O_NDELAY
-	 * is defined as O_NONBLOCK on some platforms and not on others.
-	 */
-	BUILD_BUG_ON(19 - 1 /* for O_RDONLY being 0 */ != HWEIGHT32(
-		O_RDONLY	| O_WRONLY	| O_RDWR	|
-		O_CREAT		| O_EXCL	| O_NOCTTY	|
-		O_TRUNC		| O_APPEND	| /* O_NONBLOCK	| */
-		__O_SYNC	| O_DSYNC	| FASYNC	|
-		O_DIRECT	| O_LARGEFILE	| O_DIRECTORY	|
-		O_NOFOLLOW	| O_NOATIME	| O_CLOEXEC	|
-		__FMODE_EXEC	| O_PATH
-		));
-
 	fasync_cache = kmem_cache_create("fasync_cache",
 		sizeof(struct fasync_struct), 0, SLAB_PANIC, NULL);
 	return 0;
 }
 
-module_init(fcntl_init)
+module_init(fasync_init)

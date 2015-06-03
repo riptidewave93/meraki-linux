@@ -12,7 +12,13 @@
 #include "as-layout.h"
 #include "kern_util.h"
 #include "os.h"
-#include "sysdep/mcontext.h"
+#include "process.h"
+#include "sysdep/barrier.h"
+#include "sysdep/sigcontext.h"
+#include "user.h"
+
+/* Copied from linux/compiler-gcc.h since we can't include it directly */
+#define barrier() __asm__ __volatile__("": : :"memory")
 
 void (*sig_info[NSIG])(int, struct uml_pt_regs *) = {
 	[SIGTRAP]	= relay_signal,
@@ -24,7 +30,7 @@ void (*sig_info[NSIG])(int, struct uml_pt_regs *) = {
 	[SIGIO]		= sigio_handler,
 	[SIGVTALRM]	= timer_handler };
 
-static void sig_handler_common(int sig, mcontext_t *mc)
+static void sig_handler_common(int sig, struct sigcontext *sc)
 {
 	struct uml_pt_regs r;
 	int save_errno = errno;
@@ -32,8 +38,8 @@ static void sig_handler_common(int sig, mcontext_t *mc)
 	r.is_user = 0;
 	if (sig == SIGSEGV) {
 		/* For segfaults, we want the data from the sigcontext. */
-		get_regs_from_mc(&r, mc);
-		GET_FAULTINFO_FROM_MC(r.faultinfo, mc);
+		copy_sc(&r, sc);
+		GET_FAULTINFO_FROM_SC(r.faultinfo, sc);
 	}
 
 	/* enable signals if sig isn't IRQ signal */
@@ -60,7 +66,7 @@ static void sig_handler_common(int sig, mcontext_t *mc)
 static int signals_enabled;
 static unsigned int signals_pending;
 
-void sig_handler(int sig, mcontext_t *mc)
+void sig_handler(int sig, struct sigcontext *sc)
 {
 	int enabled;
 
@@ -72,23 +78,23 @@ void sig_handler(int sig, mcontext_t *mc)
 
 	block_signals();
 
-	sig_handler_common(sig, mc);
+	sig_handler_common(sig, sc);
 
 	set_signals(enabled);
 }
 
-static void real_alarm_handler(mcontext_t *mc)
+static void real_alarm_handler(struct sigcontext *sc)
 {
 	struct uml_pt_regs regs;
 
-	if (mc != NULL)
-		get_regs_from_mc(&regs, mc);
+	if (sc != NULL)
+		copy_sc(&regs, sc);
 	regs.is_user = 0;
 	unblock_signals();
 	timer_handler(SIGVTALRM, &regs);
 }
 
-void alarm_handler(int sig, mcontext_t *mc)
+void alarm_handler(int sig, struct sigcontext *sc)
 {
 	int enabled;
 
@@ -100,13 +106,14 @@ void alarm_handler(int sig, mcontext_t *mc)
 
 	block_signals();
 
-	real_alarm_handler(mc);
+	real_alarm_handler(sc);
 	set_signals(enabled);
 }
 
 void timer_init(void)
 {
-	set_handler(SIGVTALRM);
+	set_handler(SIGVTALRM, (__sighandler_t) alarm_handler,
+		    SA_ONSTACK | SA_RESTART, SIGUSR1, SIGIO, SIGWINCH, -1);
 }
 
 void set_sigstack(void *sig_stack, int size)
@@ -119,23 +126,10 @@ void set_sigstack(void *sig_stack, int size)
 		panic("enabling signal stack failed, errno = %d\n", errno);
 }
 
-static void (*handlers[_NSIG])(int sig, mcontext_t *mc) = {
-	[SIGSEGV] = sig_handler,
-	[SIGBUS] = sig_handler,
-	[SIGILL] = sig_handler,
-	[SIGFPE] = sig_handler,
-	[SIGTRAP] = sig_handler,
+static void (*handlers[_NSIG])(int sig, struct sigcontext *sc);
 
-	[SIGIO] = sig_handler,
-	[SIGWINCH] = sig_handler,
-	[SIGVTALRM] = alarm_handler
-};
-
-
-static void hard_handler(int sig, siginfo_t *info, void *p)
+void handle_signal(int sig, struct sigcontext *sc)
 {
-	struct ucontext *uc = p;
-	mcontext_t *mc = &uc->uc_mcontext;
 	unsigned long pending = 1UL << sig;
 
 	do {
@@ -161,7 +155,7 @@ static void hard_handler(int sig, siginfo_t *info, void *p)
 		while ((sig = ffs(pending)) != 0){
 			sig--;
 			pending &= ~(1 << sig);
-			(*handlers[sig])(sig, mc);
+			(*handlers[sig])(sig, sc);
 		}
 
 		/*
@@ -175,25 +169,27 @@ static void hard_handler(int sig, siginfo_t *info, void *p)
 	} while (pending);
 }
 
-void set_handler(int sig)
+extern void hard_handler(int sig);
+
+void set_handler(int sig, void (*handler)(int), int flags, ...)
 {
 	struct sigaction action;
-	int flags = SA_SIGINFO | SA_ONSTACK;
+	va_list ap;
 	sigset_t sig_mask;
+	int mask;
 
-	action.sa_sigaction = hard_handler;
+	handlers[sig] = (void (*)(int, struct sigcontext *)) handler;
+	action.sa_handler = hard_handler;
 
-	/* block irq ones */
 	sigemptyset(&action.sa_mask);
-	sigaddset(&action.sa_mask, SIGVTALRM);
-	sigaddset(&action.sa_mask, SIGIO);
-	sigaddset(&action.sa_mask, SIGWINCH);
+
+	va_start(ap, flags);
+	while ((mask = va_arg(ap, int)) != -1)
+		sigaddset(&action.sa_mask, mask);
+	va_end(ap);
 
 	if (sig == SIGSEGV)
 		flags |= SA_NODEFER;
-
-	if (sigismember(&action.sa_mask, sig))
-		flags |= SA_RESTART; /* if it's an irq signal */
 
 	action.sa_flags = flags;
 	action.sa_restorer = NULL;

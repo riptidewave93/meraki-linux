@@ -50,7 +50,7 @@
 /* amount of chips attached via this driver */
 static int zr36060_codecs;
 
-static bool low_bitrate;
+static int low_bitrate;
 module_param(low_bitrate, bool, 0);
 MODULE_PARM_DESC(low_bitrate, "Buz compatibility option, halves bitrate");
 
@@ -227,7 +227,7 @@ zr36060_pushit (struct zr36060 *ptr,
 
    Could be variable, but until it's not needed it they are just fixed to save
    memory. Otherwise expand zr36060 structure with arrays, push the values to
-   it and initialize from there, as e.g. the linux zr36057/60 driver does it.
+   it and initalize from there, as e.g. the linux zr36057/60 driver does it.
    ========================================================================= */
 
 static const char zr36060_dqt[0x86] = {

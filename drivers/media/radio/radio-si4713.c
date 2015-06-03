@@ -27,7 +27,6 @@
 #include <linux/platform_device.h>
 #include <linux/i2c.h>
 #include <linux/videodev2.h>
-#include <linux/slab.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-common.h>
 #include <media/v4l2-ioctl.h>
@@ -53,8 +52,7 @@ struct radio_si4713_device {
 /* radio_si4713_fops - file operations interface */
 static const struct v4l2_file_operations radio_si4713_fops = {
 	.owner		= THIS_MODULE,
-	/* Note: locking is done at the subdev level in the i2c driver. */
-	.unlocked_ioctl	= video_ioctl2,
+	.ioctl		= video_ioctl2,
 };
 
 /* Video4Linux Interface */
@@ -92,6 +90,10 @@ static int radio_si4713_s_audout(struct file *file, void *priv,
 static int radio_si4713_querycap(struct file *file, void *priv,
 					struct v4l2_capability *capability)
 {
+	struct radio_si4713_device *rsdev;
+
+	rsdev = video_get_drvdata(video_devdata(file));
+
 	strlcpy(capability->driver, "radio-si4713", sizeof(capability->driver));
 	strlcpy(capability->card, "Silicon Labs Si4713 Modulator",
 				sizeof(capability->card));
@@ -220,8 +222,7 @@ static int radio_si4713_s_frequency(struct file *file, void *p,
 							s_frequency, vf);
 }
 
-static long radio_si4713_default(struct file *file, void *p,
-				bool valid_prio, int cmd, void *arg)
+static long radio_si4713_default(struct file *file, void *p, int cmd, void *arg)
 {
 	return v4l2_device_call_until_err(get_v4l2_dev(file), 0, core,
 							ioctl, cmd, arg);
@@ -289,19 +290,19 @@ static int radio_si4713_pdriver_probe(struct platform_device *pdev)
 		goto unregister_v4l2_dev;
 	}
 
-	sd = v4l2_i2c_new_subdev_board(&rsdev->v4l2_dev, adapter,
+	sd = v4l2_i2c_new_subdev_board(&rsdev->v4l2_dev, adapter, "si4713_i2c",
 					pdata->subdev_board_info, NULL);
 	if (!sd) {
 		dev_err(&pdev->dev, "Cannot get v4l2 subdevice\n");
 		rval = -ENODEV;
-		goto put_adapter;
+		goto unregister_v4l2_dev;
 	}
 
 	rsdev->radio_dev = video_device_alloc();
 	if (!rsdev->radio_dev) {
 		dev_err(&pdev->dev, "Failed to alloc video device.\n");
 		rval = -ENOMEM;
-		goto put_adapter;
+		goto unregister_v4l2_dev;
 	}
 
 	memcpy(rsdev->radio_dev, &radio_si4713_vdev_template,
@@ -318,8 +319,6 @@ static int radio_si4713_pdriver_probe(struct platform_device *pdev)
 
 free_vdev:
 	video_device_release(rsdev->radio_dev);
-put_adapter:
-	i2c_put_adapter(adapter);
 unregister_v4l2_dev:
 	v4l2_device_unregister(&rsdev->v4l2_dev);
 free_rsdev:
@@ -335,12 +334,8 @@ static int __exit radio_si4713_pdriver_remove(struct platform_device *pdev)
 	struct radio_si4713_device *rsdev = container_of(v4l2_dev,
 						struct radio_si4713_device,
 						v4l2_dev);
-	struct v4l2_subdev *sd = list_entry(v4l2_dev->subdevs.next,
-					    struct v4l2_subdev, list);
-	struct i2c_client *client = v4l2_get_subdevdata(sd);
 
 	video_unregister_device(rsdev->radio_dev);
-	i2c_put_adapter(client->adapter);
 	v4l2_device_unregister(&rsdev->v4l2_dev);
 	kfree(rsdev);
 
@@ -355,4 +350,17 @@ static struct platform_driver radio_si4713_pdriver = {
 	.remove         = __exit_p(radio_si4713_pdriver_remove),
 };
 
-module_platform_driver(radio_si4713_pdriver);
+/* Module Interface */
+static int __init radio_si4713_module_init(void)
+{
+	return platform_driver_register(&radio_si4713_pdriver);
+}
+
+static void __exit radio_si4713_module_exit(void)
+{
+	platform_driver_unregister(&radio_si4713_pdriver);
+}
+
+module_init(radio_si4713_module_init);
+module_exit(radio_si4713_module_exit);
+

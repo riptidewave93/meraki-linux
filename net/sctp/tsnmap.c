@@ -42,7 +42,6 @@
  * be incorporated into the next SCTP release.
  */
 
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/bitmap.h>
 #include <net/sctp/sctp.h>
@@ -344,7 +343,7 @@ __u16 sctp_tsnmap_num_gabs(struct sctp_tsnmap *map,
 
 	/* Refresh the gap ack information. */
 	if (sctp_tsnmap_has_gap(map)) {
-		__u16 start = 0, end = 0;
+		__u16 start, end;
 		sctp_tsnmap_iter_init(map, &iter);
 		while (sctp_tsnmap_next_gap_ack(map, &iter,
 						&start,

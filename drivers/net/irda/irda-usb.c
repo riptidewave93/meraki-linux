@@ -370,7 +370,7 @@ static void speed_bulk_callback(struct urb *urb)
 	/* urb is now available */
 	//urb->status = 0; -> tested above
 
-	/* New speed and xbof is now committed in hardware */
+	/* New speed and xbof is now commited in hardware */
 	self->new_speed = -1;
 	self->new_xbofs = -1;
 
@@ -602,7 +602,7 @@ static void write_bulk_callback(struct urb *urb)
 			IRDA_DEBUG(1, "%s(), Changing speed now...\n", __func__);
 			irda_usb_change_speed_xbofs(self);
 		} else {
-			/* New speed and xbof is now committed in hardware */
+			/* New speed and xbof is now commited in hardware */
 			self->new_speed = -1;
 			self->new_xbofs = -1;
 			/* Done, waiting for next packet */
@@ -839,7 +839,7 @@ static void irda_usb_receive(struct urb *urb)
 			/* Usually precursor to a hot-unplug on OHCI. */
 		default:
 			self->netdev->stats.rx_errors++;
-			IRDA_DEBUG(0, "%s(), RX status %d, transfer_flags 0x%04X\n", __func__, urb->status, urb->transfer_flags);
+			IRDA_DEBUG(0, "%s(), RX status %d, transfer_flags 0x%04X \n", __func__, urb->status, urb->transfer_flags);
 			break;
 		}
 		/* If we received an error, we don't want to resubmit the
@@ -852,7 +852,7 @@ static void irda_usb_receive(struct urb *urb)
 		 * hot unplug of the dongle...
 		 * Lowest effective timer is 10ms...
 		 * Jean II */
-		self->rx_defer_timer.function = irda_usb_rx_defer_expired;
+		self->rx_defer_timer.function = &irda_usb_rx_defer_expired;
 		self->rx_defer_timer.data = (unsigned long) urb;
 		mod_timer(&self->rx_defer_timer, jiffies + (10 * HZ / 1000));
 		return;
@@ -1124,11 +1124,11 @@ static int stir421x_patch_device(struct irda_usb_cb *self)
                  * The actual image starts after the "STMP" keyword
                  * so forward to the firmware header tag
                  */
-                for (i = 0; i < fw->size && fw->data[i] !=
-			     STIR421X_PATCH_END_OF_HDR_TAG; i++) ;
+                for (i = 0; (fw->data[i] != STIR421X_PATCH_END_OF_HDR_TAG)
+			     && (i < fw->size); i++) ;
                 /* here we check for the out of buffer case */
-                if (i < STIR421X_PATCH_CODE_OFFSET && i < fw->size &&
-				STIR421X_PATCH_END_OF_HDR_TAG == fw->data[i]) {
+                if ((STIR421X_PATCH_END_OF_HDR_TAG == fw->data[i])
+                    && (i < STIR421X_PATCH_CODE_OFFSET)) {
                         if (!memcmp(fw->data + i + 1, STIR421X_PATCH_STMP_TAG,
                                     sizeof(STIR421X_PATCH_STMP_TAG) - 1)) {
 
@@ -1514,7 +1514,7 @@ static inline int irda_usb_parse_endpoints(struct irda_usb_cb *self, struct usb_
 	IRDA_DEBUG(0, "%s(), And our endpoints are : in=%02X, out=%02X (%d), int=%02X\n",
 		__func__, self->bulk_in_ep, self->bulk_out_ep, self->bulk_out_mtu, self->bulk_int_ep);
 
-	return (self->bulk_in_ep != 0) && (self->bulk_out_ep != 0);
+	return((self->bulk_in_ep != 0) && (self->bulk_out_ep != 0));
 }
 
 #ifdef IU_DUMP_CLASS_DESC
@@ -1651,8 +1651,6 @@ static int irda_usb_probe(struct usb_interface *intf,
 
 	self->rx_urb = kcalloc(self->max_rx_urb, sizeof(struct urb *),
 				GFP_KERNEL);
-	if (!self->rx_urb)
-		goto err_free_net;
 
 	for (i = 0; i < self->max_rx_urb; i++) {
 		self->rx_urb[i] = usb_alloc_urb(0, GFP_KERNEL);
@@ -1785,8 +1783,6 @@ err_out_2:
 err_out_1:
 	for (i = 0; i < self->max_rx_urb; i++)
 		usb_free_urb(self->rx_urb[i]);
-	kfree(self->rx_urb);
-err_free_net:
 	free_netdev(net);
 err_out:
 	return ret;
@@ -1914,8 +1910,41 @@ static struct usb_driver irda_driver = {
 #endif
 };
 
-module_usb_driver(irda_driver);
+/************************* MODULE CALLBACKS *************************/
+/*
+ * Deal with module insertion/removal
+ * Mostly tell USB about our existence
+ */
 
+/*------------------------------------------------------------------*/
+/*
+ * Module insertion
+ */
+static int __init usb_irda_init(void)
+{
+	int	ret;
+
+	ret = usb_register(&irda_driver);
+	if (ret < 0)
+		return ret;
+
+	IRDA_MESSAGE("USB IrDA support registered\n");
+	return 0;
+}
+module_init(usb_irda_init);
+
+/*------------------------------------------------------------------*/
+/*
+ * Module removal
+ */
+static void __exit usb_irda_cleanup(void)
+{
+	/* Deregister the driver and remove all pending instances */
+	usb_deregister(&irda_driver);
+}
+module_exit(usb_irda_cleanup);
+
+/*------------------------------------------------------------------*/
 /*
  * Module parameters
  */

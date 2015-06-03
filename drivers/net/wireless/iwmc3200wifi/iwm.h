@@ -48,7 +48,6 @@
 #include "umac.h"
 #include "lmac.h"
 #include "eeprom.h"
-#include "trace.h"
 
 #define IWM_COPYRIGHT "Copyright(c) 2009 Intel Corporation"
 #define IWM_AUTHOR "<ilw@linux.intel.com>"
@@ -66,8 +65,6 @@ struct iwm_conf {
 	u32 sdio_ior_timeout;
 	unsigned long calib_map;
 	unsigned long expected_calib_map;
-	u8 ct_kill_entry;
-	u8 ct_kill_exit;
 	bool reset_on_fatal_err;
 	bool auto_connect;
 	bool wimax_not_present;
@@ -82,6 +79,7 @@ struct iwm_conf {
 	u32 assoc_timeout;
 	u32 roam_timeout;
 	u32 wireless_mode;
+	u32 coexist_mode;
 
 	u8 ibss_band;
 	u8 ibss_channel;
@@ -131,18 +129,11 @@ struct iwm_notif {
 	unsigned long buf_size;
 };
 
-struct iwm_tid_info {
-	__le16 last_seq_num;
-	bool stopped;
-	struct mutex mutex;
-};
-
 struct iwm_sta_info {
 	u8 addr[ETH_ALEN];
 	bool valid;
 	bool qos;
 	u8 color;
-	struct iwm_tid_info tid_info[IWM_UMAC_TID_NR];
 };
 
 struct iwm_tx_info {
@@ -162,7 +153,7 @@ struct iwm_umac_key_hdr {
 	u8 mac[ETH_ALEN];
 	u8 key_idx;
 	u8 multicast; /* BCast encrypt & BCast decrypt of frames FROM mac */
-} __packed;
+} __attribute__ ((packed));
 
 struct iwm_key {
 	struct iwm_umac_key_hdr hdr;
@@ -192,8 +183,6 @@ struct iwm_key {
 struct iwm_tx_queue {
 	int id;
 	struct sk_buff_head queue;
-	struct sk_buff_head stopped_queue;
-	spinlock_t lock;
 	struct workqueue_struct *wq;
 	struct work_struct worker;
 	u8 concat_buf[IWM_HAL_CONCATENATE_BUF_SIZE];
@@ -269,9 +258,7 @@ struct iwm_priv {
 
 	struct sk_buff_head rx_list;
 	struct list_head rx_tickets;
-	spinlock_t ticket_lock;
-	struct list_head rx_packets[IWM_RX_ID_HASH];
-	spinlock_t packet_lock[IWM_RX_ID_HASH];
+	struct list_head rx_packets[IWM_RX_ID_HASH + 1];
 	struct workqueue_struct *rx_wq;
 	struct work_struct rx_worker;
 
@@ -289,14 +276,12 @@ struct iwm_priv {
 	struct iw_statistics wstats;
 	struct delayed_work stats_request;
 	struct delayed_work disconnect;
-	struct delayed_work ct_kill_delay;
 
 	struct iwm_debugfs dbg;
 
 	u8 *eeprom;
 	struct timer_list watchdog;
 	struct work_struct reset_worker;
-	struct work_struct auth_retry_worker;
 	struct mutex mutex;
 
 	u8 *req_ie;
@@ -305,8 +290,6 @@ struct iwm_priv {
 	int resp_ie_len;
 
 	struct iwm_fw_error_hdr *last_fw_err;
-	char umac_version[8];
-	char lmac_version[8];
 
 	char private[0] __attribute__((__aligned__(NETDEV_ALIGN)));
 };
@@ -352,7 +335,6 @@ int iwm_up(struct iwm_priv *iwm);
 int iwm_down(struct iwm_priv *iwm);
 
 /* TX API */
-int iwm_tid_to_queue(u16 tid);
 void iwm_tx_credit_inc(struct iwm_priv *iwm, int id, int total_freed_pages);
 void iwm_tx_worker(struct work_struct *work);
 int iwm_xmit_frame(struct sk_buff *skb, struct net_device *netdev);

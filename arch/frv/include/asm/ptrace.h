@@ -78,11 +78,14 @@ register struct pt_regs *__frame asm("gr28");
 #define user_stack_pointer(regs)	((regs)->sp)
 
 extern unsigned long user_stack(const struct pt_regs *);
+extern void show_regs(struct pt_regs *);
 #define profile_pc(regs) ((regs)->pc)
 
 #define task_pt_regs(task) ((task)->thread.frame0)
 
 #define arch_has_single_step()	(1)
+extern void user_enable_single_step(struct task_struct *);
+extern void user_disable_single_step(struct task_struct *);
 
 #endif /* !__ASSEMBLY__ */
 #endif /* __KERNEL__ */

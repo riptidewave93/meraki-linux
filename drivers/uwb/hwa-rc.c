@@ -53,7 +53,6 @@
  */
 #include <linux/init.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/usb.h>
 #include <linux/usb/wusb.h>
 #include <linux/usb/wusb-wa.h>
@@ -645,8 +644,7 @@ void hwarc_neep_cb(struct urb *urb)
 		dev_err(dev, "NEEP: URB error %d\n", urb->status);
 	}
 	result = usb_submit_urb(urb, GFP_ATOMIC);
-	if (result < 0 && result != -ENODEV && result != -EPERM) {
-		/* ignoring unrecoverable errors */
+	if (result < 0) {
 		dev_err(dev, "NEEP: Can't resubmit URB (%d) resetting device\n",
 			result);
 		goto error;
@@ -893,7 +891,7 @@ static int hwarc_post_reset(struct usb_interface *iface)
 }
 
 /** USB device ID's that we handle */
-static const struct usb_device_id hwarc_id_table[] = {
+static struct usb_device_id hwarc_id_table[] = {
 	/* D-Link DUB-1210 */
 	{ USB_DEVICE_AND_INTERFACE_INFO(0x07d1, 0x3d02, 0xe0, 0x01, 0x02),
 	  .driver_info = WUSB_QUIRK_WHCI_CMD_EVT },
@@ -915,7 +913,17 @@ static struct usb_driver hwarc_driver = {
 	.post_reset =   hwarc_post_reset,
 };
 
-module_usb_driver(hwarc_driver);
+static int __init hwarc_driver_init(void)
+{
+	return usb_register(&hwarc_driver);
+}
+module_init(hwarc_driver_init);
+
+static void __exit hwarc_driver_exit(void)
+{
+	usb_deregister(&hwarc_driver);
+}
+module_exit(hwarc_driver_exit);
 
 MODULE_AUTHOR("Inaky Perez-Gonzalez <inaky.perez-gonzalez@intel.com>");
 MODULE_DESCRIPTION("Host Wireless Adapter Radio Control Driver");

@@ -76,39 +76,39 @@ static long gio_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		break;
 
 	case GIODRV_IOCSGIODATA1:	/* write byte */
-		__raw_writeb((unsigned char)(0x0ff & data), addr);
+		ctrl_outb((unsigned char)(0x0ff & data), addr);
 		break;
 
 	case GIODRV_IOCSGIODATA2:	/* write word */
 		if (addr & 0x01) {
 			return -EFAULT;
 		}
-		__raw_writew((unsigned short int)(0x0ffff & data), addr);
+		ctrl_outw((unsigned short int)(0x0ffff & data), addr);
 		break;
 
 	case GIODRV_IOCSGIODATA4:	/* write long */
 		if (addr & 0x03) {
 			return -EFAULT;
 		}
-		__raw_writel(data, addr);
+		ctrl_outl(data, addr);
 		break;
 
 	case GIODRV_IOCGGIODATA1:	/* read byte */
-		data = __raw_readb(addr);
+		data = ctrl_inb(addr);
 		break;
 
 	case GIODRV_IOCGGIODATA2:	/* read word */
 		if (addr & 0x01) {
 			return -EFAULT;
 		}
-		data = __raw_readw(addr);
+		data = ctrl_inw(addr);
 		break;
 
 	case GIODRV_IOCGGIODATA4:	/* read long */
 		if (addr & 0x03) {
 			return -EFAULT;
 		}
-		data = __raw_readl(addr);
+		data = ctrl_inl(addr);
 		break;
 	default:
 		return -EFAULT;
@@ -128,7 +128,6 @@ static const struct file_operations gio_fops = {
 	.open = gio_open,	/* open */
 	.release = gio_close,	/* release */
 	.unlocked_ioctl = gio_ioctl,
-	.llseek = noop_llseek,
 };
 
 static int __init gio_init(void)

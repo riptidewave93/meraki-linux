@@ -336,6 +336,20 @@ static int sha256_import(struct shash_desc *desc, const void *in)
 	return 0;
 }
 
+static int sha256_partial(struct shash_desc *desc, u8 *data)
+{
+	struct sha256_state *sctx = shash_desc_ctx(desc);
+	int i;
+
+	for (i = 0; i < 8; i++) {
+		*data++ = sctx->state[i] & 0xFF;
+		*data++ = (sctx->state[i] >> 8) & 0xFF;
+		*data++ = (sctx->state[i] >> 16) & 0xFF;
+		*data++ = (sctx->state[i] >> 24) & 0xFF;
+	}
+	return 0;
+}
+
 static struct shash_alg sha256 = {
 	.digestsize	=	SHA256_DIGEST_SIZE,
 	.init		=	sha256_init,
@@ -343,6 +357,8 @@ static struct shash_alg sha256 = {
 	.final		=	sha256_final,
 	.export		=	sha256_export,
 	.import		=	sha256_import,
+	.partial	=	sha256_partial,
+	.partialsize	=	SHA256_DIGEST_SIZE,
 	.descsize	=	sizeof(struct sha256_state),
 	.statesize	=	sizeof(struct sha256_state),
 	.base		=	{
@@ -359,6 +375,8 @@ static struct shash_alg sha224 = {
 	.init		=	sha224_init,
 	.update		=	sha256_update,
 	.final		=	sha224_final,
+	.partial	=	sha256_partial,
+	.partialsize	=	SHA256_DIGEST_SIZE,
 	.descsize	=	sizeof(struct sha256_state),
 	.base		=	{
 		.cra_name	=	"sha224",

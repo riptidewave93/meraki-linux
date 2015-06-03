@@ -15,7 +15,6 @@
 #include <linux/interrupt.h>
 #include <linux/blkdev.h>
 #include <linux/ide.h>
-#include <linux/module.h>
 
 #include <asm/ide.h>
 

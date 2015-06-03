@@ -11,12 +11,11 @@
  */
 
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/fs.h>
+#include <linux/slab.h>
 #include <arch/svinto.h>
 #include <linux/init.h>
-#include <arch/system.h>
 
 #ifdef CONFIG_ETRAX_GPIO
 void etrax_gpio_wake_up_check(void); /* drivers/gpio.c */
@@ -205,9 +204,7 @@ asmlinkage int sys_vfork(long r10, long r11, long r12, long r13, long mof, long 
 /*
  * sys_execve() executes a new program.
  */
-asmlinkage int sys_execve(const char *fname,
-			  const char *const *argv,
-			  const char *const *envp,
+asmlinkage int sys_execve(const char *fname, char **argv, char **envp,
 			  long r13, long mof, long srp, 
 			  struct pt_regs *regs)
 {

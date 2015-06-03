@@ -128,7 +128,7 @@ affs_fix_dcache(struct dentry *dentry, u32 entry_ino)
 	void *data = dentry->d_fsdata;
 	struct list_head *head, *next;
 
-	spin_lock(&inode->i_lock);
+	spin_lock(&dcache_lock);
 	head = &inode->i_dentry;
 	next = head->next;
 	while (next != head) {
@@ -139,7 +139,7 @@ affs_fix_dcache(struct dentry *dentry, u32 entry_ino)
 		}
 		next = next->next;
 	}
-	spin_unlock(&inode->i_lock);
+	spin_unlock(&dcache_lock);
 }
 
 
@@ -215,7 +215,7 @@ affs_remove_link(struct dentry *dentry)
 				break;
 			default:
 				if (!AFFS_TAIL(sb, bh)->link_chain)
-					set_nlink(inode, 1);
+					inode->i_nlink = 1;
 			}
 			affs_free_block(sb, link_ino);
 			goto done;
@@ -316,7 +316,7 @@ affs_remove_header(struct dentry *dentry)
 	if (inode->i_nlink > 1)
 		retval = affs_remove_link(dentry);
 	else
-		clear_nlink(inode);
+		inode->i_nlink = 0;
 	affs_unlock_link(inode);
 	inode->i_ctime = CURRENT_TIME_SEC;
 	mark_inode_dirty(inode);
@@ -390,10 +390,10 @@ secs_to_datestamp(time_t secs, struct affs_date *ds)
 	ds->ticks = cpu_to_be32(secs * 50);
 }
 
-umode_t
+mode_t
 prot_to_mode(u32 prot)
 {
-	umode_t mode = 0;
+	int mode = 0;
 
 	if (!(prot & FIBF_NOWRITE))
 		mode |= S_IWUSR;
@@ -421,7 +421,7 @@ void
 mode_to_prot(struct inode *inode)
 {
 	u32 prot = AFFS_I(inode)->i_protect;
-	umode_t mode = inode->i_mode;
+	mode_t mode = inode->i_mode;
 
 	if (!(mode & S_IXUSR))
 		prot |= FIBF_NOEXECUTE;

@@ -1,6 +1,9 @@
-config SYMBOL_PREFIX
-	string
-	default "_"
+#
+# For a description of the syntax of this configuration file,
+# see Documentation/kbuild/kconfig-language.txt.
+#
+
+mainmenu "Blackfin Kernel Configuration"
 
 config MMU
 	def_bool n
@@ -16,37 +19,35 @@ config RWSEM_XCHGADD_ALGORITHM
 
 config BLACKFIN
 	def_bool y
-	select HAVE_ARCH_KGDB
-	select HAVE_ARCH_TRACEHOOK
-	select HAVE_DYNAMIC_FTRACE
-	select HAVE_FTRACE_MCOUNT_RECORD
 	select HAVE_FUNCTION_GRAPH_TRACER
 	select HAVE_FUNCTION_TRACER
-	select HAVE_FUNCTION_TRACE_MCOUNT_TEST
 	select HAVE_IDE
-	select HAVE_IRQ_WORK
-	select HAVE_KERNEL_GZIP if RAMKERNEL
-	select HAVE_KERNEL_BZIP2 if RAMKERNEL
-	select HAVE_KERNEL_LZMA if RAMKERNEL
-	select HAVE_KERNEL_LZO if RAMKERNEL
+	select HAVE_KERNEL_GZIP
+	select HAVE_KERNEL_BZIP2
+	select HAVE_KERNEL_LZMA
 	select HAVE_OPROFILE
-	select HAVE_PERF_EVENTS
 	select ARCH_WANT_OPTIONAL_GPIOLIB
-	select HAVE_GENERIC_HARDIRQS
-	select GENERIC_ATOMIC64
-	select GENERIC_IRQ_PROBE
-	select IRQ_PER_CPU if SMP
-	select HAVE_NMI_WATCHDOG if NMI_WATCHDOG
-	select GENERIC_SMP_IDLE_THREAD
-
-config GENERIC_CSUM
-	def_bool y
 
 config GENERIC_BUG
 	def_bool y
 	depends on BUG
 
 config ZONE_DMA
+	def_bool y
+
+config GENERIC_FIND_NEXT_BIT
+	def_bool y
+
+config GENERIC_HWEIGHT
+	def_bool y
+
+config GENERIC_HARDIRQS
+	def_bool y
+
+config GENERIC_IRQ_PROBE
+	def_bool y
+
+config GENERIC_HARDIRQS_NO__DO_IRQ
 	def_bool y
 
 config GENERIC_GPIO
@@ -172,7 +173,7 @@ config BF539
 	help
 	  BF539 Processor Support.
 
-config BF542_std
+config BF542
 	bool "BF542"
 	help
 	  BF542 Processor Support.
@@ -182,7 +183,7 @@ config BF542M
 	help
 	  BF542 Processor Support.
 
-config BF544_std
+config BF544
 	bool "BF544"
 	help
 	  BF544 Processor Support.
@@ -192,7 +193,7 @@ config BF544M
 	help
 	  BF544 Processor Support.
 
-config BF547_std
+config BF547
 	bool "BF547"
 	help
 	  BF547 Processor Support.
@@ -202,7 +203,7 @@ config BF547M
 	help
 	  BF547 Processor Support.
 
-config BF548_std
+config BF548
 	bool "BF548"
 	help
 	  BF548 Processor Support.
@@ -212,7 +213,7 @@ config BF548M
 	help
 	  BF548 Processor Support.
 
-config BF549_std
+config BF549
 	bool "BF549"
 	help
 	  BF549 Processor Support.
@@ -231,7 +232,7 @@ endchoice
 
 config SMP
 	depends on BF561
-	select TICKSOURCE_CORETMR
+	select GENERIC_CLOCKEVENTS
 	bool "Symmetric multi-processing support"
 	---help---
 	  This enables support for systems with more than one CPU,
@@ -245,9 +246,9 @@ config NR_CPUS
 	depends on SMP
 	default 2 if BF561
 
-config HOTPLUG_CPU
-	bool "Support for hot-pluggable CPUs"
-	depends on SMP && HOTPLUG
+config IRQ_PER_CPU
+	bool
+	depends on SMP
 	default y
 
 config BF_REV_MIN
@@ -280,7 +281,7 @@ config BF_REV_0_1
 
 config BF_REV_0_2
 	bool "0.2"
-	depends on (BF51x || BF52x || BF537 || BF536 || BF534 || (BF54x && !BF54xM))
+	depends on (BF52x || BF537 || BF536 || BF534 || (BF54x && !BF54xM))
 
 config BF_REV_0_3
 	bool "0.3"
@@ -306,9 +307,34 @@ config BF_REV_NONE
 
 endchoice
 
+config BF51x
+	bool
+	depends on (BF512 || BF514 || BF516 || BF518)
+	default y
+
+config BF52x
+	bool
+	depends on (BF522 || BF523 || BF524 || BF525 || BF526 || BF527)
+	default y
+
 config BF53x
 	bool
 	depends on (BF531 || BF532 || BF533 || BF534 || BF536 || BF537)
+	default y
+
+config BF54xM
+	bool
+	depends on (BF542M || BF544M || BF547M || BF548M || BF549M)
+	default y
+
+config BF54x
+	bool
+	depends on (BF542 || BF544 || BF547 || BF548 || BF549 || BF54xM)
+	default y
+
+config MEM_GENERIC_BOARD
+	bool
+	depends on GENERIC_BOARD
 	default y
 
 config MEM_MT48LC64M4A2FB_7E
@@ -326,7 +352,7 @@ config MEM_MT48LC16M16A2TG_75
 
 config MEM_MT48LC32M8A2_75
 	bool
-	depends on (BFIN518F_EZBRD || BFIN537_STAMP || PNAV10 || BFIN538_EZKIT)
+	depends on (BFIN537_STAMP || PNAV10 || BFIN538_EZKIT)
 	default y
 
 config MEM_MT48LC8M32B2B5_7
@@ -336,7 +362,12 @@ config MEM_MT48LC8M32B2B5_7
 
 config MEM_MT48LC32M16A2TG_75
 	bool
-	depends on (BFIN527_EZKIT || BFIN527_EZKIT_V2 || BFIN532_IP0X || BLACKSTAMP || BFIN527_AD7160EVAL)
+	depends on (BFIN527_EZKIT || BFIN532_IP0X || BLACKSTAMP)
+	default y
+
+config MEM_MT48LC32M8A2_75
+	bool
+	depends on (BFIN518F_EZBRD)
 	default y
 
 config MEM_MT48H32M16LFCJ_75
@@ -383,18 +414,10 @@ config BOOT_LOAD
 config ROM_BASE
 	hex "Kernel ROM Base"
 	depends on ROMKERNEL
-	default "0x20040040"
+	default "0x20040000"
 	range 0x20000000 0x20400000 if !(BF54x || BF561)
 	range 0x20000000 0x30000000 if (BF54x || BF561)
 	help
-	  Make sure your ROM base does not include any file-header
-	  information that is prepended to the kernel.
-
-	  For example, the bootable U-Boot format (created with
-	  mkimage) has a 64 byte header (0x40).  So while the image
-	  you write to flash might start at say 0x20080000, you have
-	  to add 0x40 to get the kernel's ROM base as it will come
-	  after the header.
 
 comment "Clock/PLL Setup"
 
@@ -406,7 +429,6 @@ config CLKIN_HZ
 	default "25000000" # most people use this
 	default "27000000" if BFIN533_EZKIT
 	default "30000000" if BFIN561_EZKIT
-	default "24000000" if BFIN527_AD7160EVAL
 	help
 	  The frequency of CLKIN crystal oscillator on the board in Hz.
 	  Warning: This value should match the crystal on the board. Otherwise,
@@ -439,12 +461,11 @@ config VCO_MULT
 	range 1 64
 	default "22" if BFIN533_EZKIT
 	default "45" if BFIN533_STAMP
-	default "20" if (BFIN537_STAMP || BFIN527_EZKIT || BFIN527_EZKIT_V2 || BFIN548_EZKIT || BFIN548_BLUETECHNIX_CM || BFIN538_EZKIT)
+	default "20" if (BFIN537_STAMP || BFIN527_EZKIT || BFIN548_EZKIT || BFIN548_BLUETECHNIX_CM || BFIN538_EZKIT)
 	default "22" if BFIN533_BLUETECHNIX_CM
 	default "20" if (BFIN537_BLUETECHNIX_CM_E || BFIN537_BLUETECHNIX_CM_U || BFIN527_BLUETECHNIX_CM || BFIN561_BLUETECHNIX_CM)
 	default "20" if BFIN561_EZKIT
 	default "16" if (H8606_HVSISTEMAS || BLACKSTAMP || BFIN526_EZBRD || BFIN518F_EZBRD)
-	default "25" if BFIN527_AD7160EVAL
 	help
 	  This controls the frequency of the on-chip PLL. This can be between 1 and 64.
 	  PLL Frequency = (Crystal Frequency) * (this setting)
@@ -594,27 +615,30 @@ comment "Kernel Timer/Scheduler"
 
 source kernel/Kconfig.hz
 
+config GENERIC_TIME
+	def_bool y
+
 config GENERIC_CLOCKEVENTS
 	bool "Generic clock events"
 	default y
 
-menu "Clock event device"
+choice
+	prompt "Kernel Tick Source"
 	depends on GENERIC_CLOCKEVENTS
+	default TICKSOURCE_CORETMR
+
 config TICKSOURCE_GPTMR0
-	bool "GPTimer0"
-	depends on !SMP
+	bool "Gptimer0 (SCLK domain)"
 	select BFIN_GPTIMERS
 
 config TICKSOURCE_CORETMR
-	bool "Core timer"
-	default y
-endmenu
+	bool "Core timer (CCLK domain)"
 
-menu "Clock souce"
-	depends on GENERIC_CLOCKEVENTS
+endchoice
+
 config CYCLES_CLOCKSOURCE
-	bool "CYCLES"
-	default y
+	bool "Use 'CYCLES' as a clocksource"
+	depends on GENERIC_CLOCKEVENTS
 	depends on !BFIN_SCRATCH_REG_CYCLES
 	depends on !SMP
 	help
@@ -625,10 +649,10 @@ config CYCLES_CLOCKSOURCE
 	  writing the registers will most likely crash the kernel.
 
 config GPTMR0_CLOCKSOURCE
-	bool "GPTimer0"
+	bool "Use GPTimer0 as a clocksource"
 	select BFIN_GPTIMERS
+	depends on GENERIC_CLOCKEVENTS
 	depends on !TICKSOURCE_GPTMR0
-endmenu
 
 config ARCH_USES_GETTIMEOFFSET
 	depends on !GENERIC_CLOCKEVENTS
@@ -688,13 +712,13 @@ endmenu
 
 
 menu "Blackfin Kernel Optimizations"
+	depends on !SMP
 
 comment "Memory Optimizations"
 
 config I_ENTRY_L1
 	bool "Locate interrupt entry code in L1 Memory"
 	default y
-	depends on !SMP
 	help
 	  If enabled, interrupt entry code (STORE/RESTORE CONTEXT) is linked
 	  into L1 instruction memory. (less latency)
@@ -702,7 +726,6 @@ config I_ENTRY_L1
 config EXCPT_IRQ_SYSC_L1
 	bool "Locate entire ASM lowlevel exception / interrupt - Syscall and CPLB handler code in L1 Memory"
 	default y
-	depends on !SMP
 	help
 	  If enabled, the entire ASM lowlevel exception and interrupt entry code
 	  (STORE/RESTORE CONTEXT) is linked into L1 instruction memory.
@@ -711,7 +734,6 @@ config EXCPT_IRQ_SYSC_L1
 config DO_IRQ_L1
 	bool "Locate frequently called do_irq dispatcher function in L1 Memory"
 	default y
-	depends on !SMP
 	help
 	  If enabled, the frequently called do_irq dispatcher function is linked
 	  into L1 instruction memory. (less latency)
@@ -719,7 +741,6 @@ config DO_IRQ_L1
 config CORE_TIMER_IRQ_L1
 	bool "Locate frequently called timer_interrupt() function in L1 Memory"
 	default y
-	depends on !SMP
 	help
 	  If enabled, the frequently called timer_interrupt() function is linked
 	  into L1 instruction memory. (less latency)
@@ -727,7 +748,6 @@ config CORE_TIMER_IRQ_L1
 config IDLE_L1
 	bool "Locate frequently idle function in L1 Memory"
 	default y
-	depends on !SMP
 	help
 	  If enabled, the frequently called idle function is linked
 	  into L1 instruction memory. (less latency)
@@ -735,7 +755,6 @@ config IDLE_L1
 config SCHEDULE_L1
 	bool "Locate kernel schedule function in L1 Memory"
 	default y
-	depends on !SMP
 	help
 	  If enabled, the frequently called kernel schedule is linked
 	  into L1 instruction memory. (less latency)
@@ -743,7 +762,6 @@ config SCHEDULE_L1
 config ARITHMETIC_OPS_L1
 	bool "Locate kernel owned arithmetic functions in L1 Memory"
 	default y
-	depends on !SMP
 	help
 	  If enabled, arithmetic functions are linked
 	  into L1 instruction memory. (less latency)
@@ -751,7 +769,6 @@ config ARITHMETIC_OPS_L1
 config ACCESS_OK_L1
 	bool "Locate access_ok function in L1 Memory"
 	default y
-	depends on !SMP
 	help
 	  If enabled, the access_ok function is linked
 	  into L1 instruction memory. (less latency)
@@ -759,7 +776,6 @@ config ACCESS_OK_L1
 config MEMSET_L1
 	bool "Locate memset function in L1 Memory"
 	default y
-	depends on !SMP
 	help
 	  If enabled, the memset function is linked
 	  into L1 instruction memory. (less latency)
@@ -767,47 +783,13 @@ config MEMSET_L1
 config MEMCPY_L1
 	bool "Locate memcpy function in L1 Memory"
 	default y
-	depends on !SMP
 	help
 	  If enabled, the memcpy function is linked
 	  into L1 instruction memory. (less latency)
 
-config STRCMP_L1
-	bool "locate strcmp function in L1 Memory"
-	default y
-	depends on !SMP
-	help
-	  If enabled, the strcmp function is linked
-	  into L1 instruction memory (less latency).
-
-config STRNCMP_L1
-	bool "locate strncmp function in L1 Memory"
-	default y
-	depends on !SMP
-	help
-	  If enabled, the strncmp function is linked
-	  into L1 instruction memory (less latency).
-
-config STRCPY_L1
-	bool "locate strcpy function in L1 Memory"
-	default y
-	depends on !SMP
-	help
-	  If enabled, the strcpy function is linked
-	  into L1 instruction memory (less latency).
-
-config STRNCPY_L1
-	bool "locate strncpy function in L1 Memory"
-	default y
-	depends on !SMP
-	help
-	  If enabled, the strncpy function is linked
-	  into L1 instruction memory (less latency).
-
 config SYS_BFIN_SPINLOCK_L1
 	bool "Locate sys_bfin_spinlock function in L1 Memory"
 	default y
-	depends on !SMP
 	help
 	  If enabled, sys_bfin_spinlock function is linked
 	  into L1 instruction memory. (less latency)
@@ -815,7 +797,6 @@ config SYS_BFIN_SPINLOCK_L1
 config IP_CHECKSUM_L1
 	bool "Locate IP Checksum function in L1 Memory"
 	default n
-	depends on !SMP
 	help
 	  If enabled, the IP Checksum function is linked
 	  into L1 instruction memory. (less latency)
@@ -824,7 +805,7 @@ config CACHELINE_ALIGNED_L1
 	bool "Locate cacheline_aligned data to L1 Data Memory"
 	default y if !BF54x
 	default n if BF54x
-	depends on !SMP && !BF531 && !CRC32
+	depends on !BF531
 	help
 	  If enabled, cacheline_aligned data is linked
 	  into L1 data memory. (less latency)
@@ -832,7 +813,7 @@ config CACHELINE_ALIGNED_L1
 config SYSCALL_TAB_L1
 	bool "Locate Syscall Table L1 Data Memory"
 	default n
-	depends on !SMP && !BF531
+	depends on !BF531
 	help
 	  If enabled, the Syscall LUT is linked
 	  into L1 data memory. (less latency)
@@ -840,35 +821,14 @@ config SYSCALL_TAB_L1
 config CPLB_SWITCH_TAB_L1
 	bool "Locate CPLB Switch Tables L1 Data Memory"
 	default n
-	depends on !SMP && !BF531
+	depends on !BF531
 	help
 	  If enabled, the CPLB Switch Tables are linked
 	  into L1 data memory. (less latency)
 
-config ICACHE_FLUSH_L1
-	bool "Locate icache flush funcs in L1 Inst Memory"
-	default y
-	help
-	  If enabled, the Blackfin icache flushing functions are linked
-	  into L1 instruction memory.
-
-	  Note that this might be required to address anomalies, but
-	  these functions are pretty small, so it shouldn't be too bad.
-	  If you are using a processor affected by an anomaly, the build
-	  system will double check for you and prevent it.
-
-config DCACHE_FLUSH_L1
-	bool "Locate dcache flush funcs in L1 Inst Memory"
-	default y
-	depends on !SMP
-	help
-	  If enabled, the Blackfin dcache flushing functions are linked
-	  into L1 instruction memory.
-
 config APP_STACK_L1
 	bool "Support locating application stack in L1 Scratch Memory"
 	default y
-	depends on !SMP
 	help
 	  If enabled the application stack can be located in L1
 	  scratch memory (less latency).
@@ -878,7 +838,7 @@ config APP_STACK_L1
 config EXCEPTION_L1_SCRATCH
 	bool "Locate exception stack in L1 Scratch Memory"
 	default n
-	depends on !SMP && !APP_STACK_L1
+	depends on !APP_STACK_L1
 	help
 	  Whenever an exception occurs, use the L1 Scratch memory for
 	  stack storage.  You cannot place the stacks of FLAT binaries
@@ -890,7 +850,6 @@ comment "Speed Optimizations"
 config BFIN_INS_LOWOVERHEAD
 	bool "ins[bwl] low overhead, higher interrupt latency"
 	default y
-	depends on !SMP
 	help
 	  Reads on the Blackfin are speculative. In Blackfin terms, this means
 	  they can be interrupted at any time (even after they have been issued
@@ -933,12 +892,6 @@ config ROMKERNEL
 
 endchoice
 
-# Common code uses "ROMKERNEL" or "XIP_KERNEL", so define both
-config XIP_KERNEL
-	bool
-	default y
-	depends on ROMKERNEL
-
 source "mm/Kconfig"
 
 config BFIN_GPTIMERS
@@ -951,16 +904,6 @@ config BFIN_GPTIMERS
 	  To compile this driver as a module, choose M here: the module
 	  will be called gptimers.
 
-config HAVE_PWM
-	tristate "Enable PWM API support"
-	depends on BFIN_GPTIMERS
-	help
-	  Enable support for the Pulse Width Modulation framework (as
-	  found in linux/pwm.h).
-
-	  To compile this driver as a module, choose M here: the module
-	  will be called pwm.
-
 choice
 	prompt "Uncached DMA region"
 	default DMA_UNCACHED_1M
@@ -970,12 +913,6 @@ config DMA_UNCACHED_2M
 	bool "Enable 2M DMA region"
 config DMA_UNCACHED_1M
 	bool "Enable 1M DMA region"
-config DMA_UNCACHED_512K
-	bool "Enable 512K DMA region"
-config DMA_UNCACHED_256K
-	bool "Enable 256K DMA region"
-config DMA_UNCACHED_128K
-	bool "Enable 128K DMA region"
 config DMA_UNCACHED_NONE
 	bool "Disable DMA region"
 endchoice
@@ -1186,6 +1123,24 @@ config PCI
 
 source "drivers/pci/Kconfig"
 
+config HOTPLUG
+	bool "Support for hot-pluggable device"
+	  help
+	  Say Y here if you want to plug devices into your computer while
+	  the system is running, and be able to use them quickly.  In many
+	  cases, the devices can likewise be unplugged at any time too.
+
+	  One well known example of this is PCMCIA- or PC-cards, credit-card
+	  size devices such as network cards, modems or hard drives which are
+	  plugged into slots found on all modern laptop computers.  Another
+	  example, used on modern desktops as well as laptops, is USB.
+
+	  Enable HOTPLUG and build a modular kernel.  Get agent software
+	  (from <http://linux-hotplug.sourceforge.net/>) and install it.
+	  Then your kernel will automatically call out to a user mode "policy
+	  agent" (/sbin/hotplug) to load modules and set up software needed
+	  to use devices as you hotplug them.
+
 source "drivers/pcmcia/Kconfig"
 
 source "drivers/pci/hotplug/Kconfig"
@@ -1199,6 +1154,7 @@ source "fs/Kconfig.binfmt"
 endmenu
 
 menu "Power management options"
+	depends on !SMP
 
 source "kernel/power/Kconfig"
 
@@ -1240,6 +1196,32 @@ config  PM_BFIN_SLEEP
 	  If unsure, select "Sleep Deeper".
 endchoice
 
+config PM_WAKEUP_BY_GPIO
+	bool "Allow Wakeup from Standby by GPIO"
+	depends on PM && !BF54x
+
+config PM_WAKEUP_GPIO_NUMBER
+	int "GPIO number"
+	range 0 47
+	depends on PM_WAKEUP_BY_GPIO
+	default 2
+
+choice
+	prompt "GPIO Polarity"
+	depends on PM_WAKEUP_BY_GPIO
+	default PM_WAKEUP_GPIO_POLAR_H
+config  PM_WAKEUP_GPIO_POLAR_H
+	bool "Active High"
+config  PM_WAKEUP_GPIO_POLAR_L
+	bool "Active Low"
+config  PM_WAKEUP_GPIO_POLAR_EDGE_F
+	bool "Falling EDGE"
+config  PM_WAKEUP_GPIO_POLAR_EDGE_R
+	bool "Rising EDGE"
+config  PM_WAKEUP_GPIO_POLAR_EDGE_B
+	bool "Both EDGE"
+endchoice
+
 comment "Possible Suspend Mem / Hibernate Wake-Up Sources"
 	depends on PM
 
@@ -1265,6 +1247,7 @@ config PM_BFIN_WAKE_GP
 endmenu
 
 menu "CPU Frequency scaling"
+	depends on !SMP
 
 source "drivers/cpufreq/Kconfig"
 
@@ -1290,8 +1273,6 @@ endmenu
 source "net/Kconfig"
 
 source "drivers/Kconfig"
-
-source "drivers/firmware/Kconfig"
 
 source "fs/Kconfig"
 

@@ -37,13 +37,14 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
  * DAMAGE.
  *
+ * Send feedback to <socketcan-users@lists.berlios.de>
+ *
  */
 
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/uio.h>
 #include <linux/net.h>
-#include <linux/slab.h>
 #include <linux/netdevice.h>
 #include <linux/socket.h>
 #include <linux/if_arp.h>
@@ -88,39 +89,23 @@ struct raw_sock {
 	can_err_mask_t err_mask;
 };
 
-/*
- * Return pointer to store the extra msg flags for raw_recvmsg().
- * We use the space of one unsigned int beyond the 'struct sockaddr_can'
- * in skb->cb.
- */
-static inline unsigned int *raw_flags(struct sk_buff *skb)
-{
-	BUILD_BUG_ON(sizeof(skb->cb) <= (sizeof(struct sockaddr_can) +
-					 sizeof(unsigned int)));
-
-	/* return pointer after struct sockaddr_can */
-	return (unsigned int *)(&((struct sockaddr_can *)skb->cb)[1]);
-}
-
 static inline struct raw_sock *raw_sk(const struct sock *sk)
 {
 	return (struct raw_sock *)sk;
 }
 
-static void raw_rcv(struct sk_buff *oskb, void *data)
+static void raw_rcv(struct sk_buff *skb, void *data)
 {
 	struct sock *sk = (struct sock *)data;
 	struct raw_sock *ro = raw_sk(sk);
 	struct sockaddr_can *addr;
-	struct sk_buff *skb;
-	unsigned int *pflags;
 
 	/* check the received tx sock reference */
-	if (!ro->recv_own_msgs && oskb->sk == sk)
+	if (!ro->recv_own_msgs && skb->sk == sk)
 		return;
 
 	/* clone the given skb to be able to enqueue it into the rcv queue */
-	skb = skb_clone(oskb, GFP_ATOMIC);
+	skb = skb_clone(skb, GFP_ATOMIC);
 	if (!skb)
 		return;
 
@@ -136,14 +121,6 @@ static void raw_rcv(struct sk_buff *oskb, void *data)
 	memset(addr, 0, sizeof(*addr));
 	addr->can_family  = AF_CAN;
 	addr->can_ifindex = skb->dev->ifindex;
-
-	/* add CAN specific message flags for raw_recvmsg() */
-	pflags = raw_flags(skb);
-	*pflags = 0;
-	if (oskb->sk)
-		*pflags |= MSG_DONTROUTE;
-	if (oskb->sk == sk)
-		*pflags |= MSG_CONFIRM;
 
 	if (sock_queue_rcv_skb(sk, skb) < 0)
 		kfree_skb(skb);
@@ -452,6 +429,8 @@ static int raw_setsockopt(struct socket *sock, int level, int optname,
 
 	if (level != SOL_CAN_RAW)
 		return -EINVAL;
+	if (optlen < 0)
+		return -EINVAL;
 
 	switch (optname) {
 
@@ -463,11 +442,16 @@ static int raw_setsockopt(struct socket *sock, int level, int optname,
 
 		if (count > 1) {
 			/* filter does not fit into dfilter => alloc space */
-			filter = memdup_user(optval, optlen);
-			if (IS_ERR(filter))
-				return PTR_ERR(filter);
+			filter = kmalloc(optlen, GFP_KERNEL);
+			if (!filter)
+				return -ENOMEM;
+
+			if (copy_from_user(filter, optval, optlen)) {
+				kfree(filter);
+				return -EFAULT;
+			}
 		} else if (count == 1) {
-			if (copy_from_user(&sfilter, optval, sizeof(sfilter)))
+			if (copy_from_user(&sfilter, optval, optlen))
 				return -EFAULT;
 		}
 
@@ -652,9 +636,6 @@ static int raw_sendmsg(struct kiocb *iocb, struct socket *sock,
 		struct sockaddr_can *addr =
 			(struct sockaddr_can *)msg->msg_name;
 
-		if (msg->msg_namelen < sizeof(*addr))
-			return -EINVAL;
-
 		if (addr->can_family != AF_CAN)
 			return -EINVAL;
 
@@ -677,10 +658,9 @@ static int raw_sendmsg(struct kiocb *iocb, struct socket *sock,
 	err = memcpy_fromiovec(skb_put(skb, size), msg->msg_iov, size);
 	if (err < 0)
 		goto free_skb;
-	err = sock_tx_timestamp(sk, &skb_shinfo(skb)->tx_flags);
+	err = sock_tx_timestamp(msg, sk, skb_tx(skb));
 	if (err < 0)
 		goto free_skb;
-
 	skb->dev = dev;
 	skb->sk  = sk;
 
@@ -727,22 +707,19 @@ static int raw_recvmsg(struct kiocb *iocb, struct socket *sock,
 		return err;
 	}
 
-	sock_recv_ts_and_drops(msg, sk, skb);
+	sock_recv_timestamp(msg, sk, skb);
 
 	if (msg->msg_name) {
 		msg->msg_namelen = sizeof(struct sockaddr_can);
 		memcpy(msg->msg_name, skb->cb, msg->msg_namelen);
 	}
 
-	/* assign the flags that have been recorded in raw_rcv() */
-	msg->msg_flags |= *(raw_flags(skb));
-
 	skb_free_datagram(sk, skb);
 
 	return size;
 }
 
-static const struct proto_ops raw_ops = {
+static struct proto_ops raw_ops __read_mostly = {
 	.family        = PF_CAN,
 	.release       = raw_release,
 	.bind          = raw_bind,
@@ -751,7 +728,7 @@ static const struct proto_ops raw_ops = {
 	.accept        = sock_no_accept,
 	.getname       = raw_getname,
 	.poll          = datagram_poll,
-	.ioctl         = can_ioctl,	/* use can_ioctl() from af_can.c */
+	.ioctl         = NULL,		/* use can_ioctl() from af_can.c */
 	.listen        = sock_no_listen,
 	.shutdown      = sock_no_shutdown,
 	.setsockopt    = raw_setsockopt,
@@ -769,9 +746,10 @@ static struct proto raw_proto __read_mostly = {
 	.init       = raw_init,
 };
 
-static const struct can_proto raw_can_proto = {
+static struct can_proto raw_can_proto __read_mostly = {
 	.type       = SOCK_RAW,
 	.protocol   = CAN_RAW,
+	.capability = -1,
 	.ops        = &raw_ops,
 	.prot       = &raw_proto,
 };

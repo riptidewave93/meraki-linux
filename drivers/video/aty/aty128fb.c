@@ -52,6 +52,7 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -1786,7 +1787,7 @@ static int aty128_bl_get_brightness(struct backlight_device *bd)
 	return bd->props.brightness;
 }
 
-static const struct backlight_ops aty128_bl_data = {
+static struct backlight_ops aty128_bl_data = {
 	.get_brightness	= aty128_bl_get_brightness,
 	.update_status	= aty128_bl_update_status,
 };
@@ -1801,7 +1802,6 @@ static void aty128_bl_set_power(struct fb_info *info, int power)
 
 static void aty128_bl_init(struct aty128fb_par *par)
 {
-	struct backlight_properties props;
 	struct fb_info *info = pci_get_drvdata(par->pdev);
 	struct backlight_device *bd;
 	char name[12];
@@ -1817,11 +1817,7 @@ static void aty128_bl_init(struct aty128fb_par *par)
 
 	snprintf(name, sizeof(name), "aty128bl%d", info->node);
 
-	memset(&props, 0, sizeof(struct backlight_properties));
-	props.type = BACKLIGHT_RAW;
-	props.max_brightness = FB_BACKLIGHT_LEVELS - 1;
-	bd = backlight_device_register(name, info->dev, par, &aty128_bl_data,
-				       &props);
+	bd = backlight_device_register(name, info->dev, par, &aty128_bl_data);
 	if (IS_ERR(bd)) {
 		info->bl_dev = NULL;
 		printk(KERN_WARNING "aty128: Backlight registration failed\n");
@@ -1833,6 +1829,7 @@ static void aty128_bl_init(struct aty128fb_par *par)
 		 63 * FB_BACKLIGHT_MAX / MAX_LEVEL,
 		219 * FB_BACKLIGHT_MAX / MAX_LEVEL);
 
+	bd->props.max_brightness = FB_BACKLIGHT_LEVELS - 1;
 	bd->props.brightness = bd->props.max_brightness;
 	bd->props.power = FB_BLANK_UNBLANK;
 	backlight_update_status(bd);
@@ -1861,11 +1858,11 @@ static void aty128_early_resume(void *data)
 {
         struct aty128fb_par *par = data;
 
-	if (!console_trylock())
+	if (try_acquire_console_sem())
 		return;
 	pci_restore_state(par->pdev);
 	aty128_do_resume(par->pdev);
-	console_unlock();
+	release_console_sem();
 }
 #endif /* CONFIG_PPC_PMAC */
 
@@ -1934,22 +1931,22 @@ static int __devinit aty128_init(struct pci_dev *pdev, const struct pci_device_i
 			 * PowerMac2,2 summer 2000 iMacs
 			 * PowerMac4,1 january 2001 iMacs "flower power"
 			 */
-			if (of_machine_is_compatible("PowerMac2,1") ||
-			    of_machine_is_compatible("PowerMac2,2") ||
-			    of_machine_is_compatible("PowerMac4,1"))
+			if (machine_is_compatible("PowerMac2,1") ||
+			    machine_is_compatible("PowerMac2,2") ||
+			    machine_is_compatible("PowerMac4,1"))
 				default_vmode = VMODE_1024_768_75;
 
 			/* iBook SE */
-			if (of_machine_is_compatible("PowerBook2,2"))
+			if (machine_is_compatible("PowerBook2,2"))
 				default_vmode = VMODE_800_600_60;
 
 			/* PowerBook Firewire (Pismo), iBook Dual USB */
-			if (of_machine_is_compatible("PowerBook3,1") ||
-			    of_machine_is_compatible("PowerBook4,1"))
+			if (machine_is_compatible("PowerBook3,1") ||
+			    machine_is_compatible("PowerBook4,1"))
 				default_vmode = VMODE_1024_768_60;
 
 			/* PowerBook Titanium */
-			if (of_machine_is_compatible("PowerBook3,2"))
+			if (machine_is_compatible("PowerBook3,2"))
 				default_vmode = VMODE_1152_768_60;
 	
 			if (default_cmode > 16) 
@@ -2439,7 +2436,7 @@ static int aty128_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 
 	printk(KERN_DEBUG "aty128fb: suspending...\n");
 	
-	console_lock();
+	acquire_console_sem();
 
 	fb_set_suspend(info, 1);
 
@@ -2471,7 +2468,7 @@ static int aty128_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 	if (state.event != PM_EVENT_ON)
 		aty128_set_suspend(par, 1);
 
-	console_unlock();
+	release_console_sem();
 
 	pdev->dev.power.power_state = state;
 
@@ -2528,9 +2525,9 @@ static int aty128_pci_resume(struct pci_dev *pdev)
 {
 	int rc;
 
-	console_lock();
+	acquire_console_sem();
 	rc = aty128_do_resume(pdev);
-	console_unlock();
+	release_console_sem();
 
 	return rc;
 }

@@ -18,7 +18,6 @@
 
 #include <linux/types.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/device.h>
 #include <linux/interrupt.h>
 #include <linux/module.h>
@@ -81,13 +80,13 @@ static int rackmeter_ignore_nice;
  */
 static inline cputime64_t get_cpu_idle_time(unsigned int cpu)
 {
-	u64 retval;
+	cputime64_t retval;
 
-	retval = kcpustat_cpu(cpu).cpustat[CPUTIME_IDLE] +
-		 kcpustat_cpu(cpu).cpustat[CPUTIME_IOWAIT];
+	retval = cputime64_add(kstat_cpu(cpu).cpustat.idle,
+			kstat_cpu(cpu).cpustat.iowait);
 
 	if (rackmeter_ignore_nice)
-		retval += kcpustat_cpu(cpu).cpustat[CPUTIME_NICE];
+		retval = cputime64_add(retval, kstat_cpu(cpu).cpustat.nice);
 
 	return retval;
 }
@@ -220,11 +219,13 @@ static void rackmeter_do_timer(struct work_struct *work)
 	int i, offset, load, cumm, pause;
 
 	cur_jiffies = jiffies64_to_cputime64(get_jiffies_64());
-	total_ticks = (unsigned int) (cur_jiffies - rcpu->prev_wall);
+	total_ticks = (unsigned int)cputime64_sub(cur_jiffies,
+						  rcpu->prev_wall);
 	rcpu->prev_wall = cur_jiffies;
 
 	total_idle_ticks = get_cpu_idle_time(cpu);
-	idle_ticks = (unsigned int) (total_idle_ticks - rcpu->prev_idle);
+	idle_ticks = (unsigned int) cputime64_sub(total_idle_ticks,
+				rcpu->prev_idle);
 	rcpu->prev_idle = total_idle_ticks;
 
 	/* We do a very dumb calculation to update the LEDs for now,
@@ -281,10 +282,10 @@ static void __devinit rackmeter_init_cpu_sniffer(struct rackmeter *rm)
 	}
 }
 
-static void rackmeter_stop_cpu_sniffer(struct rackmeter *rm)
+static void __devexit rackmeter_stop_cpu_sniffer(struct rackmeter *rm)
 {
-	cancel_delayed_work_sync(&rm->cpu[0].sniffer);
-	cancel_delayed_work_sync(&rm->cpu[1].sniffer);
+	cancel_rearming_delayed_work(&rm->cpu[0].sniffer);
+	cancel_rearming_delayed_work(&rm->cpu[1].sniffer);
 }
 
 static int __devinit rackmeter_setup(struct rackmeter *rm)
@@ -373,7 +374,7 @@ static int __devinit rackmeter_probe(struct macio_dev* mdev,
 	pr_debug("rackmeter_probe()\n");
 
 	/* Get i2s-a node */
-	while ((i2s = of_get_next_child(mdev->ofdev.dev.of_node, i2s)) != NULL)
+	while ((i2s = of_get_next_child(mdev->ofdev.node, i2s)) != NULL)
 	       if (strcmp(i2s->name, "i2s-a") == 0)
 		       break;
 	if (i2s == NULL) {
@@ -429,7 +430,7 @@ static int __devinit rackmeter_probe(struct macio_dev* mdev,
 	    of_address_to_resource(i2s, 1, &rdma)) {
 		printk(KERN_ERR
 		       "rackmeter: found match but lacks resources: %s",
-		       mdev->ofdev.dev.of_node->full_name);
+		       mdev->ofdev.node->full_name);
 		rc = -ENXIO;
 		goto bail_free;
 	}
@@ -582,11 +583,9 @@ static struct of_device_id rackmeter_match[] = {
 };
 
 static struct macio_driver rackmeter_driver = {
-	.driver = {
-		.name = "rackmeter",
-		.owner = THIS_MODULE,
-		.of_match_table = rackmeter_match,
-	},
+	.name = "rackmeter",
+	.owner = THIS_MODULE,
+	.match_table = rackmeter_match,
 	.probe = rackmeter_probe,
 	.remove = __devexit_p(rackmeter_remove),
 	.shutdown = rackmeter_shutdown,

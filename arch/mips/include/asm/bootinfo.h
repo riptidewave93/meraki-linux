@@ -67,15 +67,24 @@
 #define MACH_LEMOTE_ML2F7      3
 #define MACH_LEMOTE_YL2F89     4
 #define MACH_DEXXON_GDIUM2F10  5
-#define MACH_LEMOTE_NAS        6
-#define MACH_LEMOTE_LL2F       7
-#define MACH_LOONGSON_END      8
+#define MACH_LOONGSON_END      6
 
 /*
- * Valid machtype for group INGENIC
+ * Atheros ar7240
  */
-#define  MACH_INGENIC_JZ4730	0	/* JZ4730 SOC		*/
-#define  MACH_INGENIC_JZ4740	1	/* JZ4740 SOC		*/
+#define MACH_GROUP_AR7240       24
+#define MACH_ATHEROS_AR7240     1
+
+#define MACH_GROUP_ATHEROS	24 /* Look for ATH_MACH_TYPE in arch/mips/Kconfig */
+
+/*
+ * Atheros ar7100 ( hydra )
+ */
+#define MACH_GROUP_AR7100       23
+#define MACH_ATHEROS_AR7100     1
+
+
+#define CL_SIZE			COMMAND_LINE_SIZE
 
 extern char *system_type;
 const char *get_system_type(void);
@@ -86,7 +95,6 @@ extern unsigned long mips_machtype;
 #define BOOT_MEM_RAM		1
 #define BOOT_MEM_ROM_DATA	2
 #define BOOT_MEM_RESERVED	3
-#define BOOT_MEM_INIT_RAM	4
 
 /*
  * A memory map that's built upon what was determined
@@ -114,7 +122,7 @@ extern void free_init_pages(const char *what,
 /*
  * Initial kernel command line, usually setup by prom_init()
  */
-extern char arcs_cmdline[COMMAND_LINE_SIZE];
+extern char arcs_cmdline[CL_SIZE];
 
 /*
  * Registers a0, a1, a3 and a4 as passed to the kernel entry by firmware
@@ -125,17 +133,5 @@ extern unsigned long fw_arg0, fw_arg1, fw_arg2, fw_arg3;
  * Platform memory detection hook called by setup_arch
  */
 extern void plat_mem_setup(void);
-
-#ifdef CONFIG_SWIOTLB
-/*
- * Optional platform hook to call swiotlb_setup().
- */
-extern void plat_swiotlb_setup(void);
-
-#else
-
-static inline void plat_swiotlb_setup(void) {}
-
-#endif /* CONFIG_SWIOTLB */
 
 #endif /* _ASM_BOOTINFO_H */

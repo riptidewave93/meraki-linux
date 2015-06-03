@@ -1,4 +1,4 @@
-/* Credentials management - see Documentation/security/credentials.txt
+/* Credentials management - see Documentation/credentials.txt
  *
  * Copyright (C) 2008 Red Hat, Inc. All Rights Reserved.
  * Written by David Howells (dhowells@redhat.com)
@@ -16,7 +16,7 @@
 #include <linux/init.h>
 #include <linux/key.h>
 #include <linux/selinux.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 struct user_struct;
 struct cred;
@@ -84,7 +84,7 @@ struct thread_group_cred {
 	atomic_t	usage;
 	pid_t		tgid;			/* thread group process ID */
 	spinlock_t	lock;
-	struct key __rcu *session_keyring;	/* keyring inherited over fork */
+	struct key	*session_keyring;	/* keyring inherited over fork */
 	struct key	*process_keyring;	/* keyring private to this process */
 	struct rcu_head	rcu;			/* RCU deletion hook */
 };
@@ -146,7 +146,6 @@ struct cred {
 	void		*security;	/* subjective LSM security */
 #endif
 	struct user_struct *user;	/* real user ID subscription */
-	struct user_namespace *user_ns; /* cached user->user_ns */
 	struct group_info *group_info;	/* supplementary groups for euid/fsgid */
 	struct rcu_head	rcu;		/* RCU deletion hook */
 };
@@ -158,6 +157,7 @@ extern const struct cred *get_task_cred(struct task_struct *);
 extern struct cred *cred_alloc_blank(void);
 extern struct cred *prepare_creds(void);
 extern struct cred *prepare_exec_creds(void);
+extern struct cred *prepare_usermodehelper_creds(void);
 extern int commit_creds(struct cred *);
 extern void abort_creds(struct cred *);
 extern const struct cred *override_creds(const struct cred *);
@@ -265,28 +265,23 @@ static inline void put_cred(const struct cred *_cred)
 /**
  * current_cred - Access the current task's subjective credentials
  *
- * Access the subjective credentials of the current task.  RCU-safe,
- * since nobody else can modify it.
+ * Access the subjective credentials of the current task.
  */
 #define current_cred() \
-	rcu_dereference_protected(current->cred, 1)
+	(current->cred)
 
 /**
  * __task_cred - Access a task's objective credentials
  * @task: The task to query
  *
  * Access the objective credentials of a task.  The caller must hold the RCU
- * readlock or the task must be dead and unable to change its own credentials.
+ * readlock.
  *
- * The result of this function should not be passed directly to get_cred();
- * rather get_task_cred() should be used instead.
+ * The caller must make sure task doesn't go away, either by holding a ref on
+ * task or by holding tasklist_lock to prevent it from being unlinked.
  */
-#define __task_cred(task)						\
-	({								\
-		const struct task_struct *__t = (task);			\
-		rcu_dereference_check(__t->real_cred,			\
-				      task_is_dead(__t));		\
-	})
+#define __task_cred(task) \
+	((const struct cred *)(rcu_dereference((task)->real_cred)))
 
 /**
  * get_current_cred - Get the current task's subjective credentials
@@ -307,8 +302,8 @@ static inline void put_cred(const struct cred *_cred)
 #define get_current_user()				\
 ({							\
 	struct user_struct *__u;			\
-	const struct cred *__cred;			\
-	__cred = current_cred();			\
+	struct cred *__cred;				\
+	__cred = (struct cred *) current_cred();	\
 	__u = get_uid(__cred->user);			\
 	__u;						\
 })
@@ -322,8 +317,8 @@ static inline void put_cred(const struct cred *_cred)
 #define get_current_groups()				\
 ({							\
 	struct group_info *__groups;			\
-	const struct cred *__cred;			\
-	__cred = current_cred();			\
+	struct cred *__cred;				\
+	__cred = (struct cred *) current_cred();	\
 	__groups = get_group_info(__cred->group_info);	\
 	__groups;					\
 })
@@ -342,7 +337,7 @@ static inline void put_cred(const struct cred *_cred)
 
 #define current_cred_xxx(xxx)			\
 ({						\
-	current_cred()->xxx;			\
+	current->cred->xxx;			\
 })
 
 #define current_uid()		(current_cred_xxx(uid))
@@ -355,17 +350,8 @@ static inline void put_cred(const struct cred *_cred)
 #define current_fsgid() 	(current_cred_xxx(fsgid))
 #define current_cap()		(current_cred_xxx(cap_effective))
 #define current_user()		(current_cred_xxx(user))
+#define current_user_ns()	(current_cred_xxx(user)->user_ns)
 #define current_security()	(current_cred_xxx(security))
-
-#ifdef CONFIG_USER_NS
-#define current_user_ns()	(current_cred_xxx(user_ns))
-#define task_user_ns(task)	(task_cred_xxx((task), user_ns))
-#else
-extern struct user_namespace init_user_ns;
-#define current_user_ns()	(&init_user_ns)
-#define task_user_ns(task)	(&init_user_ns)
-#endif
-
 
 #define current_uid_gid(_uid, _gid)		\
 do {						\

@@ -8,8 +8,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
-#include <linux/export.h>
 #include <linux/usb.h>
 #include <linux/fs.h>
 #include <asm/uaccess.h>
@@ -64,6 +62,6 @@ const struct file_operations mon_fops_stat = {
 	.read =		mon_stat_read,
 	/* .write =	mon_stat_write, */
 	/* .poll =		mon_stat_poll, */
-	/* .unlocked_ioctl =	mon_stat_ioctl, */
+	/* .ioctl =	mon_stat_ioctl, */
 	.release =	mon_stat_release,
 };

@@ -146,7 +146,7 @@ found to be inadequate, in this case. The Generic Netlink system was
 used for this as raw Netlink would lead to a significant increase in
 complexity. There's no question that the Generic Netlink system is an
 elegant solution for common case ioctl functions but it's not a complete
-replacement probably because its primary purpose in life is to be a
+replacement probably because it's primary purpose in life is to be a
 message bus implementation rather than specifically an ioctl replacement.
 While it would be possible to work around this there is one concern
 that lead to the decision to not use it. This is that the autofs
@@ -309,7 +309,7 @@ ioctlfd field set to the descriptor obtained from the open call.
 AUTOFS_DEV_IOCTL_TIMEOUT_CMD
 ----------------------------
 
-Set the expire timeout for mounts within an autofs mount point.
+Set the expire timeout for mounts withing an autofs mount point.
 
 The call requires an initialized struct autofs_dev_ioctl with the
 ioctlfd field set to the descriptor obtained from the open call.

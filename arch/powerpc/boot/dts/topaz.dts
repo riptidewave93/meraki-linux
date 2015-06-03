@@ -109,11 +109,11 @@
 
 			partition@0 {
 				label = "firmware";
-				reg   = <0x00000000 0x00100000>;
+				reg   = <0x00000000 0x00180000>;
 			};
 			partition@180000 {
-				label = "factory";
-				reg   = <0x00100000 0x00100000>;
+				label = "oops";
+				reg   = <0x00180000 0x00080000>;
 			};
 			partition@200000 {
 				label = "ubi";
@@ -121,7 +121,7 @@
 			};
 			all {
 				label = "all";
-				reg   = <0x00000000 0x08000000>;
+				reg   = <0x00000000 0x02000000>;
 			};
 		};
 		board-control@3,0 {

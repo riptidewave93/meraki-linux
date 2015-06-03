@@ -92,10 +92,8 @@ static int __init via_pmu_led_init(void)
 	if (dt == NULL)
 		return -ENODEV;
 	model = of_get_property(dt, "model", NULL);
-	if (model == NULL) {
-		of_node_put(dt);
+	if (model == NULL)
 		return -ENODEV;
-	}
 	if (strncmp(model, "PowerBook", strlen("PowerBook")) != 0 &&
 	    strncmp(model, "iBook", strlen("iBook")) != 0 &&
 	    strcmp(model, "PowerMac7,2") != 0 &&

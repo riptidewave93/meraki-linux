@@ -7,9 +7,13 @@
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/sched.h>
-#include <linux/miscdevice.h>
 #include <asm/io.h>
 #include "wd_ioctl.h"
+
+/*
+ * Device Major Number
+ */
+#define WD_MAJOR 243
 
 /*
  * Is the device opened right now?
@@ -225,12 +229,12 @@ void stop_watchdog_timer(void)
 {
     clr_wd_status();
 }
-static long wd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static int wd_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
 {
     switch (cmd) {
 
         case IOCTL_RUNTIME_BYPASS_STATE:
-	    switch ((int)arg) {
+            switch (arg) {
                 case RUNTIME_BYPASS_STATE_ENABLE_LAN_ALL:
                     set_runtime_bypass_enable_all();
                     break;
@@ -255,7 +259,7 @@ static long wd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
             break;
 
         case IOCTL_SYSTEM_OFF_BYPASS_STATE:
-	    switch ((int)arg) {
+            switch (arg) {
                 case SYSTEM_OFF_BYPASS_STATE_ENABLE:
                     set_bypass_enable_when_system_off();
                     break;
@@ -268,7 +272,7 @@ static long wd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
             break;
 
         case IOCTL_SET_WDTO_STATE:
-	    switch ((int)arg) {
+            switch (arg) {
                 case SET_WDTO_STATE_SYSTEM_RESET:
                     set_wdto_state_system_reset();
                     break;
@@ -290,7 +294,7 @@ static long wd_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
             break;
 
         case IOCTL_START_STOP_WDT:
-	    switch ((int)arg) {
+            switch (arg) {
                 case START_WDT:
                     if (!timeout_mode) {
                         printk(KERN_ERR "wd_drv error: Invalid manipulation, you should first choose Watchdog Timeout Mode\n");
@@ -355,18 +359,9 @@ static int wd_release(struct inode * inode, struct file * file)
  * NULL is for unimplemented functions.
  */
 static const struct file_operations wd_fops = {
-	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= wd_ioctl,
-	.compat_ioctl	= wd_ioctl,
+	.ioctl		= wd_ioctl,
 	.open		= wd_open,
 	.release	= wd_release,
-};
-
-static struct miscdevice wd_miscdev = {
-	.name = "wd_drv",
-	.fops = &wd_fops,
-	.nodename = "wd_drv",
-	.minor = MISC_DYNAMIC_MINOR,
 };
 
 int wd_init(void)
@@ -374,10 +369,9 @@ int wd_init(void)
     /*
      * Register the character device
      */
-
-    if(misc_register(&wd_miscdev))
+    if(register_chrdev(WD_MAJOR, "wd_drv", &wd_fops))
     {
-        printk("wd_drv : unable to register\n");
+        printk("wd_drv : unable to get major %d\n", WD_MAJOR);
         return -EIO;
     }
     platform_information();
@@ -392,7 +386,7 @@ int wd_init(void)
 void wd_exit(void)
 {
     /* Unregister the device */
-    misc_deregister(&wd_miscdev);
+    unregister_chrdev(WD_MAJOR, "wd_drv");
     /* If there's an error, report it */
     printk("Watchdog Driver Version %s is unloaded\n", Driver_Version);
 }

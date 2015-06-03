@@ -4,15 +4,13 @@
  * Author: Matthew McClintock
  * Maintainer: Kumar Gala <galak@kernel.crashing.org>
  *
- * Copyright 2005, 2008, 2010-2011 Freescale Semiconductor Inc.
+ * Copyright 2005, 2008 Freescale Semiconductor Inc.
  *
  * This program is free software; you can redistribute  it and/or modify it
  * under  the terms of  the GNU General  Public License as published by the
  * Free Software Foundation;  either version 2 of the  License, or (at your
  * option) any later version.
  */
-
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/module.h>
 #include <linux/fs.h>
@@ -23,6 +21,7 @@
 #include <linux/uaccess.h>
 
 #include <asm/reg_booke.h>
+#include <asm/system.h>
 #include <asm/time.h>
 #include <asm/div64.h>
 
@@ -34,8 +33,16 @@
  * occur, and the final time the board will reset.
  */
 
+#ifdef	CONFIG_FSL_BOOKE
+#define WDT_PERIOD_DEFAULT 34	/* Ex. wdt_period=28 bus=333Mhz,reset=~40sec */
+#else
+#define WDT_PERIOD_DEFAULT 3	/* Refer to the PPC40x and PPC4xx manuals */
+#endif				/* for timing information */
+
 u32 booke_wdt_enabled;
-u32 booke_wdt_period = CONFIG_BOOKE_WDT_DEFAULT_TIMEOUT;
+u32 booke_wdt_period = WDT_PERIOD_DEFAULT;
+
+bool booke_wdt_rebooted;
 
 #ifdef	CONFIG_FSL_BOOKE
 #define WDTP(x)		((((x)&0x3)<<30)|(((x)&0x3c)<<15))
@@ -46,6 +53,9 @@ u32 booke_wdt_period = CONFIG_BOOKE_WDT_DEFAULT_TIMEOUT;
 #endif
 
 static DEFINE_SPINLOCK(booke_wdt_lock);
+
+/* wdt_is_active stores wether or not the /dev/watchdog device is opened */
+static unsigned long wdt_is_active;
 
 /* For the specified period, determine the number of seconds
  * corresponding to the reset time.  There will be a watchdog
@@ -86,22 +96,6 @@ static unsigned int sec_to_period(unsigned int secs)
 	return 0;
 }
 
-static void __booke_wdt_set(void *data)
-{
-	u32 val;
-
-	val = mfspr(SPRN_TCR);
-	val &= ~WDTP_MASK;
-	val |= WDTP(booke_wdt_period);
-
-	mtspr(SPRN_TCR, val);
-}
-
-static void booke_wdt_set(void)
-{
-	on_each_cpu(__booke_wdt_set, NULL, 0);
-}
-
 static void __booke_wdt_ping(void *data)
 {
 	mtspr(SPRN_TSR, TSR_ENW|TSR_WIS);
@@ -120,36 +114,41 @@ static void __booke_wdt_enable(void *data)
 	__booke_wdt_ping(NULL);
 	val = mfspr(SPRN_TCR);
 	val &= ~WDTP_MASK;
+#ifdef CONFIG_E500
 	val |= (TCR_WIE|TCR_WRC(WRC_CHIP)|WDTP(booke_wdt_period));
+#else
+	val |= (TCR_WIE|TCR_WRC(WRC_SYSTEM)|WDTP(booke_wdt_period));
+#endif
 
 	mtspr(SPRN_TCR, val);
 }
 
-/**
- * booke_wdt_disable - disable the watchdog on the given CPU
- *
- * This function is called on each CPU.  It disables the watchdog on that CPU.
- *
- * TCR[WRC] cannot be changed once it has been set to non-zero, but we can
- * effectively disable the watchdog by setting its period to the maximum value.
- */
 static void __booke_wdt_disable(void *data)
 {
 	u32 val;
 
 	val = mfspr(SPRN_TCR);
-	val &= ~(TCR_WIE | WDTP_MASK);
+	val &= ~(TCR_WIE | TCR_WRC_MASK | WDTP_MASK);
 	mtspr(SPRN_TCR, val);
-
-	/* clear status to make sure nothing is pending */
-	__booke_wdt_ping(NULL);
-
 }
 
 static ssize_t booke_wdt_write(struct file *file, const char __user *buf,
 				size_t count, loff_t *ppos)
 {
 	booke_wdt_ping();
+#ifdef CONFIG_E500
+	u8 letter;
+	if (count > 0 && !get_user(letter, buf) && letter == 'G') {
+		spin_lock(&booke_wdt_lock);
+		if (booke_wdt_enabled == 1) {
+			booke_wdt_enabled = 0;
+			on_each_cpu(__booke_wdt_disable, NULL, 0);
+			printk(KERN_INFO "PowerPC Book-E Watchdog Timer Disabled\n");
+			clear_bit(0, &wdt_is_active);
+		}
+		spin_unlock(&booke_wdt_lock);
+	}
+#endif
 	return count;
 }
 
@@ -169,12 +168,9 @@ static long booke_wdt_ioctl(struct file *file,
 		if (copy_to_user((void *)arg, &ident, sizeof(ident)))
 			return -EFAULT;
 	case WDIOC_GETSTATUS:
-		return put_user(0, p);
+		return put_user(ident.options, p);
 	case WDIOC_GETBOOTSTATUS:
-		/* XXX: something is clearing TSR */
-		tmp = mfspr(SPRN_TSR) & TSR_WRS(3);
-		/* returns CARDRESET if last reset was caused by the WDT */
-		return (tmp ? WDIOF_CARDRESET : 0);
+		return put_user(booke_wdt_rebooted ? WDIOF_CARDRESET : 0, p);
 	case WDIOC_SETOPTIONS:
 		if (get_user(tmp, p))
 			return -EINVAL;
@@ -188,6 +184,8 @@ static long booke_wdt_ioctl(struct file *file,
 		booke_wdt_ping();
 		return 0;
 	case WDIOC_SETTIMEOUT:
+		if (1) // disabled by cliff because the logic is clearly wrong/not working - causes immediate reboot.
+			return 0;
 		if (get_user(tmp, p))
 			return -EFAULT;
 #ifdef	CONFIG_FSL_BOOKE
@@ -198,14 +196,11 @@ static long booke_wdt_ioctl(struct file *file,
 #else
 		booke_wdt_period = tmp;
 #endif
-		booke_wdt_set();
-		/* Fall */
+		mtspr(SPRN_TCR, (mfspr(SPRN_TCR) & ~WDTP_MASK) |
+						WDTP(booke_wdt_period));
+		return 0;
 	case WDIOC_GETTIMEOUT:
-#ifdef	CONFIG_FSL_BOOKE
-		return put_user(period_to_sec(booke_wdt_period), p);
-#else
 		return put_user(booke_wdt_period, p);
-#endif
 	default:
 		return -ENOTTY;
 	}
@@ -213,43 +208,19 @@ static long booke_wdt_ioctl(struct file *file,
 	return 0;
 }
 
-/* wdt_is_active stores wether or not the /dev/watchdog device is opened */
-static unsigned long wdt_is_active;
-
 static int booke_wdt_open(struct inode *inode, struct file *file)
 {
-	/* /dev/watchdog can only be opened once */
-	if (test_and_set_bit(0, &wdt_is_active))
-		return -EBUSY;
-
 	spin_lock(&booke_wdt_lock);
 	if (booke_wdt_enabled == 0) {
 		booke_wdt_enabled = 1;
 		on_each_cpu(__booke_wdt_enable, NULL, 0);
-		pr_debug("watchdog enabled (timeout = %llu sec)\n",
-			 period_to_sec(booke_wdt_period));
+		printk(KERN_INFO
+		      "PowerPC Book-E Watchdog Timer Enabled (wdt_period=%d)\n",
+				booke_wdt_period);
 	}
 	spin_unlock(&booke_wdt_lock);
 
 	return nonseekable_open(inode, file);
-}
-
-static int booke_wdt_release(struct inode *inode, struct file *file)
-{
-#ifndef CONFIG_WATCHDOG_NOWAYOUT
-	/* Normally, the watchdog is disabled when /dev/watchdog is closed, but
-	 * if CONFIG_WATCHDOG_NOWAYOUT is defined, then it means that the
-	 * watchdog should remain enabled.  So we disable it only if
-	 * CONFIG_WATCHDOG_NOWAYOUT is not defined.
-	 */
-	on_each_cpu(__booke_wdt_disable, NULL, 0);
-	booke_wdt_enabled = 0;
-	pr_debug("watchdog disabled\n");
-#endif
-
-	clear_bit(0, &wdt_is_active);
-
-	return 0;
 }
 
 static const struct file_operations booke_wdt_fops = {
@@ -258,7 +229,6 @@ static const struct file_operations booke_wdt_fops = {
 	.write = booke_wdt_write,
 	.unlocked_ioctl = booke_wdt_ioctl,
 	.open = booke_wdt_open,
-	.release = booke_wdt_release,
 };
 
 static struct miscdevice booke_wdt_miscdev = {
@@ -276,29 +246,33 @@ static int __init booke_wdt_init(void)
 {
 	int ret = 0;
 
-	pr_info("powerpc book-e watchdog driver loaded\n");
+	printk(KERN_INFO "PowerPC Book-E Watchdog Timer Loaded\n");
 	ident.firmware_version = cur_cpu_spec->pvr_value;
 
 	ret = misc_register(&booke_wdt_miscdev);
 	if (ret) {
-		pr_err("cannot register device (minor=%u, ret=%i)\n",
-		       WATCHDOG_MINOR, ret);
+		printk(KERN_CRIT "Cannot register miscdev on minor=%d: %d\n",
+				WATCHDOG_MINOR, ret);
 		return ret;
 	}
 
 	spin_lock(&booke_wdt_lock);
 	if (booke_wdt_enabled == 1) {
-		pr_info("watchdog enabled (timeout = %llu sec)\n",
-			period_to_sec(booke_wdt_period));
+		printk(KERN_INFO
+		      "PowerPC Book-E Watchdog Timer Enabled (wdt_period=%d)\n",
+				booke_wdt_period);
 		on_each_cpu(__booke_wdt_enable, NULL, 0);
 	}
+
+	/* Get the rebooted by watchdog flag out of the TSR and
+	 * reset it for next time.
+	 */
+
+	booke_wdt_rebooted = (mfspr(SPRN_TSR) & TSR_WRS(3)) ? 1 : 0;
+	mtspr(SPRN_TSR, TSR_WRS(3));
+
 	spin_unlock(&booke_wdt_lock);
 
 	return ret;
 }
-
-module_init(booke_wdt_init);
-module_exit(booke_wdt_exit);
-
-MODULE_DESCRIPTION("PowerPC Book-E watchdog driver");
-MODULE_LICENSE("GPL");
+device_initcall(booke_wdt_init);

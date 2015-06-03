@@ -19,11 +19,9 @@
 #include <linux/init.h>
 #include <linux/tty.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/usb.h>
 #include <linux/usb/serial.h>
 #include <linux/serial.h>
-#include <asm/unaligned.h>
 
 #define DEFAULT_BAUD_RATE 9600
 #define DEFAULT_TIMEOUT   1000
@@ -70,9 +68,9 @@
 #define CH341_NBREAK_BITS_REG2 0x40
 
 
-static bool debug;
+static int debug;
 
-static const struct usb_device_id id_table[] = {
+static struct usb_device_id id_table [] = {
 	{ USB_DEVICE(0x4348, 0x5523) },
 	{ USB_DEVICE(0x1a86, 0x7523) },
 	{ USB_DEVICE(0x1a86, 0x5523) },
@@ -82,6 +80,7 @@ MODULE_DEVICE_TABLE(usb, id_table);
 
 struct ch341_private {
 	spinlock_t lock; /* access lock */
+	wait_queue_head_t delta_msr_wait; /* wait queue for modem status */
 	unsigned baud_rate; /* set baud rate */
 	u8 line_control; /* set line control value RTS/DTR */
 	u8 line_status; /* active status of modem control inputs */
@@ -261,6 +260,7 @@ static int ch341_attach(struct usb_serial *serial)
 		return -ENOMEM;
 
 	spin_lock_init(&priv->lock);
+	init_waitqueue_head(&priv->delta_msr_wait);
 	priv->baud_rate = DEFAULT_BAUD_RATE;
 	priv->line_control = CH341_BIT_RTS | CH341_BIT_DTR;
 
@@ -297,14 +297,17 @@ static void ch341_dtr_rts(struct usb_serial_port *port, int on)
 		priv->line_control &= ~(CH341_BIT_RTS | CH341_BIT_DTR);
 	spin_unlock_irqrestore(&priv->lock, flags);
 	ch341_set_handshake(port->serial->dev, priv->line_control);
-	wake_up_interruptible(&port->delta_msr_wait);
+	wake_up_interruptible(&priv->delta_msr_wait);
 }
 
 static void ch341_close(struct usb_serial_port *port)
 {
 	dbg("%s - port %d", __func__, port->number);
 
-	usb_serial_generic_close(port);
+	/* shutdown our urbs */
+	dbg("%s - shutting down urbs", __func__);
+	usb_kill_urb(port->write_urb);
+	usb_kill_urb(port->read_urb);
 	usb_kill_urb(port->interrupt_in_urb);
 }
 
@@ -333,12 +336,13 @@ static int ch341_open(struct tty_struct *tty, struct usb_serial_port *port)
 		goto out;
 
 	dbg("%s - submitting interrupt urb", __func__);
+	port->interrupt_in_urb->dev = serial->dev;
 	r = usb_submit_urb(port->interrupt_in_urb, GFP_KERNEL);
 	if (r) {
 		dev_err(&port->dev, "%s - failed submitting interrupt urb,"
 			" error %d\n", __func__, r);
 		ch341_close(port);
-		goto out;
+		return -EPROTO;
 	}
 
 	r = usb_serial_generic_open(tty, port);
@@ -389,22 +393,16 @@ static void ch341_break_ctl(struct tty_struct *tty, int break_state)
 	struct usb_serial_port *port = tty->driver_data;
 	int r;
 	uint16_t reg_contents;
-	uint8_t *break_reg;
+	uint8_t break_reg[2];
 
 	dbg("%s()", __func__);
 
-	break_reg = kmalloc(2, GFP_KERNEL);
-	if (!break_reg) {
-		dev_err(&port->dev, "%s - kmalloc failed\n", __func__);
-		return;
-	}
-
 	r = ch341_control_in(port->serial->dev, CH341_REQ_READ_REG,
-			ch341_break_reg, 0, break_reg, 2);
+			ch341_break_reg, 0, break_reg, sizeof(break_reg));
 	if (r < 0) {
-		dev_err(&port->dev, "%s - USB control read error (%d)\n",
-				__func__, r);
-		goto out;
+		printk(KERN_WARNING "%s: USB control read error whilst getting"
+				" break register contents.\n", __FILE__);
+		return;
 	}
 	dbg("%s - initial ch341 break register contents - reg1: %x, reg2: %x",
 			__func__, break_reg[0], break_reg[1]);
@@ -419,17 +417,15 @@ static void ch341_break_ctl(struct tty_struct *tty, int break_state)
 	}
 	dbg("%s - New ch341 break register contents - reg1: %x, reg2: %x",
 			__func__, break_reg[0], break_reg[1]);
-	reg_contents = get_unaligned_le16(break_reg);
+	reg_contents = (uint16_t)break_reg[0] | ((uint16_t)break_reg[1] << 8);
 	r = ch341_control_out(port->serial->dev, CH341_REQ_WRITE_REG,
 			ch341_break_reg, reg_contents);
 	if (r < 0)
-		dev_err(&port->dev, "%s - USB control write error (%d)\n",
-				__func__, r);
-out:
-	kfree(break_reg);
+		printk(KERN_WARNING "%s: USB control write error whilst setting"
+				" break register contents.\n", __FILE__);
 }
 
-static int ch341_tiocmset(struct tty_struct *tty,
+static int ch341_tiocmset(struct tty_struct *tty, struct file *file,
 			  unsigned int set, unsigned int clear)
 {
 	struct usb_serial_port *port = tty->driver_data;
@@ -500,7 +496,7 @@ static void ch341_read_int_callback(struct urb *urb)
 			tty_kref_put(tty);
 		}
 
-		wake_up_interruptible(&port->delta_msr_wait);
+		wake_up_interruptible(&priv->delta_msr_wait);
 	}
 
 exit:
@@ -526,13 +522,10 @@ static int wait_modem_info(struct usb_serial_port *port, unsigned int arg)
 	spin_unlock_irqrestore(&priv->lock, flags);
 
 	while (!multi_change) {
-		interruptible_sleep_on(&port->delta_msr_wait);
+		interruptible_sleep_on(&priv->delta_msr_wait);
 		/* see if a signal did it */
 		if (signal_pending(current))
 			return -ERESTARTSYS;
-
-		if (port->serial->disconnected)
-			return -EIO;
 
 		spin_lock_irqsave(&priv->lock, flags);
 		status = priv->line_status;
@@ -553,7 +546,8 @@ static int wait_modem_info(struct usb_serial_port *port, unsigned int arg)
 	return 0;
 }
 
-static int ch341_ioctl(struct tty_struct *tty,
+/*static int ch341_ioctl(struct usb_serial_port *port, struct file *file,*/
+static int ch341_ioctl(struct tty_struct *tty, struct file *file,
 			unsigned int cmd, unsigned long arg)
 {
 	struct usb_serial_port *port = tty->driver_data;
@@ -572,7 +566,7 @@ static int ch341_ioctl(struct tty_struct *tty,
 	return -ENOIOCTLCMD;
 }
 
-static int ch341_tiocmget(struct tty_struct *tty)
+static int ch341_tiocmget(struct tty_struct *tty, struct file *file)
 {
 	struct usb_serial_port *port = tty->driver_data;
 	struct ch341_private *priv = usb_get_serial_port_data(port);
@@ -626,6 +620,7 @@ static struct usb_driver ch341_driver = {
 	.resume		= usb_serial_resume,
 	.reset_resume	= ch341_reset_resume,
 	.id_table	= id_table,
+	.no_dynamic_id	= 1,
 	.supports_autosuspend =	1,
 };
 
@@ -635,6 +630,7 @@ static struct usb_serial_driver ch341_device = {
 		.name	= "ch341-uart",
 	},
 	.id_table          = id_table,
+	.usb_driver        = &ch341_driver,
 	.num_ports         = 1,
 	.open              = ch341_open,
 	.dtr_rts	   = ch341_dtr_rts,
@@ -649,13 +645,30 @@ static struct usb_serial_driver ch341_device = {
 	.attach            = ch341_attach,
 };
 
-static struct usb_serial_driver * const serial_drivers[] = {
-	&ch341_device, NULL
-};
+static int __init ch341_init(void)
+{
+	int retval;
 
-module_usb_serial_driver(ch341_driver, serial_drivers);
+	retval = usb_serial_register(&ch341_device);
+	if (retval)
+		return retval;
+	retval = usb_register(&ch341_driver);
+	if (retval)
+		usb_serial_deregister(&ch341_device);
+	return retval;
+}
 
+static void __exit ch341_exit(void)
+{
+	usb_deregister(&ch341_driver);
+	usb_serial_deregister(&ch341_device);
+}
+
+module_init(ch341_init);
+module_exit(ch341_exit);
 MODULE_LICENSE("GPL");
 
 module_param(debug, bool, S_IRUGO | S_IWUSR);
 MODULE_PARM_DESC(debug, "Debug enabled or not");
+
+/* EOF ch341.c */

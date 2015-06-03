@@ -7,14 +7,13 @@
  */
 
 #include <linux/module.h>
-#include <linux/gfp.h>
 #include <linux/moduleparam.h>
 #include <linux/interrupt.h>
 #include <sound/pcm.h>
 #include <asm/io.h>
 #include "pcsp.h"
 
-static bool nforce_wa;
+static int nforce_wa;
 module_param(nforce_wa, bool, 0444);
 MODULE_PARM_DESC(nforce_wa, "Apply NForce chipset workaround "
 		"(expect bad sound)");
@@ -66,7 +65,7 @@ static u64 pcsp_timer_update(struct snd_pcsp *chip)
 	timer_cnt = val * CUR_DIV() / 256;
 
 	if (timer_cnt && chip->enable) {
-		raw_spin_lock_irqsave(&i8253_lock, flags);
+		spin_lock_irqsave(&i8253_lock, flags);
 		if (!nforce_wa) {
 			outb_p(chip->val61, 0x61);
 			outb_p(timer_cnt, 0x42);
@@ -75,7 +74,7 @@ static u64 pcsp_timer_update(struct snd_pcsp *chip)
 			outb(chip->val61 ^ 2, 0x61);
 			chip->thalf = 1;
 		}
-		raw_spin_unlock_irqrestore(&i8253_lock, flags);
+		spin_unlock_irqrestore(&i8253_lock, flags);
 	}
 
 	chip->ns_rem = PCSP_PERIOD_NS();
@@ -159,10 +158,10 @@ static int pcsp_start_playing(struct snd_pcsp *chip)
 		return -EIO;
 	}
 
-	raw_spin_lock(&i8253_lock);
+	spin_lock(&i8253_lock);
 	chip->val61 = inb(0x61) | 0x03;
 	outb_p(0x92, 0x43);	/* binary, mode 1, LSB only, ch 2 */
-	raw_spin_unlock(&i8253_lock);
+	spin_unlock(&i8253_lock);
 	atomic_set(&chip->timer_active, 1);
 	chip->thalf = 0;
 
@@ -179,11 +178,11 @@ static void pcsp_stop_playing(struct snd_pcsp *chip)
 		return;
 
 	atomic_set(&chip->timer_active, 0);
-	raw_spin_lock(&i8253_lock);
+	spin_lock(&i8253_lock);
 	/* restore the timer */
 	outb_p(0xb6, 0x43);	/* binary, mode 3, LSB/MSB, ch 2 */
 	outb(chip->val61 & 0xFC, 0x61);
-	raw_spin_unlock(&i8253_lock);
+	spin_unlock(&i8253_lock);
 }
 
 /*

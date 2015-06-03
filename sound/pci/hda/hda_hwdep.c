@@ -24,9 +24,7 @@
 #include <linux/compat.h>
 #include <linux/mutex.h>
 #include <linux/ctype.h>
-#include <linux/string.h>
 #include <linux/firmware.h>
-#include <linux/export.h>
 #include <sound/core.h>
 #include "hda_codec.h"
 #include "hda_local.h"
@@ -156,44 +154,6 @@ int /*__devinit*/ snd_hda_create_hwdep(struct hda_codec *codec)
 	return 0;
 }
 
-#ifdef CONFIG_SND_HDA_POWER_SAVE
-static ssize_t power_on_acct_show(struct device *dev,
-				  struct device_attribute *attr,
-				  char *buf)
-{
-	struct snd_hwdep *hwdep = dev_get_drvdata(dev);
-	struct hda_codec *codec = hwdep->private_data;
-	snd_hda_update_power_acct(codec);
-	return sprintf(buf, "%u\n", jiffies_to_msecs(codec->power_on_acct));
-}
-
-static ssize_t power_off_acct_show(struct device *dev,
-				   struct device_attribute *attr,
-				   char *buf)
-{
-	struct snd_hwdep *hwdep = dev_get_drvdata(dev);
-	struct hda_codec *codec = hwdep->private_data;
-	snd_hda_update_power_acct(codec);
-	return sprintf(buf, "%u\n", jiffies_to_msecs(codec->power_off_acct));
-}
-
-static struct device_attribute power_attrs[] = {
-	__ATTR_RO(power_on_acct),
-	__ATTR_RO(power_off_acct),
-};
-
-int snd_hda_hwdep_add_power_sysfs(struct hda_codec *codec)
-{
-	struct snd_hwdep *hwdep = codec->hwdep;
-	int i;
-
-	for (i = 0; i < ARRAY_SIZE(power_attrs); i++)
-		snd_add_device_sysfs_file(SNDRV_DEVICE_TYPE_HWDEP, hwdep->card,
-					  hwdep->device, &power_attrs[i]);
-	return 0;
-}
-#endif /* CONFIG_SND_HDA_POWER_SAVE */
-
 #ifdef CONFIG_SND_HDA_RECONFIG
 
 /*
@@ -294,11 +254,8 @@ static ssize_t type##_store(struct device *dev,			\
 {								\
 	struct snd_hwdep *hwdep = dev_get_drvdata(dev);		\
 	struct hda_codec *codec = hwdep->private_data;		\
-	unsigned long val;					\
-	int err = strict_strtoul(buf, 0, &val);			\
-	if (err < 0)						\
-		return err;					\
-	codec->type = val;					\
+	char *after;						\
+	codec->type = simple_strtoul(buf, &after, 0);		\
 	return count;						\
 }
 
@@ -433,7 +390,8 @@ static int parse_hints(struct hda_codec *codec, const char *buf)
 	char *key, *val;
 	struct hda_hint *hint;
 
-	buf = skip_spaces(buf);
+	while (isspace(*buf))
+		buf++;
 	if (!*buf || *buf == '#' || *buf == '\n')
 		return 0;
 	if (*buf == '=')
@@ -448,7 +406,8 @@ static int parse_hints(struct hda_codec *codec, const char *buf)
 		return -EINVAL;
 	}
 	*val++ = 0;
-	val = skip_spaces(val);
+	while (isspace(*val))
+		val++;
 	remove_trail_spaces(key);
 	remove_trail_spaces(val);
 	hint = get_hint(codec, key);
@@ -626,10 +585,6 @@ enum {
 	LINE_MODE_PINCFG,
 	LINE_MODE_VERB,
 	LINE_MODE_HINT,
-	LINE_MODE_VENDOR_ID,
-	LINE_MODE_SUBSYSTEM_ID,
-	LINE_MODE_REVISION_ID,
-	LINE_MODE_CHIP_NAME,
 	NUM_LINE_MODES,
 };
 
@@ -644,15 +599,13 @@ static inline int strmatch(const char *a, const char *b)
 static void parse_codec_mode(char *buf, struct hda_bus *bus,
 			     struct hda_codec **codecp)
 {
-	int vendorid, subid, caddr;
+	unsigned int vendorid, subid, caddr;
 	struct hda_codec *codec;
 
 	*codecp = NULL;
 	if (sscanf(buf, "%i %i %i", &vendorid, &subid, &caddr) == 3) {
 		list_for_each_entry(codec, &bus->codec_list, list) {
-			if ((vendorid <= 0 || codec->vendor_id == vendorid) &&
-			    (subid <= 0 || codec->subsystem_id == subid) &&
-			    codec->addr == caddr) {
+			if (codec->addr == caddr) {
 				*codecp = codec;
 				break;
 			}
@@ -661,71 +614,53 @@ static void parse_codec_mode(char *buf, struct hda_bus *bus,
 }
 
 /* parse the contents after the other command tags, [pincfg], [verb],
- * [vendor_id], [subsystem_id], [revision_id], [chip_name], [hint] and [model]
+ * [hint] and [model]
  * just pass to the sysfs helper (only when any codec was specified)
  */
 static void parse_pincfg_mode(char *buf, struct hda_bus *bus,
 			      struct hda_codec **codecp)
 {
+	if (!*codecp)
+		return;
 	parse_user_pin_configs(*codecp, buf);
 }
 
 static void parse_verb_mode(char *buf, struct hda_bus *bus,
 			    struct hda_codec **codecp)
 {
+	if (!*codecp)
+		return;
 	parse_init_verbs(*codecp, buf);
 }
 
 static void parse_hint_mode(char *buf, struct hda_bus *bus,
 			    struct hda_codec **codecp)
 {
+	if (!*codecp)
+		return;
 	parse_hints(*codecp, buf);
 }
 
 static void parse_model_mode(char *buf, struct hda_bus *bus,
 			     struct hda_codec **codecp)
 {
+	if (!*codecp)
+		return;
 	kfree((*codecp)->modelname);
 	(*codecp)->modelname = kstrdup(buf, GFP_KERNEL);
 }
 
-static void parse_chip_name_mode(char *buf, struct hda_bus *bus,
-				 struct hda_codec **codecp)
-{
-	kfree((*codecp)->chip_name);
-	(*codecp)->chip_name = kstrdup(buf, GFP_KERNEL);
-}
-
-#define DEFINE_PARSE_ID_MODE(name) \
-static void parse_##name##_mode(char *buf, struct hda_bus *bus, \
-				 struct hda_codec **codecp) \
-{ \
-	unsigned long val; \
-	if (!strict_strtoul(buf, 0, &val)) \
-		(*codecp)->name = val; \
-}
-
-DEFINE_PARSE_ID_MODE(vendor_id);
-DEFINE_PARSE_ID_MODE(subsystem_id);
-DEFINE_PARSE_ID_MODE(revision_id);
-
-
 struct hda_patch_item {
 	const char *tag;
 	void (*parser)(char *buf, struct hda_bus *bus, struct hda_codec **retc);
-	int need_codec;
 };
 
 static struct hda_patch_item patch_items[NUM_LINE_MODES] = {
-	[LINE_MODE_CODEC] = { "[codec]", parse_codec_mode, 0 },
-	[LINE_MODE_MODEL] = { "[model]", parse_model_mode, 1 },
-	[LINE_MODE_VERB] = { "[verb]", parse_verb_mode, 1 },
-	[LINE_MODE_PINCFG] = { "[pincfg]", parse_pincfg_mode, 1 },
-	[LINE_MODE_HINT] = { "[hint]", parse_hint_mode, 1 },
-	[LINE_MODE_VENDOR_ID] = { "[vendor_id]", parse_vendor_id_mode, 1 },
-	[LINE_MODE_SUBSYSTEM_ID] = { "[subsystem_id]", parse_subsystem_id_mode, 1 },
-	[LINE_MODE_REVISION_ID] = { "[revision_id]", parse_revision_id_mode, 1 },
-	[LINE_MODE_CHIP_NAME] = { "[chip_name]", parse_chip_name_mode, 1 },
+	[LINE_MODE_CODEC] = { "[codec]", parse_codec_mode },
+	[LINE_MODE_MODEL] = { "[model]", parse_model_mode },
+	[LINE_MODE_VERB] = { "[verb]", parse_verb_mode },
+	[LINE_MODE_PINCFG] = { "[pincfg]", parse_pincfg_mode },
+	[LINE_MODE_HINT] = { "[hint]", parse_hint_mode },
 };
 
 /* check the line starting with '[' -- change the parser mode accodingly */
@@ -757,6 +692,8 @@ static int get_line_from_fw(char *buf, int size, struct firmware *fw)
 	}
 	if (!fw->size)
 		return 0;
+	if (size < fw->size)
+		size = fw->size;
 
 	for (len = 0; len < fw->size; len++) {
 		if (!*p)
@@ -806,8 +743,7 @@ int snd_hda_load_patch(struct hda_bus *bus, const char *patch)
 			continue;
 		if (*buf == '[')
 			line_mode = parse_line_mode(buf, bus);
-		else if (patch_items[line_mode].parser &&
-			 (codec || !patch_items[line_mode].need_codec))
+		else if (patch_items[line_mode].parser)
 			patch_items[line_mode].parser(buf, bus, &codec);
 	}
 	release_firmware(fw);

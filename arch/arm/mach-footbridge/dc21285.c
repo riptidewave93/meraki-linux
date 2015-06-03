@@ -20,6 +20,7 @@
 #include <linux/spinlock.h>
 
 #include <asm/irq.h>
+#include <asm/system.h>
 #include <asm/mach/pci.h>
 #include <asm/hardware/dec21285.h>
 
@@ -273,19 +274,17 @@ int __init dc21285_setup(int nr, struct pci_sys_data *sys)
 	allocate_resource(&iomem_resource, &res[0], 0x40000000,
 			  0x80000000, 0xffffffff, 0x40000000, NULL, NULL);
 
+	sys->resource[0] = &ioport_resource;
+	sys->resource[1] = &res[0];
+	sys->resource[2] = &res[1];
 	sys->mem_offset  = DC21285_PCI_MEM;
-
-	pci_add_resource_offset(&sys->resources,
-				&ioport_resource, sys->io_offset);
-	pci_add_resource_offset(&sys->resources, &res[0], sys->mem_offset);
-	pci_add_resource_offset(&sys->resources, &res[1], sys->mem_offset);
 
 	return 1;
 }
 
 struct pci_bus * __init dc21285_scan_bus(int nr, struct pci_sys_data *sys)
 {
-	return pci_scan_root_bus(NULL, 0, &dc21285_ops, sys, &sys->resources);
+	return pci_scan_bus(0, &dc21285_ops, sys);
 }
 
 #define dc21285_request_irq(_a, _b, _c, _d, _e) \
@@ -295,8 +294,6 @@ void __init dc21285_preinit(void)
 {
 	unsigned int mem_size, mem_mask;
 	int cfn_mode;
-
-	pcibios_min_mem = 0x81000000;
 
 	mem_size = (unsigned int)high_memory - PAGE_OFFSET;
 	for (mem_mask = 0x00100000; mem_mask < 0x10000000; mem_mask <<= 1)

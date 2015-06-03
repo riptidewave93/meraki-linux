@@ -26,10 +26,12 @@
 #include <linux/mutex.h>
 #include <linux/delay.h>
 #include <linux/log2.h>
-#include <linux/slab.h>
 
 /* Addresses to scan */
 static const unsigned short normal_i2c[] = { 0x69, I2C_CLIENT_END };
+
+/* Insmod parameters */
+I2C_CLIENT_INSMOD_1(ics932s401);
 
 /* ICS932S401 registers */
 #define ICS932S401_REG_CFG2			0x01
@@ -104,12 +106,12 @@ struct ics932s401_data {
 
 static int ics932s401_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id);
-static int ics932s401_detect(struct i2c_client *client,
+static int ics932s401_detect(struct i2c_client *client, int kind,
 			  struct i2c_board_info *info);
 static int ics932s401_remove(struct i2c_client *client);
 
 static const struct i2c_device_id ics932s401_id[] = {
-	{ "ics932s401", 0 },
+	{ "ics932s401", ics932s401 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, ics932s401_id);
@@ -123,7 +125,7 @@ static struct i2c_driver ics932s401_driver = {
 	.remove		= ics932s401_remove,
 	.id_table	= ics932s401_id,
 	.detect		= ics932s401_detect,
-	.address_list	= normal_i2c,
+	.address_data	= &addr_data,
 };
 
 static struct ics932s401_data *ics932s401_update_device(struct device *dev)
@@ -411,29 +413,36 @@ static ssize_t show_spread(struct device *dev,
 }
 
 /* Return 0 if detection is successful, -ENODEV otherwise */
-static int ics932s401_detect(struct i2c_client *client,
+static int ics932s401_detect(struct i2c_client *client, int kind,
 			  struct i2c_board_info *info)
 {
 	struct i2c_adapter *adapter = client->adapter;
-	int vendor, device, revision;
 
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -ENODEV;
 
-	vendor = i2c_smbus_read_word_data(client, ICS932S401_REG_VENDOR_REV);
-	vendor >>= 8;
-	revision = vendor >> ICS932S401_REV_SHIFT;
-	vendor &= ICS932S401_VENDOR_MASK;
-	if (vendor != ICS932S401_VENDOR)
-		return -ENODEV;
+	if (kind <= 0) {
+		int vendor, device, revision;
 
-	device = i2c_smbus_read_word_data(client, ICS932S401_REG_DEVICE);
-	device >>= 8;
-	if (device != ICS932S401_DEVICE)
-		return -ENODEV;
+		vendor = i2c_smbus_read_word_data(client,
+						  ICS932S401_REG_VENDOR_REV);
+		vendor >>= 8;
+		revision = vendor >> ICS932S401_REV_SHIFT;
+		vendor &= ICS932S401_VENDOR_MASK;
+		if (vendor != ICS932S401_VENDOR)
+			return -ENODEV;
 
-	if (revision != ICS932S401_REV)
-		dev_info(&adapter->dev, "Unknown revision %d\n", revision);
+		device = i2c_smbus_read_word_data(client,
+						  ICS932S401_REG_DEVICE);
+		device >>= 8;
+		if (device != ICS932S401_DEVICE)
+			return -ENODEV;
+
+		if (revision != ICS932S401_REV)
+			dev_info(&adapter->dev, "Unknown revision %d\n",
+				 revision);
+	} else
+		dev_dbg(&adapter->dev, "detection forced\n");
 
 	strlcpy(info->type, "ics932s401", I2C_NAME_SIZE);
 
@@ -480,11 +489,22 @@ static int ics932s401_remove(struct i2c_client *client)
 	return 0;
 }
 
-module_i2c_driver(ics932s401_driver);
+static int __init ics932s401_init(void)
+{
+	return i2c_add_driver(&ics932s401_driver);
+}
+
+static void __exit ics932s401_exit(void)
+{
+	i2c_del_driver(&ics932s401_driver);
+}
 
 MODULE_AUTHOR("Darrick J. Wong <djwong@us.ibm.com>");
 MODULE_DESCRIPTION("ICS932S401 driver");
 MODULE_LICENSE("GPL");
+
+module_init(ics932s401_init);
+module_exit(ics932s401_exit);
 
 /* IBM IntelliStation Z30 */
 MODULE_ALIAS("dmi:bvnIBM:*:rn9228:*");

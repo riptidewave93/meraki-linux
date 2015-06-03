@@ -14,7 +14,7 @@
  *
  * Notes:
  *     This is a wm97xx extended touch driver to capture touch
- *     data in a continuous manner on the Intel XScale architecture
+ *     data in a continuous manner on the Intel XScale archictecture
  *
  *  Features:
  *       - codecs supported:- WM9705, WM9712, WM9713
@@ -131,7 +131,7 @@ static int wm97xx_acc_pen_down(struct wm97xx *wm)
 	/* When the AC97 queue has been drained we need to allow time
 	 * to buffer up samples otherwise we end up spinning polling
 	 * for samples.  The controller can't have a suitably low
-	 * threshold set to use the notifications it gives.
+	 * threashold set to use the notifications it gives.
 	 */
 	schedule_timeout_uninterruptible(1);
 
@@ -153,13 +153,10 @@ static int wm97xx_acc_pen_down(struct wm97xx *wm)
 		if (pressure)
 			p = MODR;
 
-		dev_dbg(wm->dev, "Raw coordinates: x=%x, y=%x, p=%x\n",
-			x, y, p);
-
 		/* are samples valid */
-		if ((x & WM97XX_ADCSEL_MASK) != WM97XX_ADCSEL_X ||
-		    (y & WM97XX_ADCSEL_MASK) != WM97XX_ADCSEL_Y ||
-		    (p & WM97XX_ADCSEL_MASK) != WM97XX_ADCSEL_PRES)
+		if ((x & WM97XX_ADCSRC_MASK) != WM97XX_ADCSEL_X ||
+		    (y & WM97XX_ADCSRC_MASK) != WM97XX_ADCSEL_Y ||
+		    (p & WM97XX_ADCSRC_MASK) != WM97XX_ADCSEL_PRES)
 			goto up;
 
 		/* coordinate is good */
@@ -219,7 +216,7 @@ static int wm97xx_acc_startup(struct wm97xx *wm)
 		}
 
 		wm->pen_irq = gpio_to_irq(irq);
-		irq_set_irq_type(wm->pen_irq, IRQ_TYPE_EDGE_BOTH);
+		set_irq_type(wm->pen_irq, IRQ_TYPE_EDGE_BOTH);
 	} else /* pen irq not supported */
 		pen_int = 0;
 
@@ -302,7 +299,19 @@ static struct platform_driver mainstone_wm97xx_driver = {
 		.name = "wm97xx-touch",
 	},
 };
-module_platform_driver(mainstone_wm97xx_driver);
+
+static int __init mainstone_wm97xx_init(void)
+{
+	return platform_driver_register(&mainstone_wm97xx_driver);
+}
+
+static void __exit mainstone_wm97xx_exit(void)
+{
+	platform_driver_unregister(&mainstone_wm97xx_driver);
+}
+
+module_init(mainstone_wm97xx_init);
+module_exit(mainstone_wm97xx_exit);
 
 /* Module information */
 MODULE_AUTHOR("Liam Girdwood <lrg@slimlogic.co.uk>");

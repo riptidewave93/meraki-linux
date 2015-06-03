@@ -34,11 +34,9 @@
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
 #include <linux/platform_device.h>
+#include <linux/mod_devicetable.h>
 #include <linux/log2.h>
 #include <linux/pm.h>
-#include <linux/of.h>
-#include <linux/of_platform.h>
-#include <linux/dmi.h>
 
 /* this is for "generic access to PC-style RTC" using CMOS_READ/CMOS_WRITE */
 #include <asm-generic/rtc.h>
@@ -164,7 +162,7 @@ static inline unsigned char cmos_read_bank2(unsigned char addr)
 static inline void cmos_write_bank2(unsigned char val, unsigned char addr)
 {
 	outb(addr, RTC_PORT(2));
-	outb(val, RTC_PORT(3));
+	outb(val, RTC_PORT(2));
 }
 
 #else
@@ -241,32 +239,31 @@ static int cmos_read_alarm(struct device *dev, struct rtc_wkalrm *t)
 	rtc_control = CMOS_READ(RTC_CONTROL);
 	spin_unlock_irq(&rtc_lock);
 
-	if (!(rtc_control & RTC_DM_BINARY) || RTC_ALWAYS_BCD) {
-		if (((unsigned)t->time.tm_sec) < 0x60)
-			t->time.tm_sec = bcd2bin(t->time.tm_sec);
-		else
-			t->time.tm_sec = -1;
-		if (((unsigned)t->time.tm_min) < 0x60)
-			t->time.tm_min = bcd2bin(t->time.tm_min);
-		else
-			t->time.tm_min = -1;
-		if (((unsigned)t->time.tm_hour) < 0x24)
-			t->time.tm_hour = bcd2bin(t->time.tm_hour);
-		else
-			t->time.tm_hour = -1;
+	/* REVISIT this assumes PC style usage:  always BCD */
 
-		if (cmos->day_alrm) {
-			if (((unsigned)t->time.tm_mday) <= 0x31)
-				t->time.tm_mday = bcd2bin(t->time.tm_mday);
+	if (((unsigned)t->time.tm_sec) < 0x60)
+		t->time.tm_sec = bcd2bin(t->time.tm_sec);
+	else
+		t->time.tm_sec = -1;
+	if (((unsigned)t->time.tm_min) < 0x60)
+		t->time.tm_min = bcd2bin(t->time.tm_min);
+	else
+		t->time.tm_min = -1;
+	if (((unsigned)t->time.tm_hour) < 0x24)
+		t->time.tm_hour = bcd2bin(t->time.tm_hour);
+	else
+		t->time.tm_hour = -1;
+
+	if (cmos->day_alrm) {
+		if (((unsigned)t->time.tm_mday) <= 0x31)
+			t->time.tm_mday = bcd2bin(t->time.tm_mday);
+		else
+			t->time.tm_mday = -1;
+		if (cmos->mon_alrm) {
+			if (((unsigned)t->time.tm_mon) <= 0x12)
+				t->time.tm_mon = bcd2bin(t->time.tm_mon) - 1;
 			else
-				t->time.tm_mday = -1;
-
-			if (cmos->mon_alrm) {
-				if (((unsigned)t->time.tm_mon) <= 0x12)
-					t->time.tm_mon = bcd2bin(t->time.tm_mon)-1;
-				else
-					t->time.tm_mon = -1;
-			}
+				t->time.tm_mon = -1;
 		}
 	}
 	t->time.tm_year = -1;
@@ -326,26 +323,29 @@ static void cmos_irq_disable(struct cmos_rtc *cmos, unsigned char mask)
 static int cmos_set_alarm(struct device *dev, struct rtc_wkalrm *t)
 {
 	struct cmos_rtc	*cmos = dev_get_drvdata(dev);
-       unsigned char   mon, mday, hrs, min, sec, rtc_control;
+	unsigned char	mon, mday, hrs, min, sec;
 
 	if (!is_valid_irq(cmos->irq))
 		return -EIO;
 
-	mon = t->time.tm_mon + 1;
-	mday = t->time.tm_mday;
-	hrs = t->time.tm_hour;
-	min = t->time.tm_min;
-	sec = t->time.tm_sec;
+	/* REVISIT this assumes PC style usage:  always BCD */
 
-	rtc_control = CMOS_READ(RTC_CONTROL);
-	if (!(rtc_control & RTC_DM_BINARY) || RTC_ALWAYS_BCD) {
-		/* Writing 0xff means "don't care" or "match all".  */
-		mon = (mon <= 12) ? bin2bcd(mon) : 0xff;
-		mday = (mday >= 1 && mday <= 31) ? bin2bcd(mday) : 0xff;
-		hrs = (hrs < 24) ? bin2bcd(hrs) : 0xff;
-		min = (min < 60) ? bin2bcd(min) : 0xff;
-		sec = (sec < 60) ? bin2bcd(sec) : 0xff;
-	}
+	/* Writing 0xff means "don't care" or "match all".  */
+
+	mon = t->time.tm_mon + 1;
+	mon = (mon <= 12) ? bin2bcd(mon) : 0xff;
+
+	mday = t->time.tm_mday;
+	mday = (mday >= 1 && mday <= 31) ? bin2bcd(mday) : 0xff;
+
+	hrs = t->time.tm_hour;
+	hrs = (hrs < 24) ? bin2bcd(hrs) : 0xff;
+
+	min = t->time.tm_min;
+	min = (min < 60) ? bin2bcd(min) : 0xff;
+
+	sec = t->time.tm_sec;
+	sec = (sec < 60) ? bin2bcd(sec) : 0xff;
 
 	spin_lock_irq(&rtc_lock);
 
@@ -377,72 +377,93 @@ static int cmos_set_alarm(struct device *dev, struct rtc_wkalrm *t)
 	return 0;
 }
 
-/*
- * Do not disable RTC alarm on shutdown - workaround for b0rked BIOSes.
- */
-static bool alarm_disable_quirk;
-
-static int __init set_alarm_disable_quirk(const struct dmi_system_id *id)
+static int cmos_irq_set_freq(struct device *dev, int freq)
 {
-	alarm_disable_quirk = true;
-	pr_info("rtc-cmos: BIOS has alarm-disable quirk. ");
-	pr_info("RTC alarms disabled\n");
+	struct cmos_rtc	*cmos = dev_get_drvdata(dev);
+	int		f;
+	unsigned long	flags;
+
+	if (!is_valid_irq(cmos->irq))
+		return -ENXIO;
+
+	if (!is_power_of_2(freq))
+		return -EINVAL;
+	/* 0 = no irqs; 1 = 2^15 Hz ... 15 = 2^0 Hz */
+	f = ffs(freq);
+	if (f-- > 16)
+		return -EINVAL;
+	f = 16 - f;
+
+	spin_lock_irqsave(&rtc_lock, flags);
+	hpet_set_periodic_freq(freq);
+	CMOS_WRITE(RTC_REF_CLCK_32KHZ | f, RTC_FREQ_SELECT);
+	spin_unlock_irqrestore(&rtc_lock, flags);
+
 	return 0;
 }
 
-static const struct dmi_system_id rtc_quirks[] __initconst = {
-	/* https://bugzilla.novell.com/show_bug.cgi?id=805740 */
-	{
-		.callback = set_alarm_disable_quirk,
-		.ident    = "IBM Truman",
-		.matches  = {
-			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "4852570"),
-		},
-	},
-	/* https://bugzilla.novell.com/show_bug.cgi?id=812592 */
-	{
-		.callback = set_alarm_disable_quirk,
-		.ident    = "Gigabyte GA-990XA-UD3",
-		.matches  = {
-			DMI_MATCH(DMI_SYS_VENDOR,
-					"Gigabyte Technology Co., Ltd."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "GA-990XA-UD3"),
-		},
-	},
-	/* http://permalink.gmane.org/gmane.linux.kernel/1604474 */
-	{
-		.callback = set_alarm_disable_quirk,
-		.ident    = "Toshiba Satellite L300",
-		.matches  = {
-			DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-			DMI_MATCH(DMI_PRODUCT_NAME, "Satellite L300"),
-		},
-	},
-	{}
-};
-
-static int cmos_alarm_irq_enable(struct device *dev, unsigned int enabled)
+static int cmos_irq_set_state(struct device *dev, int enabled)
 {
 	struct cmos_rtc	*cmos = dev_get_drvdata(dev);
 	unsigned long	flags;
 
 	if (!is_valid_irq(cmos->irq))
-		return -EINVAL;
-
-	if (alarm_disable_quirk)
-		return 0;
+		return -ENXIO;
 
 	spin_lock_irqsave(&rtc_lock, flags);
 
 	if (enabled)
-		cmos_irq_enable(cmos, RTC_AIE);
+		cmos_irq_enable(cmos, RTC_PIE);
 	else
-		cmos_irq_disable(cmos, RTC_AIE);
+		cmos_irq_disable(cmos, RTC_PIE);
 
 	spin_unlock_irqrestore(&rtc_lock, flags);
 	return 0;
 }
+
+#if defined(CONFIG_RTC_INTF_DEV) || defined(CONFIG_RTC_INTF_DEV_MODULE)
+
+static int
+cmos_rtc_ioctl(struct device *dev, unsigned int cmd, unsigned long arg)
+{
+	struct cmos_rtc	*cmos = dev_get_drvdata(dev);
+	unsigned long	flags;
+
+	switch (cmd) {
+	case RTC_AIE_OFF:
+	case RTC_AIE_ON:
+	case RTC_UIE_OFF:
+	case RTC_UIE_ON:
+		if (!is_valid_irq(cmos->irq))
+			return -EINVAL;
+		break;
+	/* PIE ON/OFF is handled by cmos_irq_set_state() */
+	default:
+		return -ENOIOCTLCMD;
+	}
+
+	spin_lock_irqsave(&rtc_lock, flags);
+	switch (cmd) {
+	case RTC_AIE_OFF:	/* alarm off */
+		cmos_irq_disable(cmos, RTC_AIE);
+		break;
+	case RTC_AIE_ON:	/* alarm on */
+		cmos_irq_enable(cmos, RTC_AIE);
+		break;
+	case RTC_UIE_OFF:	/* update off */
+		cmos_irq_disable(cmos, RTC_UIE);
+		break;
+	case RTC_UIE_ON:	/* update on */
+		cmos_irq_enable(cmos, RTC_UIE);
+		break;
+	}
+	spin_unlock_irqrestore(&rtc_lock, flags);
+	return 0;
+}
+
+#else
+#define	cmos_rtc_ioctl	NULL
+#endif
 
 #if defined(CONFIG_RTC_INTF_PROC) || defined(CONFIG_RTC_INTF_PROC_MODULE)
 
@@ -464,7 +485,7 @@ static int cmos_procfs(struct device *dev, struct seq_file *seq)
 			"update_IRQ\t: %s\n"
 			"HPET_emulated\t: %s\n"
 			// "square_wave\t: %s\n"
-			"BCD\t\t: %s\n"
+			// "BCD\t\t: %s\n"
 			"DST_enable\t: %s\n"
 			"periodic_freq\t: %d\n"
 			"batt_status\t: %s\n",
@@ -472,7 +493,7 @@ static int cmos_procfs(struct device *dev, struct seq_file *seq)
 			(rtc_control & RTC_UIE) ? "yes" : "no",
 			is_hpet_enabled() ? "yes" : "no",
 			// (rtc_control & RTC_SQWE) ? "yes" : "no",
-			(rtc_control & RTC_DM_BINARY) ? "no" : "yes",
+			// (rtc_control & RTC_DM_BINARY) ? "no" : "yes",
 			(rtc_control & RTC_DST_EN) ? "yes" : "no",
 			cmos->rtc->irq_freq,
 			(valid & RTC_VRT) ? "okay" : "dead");
@@ -483,12 +504,14 @@ static int cmos_procfs(struct device *dev, struct seq_file *seq)
 #endif
 
 static const struct rtc_class_ops cmos_rtc_ops = {
-	.read_time		= cmos_read_time,
-	.set_time		= cmos_set_time,
-	.read_alarm		= cmos_read_alarm,
-	.set_alarm		= cmos_set_alarm,
-	.proc			= cmos_procfs,
-	.alarm_irq_enable	= cmos_alarm_irq_enable,
+	.ioctl		= cmos_rtc_ioctl,
+	.read_time	= cmos_read_time,
+	.set_time	= cmos_set_time,
+	.read_alarm	= cmos_read_alarm,
+	.set_alarm	= cmos_set_alarm,
+	.proc		= cmos_procfs,
+	.irq_set_freq	= cmos_irq_set_freq,
+	.irq_set_state	= cmos_irq_set_state,
 };
 
 /*----------------------------------------------------------------*/
@@ -502,8 +525,7 @@ static const struct rtc_class_ops cmos_rtc_ops = {
 #define NVRAM_OFFSET	(RTC_REG_D + 1)
 
 static ssize_t
-cmos_nvram_read(struct file *filp, struct kobject *kobj,
-		struct bin_attribute *attr,
+cmos_nvram_read(struct kobject *kobj, struct bin_attribute *attr,
 		char *buf, loff_t off, size_t count)
 {
 	int	retval;
@@ -531,8 +553,7 @@ cmos_nvram_read(struct file *filp, struct kobject *kobj,
 }
 
 static ssize_t
-cmos_nvram_write(struct file *filp, struct kobject *kobj,
-		struct bin_attribute *attr,
+cmos_nvram_write(struct kobject *kobj, struct bin_attribute *attr,
 		char *buf, loff_t off, size_t count)
 {
 	struct cmos_rtc	*cmos;
@@ -654,7 +675,7 @@ cmos_do_probe(struct device *dev, struct resource *ports, int rtc_irq)
 	 * (needing ioremap etc), not i/o space resources like this ...
 	 */
 	ports = request_region(ports->start,
-			resource_size(ports),
+			ports->end + 1 - ports->start,
 			driver_name);
 	if (!ports) {
 		dev_dbg(dev, "i/o registers already in use\n");
@@ -671,9 +692,7 @@ cmos_do_probe(struct device *dev, struct resource *ports, int rtc_irq)
 	 */
 #if	defined(CONFIG_ATARI)
 	address_space = 64;
-#elif defined(__i386__) || defined(__x86_64__) || defined(__arm__) \
-			|| defined(__sparc__) || defined(__mips__) \
-			|| defined(__powerpc__)
+#elif defined(__i386__) || defined(__x86_64__) || defined(__arm__) || defined(__sparc__)
 	address_space = 128;
 #else
 #warning Assuming 128 bytes of RTC+NVRAM address space, not 64 bytes.
@@ -736,11 +755,12 @@ cmos_do_probe(struct device *dev, struct resource *ports, int rtc_irq)
 
 	spin_unlock_irq(&rtc_lock);
 
-	/* FIXME:
+	/* FIXME teach the alarm code how to handle binary mode;
 	 * <asm-generic/rtc.h> doesn't know 12-hour mode either.
 	 */
-       if (is_valid_irq(rtc_irq) && !(rtc_control & RTC_24H)) {
-		dev_warn(dev, "only 24-hr supported\n");
+	if (is_valid_irq(rtc_irq) &&
+	    (!(rtc_control & RTC_24H) || (rtc_control & (RTC_DM_BINARY)))) {
+		dev_dbg(dev, "only 24-hr BCD mode supported\n");
 		retval = -ENXIO;
 		goto cleanup1;
 	}
@@ -762,7 +782,7 @@ cmos_do_probe(struct device *dev, struct resource *ports, int rtc_irq)
 			rtc_cmos_int_handler = cmos_interrupt;
 
 		retval = request_irq(rtc_irq, rtc_cmos_int_handler,
-				0, dev_name(&cmos_rtc.rtc->dev),
+				IRQF_DISABLED, dev_name(&cmos_rtc.rtc->dev),
 				cmos_rtc.rtc);
 		if (retval < 0) {
 			dev_dbg(dev, "IRQ %d is already in use\n", rtc_irq);
@@ -798,7 +818,7 @@ cleanup1:
 	cmos_rtc.dev = NULL;
 	rtc_device_unregister(cmos_rtc.rtc);
 cleanup0:
-	release_region(ports->start, resource_size(ports));
+	release_region(ports->start, ports->end + 1 - ports->start);
 	return retval;
 }
 
@@ -827,7 +847,7 @@ static void __exit cmos_do_remove(struct device *dev)
 	cmos->rtc = NULL;
 
 	ports = cmos->iomem;
-	release_region(ports->start, resource_size(ports));
+	release_region(ports->start, ports->end + 1 - ports->start);
 	cmos->iomem = NULL;
 
 	cmos->dev = NULL;
@@ -919,7 +939,6 @@ static int cmos_resume(struct device *dev)
 			rtc_update_irq(cmos->rtc, 1, mask);
 			tmp &= ~RTC_AIE;
 			hpet_mask_rtc_irq_bit(RTC_AIE);
-			hpet_rtc_timer_init();
 		} while (mask & RTC_AIE);
 		spin_unlock_irq(&rtc_lock);
 	}
@@ -956,6 +975,7 @@ static inline int cmos_poweroff(struct device *dev)
 
 #include <linux/acpi.h>
 
+#ifdef	CONFIG_PM
 static u32 rtc_handler(void *context)
 {
 	acpi_clear_event(ACPI_EVENT_RTC);
@@ -984,6 +1004,11 @@ static void rtc_wake_off(struct device *dev)
 {
 	acpi_disable_event(ACPI_EVENT_RTC, 0);
 }
+#else
+#define rtc_wake_setup()	do{}while(0)
+#define rtc_wake_on		NULL
+#define rtc_wake_off		NULL
+#endif
 
 /* Every ACPI platform has a mc146818 compatible "cmos rtc".  Here we find
  * its device node and pass extra config data.  This helps its driver use
@@ -1107,47 +1132,6 @@ static struct pnp_driver cmos_pnp_driver = {
 
 #endif	/* CONFIG_PNP */
 
-#ifdef CONFIG_OF
-static const struct of_device_id of_cmos_match[] = {
-	{
-		.compatible = "motorola,mc146818",
-	},
-	{ },
-};
-MODULE_DEVICE_TABLE(of, of_cmos_match);
-
-static __init void cmos_of_init(struct platform_device *pdev)
-{
-	struct device_node *node = pdev->dev.of_node;
-	struct rtc_time time;
-	int ret;
-	const __be32 *val;
-
-	if (!node)
-		return;
-
-	val = of_get_property(node, "ctrl-reg", NULL);
-	if (val)
-		CMOS_WRITE(be32_to_cpup(val), RTC_CONTROL);
-
-	val = of_get_property(node, "freq-reg", NULL);
-	if (val)
-		CMOS_WRITE(be32_to_cpup(val), RTC_FREQ_SELECT);
-
-	get_rtc_time(&time);
-	ret = rtc_valid_tm(&time);
-	if (ret) {
-		struct rtc_time def_time = {
-			.tm_year = 1,
-			.tm_mday = 1,
-		};
-		set_rtc_time(&def_time);
-	}
-}
-#else
-static inline void cmos_of_init(struct platform_device *pdev) {}
-#define of_cmos_match NULL
-#endif
 /*----------------------------------------------------------------*/
 
 /* Platform setup should have set up an RTC device, when PNP is
@@ -1156,7 +1140,6 @@ static inline void cmos_of_init(struct platform_device *pdev) {}
 
 static int __init cmos_platform_probe(struct platform_device *pdev)
 {
-	cmos_of_init(pdev);
 	cmos_wake_setup(&pdev->dev);
 	return cmos_do_probe(&pdev->dev,
 			platform_get_resource(pdev, IORESOURCE_IO, 0),
@@ -1188,7 +1171,6 @@ static struct platform_driver cmos_platform_driver = {
 #ifdef CONFIG_PM
 		.pm		= &cmos_pm_ops,
 #endif
-		.of_match_table = of_cmos_match,
 	}
 };
 
@@ -1213,8 +1195,6 @@ static int __init cmos_init(void)
 		if (retval == 0)
 			platform_driver_registered = true;
 	}
-
-	dmi_check_system(rtc_quirks);
 
 	if (retval == 0)
 		return 0;

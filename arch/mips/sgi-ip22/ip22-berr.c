@@ -9,6 +9,7 @@
 #include <linux/sched.h>
 
 #include <asm/addrspace.h>
+#include <asm/system.h>
 #include <asm/traps.h>
 #include <asm/branch.h>
 #include <asm/irq_regs.h>
@@ -88,7 +89,7 @@ static void print_buserr(void)
 void ip22_be_interrupt(int irq)
 {
 	const int field = 2 * sizeof(unsigned long);
-	struct pt_regs *regs = get_irq_regs();
+	const struct pt_regs *regs = get_irq_regs();
 
 	save_and_clear_buserr();
 	print_buserr();

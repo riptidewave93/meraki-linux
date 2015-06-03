@@ -45,8 +45,8 @@ typedef struct tagsPMKIDInfo {
 } PMKIDInfo, *PPMKIDInfo;
 
 typedef struct tagSPMKIDCache {
-	u32 BSSIDInfoCount;
-	PMKIDInfo BSSIDInfo[MAX_PMKID_CACHE];
+    ULONG       BSSIDInfoCount;
+    PMKIDInfo   BSSIDInfo[MAX_PMKID_CACHE];
 } SPMKIDCache, *PSPMKIDCache;
 
 
@@ -58,9 +58,21 @@ typedef struct tagSPMKIDCache {
 
 /*---------------------  Export Functions  --------------------------*/
 
-void WPA2_ClearRSN(PKnownBSS pBSSNode);
-void WPA2vParseRSN(PKnownBSS pBSSNode, PWLAN_IE_RSN pRSN);
+VOID
+WPA2_ClearRSN (
+    IN PKnownBSS        pBSSNode
+    );
 
-unsigned int WPA2uSetIEs(void *pMgmtHandle, PWLAN_IE_RSN pRSNIEs);
+VOID
+WPA2vParseRSN (
+    IN PKnownBSS        pBSSNode,
+    IN PWLAN_IE_RSN     pRSN
+    );
 
-#endif /* __WPA2_H__ */
+UINT
+WPA2uSetIEs(
+    IN PVOID pMgmtHandle,
+    OUT PWLAN_IE_RSN pRSNIEs
+    );
+
+#endif // __WPA2_H__

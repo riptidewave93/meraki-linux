@@ -28,8 +28,6 @@
 #include <asm/irq.h>
 #include <asm-generic/gpio.h>
 
-#define __ARM_GPIOLIB_COMPLEX
-
 static inline int gpio_get_value(unsigned gpio)
 {
 	if (__builtin_constant_p(gpio) && (gpio <= GPIO_MAX))
@@ -50,5 +48,21 @@ static inline void gpio_set_value(unsigned gpio, int value)
 }
 
 #define gpio_cansleep	__gpio_cansleep
+
+static inline unsigned gpio_to_irq(unsigned gpio)
+{
+	if (gpio < 11)
+		return IRQ_GPIO0 + gpio;
+	else
+		return IRQ_GPIO11 - 11 + gpio;
+}
+
+static inline unsigned irq_to_gpio(unsigned irq)
+{
+	if (irq < IRQ_GPIO11_27)
+		return irq - IRQ_GPIO0;
+	else
+		return irq - IRQ_GPIO11 + 11;
+}
 
 #endif

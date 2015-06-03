@@ -13,15 +13,12 @@
  * Tracer plugins will chose a default from these clocks.
  */
 #include <linux/spinlock.h>
-#include <linux/irqflags.h>
 #include <linux/hardirq.h>
 #include <linux/module.h>
 #include <linux/percpu.h>
 #include <linux/sched.h>
 #include <linux/ktime.h>
 #include <linux/trace_clock.h>
-
-#include "trace.h"
 
 /*
  * trace_clock_local(): the simplest and least coherent tracing clock.
@@ -31,6 +28,7 @@
  */
 u64 notrace trace_clock_local(void)
 {
+	unsigned long flags;
 	u64 clock;
 
 	/*
@@ -38,15 +36,15 @@ u64 notrace trace_clock_local(void)
 	 * lockless clock. It is not guaranteed to be coherent across
 	 * CPUs, nor across CPU idle events.
 	 */
-	preempt_disable_notrace();
+	raw_local_irq_save(flags);
 	clock = sched_clock();
-	preempt_enable_notrace();
+	raw_local_irq_restore(flags);
 
 	return clock;
 }
 
 /*
- * trace_clock(): 'between' trace clock. Not completely serialized,
+ * trace_clock(): 'inbetween' trace clock. Not completely serialized,
  * but not completely incorrect when crossing CPUs either.
  *
  * This is based on cpu_clock(), which will allow at most ~1 jiffy of
@@ -55,7 +53,7 @@ u64 notrace trace_clock_local(void)
  */
 u64 notrace trace_clock(void)
 {
-	return local_clock();
+	return cpu_clock(raw_smp_processor_id());
 }
 
 
@@ -71,10 +69,10 @@ u64 notrace trace_clock(void)
 /* keep prev_time and lock in the same cacheline. */
 static struct {
 	u64 prev_time;
-	arch_spinlock_t lock;
+	raw_spinlock_t lock;
 } trace_clock_struct ____cacheline_aligned_in_smp =
 	{
-		.lock = (arch_spinlock_t)__ARCH_SPIN_LOCK_UNLOCKED,
+		.lock = (raw_spinlock_t)__RAW_SPIN_LOCK_UNLOCKED,
 	};
 
 u64 notrace trace_clock_global(void)
@@ -83,7 +81,7 @@ u64 notrace trace_clock_global(void)
 	int this_cpu;
 	u64 now;
 
-	local_irq_save(flags);
+	raw_local_irq_save(flags);
 
 	this_cpu = raw_smp_processor_id();
 	now = cpu_clock(this_cpu);
@@ -94,7 +92,7 @@ u64 notrace trace_clock_global(void)
 	if (unlikely(in_nmi()))
 		goto out;
 
-	arch_spin_lock(&trace_clock_struct.lock);
+	__raw_spin_lock(&trace_clock_struct.lock);
 
 	/*
 	 * TODO: if this happens often then maybe we should reset
@@ -106,22 +104,10 @@ u64 notrace trace_clock_global(void)
 
 	trace_clock_struct.prev_time = now;
 
-	arch_spin_unlock(&trace_clock_struct.lock);
+	__raw_spin_unlock(&trace_clock_struct.lock);
 
  out:
-	local_irq_restore(flags);
+	raw_local_irq_restore(flags);
 
 	return now;
-}
-
-static atomic64_t trace_counter;
-
-/*
- * trace_clock_counter(): simply an atomic counter.
- * Use the trace_counter "counter" for cases where you do not care
- * about timings, but are interested in strict ordering.
- */
-u64 notrace trace_clock_counter(void)
-{
-	return atomic64_add_return(1, &trace_counter);
 }

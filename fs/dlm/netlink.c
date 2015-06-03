@@ -9,7 +9,6 @@
 #include <net/genetlink.h>
 #include <linux/dlm.h>
 #include <linux/dlm_netlink.h>
-#include <linux/gfp.h>
 
 #include "dlm_internal.h"
 
@@ -81,11 +80,24 @@ static struct genl_ops dlm_nl_ops = {
 
 int __init dlm_netlink_init(void)
 {
-	return genl_register_family_with_ops(&family, &dlm_nl_ops, 1);
+	int rv;
+
+	rv = genl_register_family(&family);
+	if (rv)
+		return rv;
+
+	rv = genl_register_ops(&family, &dlm_nl_ops);
+	if (rv < 0)
+		goto err;
+	return 0;
+ err:
+	genl_unregister_family(&family);
+	return rv;
 }
 
 void dlm_netlink_exit(void)
 {
+	genl_unregister_ops(&family, &dlm_nl_ops);
 	genl_unregister_family(&family);
 }
 

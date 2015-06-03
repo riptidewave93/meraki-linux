@@ -14,6 +14,7 @@
 
 #include <mach/hardware.h>
 #include <asm/leds.h>
+#include <asm/system.h>
 
 #include <mach/pxa27x.h>
 #include <mach/mainstone.h>

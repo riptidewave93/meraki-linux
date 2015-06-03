@@ -39,9 +39,10 @@
 #include <linux/parser.h>
 #include <linux/notifier.h>
 #include <linux/seq_file.h>
-#include <linux/usb/hcd.h>
+#include <linux/smp_lock.h>
 #include <asm/byteorder.h>
 #include "usb.h"
+#include "hcd.h"
 
 #define USBFS_DEFAULT_DEVMODE (S_IWUSR | S_IRUGO)
 #define USBFS_DEFAULT_BUSMODE (S_IXUGO | S_IRUGO)
@@ -50,6 +51,7 @@
 static const struct file_operations default_file_operations;
 static struct vfsmount *usbfs_mount;
 static int usbfs_mount_count;	/* = 0 */
+static int ignore_mount = 0;
 
 static struct dentry *devices_usbfs_dentry;
 static int num_buses;	/* = 0 */
@@ -64,7 +66,7 @@ static umode_t devmode = USBFS_DEFAULT_DEVMODE;
 static umode_t busmode = USBFS_DEFAULT_BUSMODE;
 static umode_t listmode = USBFS_DEFAULT_LISTMODE;
 
-static int usbfs_show_options(struct seq_file *seq, struct dentry *root)
+static int usbfs_show_options(struct seq_file *seq, struct vfsmount *mnt)
 {
 	if (devuid != 0)
 		seq_printf(seq, ",devuid=%u", devuid);
@@ -255,7 +257,7 @@ static int remount(struct super_block *sb, int *flags, char *data)
 	 * i.e. it's a simple_pin_fs from create_special_files,
 	 * then ignore it.
 	 */
-	if (*flags & MS_KERNMOUNT)
+	if (ignore_mount)
 		return 0;
 
 	if (parse_options(sb, data)) {
@@ -263,19 +265,24 @@ static int remount(struct super_block *sb, int *flags, char *data)
 		return -EINVAL;
 	}
 
-	if (usbfs_mount)
+	lock_kernel();
+
+	if (usbfs_mount && usbfs_mount->mnt_sb)
 		update_sb(usbfs_mount->mnt_sb);
+
+	unlock_kernel();
 
 	return 0;
 }
 
-static struct inode *usbfs_get_inode (struct super_block *sb, umode_t mode, dev_t dev)
+static struct inode *usbfs_get_inode (struct super_block *sb, int mode, dev_t dev)
 {
 	struct inode *inode = new_inode(sb);
 
 	if (inode) {
-		inode->i_ino = get_next_ino();
-		inode_init_owner(inode, NULL, mode);
+		inode->i_mode = mode;
+		inode->i_uid = current_fsuid();
+		inode->i_gid = current_fsgid();
 		inode->i_atime = inode->i_mtime = inode->i_ctime = CURRENT_TIME;
 		switch (mode & S_IFMT) {
 		default:
@@ -297,7 +304,7 @@ static struct inode *usbfs_get_inode (struct super_block *sb, umode_t mode, dev_
 }
 
 /* SMP-safe */
-static int usbfs_mknod (struct inode *dir, struct dentry *dentry, umode_t mode,
+static int usbfs_mknod (struct inode *dir, struct dentry *dentry, int mode,
 			dev_t dev)
 {
 	struct inode *inode = usbfs_get_inode(dir->i_sb, mode, dev);
@@ -314,7 +321,7 @@ static int usbfs_mknod (struct inode *dir, struct dentry *dentry, umode_t mode,
 	return error;
 }
 
-static int usbfs_mkdir (struct inode *dir, struct dentry *dentry, umode_t mode)
+static int usbfs_mkdir (struct inode *dir, struct dentry *dentry, int mode)
 {
 	int res;
 
@@ -325,7 +332,7 @@ static int usbfs_mkdir (struct inode *dir, struct dentry *dentry, umode_t mode)
 	return res;
 }
 
-static int usbfs_create (struct inode *dir, struct dentry *dentry, umode_t mode)
+static int usbfs_create (struct inode *dir, struct dentry *dentry, int mode)
 {
 	mode = (mode & S_IALLUGO) | S_IFREG;
 	return usbfs_mknod (dir, dentry, mode, 0);
@@ -340,19 +347,17 @@ static int usbfs_empty (struct dentry *dentry)
 {
 	struct list_head *list;
 
-	spin_lock(&dentry->d_lock);
+	spin_lock(&dcache_lock);
+
 	list_for_each(list, &dentry->d_subdirs) {
 		struct dentry *de = list_entry(list, struct dentry, d_u.d_child);
-
-		spin_lock_nested(&de->d_lock, DENTRY_D_LOCK_NESTED);
 		if (usbfs_positive(de)) {
-			spin_unlock(&de->d_lock);
-			spin_unlock(&dentry->d_lock);
+			spin_unlock(&dcache_lock);
 			return 0;
 		}
-		spin_unlock(&de->d_lock);
 	}
-	spin_unlock(&dentry->d_lock);
+
+	spin_unlock(&dcache_lock);
 	return 1;
 }
 
@@ -375,7 +380,6 @@ static int usbfs_rmdir(struct inode *dir, struct dentry *dentry)
 	mutex_lock(&inode->i_mutex);
 	dentry_unhash(dentry);
 	if (usbfs_empty(dentry)) {
-		dont_mount(dentry);
 		drop_nlink(dentry->d_inode);
 		drop_nlink(dentry->d_inode);
 		dput(dentry);
@@ -386,6 +390,7 @@ static int usbfs_rmdir(struct inode *dir, struct dentry *dentry)
 	mutex_unlock(&inode->i_mutex);
 	if (!error)
 		d_delete(dentry);
+	dput(dentry);
 	return error;
 }
 
@@ -428,10 +433,18 @@ static loff_t default_file_lseek (struct file *file, loff_t offset, int orig)
 	return retval;
 }
 
+static int default_open (struct inode *inode, struct file *file)
+{
+	if (inode->i_private)
+		file->private_data = inode->i_private;
+
+	return 0;
+}
+
 static const struct file_operations default_file_operations = {
 	.read =		default_read_file,
 	.write =	default_write_file,
-	.open =		simple_open,
+	.open =		default_open,
 	.llseek =	default_file_lseek,
 };
 
@@ -445,6 +458,7 @@ static const struct super_operations usbfs_ops = {
 static int usbfs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct inode *inode;
+	struct dentry *root;
 
 	sb->s_blocksize = PAGE_CACHE_SIZE;
 	sb->s_blocksize_bits = PAGE_CACHE_SHIFT;
@@ -452,11 +466,19 @@ static int usbfs_fill_super(struct super_block *sb, void *data, int silent)
 	sb->s_op = &usbfs_ops;
 	sb->s_time_gran = 1;
 	inode = usbfs_get_inode(sb, S_IFDIR | 0755, 0);
-	sb->s_root = d_make_root(inode);
-	if (!sb->s_root) {
-		dbg("%s: could not get root dentry!",__func__);
+
+	if (!inode) {
+		dbg("%s: could not get inode!",__func__);
 		return -ENOMEM;
 	}
+
+	root = d_alloc_root(inode);
+	if (!root) {
+		dbg("%s: could not get root dentry!",__func__);
+		iput(inode);
+		return -ENOMEM;
+	}
+	sb->s_root = root;
 	return 0;
 }
 
@@ -469,7 +491,7 @@ static int usbfs_fill_super(struct super_block *sb, void *data, int silent)
  *
  * This function handles both regular files and directories.
  */
-static int fs_create_by_name (const char *name, umode_t mode,
+static int fs_create_by_name (const char *name, mode_t mode,
 			      struct dentry *parent, struct dentry **dentry)
 {
 	int error = 0;
@@ -480,8 +502,9 @@ static int fs_create_by_name (const char *name, umode_t mode,
 	 * have around.
 	 */
 	if (!parent ) {
-		if (usbfs_mount)
-			parent = usbfs_mount->mnt_root;
+		if (usbfs_mount && usbfs_mount->mnt_sb) {
+			parent = usbfs_mount->mnt_sb->s_root;
+		}
 	}
 
 	if (!parent) {
@@ -493,7 +516,7 @@ static int fs_create_by_name (const char *name, umode_t mode,
 	mutex_lock(&parent->d_inode->i_mutex);
 	*dentry = lookup_one_len(name, parent, strlen(name));
 	if (!IS_ERR(*dentry)) {
-		if (S_ISDIR(mode))
+		if ((mode & S_IFMT) == S_IFDIR)
 			error = usbfs_mkdir (parent->d_inode, *dentry, mode);
 		else 
 			error = usbfs_create (parent->d_inode, *dentry, mode);
@@ -504,7 +527,7 @@ static int fs_create_by_name (const char *name, umode_t mode,
 	return error;
 }
 
-static struct dentry *fs_create_file (const char *name, umode_t mode,
+static struct dentry *fs_create_file (const char *name, mode_t mode,
 				      struct dentry *parent, void *data,
 				      const struct file_operations *fops,
 				      uid_t uid, gid_t gid)
@@ -553,16 +576,16 @@ static void fs_remove_file (struct dentry *dentry)
 
 /* --------------------------------------------------------------------- */
 
-static struct dentry *usb_mount(struct file_system_type *fs_type,
-	int flags, const char *dev_name, void *data)
+static int usb_get_sb(struct file_system_type *fs_type,
+	int flags, const char *dev_name, void *data, struct vfsmount *mnt)
 {
-	return mount_single(fs_type, flags, data, usbfs_fill_super);
+	return get_sb_single(fs_type, flags, data, usbfs_fill_super, mnt);
 }
 
 static struct file_system_type usb_fs_type = {
 	.owner =	THIS_MODULE,
 	.name =		"usbfs",
-	.mount =	usb_mount,
+	.get_sb =	usb_get_sb,
 	.kill_sb =	kill_litter_super,
 };
 
@@ -573,6 +596,11 @@ static int create_special_files (void)
 	struct dentry *parent;
 	int retval;
 
+	/* the simple_pin_fs calls will call remount with no options
+	 * without this flag that would overwrite the real mount options (if any)
+	 */
+	ignore_mount = 1;
+
 	/* create the devices special file */
 	retval = simple_pin_fs(&usb_fs_type, &usbfs_mount, &usbfs_mount_count);
 	if (retval) {
@@ -580,7 +608,9 @@ static int create_special_files (void)
 		goto exit;
 	}
 
-	parent = usbfs_mount->mnt_root;
+	ignore_mount = 0;
+
+	parent = usbfs_mount->mnt_sb->s_root;
 	devices_usbfs_dentry = fs_create_file ("devices",
 					       listmode | S_IFREG, parent,
 					       NULL, &usbfs_devices_fops,
@@ -634,7 +664,7 @@ static void usbfs_add_bus(struct usb_bus *bus)
 
 	sprintf (name, "%03d", bus->busnum);
 
-	parent = usbfs_mount->mnt_root;
+	parent = usbfs_mount->mnt_sb->s_root;
 	bus->usbfs_dentry = fs_create_file (name, busmode | S_IFDIR, parent,
 					    bus, NULL, busuid, busgid);
 	if (bus->usbfs_dentry == NULL) {

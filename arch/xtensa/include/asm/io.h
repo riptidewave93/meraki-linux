@@ -14,7 +14,6 @@
 #ifdef __KERNEL__
 #include <asm/byteorder.h>
 #include <asm/page.h>
-#include <linux/bug.h>
 #include <linux/kernel.h>
 
 #include <linux/types.h>

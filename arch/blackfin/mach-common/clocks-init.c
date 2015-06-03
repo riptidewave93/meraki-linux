@@ -13,7 +13,6 @@
 #include <asm/dma.h>
 #include <asm/clocks.h>
 #include <asm/mem_init.h>
-#include <asm/dpmc.h>
 
 #define SDGCTL_WIDTH (1 << 31)	/* SDRAM external data path width */
 #define PLL_CTL_VAL \

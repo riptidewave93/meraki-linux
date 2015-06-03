@@ -3,11 +3,21 @@
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/list.h>
+#include <linux/errno.h>
+#include <linux/err.h>
+#include <linux/string.h>
 #include <linux/clk.h>
 #include <linux/spinlock.h>
+#include <linux/platform_device.h>
 #include <linux/delay.h>
-#include <linux/clkdev.h>
 
+#include <asm/clkdev.h>
+#include <mach/pxa2xx-regs.h>
+#include <mach/hardware.h>
+
+#include "devices.h"
+#include "generic.h"
 #include "clock.h"
 
 static DEFINE_SPINLOCK(clocks_lock);
@@ -53,34 +63,26 @@ unsigned long clk_get_rate(struct clk *clk)
 }
 EXPORT_SYMBOL(clk_get_rate);
 
-int clk_set_rate(struct clk *clk, unsigned long rate)
+
+void clk_cken_enable(struct clk *clk)
 {
-	unsigned long flags;
-	int ret = -EINVAL;
-
-	if (clk->ops->setrate) {
-		spin_lock_irqsave(&clocks_lock, flags);
-		ret = clk->ops->setrate(clk, rate);
-		spin_unlock_irqrestore(&clocks_lock, flags);
-	}
-
-	return ret;
-}
-EXPORT_SYMBOL(clk_set_rate);
-
-void clk_dummy_enable(struct clk *clk)
-{
+	CKEN |= 1 << clk->cken;
 }
 
-void clk_dummy_disable(struct clk *clk)
+void clk_cken_disable(struct clk *clk)
 {
+	CKEN &= ~(1 << clk->cken);
 }
 
-const struct clkops clk_dummy_ops = {
-	.enable		= clk_dummy_enable,
-	.disable	= clk_dummy_disable,
+const struct clkops clk_cken_ops = {
+	.enable		= clk_cken_enable,
+	.disable	= clk_cken_disable,
 };
 
-struct clk clk_dummy = {
-	.ops		= &clk_dummy_ops,
-};
+void clks_register(struct clk_lookup *clks, size_t num)
+{
+	int i;
+
+	for (i = 0; i < num; i++)
+		clkdev_add(&clks[i]);
+}

@@ -358,10 +358,11 @@ static int __devexit qt2160_remove(struct i2c_client *client)
 	input_unregister_device(qt2160->input);
 	kfree(qt2160);
 
+	i2c_set_clientdata(client, NULL);
 	return 0;
 }
 
-static const struct i2c_device_id qt2160_idtable[] = {
+static struct i2c_device_id qt2160_idtable[] = {
 	{ "qt2160", 0, },
 	{ }
 };
@@ -379,7 +380,17 @@ static struct i2c_driver qt2160_driver = {
 	.remove		= __devexit_p(qt2160_remove),
 };
 
-module_i2c_driver(qt2160_driver);
+static int __init qt2160_init(void)
+{
+	return i2c_add_driver(&qt2160_driver);
+}
+module_init(qt2160_init);
+
+static void __exit qt2160_cleanup(void)
+{
+	i2c_del_driver(&qt2160_driver);
+}
+module_exit(qt2160_cleanup);
 
 MODULE_AUTHOR("Raphael Derosso Pereira <raphaelpereira@gmail.com>");
 MODULE_DESCRIPTION("Driver for AT42QT2160 Touch Sensor");

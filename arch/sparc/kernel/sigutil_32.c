@@ -7,7 +7,6 @@
 #include <asm/sigcontext.h>
 #include <asm/fpumacro.h>
 #include <asm/ptrace.h>
-#include <asm/switch_to.h>
 
 #include "sigutil.h"
 

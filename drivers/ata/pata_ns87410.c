@@ -86,7 +86,7 @@ static void ns87410_set_piomode(struct ata_port *ap, struct ata_device *adev)
 		idefr &= ~0x04;
 
 	if (ata_timing_compute(adev, adev->pio_mode, &at, 30303, 1) < 0) {
-		dev_err(&pdev->dev, "unknown mode %d\n", adev->pio_mode);
+		dev_printk(KERN_ERR, &pdev->dev, "unknown mode %d.\n", adev->pio_mode);
 		return;
 	}
 
@@ -148,7 +148,7 @@ static int ns87410_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 		.port_ops = &ns87410_port_ops
 	};
 	const struct ata_port_info *ppi[] = { &info, NULL };
-	return ata_pci_sff_init_one(dev, ppi, &ns87410_sht, NULL, 0);
+	return ata_pci_sff_init_one(dev, ppi, &ns87410_sht, NULL);
 }
 
 static const struct pci_device_id ns87410[] = {

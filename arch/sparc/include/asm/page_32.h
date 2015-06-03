@@ -8,10 +8,14 @@
 #ifndef _SPARC_PAGE_H
 #define _SPARC_PAGE_H
 
-#include <linux/const.h>
-
 #define PAGE_SHIFT   12
-#define PAGE_SIZE    (_AC(1, UL) << PAGE_SHIFT)
+
+#ifndef __ASSEMBLY__
+/* I have my suspicions... -DaveM */
+#define PAGE_SIZE    (1UL << PAGE_SHIFT)
+#else
+#define PAGE_SIZE    (1 << PAGE_SHIFT)
+#endif
 #define PAGE_MASK    (~(PAGE_SIZE-1))
 
 #include <asm/btfixup.h>

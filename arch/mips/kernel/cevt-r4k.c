@@ -10,7 +10,6 @@
 #include <linux/interrupt.h>
 #include <linux/percpu.h>
 #include <linux/smp.h>
-#include <linux/irq.h>
 
 #include <asm/smtc_ipi.h>
 #include <asm/time.h>
@@ -32,7 +31,7 @@ static int mips_next_event(unsigned long delta,
 	cnt = read_c0_count();
 	cnt += delta;
 	write_c0_compare(cnt);
-	res = ((int)(read_c0_count() - cnt) >= 0) ? -ETIME : 0;
+	res = ((int)(read_c0_count() - cnt) > 0) ? -ETIME : 0;
 	return res;
 }
 
@@ -75,6 +74,14 @@ irqreturn_t c0_compare_interrupt(int irq, void *dev_id)
 		cd = &per_cpu(mips_clockevent_device, cpu);
 		cd->event_handler(cd);
 	}
+#ifdef CONFIG_OPROFILE_WASP
+        //pkamath: oprofile-0.9.2 does not support interrupt based profiling.
+        //Therefore we will check for a profiling event every timer interrupt.
+        // Note that this may impact accuracy of the profile
+        if (!r2 || (read_c0_cause() & (1 << 26)))
+                perf_irq();
+        //End of code changes
+#endif
 
 out:
 	return IRQ_HANDLED;
@@ -84,7 +91,7 @@ out:
 
 struct irqaction c0_compare_irqaction = {
 	.handler = c0_compare_interrupt,
-	.flags = IRQF_PERCPU | IRQF_TIMER,
+	.flags = IRQF_DISABLED | IRQF_PERCPU | IRQF_TIMER,
 	.name = "timer",
 };
 
@@ -98,15 +105,24 @@ void mips_event_handler(struct clock_event_device *dev)
  */
 static int c0_compare_int_pending(void)
 {
-	return (read_c0_cause() >> cp0_compare_irq_shift) & (1ul << CAUSEB_IP);
+	return (read_c0_cause() >> cp0_compare_irq) & 0x100;
 }
 
 /*
  * Compare interrupt can be routed and latched outside the core,
- * so wait up to worst case number of cycle counter ticks for timer interrupt
- * changes to propagate to the cause register.
+ * so a single execution hazard barrier may not be enough to give
+ * it time to clear as seen in the Cause register.  4 time the
+ * pipeline depth seems reasonably conservative, and empirically
+ * works better in configurations with high CPU/bus clock ratios.
  */
-#define COMPARE_INT_SEEN_TICKS 50
+
+#define compare_change_hazard() \
+	do { \
+		irq_disable_hazard(); \
+		irq_disable_hazard(); \
+		irq_disable_hazard(); \
+		irq_disable_hazard(); \
+	} while (0)
 
 int c0_compare_int_usable(void)
 {
@@ -117,12 +133,8 @@ int c0_compare_int_usable(void)
 	 * IP7 already pending?  Try to clear it by acking the timer.
 	 */
 	if (c0_compare_int_pending()) {
-		cnt = read_c0_count();
-		write_c0_compare(cnt);
-		back_to_back_c0_hazard();
-		while (read_c0_count() < (cnt  + COMPARE_INT_SEEN_TICKS))
-			if (!c0_compare_int_pending())
-				break;
+		write_c0_compare(read_c0_count());
+		compare_change_hazard();
 		if (c0_compare_int_pending())
 			return 0;
 	}
@@ -131,7 +143,7 @@ int c0_compare_int_usable(void)
 		cnt = read_c0_count();
 		cnt += delta;
 		write_c0_compare(cnt);
-		back_to_back_c0_hazard();
+		compare_change_hazard();
 		if ((int)(read_c0_count() - cnt) < 0)
 		    break;
 		/* increase delta if the timer was already expired */
@@ -140,17 +152,12 @@ int c0_compare_int_usable(void)
 	while ((int)(read_c0_count() - cnt) <= 0)
 		;	/* Wait for expiry  */
 
-	while (read_c0_count() < (cnt + COMPARE_INT_SEEN_TICKS))
-		if (c0_compare_int_pending())
-			break;
+	compare_change_hazard();
 	if (!c0_compare_int_pending())
 		return 0;
-	cnt = read_c0_count();
-	write_c0_compare(cnt);
-	back_to_back_c0_hazard();
-	while (read_c0_count() < (cnt + COMPARE_INT_SEEN_TICKS))
-		if (!c0_compare_int_pending())
-			break;
+
+	write_c0_compare(read_c0_count());
+	compare_change_hazard();
 	if (c0_compare_int_pending())
 		return 0;
 
@@ -164,6 +171,7 @@ int c0_compare_int_usable(void)
 
 int __cpuinit r4k_clockevent_init(void)
 {
+	uint64_t mips_freq = mips_hpt_frequency;
 	unsigned int cpu = smp_processor_id();
 	struct clock_event_device *cd;
 	unsigned int irq;
@@ -172,7 +180,18 @@ int __cpuinit r4k_clockevent_init(void)
 		return -ENXIO;
 
 	if (!c0_compare_int_usable())
+#if defined(CONFIG_SOC_AR934x) || defined(CONFIG_MACH_AR7100)
+		/*
+		 * The above test seems to randomly fail on Wasp. This
+		 * results in timer isr not getting registered. Later,
+		 * when the cpu receives a timer interrupt and tries
+		 * to handle it, the corresponding data structures are
+		 * not initialzed properly resulting in a panic
+		 */
+		printk("%s: Ignoring int_usable failure\n", __func__);
+#else
 		return -ENXIO;
+#endif
 
 	/*
 	 * With vectored interrupts things are getting platform specific.
@@ -188,9 +207,9 @@ int __cpuinit r4k_clockevent_init(void)
 	cd->name		= "MIPS";
 	cd->features		= CLOCK_EVT_FEAT_ONESHOT;
 
-	clockevent_set_clock(cd, mips_hpt_frequency);
-
 	/* Calculate the min / max delta */
+	cd->mult	= div_sc((unsigned long) mips_freq, NSEC_PER_SEC, 32);
+	cd->shift		= 32;
 	cd->max_delta_ns	= clockevent_delta2ns(0x7fffffff, cd);
 	cd->min_delta_ns	= clockevent_delta2ns(0x300, cd);
 

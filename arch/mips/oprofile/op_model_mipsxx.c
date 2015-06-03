@@ -341,7 +341,16 @@ static int __init mipsxx_init(void)
 		break;
 
 	case CPU_74K:
+#ifdef CONFIG_OPROFILE_WASP
+                /*
+                 * for now wasp 74k is exposed as 24k, so
+                 * that the old oprofile tool works without
+                 * whining about the processor
+                 */
+		op_model_mipsxx_ops.cpu_type = "mips/24K";
+#else
 		op_model_mipsxx_ops.cpu_type = "mips/74K";
+#endif
 		break;
 
 	case CPU_5KC:

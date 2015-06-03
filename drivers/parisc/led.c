@@ -38,7 +38,6 @@
 #include <linux/kernel_stat.h>
 #include <linux/reboot.h>
 #include <linux/proc_fs.h>
-#include <linux/seq_file.h>
 #include <linux/ctype.h>
 #include <linux/blkdev.h>
 #include <linux/workqueue.h>
@@ -64,7 +63,6 @@ static unsigned int led_diskio    __read_mostly = 1;
 static unsigned int led_lanrxtx   __read_mostly = 1;
 static char lcd_text[32]          __read_mostly;
 static char lcd_text_default[32]  __read_mostly;
-static int  lcd_no_led_support    __read_mostly = 0; /* KittyHawk doesn't support LED on its LCD */
 
 
 static struct workqueue_struct *led_wq;
@@ -116,7 +114,7 @@ lcd_info __attribute__((aligned(8))) __read_mostly =
 	.lcd_width =		16,
 	.lcd_cmd_reg_addr =	KITTYHAWK_LCD_CMD,
 	.lcd_data_reg_addr =	KITTYHAWK_LCD_DATA,
-	.min_cmd_delay =	80,
+	.min_cmd_delay =	40,
 	.reset_cmd1 =		0x80,
 	.reset_cmd2 =		0xc0,
 };
@@ -136,9 +134,6 @@ static int start_task(void)
 	/* Display the default text now */
 	if (led_type == LED_HASLCD) lcd_print( lcd_text_default );
 
-	/* KittyHawk has no LED support on its LCD */
-	if (lcd_no_led_support) return 0;
-
 	/* Create the work queue and queue the LED task */
 	led_wq = create_singlethread_workqueue("led_wq");	
 	queue_delayed_work(led_wq, &led_task, 0);
@@ -152,34 +147,41 @@ device_initcall(start_task);
 static void (*led_func_ptr) (unsigned char) __read_mostly;
 
 #ifdef CONFIG_PROC_FS
-static int led_proc_show(struct seq_file *m, void *v)
+static int led_proc_read(char *page, char **start, off_t off, int count, 
+	int *eof, void *data)
 {
-	switch ((long)m->private)
+	char *out = page;
+	int len;
+
+	switch ((long)data)
 	{
 	case LED_NOLCD:
-		seq_printf(m, "Heartbeat: %d\n", led_heartbeat);
-		seq_printf(m, "Disk IO: %d\n", led_diskio);
-		seq_printf(m, "LAN Rx/Tx: %d\n", led_lanrxtx);
+		out += sprintf(out, "Heartbeat: %d\n", led_heartbeat);
+		out += sprintf(out, "Disk IO: %d\n", led_diskio);
+		out += sprintf(out, "LAN Rx/Tx: %d\n", led_lanrxtx);
 		break;
 	case LED_HASLCD:
-		seq_printf(m, "%s\n", lcd_text);
+		out += sprintf(out, "%s\n", lcd_text);
 		break;
 	default:
+		*eof = 1;
 		return 0;
 	}
-	return 0;
+
+	len = out - page - off;
+	if (len < count) {
+		*eof = 1;
+		if (len <= 0) return 0;
+	} else {
+		len = count;
+	}
+	*start = page + off;
+	return len;
 }
 
-static int led_proc_open(struct inode *inode, struct file *file)
+static int led_proc_write(struct file *file, const char *buf, 
+	unsigned long count, void *data)
 {
-	return single_open(file, led_proc_show, PDE(inode)->data);
-}
-
-
-static ssize_t led_proc_write(struct file *file, const char *buf,
-	size_t count, loff_t *pos)
-{
-	void *data = PDE(file->f_path.dentry->d_inode)->data;
 	char *cur, lbuf[32];
 	int d;
 
@@ -234,15 +236,6 @@ parse_error:
 	return -EINVAL;
 }
 
-static const struct file_operations led_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= led_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-	.write		= led_proc_write,
-};
-
 static int __init led_create_procfs(void)
 {
 	struct proc_dir_entry *proc_pdc_root = NULL;
@@ -252,19 +245,19 @@ static int __init led_create_procfs(void)
 
 	proc_pdc_root = proc_mkdir("pdc", 0);
 	if (!proc_pdc_root) return -1;
-
-	if (!lcd_no_led_support)
-	{
-		ent = proc_create_data("led", S_IRUGO|S_IWUSR, proc_pdc_root,
-					&led_proc_fops, (void *)LED_NOLCD); /* LED */
-		if (!ent) return -1;
-	}
+	ent = create_proc_entry("led", S_IFREG|S_IRUGO|S_IWUSR, proc_pdc_root);
+	if (!ent) return -1;
+	ent->data = (void *)LED_NOLCD; /* LED */
+	ent->read_proc = led_proc_read;
+	ent->write_proc = led_proc_write;
 
 	if (led_type == LED_HASLCD)
 	{
-		ent = proc_create_data("lcd", S_IRUGO|S_IWUSR, proc_pdc_root,
-					&led_proc_fops, (void *)LED_HASLCD); /* LCD */
+		ent = create_proc_entry("lcd", S_IFREG|S_IRUGO|S_IWUSR, proc_pdc_root);
 		if (!ent) return -1;
+		ent->data = (void *)LED_HASLCD; /* LCD */
+		ent->read_proc = led_proc_read;
+		ent->write_proc = led_proc_write;
 	}
 
 	return 0;
@@ -354,28 +347,30 @@ static __inline__ int led_get_net_activity(void)
 #ifndef CONFIG_NET
 	return 0;
 #else
-	static u64 rx_total_last, tx_total_last;
-	u64 rx_total, tx_total;
+	static unsigned long rx_total_last, tx_total_last;
+	unsigned long rx_total, tx_total;
 	struct net_device *dev;
 	int retval;
 
 	rx_total = tx_total = 0;
 	
-	/* we are running as a workqueue task, so we can use an RCU lookup */
+	/* we are running as a workqueue task, so locking dev_base 
+	 * for reading should be OK */
+	read_lock(&dev_base_lock);
 	rcu_read_lock();
-	for_each_netdev_rcu(&init_net, dev) {
-	    const struct rtnl_link_stats64 *stats;
-	    struct rtnl_link_stats64 temp;
+	for_each_netdev(&init_net, dev) {
+	    const struct net_device_stats *stats;
 	    struct in_device *in_dev = __in_dev_get_rcu(dev);
 	    if (!in_dev || !in_dev->ifa_list)
 		continue;
 	    if (ipv4_is_loopback(in_dev->ifa_list->ifa_local))
 		continue;
-	    stats = dev_get_stats(dev, &temp);
+	    stats = dev_get_stats(dev);
 	    rx_total += stats->rx_packets;
 	    tx_total += stats->tx_packets;
 	}
 	rcu_read_unlock();
+	read_unlock(&dev_base_lock);
 
 	retval = 0;
 
@@ -700,7 +695,6 @@ int __init led_init(void)
 	case 0x58B:		/* KittyHawk DC2 100 (K200) */
 		printk(KERN_INFO "%s: KittyHawk-Machine (hversion 0x%x) found, "
 				"LED detection skipped.\n", __FILE__, CPU_HVERSION);
-		lcd_no_led_support = 1;
 		goto found;	/* use the preinitialized values of lcd_info */
 	}
 

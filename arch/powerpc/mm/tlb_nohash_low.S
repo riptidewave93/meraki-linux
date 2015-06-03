@@ -10,7 +10,7 @@
  *	- tlbil_va
  *	- tlbil_pid
  *	- tlbil_all
- *	- tlbivax_bcast
+ *	- tlbivax_bcast (not yet)
  *
  * Code mostly moved over from misc_32.S
  *
@@ -33,7 +33,6 @@
 #include <asm/ppc_asm.h>
 #include <asm/asm-offsets.h>
 #include <asm/processor.h>
-#include <asm/bug.h>
 
 #if defined(CONFIG_40x)
 
@@ -66,7 +65,7 @@ _GLOBAL(__tlbil_va)
  * Nothing to do for 8xx, everything is inline
  */
 
-#elif defined(CONFIG_44x) /* Includes 47x */
+#elif defined(CONFIG_44x)
 
 /*
  * 440 implementation uses tlbsx/we for tlbil_va and a full sweep
@@ -74,13 +73,7 @@ _GLOBAL(__tlbil_va)
  */
 _GLOBAL(__tlbil_va)
 	mfspr	r5,SPRN_MMUCR
-	mfmsr   r10
-
-	/*
-	 * We write 16 bits of STID since 47x supports that much, we
-	 * will never be passed out of bounds values on 440 (hopefully)
-	 */
-	rlwimi  r5,r4,0,16,31
+	rlwimi	r5,r4,0,24,31			/* Set TID */
 
 	/* We have to run the search with interrupts disabled, otherwise
 	 * an interrupt which causes a TLB miss can clobber the MMUCR
@@ -90,41 +83,24 @@ _GLOBAL(__tlbil_va)
 	 * and restoring MMUCR, so only normal interrupts have to be
 	 * taken care of.
 	 */
+	mfmsr	r4
 	wrteei	0
 	mtspr	SPRN_MMUCR,r5
-	tlbsx.	r6,0,r3
-	bne	10f
+	tlbsx.	r3, 0, r3
+	wrtee	r4
+	bne	1f
 	sync
-BEGIN_MMU_FTR_SECTION
-	b	2f
-END_MMU_FTR_SECTION_IFSET(MMU_FTR_TYPE_47x)
-	/* On 440 There are only 64 TLB entries, so r3 < 64, which means bit
-	 * 22, is clear.  Since 22 is the V bit in the TLB_PAGEID, loading this
+	/* There are only 64 TLB entries, so r3 < 64,
+	 * which means bit 22, is clear.  Since 22 is
+	 * the V bit in the TLB_PAGEID, loading this
 	 * value will invalidate the TLB entry.
 	 */
-	tlbwe	r6,r6,PPC44x_TLB_PAGEID
+	tlbwe	r3, r3, PPC44x_TLB_PAGEID
 	isync
-10:	wrtee	r10
-	blr
-2:
-#ifdef CONFIG_PPC_47x
-	oris	r7,r6,0x8000	/* specify way explicitely */
-	clrrwi	r4,r3,12	/* get an EPN for the hashing with V = 0 */
-	ori	r4,r4,PPC47x_TLBE_SIZE
-	tlbwe   r4,r7,0		/* write it */
-	isync
-	wrtee	r10
-	blr
-#else /* CONFIG_PPC_47x */
-1:	trap
-	EMIT_BUG_ENTRY 1b,__FILE__,__LINE__,0;
-#endif /* !CONFIG_PPC_47x */
+1:	blr
 
 _GLOBAL(_tlbil_all)
 _GLOBAL(_tlbil_pid)
-BEGIN_MMU_FTR_SECTION
-	b	2f
-END_MMU_FTR_SECTION_IFSET(MMU_FTR_TYPE_47x)
 	li	r3,0
 	sync
 
@@ -139,112 +115,6 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_TYPE_47x)
 
 	isync
 	blr
-2:
-#ifdef CONFIG_PPC_47x
-	/* 476 variant. There's not simple way to do this, hopefully we'll
-	 * try to limit the amount of such full invalidates
-	 */
-	mfmsr	r11		/* Interrupts off */
-	wrteei	0
-	li	r3,-1		/* Current set */
-	lis	r10,tlb_47x_boltmap@h
-	ori	r10,r10,tlb_47x_boltmap@l
-	lis	r7,0x8000	/* Specify way explicitely */
-
-	b	9f		/* For each set */
-
-1:	li	r9,4		/* Number of ways */
-	li	r4,0		/* Current way */
-	li	r6,0		/* Default entry value 0 */
-	andi.	r0,r8,1		/* Check if way 0 is bolted */
-	mtctr	r9		/* Load way counter */
-	bne-	3f		/* Bolted, skip loading it */
-
-2:	/* For each way */
-	or	r5,r3,r4	/* Make way|index for tlbre */
-	rlwimi	r5,r5,16,8,15	/* Copy index into position */
-	tlbre	r6,r5,0		/* Read entry */
-3:	addis	r4,r4,0x2000	/* Next way */
-	andi.	r0,r6,PPC47x_TLB0_VALID /* Valid entry ? */
-	beq	4f		/* Nope, skip it */
-	rlwimi	r7,r5,0,1,2	/* Insert way number */
-	rlwinm	r6,r6,0,21,19	/* Clear V */
-	tlbwe   r6,r7,0		/* Write it */
-4:	bdnz	2b		/* Loop for each way */
-	srwi	r8,r8,1		/* Next boltmap bit */
-9:	cmpwi	cr1,r3,255	/* Last set done ? */
-	addi	r3,r3,1		/* Next set */
-	beq	cr1,1f		/* End of loop */
-	andi.	r0,r3,0x1f	/* Need to load a new boltmap word ? */
-	bne	1b		/* No, loop */
-	lwz	r8,0(r10)	/* Load boltmap entry */
-	addi	r10,r10,4	/* Next word */
-	b	1b		/* Then loop */
-1:	isync			/* Sync shadows */
-	wrtee	r11
-#else /* CONFIG_PPC_47x */
-1:	trap
-	EMIT_BUG_ENTRY 1b,__FILE__,__LINE__,0;
-#endif /* !CONFIG_PPC_47x */
-	blr
-
-#ifdef CONFIG_PPC_47x
-
-/*
- * 47x variant of icbt
- */
-# define ICBT(CT,RA,RB)	\
-	.long	0x7c00002c | ((CT) << 21) | ((RA) << 16) | ((RB) << 11)
-
-/*
- * _tlbivax_bcast is only on 47x. We don't bother doing a runtime
- * check though, it will blow up soon enough if we mistakenly try
- * to use it on a 440.
- */
-_GLOBAL(_tlbivax_bcast)
-	mfspr	r5,SPRN_MMUCR
-	mfmsr	r10
-	rlwimi	r5,r4,0,16,31
-	wrteei	0
-	mtspr	SPRN_MMUCR,r5
-	isync
-/*	tlbivax	0,r3 - use .long to avoid binutils deps */
-	.long 0x7c000624 | (r3 << 11)
-	isync
-	eieio
-	tlbsync
-BEGIN_FTR_SECTION
-	b	1f
-END_FTR_SECTION_IFSET(CPU_FTR_476_DD2)
-	sync
-	wrtee	r10
-	blr
-/*
- * DD2 HW could hang if in instruction fetch happens before msync completes.
- * Touch enough instruction cache lines to ensure cache hits
- */
-1:	mflr	r9
-	bl	2f
-2:	mflr	r6
-	li	r7,32
-	ICBT(0,r6,r7)		/* touch next cache line */
-	add	r6,r6,r7
-	ICBT(0,r6,r7)		/* touch next cache line */
-	add	r6,r6,r7
-	ICBT(0,r6,r7)		/* touch next cache line */
-	sync
-	nop
-	nop
-	nop
-	nop
-	nop
-	nop
-	nop
-	nop
-	mtlr	r9
-	wrtee	r10
-	blr
-#endif /* CONFIG_PPC_47x */
 
 #elif defined(CONFIG_FSL_BOOKE)
 /*
@@ -402,14 +272,15 @@ _GLOBAL(set_context)
 #error Unsupported processor type !
 #endif
 
-#if defined(CONFIG_PPC_FSL_BOOK3E)
+
+#if defined(CONFIG_FSL_BOOKE)
 /*
  * extern void loadcam_entry(unsigned int index)
  *
  * Load TLBCAM[index] entry in to the L2 CAM MMU
  */
 _GLOBAL(loadcam_entry)
-	LOAD_REG_ADDR(r4, TLBCAM)
+LOAD_REG_ADDR(r4, TLBCAM)
 	mulli	r5,r3,TLBCAM_SIZE
 	add	r3,r5,r4
 	lwz	r4,TLBCAM_MAS0(r3)
@@ -420,7 +291,7 @@ _GLOBAL(loadcam_entry)
 	mtspr	SPRN_MAS2,r4
 	lwz	r4,TLBCAM_MAS3(r3)
 	mtspr	SPRN_MAS3,r4
-BEGIN_MMU_FTR_SECTION
+	BEGIN_MMU_FTR_SECTION
 	lwz	r4,TLBCAM_MAS7(r3)
 	mtspr	SPRN_MAS7,r4
 END_MMU_FTR_SECTION_IFSET(MMU_FTR_BIG_PHYS)

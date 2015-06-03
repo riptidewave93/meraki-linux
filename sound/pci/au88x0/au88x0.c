@@ -19,14 +19,14 @@
 #include <linux/pci.h>
 #include <linux/slab.h>
 #include <linux/interrupt.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/dma-mapping.h>
 #include <sound/initval.h>
 
 // module parameters (see "Module Parameters")
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
 static int pcifix[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS - 1)] = 255 };
 
 module_param_array(index, int, NULL, 0444);
@@ -196,7 +196,7 @@ snd_vortex_create(struct snd_card *card, struct pci_dev *pci, vortex_t ** rchip)
 	}
 
 	if ((err = request_irq(pci->irq, vortex_interrupt,
-			       IRQF_SHARED, KBUILD_MODNAME,
+	                       IRQF_SHARED, CARD_NAME_SHORT,
 	                       chip)) != 0) {
 		printk(KERN_ERR "cannot grab irq\n");
 		goto irq_out;
@@ -268,14 +268,8 @@ snd_vortex_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 		card->shortname, chip->io, chip->irq);
 
 	// (4) Alloc components.
-	err = snd_vortex_mixer(chip);
-	if (err < 0) {
-		snd_card_free(card);
-		return err;
-	}
 	// ADB pcm.
-	err = snd_vortex_new_pcm(chip, VORTEX_PCM_ADB, NR_PCM);
-	if (err < 0) {
+	if ((err = snd_vortex_new_pcm(chip, VORTEX_PCM_ADB, NR_ADB)) < 0) {
 		snd_card_free(card);
 		return err;
 	}
@@ -305,6 +299,11 @@ snd_vortex_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 		return err;
 	}
 #endif
+	// snd_ac97_mixer and Vortex mixer.
+	if ((err = snd_vortex_mixer(chip)) < 0) {
+		snd_card_free(card);
+		return err;
+	}
 	if ((err = snd_vortex_midi(chip)) < 0) {
 		snd_card_free(card);
 		return err;
@@ -376,7 +375,7 @@ static void __devexit snd_vortex_remove(struct pci_dev *pci)
 
 // pci_driver definition
 static struct pci_driver driver = {
-	.name = KBUILD_MODNAME,
+	.name = CARD_NAME_SHORT,
 	.id_table = snd_vortex_ids,
 	.probe = snd_vortex_probe,
 	.remove = __devexit_p(snd_vortex_remove),

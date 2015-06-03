@@ -27,7 +27,7 @@
 #include <linux/module.h>
 #include <linux/wanrouter.h>	/* WAN router API definitions */
 #include <linux/seq_file.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 
 #include <net/net_namespace.h>
 #include <asm/io.h>
@@ -51,7 +51,7 @@
 
 /*
  *	Structures for interfacing with the /proc filesystem.
- *	Router creates its own directory /proc/net/router with the following
+ *	Router creates its own directory /proc/net/router with the folowing
  *	entries:
  *	config		device configuration
  *	status		global device statistics
@@ -66,7 +66,6 @@
  *	/proc/net/router
  */
 
-static DEFINE_MUTEX(config_mutex);
 static struct proc_dir_entry *proc_router;
 
 /* Strings */
@@ -81,11 +80,12 @@ static struct proc_dir_entry *proc_router;
  *	Iterator
  */
 static void *r_start(struct seq_file *m, loff_t *pos)
+	__acquires(kernel_lock)
 {
 	struct wan_device *wandev;
 	loff_t l = *pos;
 
-	mutex_lock(&config_mutex);
+	lock_kernel();
 	if (!l--)
 		return SEQ_START_TOKEN;
 	for (wandev = wanrouter_router_devlist; l-- && wandev;
@@ -102,8 +102,9 @@ static void *r_next(struct seq_file *m, void *v, loff_t *pos)
 }
 
 static void r_stop(struct seq_file *m, void *v)
+	__releases(kernel_lock)
 {
-	mutex_unlock(&config_mutex);
+	unlock_kernel();
 }
 
 static int config_show(struct seq_file *m, void *v)

@@ -52,7 +52,7 @@ machine_kexec(struct kimage *image)
 	reboot_code_buffer =
 	  (unsigned long)page_address(image->control_code_page);
 
-	kexec_start_address = image->start;
+	kexec_start_address = KSEG0ADDR(image->start);
 	kexec_indirection_page =
 		(unsigned long) phys_to_virt(image->head & PAGE_MASK);
 
@@ -78,8 +78,8 @@ machine_kexec(struct kimage *image)
 	 */
 	local_irq_disable();
 
-	printk("Will call new kernel at %08lx\n", image->start);
+	printk("Will call new kernel at %08lx\n", kexec_start_address);
 	printk("Bye ...\n");
-	__flush_cache_all();
+	flush_icache_range(reboot_code_buffer, relocate_new_kernel_size);
 	((noretfun_t) reboot_code_buffer)();
 }

@@ -74,7 +74,7 @@ enum {
  * WUSB defines that CHIDs, CDIDs and CKs are a 16 byte string of
  * data. In order to avoid confusion and enforce types, we wrap it.
  *
- * Make it packed, as we use it in some hw definitions.
+ * Make it packed, as we use it in some hw defintions.
  */
 struct wusb_ckhdid {
 	u8 data[16];
@@ -126,7 +126,7 @@ enum {
 /**
  * WUSB IE: Channel Stop (WUSB1.0[7.5.8])
  *
- * Tells devices the host is going to stop sending MMCs and will disappear.
+ * Tells devices the host is going to stop sending MMCs and will dissapear.
  */
 struct wuie_channel_stop {
 	struct wuie_hdr hdr;

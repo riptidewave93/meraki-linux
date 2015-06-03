@@ -21,8 +21,8 @@ three rotations, respectively, to balance the tree), with slightly slower
 To quote Linux Weekly News:
 
     There are a number of red-black trees in use in the kernel.
-    The deadline and CFQ I/O schedulers employ rbtrees to
-    track requests; the packet CD/DVD driver does the same.
+    The anticipatory, deadline, and CFQ I/O schedulers all employ
+    rbtrees to track requests; the packet CD/DVD driver does the same.
     The high-resolution timer code uses an rbtree to organize outstanding
     timer requests.  The ext3 filesystem tracks directory entries in a
     red-black tree.  Virtual memory areas (VMAs) are tracked with red-black
@@ -190,66 +190,3 @@ Example:
   for (node = rb_first(&mytree); node; node = rb_next(node))
 	printk("key=%s\n", rb_entry(node, struct mytype, node)->keystring);
 
-Support for Augmented rbtrees
------------------------------
-
-Augmented rbtree is an rbtree with "some" additional data stored in each node.
-This data can be used to augment some new functionality to rbtree.
-Augmented rbtree is an optional feature built on top of basic rbtree
-infrastructure. An rbtree user who wants this feature will have to call the
-augmentation functions with the user provided augmentation callback
-when inserting and erasing nodes.
-
-On insertion, the user must call rb_augment_insert() once the new node is in
-place. This will cause the augmentation function callback to be called for
-each node between the new node and the root which has been affected by the
-insertion.
-
-When erasing a node, the user must call rb_augment_erase_begin() first to
-retrieve the deepest node on the rebalance path. Then, after erasing the
-original node, the user must call rb_augment_erase_end() with the deepest
-node found earlier. This will cause the augmentation function to be called
-for each affected node between the deepest node and the root.
-
-
-Interval tree is an example of augmented rb tree. Reference -
-"Introduction to Algorithms" by Cormen, Leiserson, Rivest and Stein.
-More details about interval trees:
-
-Classical rbtree has a single key and it cannot be directly used to store
-interval ranges like [lo:hi] and do a quick lookup for any overlap with a new
-lo:hi or to find whether there is an exact match for a new lo:hi.
-
-However, rbtree can be augmented to store such interval ranges in a structured
-way making it possible to do efficient lookup and exact match.
-
-This "extra information" stored in each node is the maximum hi
-(max_hi) value among all the nodes that are its descendents. This
-information can be maintained at each node just be looking at the node
-and its immediate children. And this will be used in O(log n) lookup
-for lowest match (lowest start address among all possible matches)
-with something like:
-
-find_lowest_match(lo, hi, node)
-{
-	lowest_match = NULL;
-	while (node) {
-		if (max_hi(node->left) > lo) {
-			// Lowest overlap if any must be on left side
-			node = node->left;
-		} else if (overlap(lo, hi, node)) {
-			lowest_match = node;
-			break;
-		} else if (lo > node->lo) {
-			// Lowest overlap if any must be on right side
-			node = node->right;
-		} else {
-			break;
-		}
-	}
-	return lowest_match;
-}
-
-Finding exact match will be to first find lowest match and then to follow
-successor nodes looking for exact match, until the start of a node is beyond
-the hi value we are looking for.

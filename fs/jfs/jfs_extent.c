@@ -126,7 +126,7 @@ extAlloc(struct inode *ip, s64 xlen, s64 pno, xad_t * xp, bool abnr)
 
 	/* allocate the disk blocks for the extent.  initially, extBalloc()
 	 * will try to allocate disk blocks for the requested size (xlen).
-	 * if this fails (xlen contiguous free blocks not available), it'll
+	 * if this fails (xlen contiguous free blocks not avaliable), it'll
 	 * try to allocate a smaller number of blocks (producing a smaller
 	 * extent), with this smaller number of blocks consisting of the
 	 * requested number of blocks rounded down to the next smaller
@@ -141,11 +141,10 @@ extAlloc(struct inode *ip, s64 xlen, s64 pno, xad_t * xp, bool abnr)
 	}
 
 	/* Allocate blocks to quota. */
-	rc = dquot_alloc_block(ip, nxlen);
-	if (rc) {
+	if (vfs_dq_alloc_block(ip, nxlen)) {
 		dbFree(ip, nxaddr, (s64) nxlen);
 		mutex_unlock(&JFS_IP(ip)->commit_mutex);
-		return rc;
+		return -EDQUOT;
 	}
 
 	/* determine the value of the extent flag */
@@ -165,7 +164,7 @@ extAlloc(struct inode *ip, s64 xlen, s64 pno, xad_t * xp, bool abnr)
 	 */
 	if (rc) {
 		dbFree(ip, nxaddr, nxlen);
-		dquot_free_block(ip, nxlen);
+		vfs_dq_free_block(ip, nxlen);
 		mutex_unlock(&JFS_IP(ip)->commit_mutex);
 		return (rc);
 	}
@@ -257,11 +256,10 @@ int extRealloc(struct inode *ip, s64 nxlen, xad_t * xp, bool abnr)
 		goto exit;
 
 	/* Allocat blocks to quota. */
-	rc = dquot_alloc_block(ip, nxlen);
-	if (rc) {
+	if (vfs_dq_alloc_block(ip, nxlen)) {
 		dbFree(ip, nxaddr, (s64) nxlen);
 		mutex_unlock(&JFS_IP(ip)->commit_mutex);
-		return rc;
+		return -EDQUOT;
 	}
 
 	delta = nxlen - xlen;
@@ -299,7 +297,7 @@ int extRealloc(struct inode *ip, s64 nxlen, xad_t * xp, bool abnr)
 		/* extend the extent */
 		if ((rc = xtExtend(0, ip, xoff + xlen, (int) nextend, 0))) {
 			dbFree(ip, xaddr + xlen, delta);
-			dquot_free_block(ip, nxlen);
+			vfs_dq_free_block(ip, nxlen);
 			goto exit;
 		}
 	} else {
@@ -310,7 +308,7 @@ int extRealloc(struct inode *ip, s64 nxlen, xad_t * xp, bool abnr)
 		 */
 		if ((rc = xtTailgate(0, ip, xoff, (int) ntail, nxaddr, 0))) {
 			dbFree(ip, nxaddr, nxlen);
-			dquot_free_block(ip, nxlen);
+			vfs_dq_free_block(ip, nxlen);
 			goto exit;
 		}
 	}
@@ -481,7 +479,7 @@ int extFill(struct inode *ip, xad_t * xp)
  *
  *		initially, we will try to allocate disk blocks for the
  *		requested size (nblocks).  if this fails (nblocks
- *		contiguous free blocks not available), we'll try to allocate
+ *		contiguous free blocks not avaliable), we'll try to allocate
  *		a smaller number of blocks (producing a smaller extent), with
  *		this smaller number of blocks consisting of the requested
  *		number of blocks rounded down to the next smaller power of 2
@@ -575,7 +573,7 @@ extBalloc(struct inode *ip, s64 hint, s64 * nblocks, s64 * blkno)
  *		to a new set of blocks.  If moving the extent, we initially
  *		will try to allocate disk blocks for the requested size
  *		(newnblks).  if this fails (new contiguous free blocks not
- *		available), we'll try to allocate a smaller number of
+ *		avaliable), we'll try to allocate a smaller number of
  *		blocks (producing a smaller extent), with this smaller
  *		number of blocks consisting of the requested number of
  *		blocks rounded down to the next smaller power of 2

@@ -18,7 +18,6 @@
  *  Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
-#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/interrupt.h>
@@ -919,7 +918,7 @@ EXPORT_SYMBOL_GPL(ps3_disable_pm);
  * @offset: Offset in bytes from the start of the trace buffer.
  * @buf: Copy destination.
  * @count: Maximum count of bytes to copy.
- * @bytes_copied: Pointer to a variable that will receive the number of
+ * @bytes_copied: Pointer to a variable that will recieve the number of
  *  bytes copied to @buf.
  *
  * On error @buf will contain any successfully copied trace buffer data
@@ -974,7 +973,7 @@ EXPORT_SYMBOL_GPL(ps3_lpm_copy_tb);
  * @offset: Offset in bytes from the start of the trace buffer.
  * @buf: A __user copy destination.
  * @count: Maximum count of bytes to copy.
- * @bytes_copied: Pointer to a variable that will receive the number of
+ * @bytes_copied: Pointer to a variable that will recieve the number of
  *  bytes copied to @buf.
  *
  * On error @buf will contain any successfully copied trace buffer data
@@ -1074,7 +1073,7 @@ EXPORT_SYMBOL_GPL(ps3_disable_pm_interrupts);
 
 /**
  * ps3_lpm_open - Open the logical performance monitor device.
- * @tb_type: Specifies the type of trace buffer lv1 should use for this lpm
+ * @tb_type: Specifies the type of trace buffer lv1 sould use for this lpm
  *  instance, specified by one of enum ps3_lpm_tb_type.
  * @tb_cache: Optional user supplied buffer to use as the trace buffer cache.
  *  If NULL, the driver will allocate and manage an internal buffer.

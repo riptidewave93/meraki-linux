@@ -3,9 +3,9 @@
  *
  * Copyright (C) 2003, 2004 Colin Leroy, Rasmus Rohde, Benjamin Herrenschmidt
  *
- * Documentation from 115254175ADT7467_pra.pdf and 3686221171167ADT7460_b.pdf
- * http://www.onsemi.com/PowerSolutions/product.do?id=ADT7467
- * http://www.onsemi.com/PowerSolutions/product.do?id=ADT7460
+ * Documentation from
+ * http://www.analog.com/UploadedFiles/Data_Sheets/115254175ADT7467_pra.pdf
+ * http://www.analog.com/UploadedFiles/Data_Sheets/3686221171167ADT7460_b.pdf
  *
  */
 
@@ -29,6 +29,7 @@
 #include <asm/prom.h>
 #include <asm/machdep.h>
 #include <asm/io.h>
+#include <asm/system.h>
 #include <asm/sections.h>
 
 #undef DEBUG
@@ -51,7 +52,7 @@ static const char *sensor_location[3];
 
 static int limit_adjust;
 static int fan_speed = -1;
-static bool verbose;
+static int verbose;
 
 MODULE_AUTHOR("Colin Leroy <colin@colino.net>");
 MODULE_DESCRIPTION("Driver for ADT746x thermostat in iBook G4 and "
@@ -83,7 +84,7 @@ struct thermostat {
 
 static enum {ADT7460, ADT7467} therm_type;
 static int therm_bus, therm_address;
-static struct platform_device * of_dev;
+static struct of_device * of_dev;
 static struct thermostat* thermostat;
 static struct task_struct *thread_therm = NULL;
 
@@ -315,7 +316,7 @@ static void update_fans_speed (struct thermostat *th)
 
 			if (verbose)
 				printk(KERN_DEBUG "adt746x: Setting fans speed to %d "
-						 "(limit exceeded by %d on %s)\n",
+						 "(limit exceeded by %d on %s) \n",
 						new_speed, var,
 						sensor_location[fan_number+1]);
 			write_both_fan_speed(th, new_speed);
@@ -395,7 +396,7 @@ static int probe_thermostat(struct i2c_client *client,
 	i2c_set_clientdata(client, th);
 	th->clt = client;
 
-	rc = read_reg(th, CONFIG_REG);
+	rc = read_reg(th, 0);
 	if (rc < 0) {
 		dev_err(&client->dev, "Thermostat failed to read config!\n");
 		kfree(th);
@@ -661,7 +662,7 @@ static void thermostat_create_files(void)
 		err |= device_create_file(&of_dev->dev, &dev_attr_sensor2_fan_speed);
 	if (err)
 		printk(KERN_WARNING
-			"Failed to create temperature attribute file(s).\n");
+			"Failed to create tempertaure attribute file(s).\n");
 }
 
 static void thermostat_remove_files(void)

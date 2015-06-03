@@ -22,7 +22,6 @@
 #define IOATDMA_V2_H
 
 #include <linux/dmaengine.h>
-#include <linux/circ_buf.h>
 #include "dma.h"
 #include "hw.h"
 
@@ -50,9 +49,8 @@ extern int ioat_ring_alloc_order;
  * @tail: cleanup index
  * @dmacount: identical to 'head' except for occasionally resetting to zero
  * @alloc_order: log2 of the number of allocated descriptors
- * @produce: number of descriptors to produce at submit time
  * @ring: software ring buffer implementation of hardware ring
- * @prep_lock: serializes descriptor preparation (producers)
+ * @ring_lock: protects ring attributes
  */
 struct ioat2_dma_chan {
 	struct ioat_chan_common base;
@@ -62,9 +60,8 @@ struct ioat2_dma_chan {
 	u16 tail;
 	u16 dmacount;
 	u16 alloc_order;
-	u16 produce;
 	struct ioat_ring_ent **ring;
-	spinlock_t prep_lock;
+	spinlock_t ring_lock;
 };
 
 static inline struct ioat2_dma_chan *to_ioat2_chan(struct dma_chan *c)
@@ -74,26 +71,38 @@ static inline struct ioat2_dma_chan *to_ioat2_chan(struct dma_chan *c)
 	return container_of(chan, struct ioat2_dma_chan, base);
 }
 
-static inline u32 ioat2_ring_size(struct ioat2_dma_chan *ioat)
+static inline u16 ioat2_ring_mask(struct ioat2_dma_chan *ioat)
 {
-	return 1 << ioat->alloc_order;
+	return (1 << ioat->alloc_order) - 1;
 }
 
 /* count of descriptors in flight with the engine */
 static inline u16 ioat2_ring_active(struct ioat2_dma_chan *ioat)
 {
-	return CIRC_CNT(ioat->head, ioat->tail, ioat2_ring_size(ioat));
+	return (ioat->head - ioat->tail) & ioat2_ring_mask(ioat);
 }
 
 /* count of descriptors pending submission to hardware */
 static inline u16 ioat2_ring_pending(struct ioat2_dma_chan *ioat)
 {
-	return CIRC_CNT(ioat->head, ioat->issued, ioat2_ring_size(ioat));
+	return (ioat->head - ioat->issued) & ioat2_ring_mask(ioat);
 }
 
-static inline u32 ioat2_ring_space(struct ioat2_dma_chan *ioat)
+static inline u16 ioat2_ring_space(struct ioat2_dma_chan *ioat)
 {
-	return ioat2_ring_size(ioat) - ioat2_ring_active(ioat);
+	u16 num_descs = ioat2_ring_mask(ioat) + 1;
+	u16 active = ioat2_ring_active(ioat);
+
+	BUG_ON(active > num_descs);
+
+	return num_descs - active;
+}
+
+/* assumes caller already checked space */
+static inline u16 ioat2_desc_alloc(struct ioat2_dma_chan *ioat, u16 len)
+{
+	ioat->head += len;
+	return ioat->head - len;
 }
 
 static inline u16 ioat2_xferlen_to_descs(struct ioat2_dma_chan *ioat, size_t len)
@@ -142,7 +151,7 @@ struct ioat_ring_ent {
 static inline struct ioat_ring_ent *
 ioat2_get_ring_ent(struct ioat2_dma_chan *ioat, u16 idx)
 {
-	return ioat->ring[idx & (ioat2_ring_size(ioat) - 1)];
+	return ioat->ring[idx & ioat2_ring_mask(ioat)];
 }
 
 static inline void ioat2_set_chainaddr(struct ioat2_dma_chan *ioat, u64 addr)
@@ -159,7 +168,7 @@ int __devinit ioat2_dma_probe(struct ioatdma_device *dev, int dca);
 int __devinit ioat3_dma_probe(struct ioatdma_device *dev, int dca);
 struct dca_provider * __devinit ioat2_dca_init(struct pci_dev *pdev, void __iomem *iobase);
 struct dca_provider * __devinit ioat3_dca_init(struct pci_dev *pdev, void __iomem *iobase);
-int ioat2_check_space_lock(struct ioat2_dma_chan *ioat, int num_descs);
+int ioat2_alloc_and_lock(u16 *idx, struct ioat2_dma_chan *ioat, int num_descs);
 int ioat2_enumerate_channels(struct ioatdma_device *device);
 struct dma_async_tx_descriptor *
 ioat2_dma_prep_memcpy_lock(struct dma_chan *c, dma_addr_t dma_dest,
@@ -167,10 +176,12 @@ ioat2_dma_prep_memcpy_lock(struct dma_chan *c, dma_addr_t dma_dest,
 void ioat2_issue_pending(struct dma_chan *chan);
 int ioat2_alloc_chan_resources(struct dma_chan *c);
 void ioat2_free_chan_resources(struct dma_chan *c);
+enum dma_status ioat2_is_complete(struct dma_chan *c, dma_cookie_t cookie,
+				  dma_cookie_t *done, dma_cookie_t *used);
 void __ioat2_restart_chan(struct ioat2_dma_chan *ioat);
 bool reshape_ring(struct ioat2_dma_chan *ioat, int order);
 void __ioat2_issue_pending(struct ioat2_dma_chan *ioat);
-void ioat2_cleanup_event(unsigned long data);
+void ioat2_cleanup_tasklet(unsigned long data);
 void ioat2_timer_event(unsigned long data);
 int ioat2_quiesce(struct ioat_chan_common *chan, unsigned long tmo);
 int ioat2_reset_sync(struct ioat_chan_common *chan, unsigned long tmo);

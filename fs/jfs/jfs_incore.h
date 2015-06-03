@@ -50,9 +50,8 @@ struct jfs_inode_info {
 	short	btindex;	/* btpage entry index*/
 	struct inode *ipimap;	/* inode map			*/
 	unsigned long cflag;	/* commit flags		*/
-	u64	agstart;	/* agstart of the containing IAG */
 	u16	bxflag;		/* xflag of pseudo buffer?	*/
-	unchar	pad;
+	unchar	agno;		/* ag number			*/
 	signed char active_ag;	/* ag currently allocating from	*/
 	lid_t	blid;		/* lid of pseudo buffer?	*/
 	lid_t	atlhead;	/* anonymous tlock list head	*/

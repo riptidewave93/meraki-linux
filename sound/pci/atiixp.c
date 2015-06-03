@@ -25,7 +25,7 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/mutex.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -43,7 +43,7 @@ static int index = SNDRV_DEFAULT_IDX1;	/* Index 0-MAX */
 static char *id = SNDRV_DEFAULT_STR1;	/* ID for this card */
 static int ac97_clock = 48000;
 static char *ac97_quirk;
-static bool spdif_aclink = 1;
+static int spdif_aclink = 1;
 static int ac97_codec = -1;
 
 module_param(index, int, 0444);
@@ -60,7 +60,7 @@ module_param(spdif_aclink, bool, 0444);
 MODULE_PARM_DESC(spdif_aclink, "S/PDIF over AC-link.");
 
 /* just for backward compatibility */
-static bool enable;
+static int enable;
 module_param(enable, bool, 0444);
 
 
@@ -286,7 +286,7 @@ struct atiixp {
 
 /*
  */
-static DEFINE_PCI_DEVICE_TABLE(snd_atiixp_ids) = {
+static struct pci_device_id snd_atiixp_ids[] = {
 	{ PCI_VDEVICE(ATI, 0x4341), 0 }, /* SB200 */
 	{ PCI_VDEVICE(ATI, 0x4361), 0 }, /* SB300 */
 	{ PCI_VDEVICE(ATI, 0x4370), 0 }, /* SB400 */
@@ -522,7 +522,7 @@ static int snd_atiixp_aclink_reset(struct atiixp *chip)
 		atiixp_read(chip, CMD);
 		mdelay(1);
 		atiixp_update(chip, CMD, ATI_REG_CMD_AC_RESET, ATI_REG_CMD_AC_RESET);
-		if (!--timeout) {
+		if (--timeout) {
 			snd_printk(KERN_ERR "atiixp: codec reset timeout\n");
 			break;
 		}
@@ -688,9 +688,7 @@ static void snd_atiixp_xrun_dma(struct atiixp *chip, struct atiixp_dma *dma)
 	if (! dma->substream || ! dma->running)
 		return;
 	snd_printdd("atiixp: XRUN detected (DMA %d)\n", dma->ops->type);
-	snd_pcm_stream_lock(dma->substream);
 	snd_pcm_stop(dma->substream, SNDRV_PCM_STATE_XRUN);
-	snd_pcm_stream_unlock(dma->substream);
 }
 
 /*
@@ -1626,7 +1624,7 @@ static int __devinit snd_atiixp_create(struct snd_card *card,
 	}
 
 	if (request_irq(pci->irq, snd_atiixp_interrupt, IRQF_SHARED,
-			KBUILD_MODNAME, chip)) {
+			card->shortname, chip)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		snd_atiixp_free(chip);
 		return -EBUSY;
@@ -1703,7 +1701,7 @@ static void __devexit snd_atiixp_remove(struct pci_dev *pci)
 }
 
 static struct pci_driver driver = {
-	.name = KBUILD_MODNAME,
+	.name = "ATI IXP AC97 controller",
 	.id_table = snd_atiixp_ids,
 	.probe = snd_atiixp_probe,
 	.remove = __devexit_p(snd_atiixp_remove),

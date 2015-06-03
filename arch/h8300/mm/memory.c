@@ -21,11 +21,13 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/types.h>
+#include <linux/slab.h>
 
 #include <asm/setup.h>
 #include <asm/segment.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
+#include <asm/system.h>
 #include <asm/traps.h>
 #include <asm/io.h>
 
@@ -42,8 +44,8 @@ void cache_push_v (unsigned long vaddr, int len)
 {
 }
 
-/*
- * Map some physical address range into the kernel address space.
+/* Map some physical address range into the kernel address space. The
+ * code is copied and adapted from map_chunk().
  */
 
 unsigned long kernel_map(unsigned long paddr, unsigned long size,

@@ -61,12 +61,12 @@ static struct ctl_table appldata_table[] = {
 	{
 		.procname	= "timer",
 		.mode		= S_IRUGO | S_IWUSR,
-		.proc_handler	= appldata_timer_handler,
+		.proc_handler	= &appldata_timer_handler,
 	},
 	{
 		.procname	= "interval",
 		.mode		= S_IRUGO | S_IWUSR,
-		.proc_handler	= appldata_interval_handler,
+		.proc_handler	= &appldata_interval_handler,
 	},
 	{ },
 };
@@ -130,7 +130,9 @@ static void appldata_work_fn(struct work_struct *work)
 {
 	struct list_head *lh;
 	struct appldata_ops *ops;
+	int i;
 
+	i = 0;
 	get_online_cpus();
 	mutex_lock(&appldata_ops_mutex);
 	list_for_each(lh, &appldata_ops_list) {
@@ -549,7 +551,7 @@ static int appldata_thaw(struct device *dev)
 	return appldata_restore(dev);
 }
 
-static const struct dev_pm_ops appldata_pm_ops = {
+static struct dev_pm_ops appldata_pm_ops = {
 	.freeze		= appldata_freeze,
 	.thaw		= appldata_thaw,
 	.restore	= appldata_restore,

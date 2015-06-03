@@ -4,7 +4,7 @@
  * Framebuffer support for the EP93xx series.
  *
  * Copyright (C) 2007 Bluewater Systems Ltd
- * Author: Ryan Mallon
+ * Author: Ryan Mallon <ryan@bluewatersys.com>
  *
  * Copyright (c) 2009 H Hartley Sweeten <hsweeten@visionengravers.com>
  *
@@ -18,9 +18,7 @@
  */
 
 #include <linux/platform_device.h>
-#include <linux/module.h>
 #include <linux/dma-mapping.h>
-#include <linux/slab.h>
 #include <linux/clk.h>
 #include <linux/fb.h>
 
@@ -360,8 +358,6 @@ static int ep93xxfb_setcolreg(unsigned int regno, unsigned int red,
 
 	switch (info->fix.visual) {
 	case FB_VISUAL_PSEUDOCOLOR:
-		if (regno > 255)
-			return 1;
 		rgb = ((red & 0xff00) << 8) | (green & 0xff00) |
 			((blue & 0xff00) >> 8);
 
@@ -457,7 +453,7 @@ static int __init ep93xxfb_alloc_videomem(struct fb_info *info)
 	 * There is a bug in the ep93xx framebuffer which causes problems
 	 * if bit 27 of the physical address is set.
 	 * See: http://marc.info/?l=linux-arm-kernel&m=110061245502000&w=2
-	 * There does not seem to be any official errata for this, but I
+	 * There does not seem to be any offical errata for this, but I
 	 * have confirmed the problem exists on my hardware (ep9315) at
 	 * least.
 	 */
@@ -484,7 +480,7 @@ static void ep93xxfb_dealloc_videomem(struct fb_info *info)
 				  info->screen_base, info->fix.smem_start);
 }
 
-static int __devinit ep93xxfb_probe(struct platform_device *pdev)
+static int __init ep93xxfb_probe(struct platform_device *pdev)
 {
 	struct ep93xxfb_mach_info *mach_info = pdev->dev.platform_data;
 	struct fb_info *info;
@@ -519,15 +515,12 @@ static int __devinit ep93xxfb_probe(struct platform_device *pdev)
 		goto failed;
 	}
 
-	/*
-	 * FIXME - We don't do a request_mem_region here because we are
-	 * sharing the register space with the backlight driver (see
-	 * drivers/video/backlight/ep93xx_bl.c) and doing so will cause
-	 * the second loaded driver to return -EBUSY.
-	 *
-	 * NOTE: No locking is required; the backlight does not touch
-	 * any of the framebuffer registers.
-	 */
+	res = request_mem_region(res->start, resource_size(res), pdev->name);
+	if (!res) {
+		err = -EBUSY;
+		goto failed;
+	}
+
 	fbi->res = res;
 	fbi->mmio_base = ioremap(res->start, resource_size(res));
 	if (!fbi->mmio_base) {
@@ -589,6 +582,8 @@ failed:
 		clk_put(fbi->clk);
 	if (fbi->mmio_base)
 		iounmap(fbi->mmio_base);
+	if (fbi->res)
+		release_mem_region(fbi->res->start, resource_size(fbi->res));
 	ep93xxfb_dealloc_videomem(info);
 	if (&info->cmap)
 		fb_dealloc_cmap(&info->cmap);
@@ -600,7 +595,7 @@ failed:
 	return err;
 }
 
-static int __devexit ep93xxfb_remove(struct platform_device *pdev)
+static int ep93xxfb_remove(struct platform_device *pdev)
 {
 	struct fb_info *info = platform_get_drvdata(pdev);
 	struct ep93xx_fbi *fbi = info->par;
@@ -609,6 +604,7 @@ static int __devexit ep93xxfb_remove(struct platform_device *pdev)
 	clk_disable(fbi->clk);
 	clk_put(fbi->clk);
 	iounmap(fbi->mmio_base);
+	release_mem_region(fbi->res->start, resource_size(fbi->res));
 	ep93xxfb_dealloc_videomem(info);
 	fb_dealloc_cmap(&info->cmap);
 
@@ -623,7 +619,7 @@ static int __devexit ep93xxfb_remove(struct platform_device *pdev)
 
 static struct platform_driver ep93xxfb_driver = {
 	.probe		= ep93xxfb_probe,
-	.remove		= __devexit_p(ep93xxfb_remove),
+	.remove		= ep93xxfb_remove,
 	.driver = {
 		.name	= "ep93xx-fb",
 		.owner	= THIS_MODULE,
@@ -645,6 +641,6 @@ module_exit(ep93xxfb_exit);
 
 MODULE_DESCRIPTION("EP93XX Framebuffer Driver");
 MODULE_ALIAS("platform:ep93xx-fb");
-MODULE_AUTHOR("Ryan Mallon, "
+MODULE_AUTHOR("Ryan Mallon <ryan&bluewatersys.com>, "
 	      "H Hartley Sweeten <hsweeten@visionengravers.com");
 MODULE_LICENSE("GPL");

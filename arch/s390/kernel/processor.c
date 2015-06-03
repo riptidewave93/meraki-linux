@@ -13,43 +13,35 @@
 #include <linux/smp.h>
 #include <linux/seq_file.h>
 #include <linux/delay.h>
-#include <linux/cpu.h>
+
 #include <asm/elf.h>
 #include <asm/lowcore.h>
 #include <asm/param.h>
 
-static DEFINE_PER_CPU(struct cpuid, cpu_id);
-
-/*
- * cpu_init - initializes state that is per-CPU.
- */
-void __cpuinit cpu_init(void)
+void __cpuinit print_cpu_info(void)
 {
-	struct cpuid *id = &per_cpu(cpu_id, smp_processor_id());
-	struct s390_idle_data *idle = &__get_cpu_var(s390_idle);
-
-	get_cpu_id(id);
-	atomic_inc(&init_mm.mm_count);
-	current->active_mm = &init_mm;
-	BUG_ON(current->mm);
-	enter_lazy_tlb(&init_mm, current);
-	memset(idle, 0, sizeof(*idle));
+	pr_info("Processor %d started, address %d, identification %06X\n",
+		S390_lowcore.cpu_nr, S390_lowcore.cpu_addr,
+		S390_lowcore.cpu_id.ident);
 }
 
 /*
  * show_cpuinfo - Get information on one CPU for use by procfs.
  */
+
 static int show_cpuinfo(struct seq_file *m, void *v)
 {
 	static const char *hwcap_str[10] = {
 		"esan3", "zarch", "stfle", "msa", "ldisp", "eimm", "dfp",
 		"edat", "etf3eh", "highgprs"
 	};
+	struct _lowcore *lc;
 	unsigned long n = (unsigned long) v - 1;
 	int i;
 
+	s390_adjust_jiffies();
+	preempt_disable();
 	if (!n) {
-		s390_adjust_jiffies();
 		seq_printf(m, "vendor_id       : IBM/S390\n"
 			   "# processors    : %i\n"
 			   "bogomips per cpu: %lu.%02lu\n",
@@ -61,22 +53,29 @@ static int show_cpuinfo(struct seq_file *m, void *v)
 				seq_printf(m, "%s ", hwcap_str[i]);
 		seq_puts(m, "\n");
 	}
-	get_online_cpus();
+
 	if (cpu_online(n)) {
-		struct cpuid *id = &per_cpu(cpu_id, n);
+#ifdef CONFIG_SMP
+		lc = (smp_processor_id() == n) ?
+			&S390_lowcore : lowcore_ptr[n];
+#else
+		lc = &S390_lowcore;
+#endif
 		seq_printf(m, "processor %li: "
 			   "version = %02X,  "
 			   "identification = %06X,  "
 			   "machine = %04X\n",
-			   n, id->version, id->ident, id->machine);
+			   n, lc->cpu_id.version,
+			   lc->cpu_id.ident,
+			   lc->cpu_id.machine);
 	}
-	put_online_cpus();
+	preempt_enable();
 	return 0;
 }
 
 static void *c_start(struct seq_file *m, loff_t *pos)
 {
-	return *pos < nr_cpu_ids ? (void *)((unsigned long) *pos + 1) : NULL;
+	return *pos < NR_CPUS ? (void *)((unsigned long) *pos + 1) : NULL;
 }
 
 static void *c_next(struct seq_file *m, void *v, loff_t *pos)

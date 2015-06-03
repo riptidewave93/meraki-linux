@@ -22,7 +22,6 @@
 
 #include <linux/kthread.h>
 #include <linux/freezer.h>
-#include <linux/slab.h>
 #include <linux/wait.h>
 #include <linux/mount.h>
 #include "ecryptfs_kernel.h"
@@ -44,7 +43,7 @@ static struct task_struct *ecryptfs_kthread;
  * @ignored: ignored
  *
  * The eCryptfs kernel thread that has the responsibility of getting
- * the lower file with RW permissions.
+ * the lower persistent file with RW permissions.
  *
  * Returns zero on success; non-zero otherwise
  */
@@ -86,7 +85,7 @@ out:
 	return 0;
 }
 
-int __init ecryptfs_init_kthread(void)
+int ecryptfs_init_kthread(void)
 {
 	int rc = 0;
 
@@ -141,8 +140,8 @@ int ecryptfs_privileged_open(struct file **lower_file,
 	int rc = 0;
 
 	/* Corresponding dput() and mntput() are done when the
-	 * lower file is fput() when all eCryptfs files for the inode are
-	 * released. */
+	 * persistent file is fput() when the eCryptfs inode is
+	 * destroyed. */
 	dget(lower_dentry);
 	mntget(lower_mnt);
 	flags |= IS_RDONLY(lower_dentry->d_inode) ? O_RDONLY : O_RDWR;

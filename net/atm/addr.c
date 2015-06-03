@@ -4,8 +4,7 @@
 
 #include <linux/atm.h>
 #include <linux/atmdev.h>
-#include <linux/slab.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 #include "signaling.h"
 #include "addr.h"

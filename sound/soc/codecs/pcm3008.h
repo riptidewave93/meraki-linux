@@ -19,4 +19,7 @@ struct pcm3008_setup_data {
 	unsigned pdda_pin;
 };
 
+extern struct snd_soc_codec_device soc_codec_dev_pcm3008;
+extern struct snd_soc_dai pcm3008_dai;
+
 #endif

@@ -32,7 +32,6 @@
  */
 
 #include <linux/err.h>
-#include <linux/slab.h>
 #include <linux/vmalloc.h>
 
 #include "ipath_verbs.h"
@@ -106,11 +105,6 @@ struct ib_srq *ipath_create_srq(struct ib_pd *ibpd,
 	struct ipath_srq *srq;
 	u32 sz;
 	struct ib_srq *ret;
-
-	if (srq_init_attr->srq_type != IB_SRQT_BASIC) {
-		ret = ERR_PTR(-ENOSYS);
-		goto done;
-	}
 
 	if (srq_init_attr->attr.max_wr == 0) {
 		ret = ERR_PTR(-EINVAL);

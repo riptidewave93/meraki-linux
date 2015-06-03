@@ -1,5 +1,5 @@
 /*
- * ISDB-T driver for VA1J5JF8007/VA1J5JF8011
+ * ISDB-T driver for VA1J5JF8007
  *
  * Copyright (C) 2009 HIRANO Takahito <hiranotaka@zng.info>
  *
@@ -45,52 +45,6 @@ struct va1j5jf8007t_state {
 	struct dvb_frontend fe;
 	enum va1j5jf8007t_tune_state tune_state;
 };
-
-static int va1j5jf8007t_read_snr(struct dvb_frontend *fe, u16 *snr)
-{
-	struct va1j5jf8007t_state *state;
-	u8 addr;
-	int i;
-	u8 write_buf[1], read_buf[1];
-	struct i2c_msg msgs[2];
-	s32 word, x, y;
-
-	state = fe->demodulator_priv;
-	addr = state->config->demod_address;
-
-	word = 0;
-	for (i = 0; i < 3; i++) {
-		write_buf[0] = 0x8b + i;
-
-		msgs[0].addr = addr;
-		msgs[0].flags = 0;
-		msgs[0].len = sizeof(write_buf);
-		msgs[0].buf = write_buf;
-
-		msgs[1].addr = addr;
-		msgs[1].flags = I2C_M_RD;
-		msgs[1].len = sizeof(read_buf);
-		msgs[1].buf = read_buf;
-
-		if (i2c_transfer(state->adap, msgs, 2) != 2)
-			return -EREMOTEIO;
-
-		word <<= 8;
-		word |= read_buf[0];
-	}
-
-	if (!word)
-		return -EIO;
-
-	x = 10 * (intlog10(0x540000 * 100 / word) - (2 << 24));
-	y = (24ll << 46) / 1000000;
-	y = ((s64)y * x >> 30) - (16ll << 40) / 10000;
-	y = ((s64)y * x >> 29) + (398ll << 35) / 10000;
-	y = ((s64)y * x >> 30) + (5491ll << 29) / 10000;
-	y = ((s64)y * x >> 30) + (30965ll << 23) / 10000;
-	*snr = y >> 15;
-	return 0;
-}
 
 static int va1j5jf8007t_get_frontend_algo(struct dvb_frontend *fe)
 {
@@ -264,17 +218,17 @@ static int va1j5jf8007t_check_modulation(struct va1j5jf8007t_state *state,
 
 static int
 va1j5jf8007t_tune(struct dvb_frontend *fe,
-		  bool re_tune,
+		  struct dvb_frontend_parameters *params,
 		  unsigned int mode_flags,  unsigned int *delay,
 		  fe_status_t *status)
 {
 	struct va1j5jf8007t_state *state;
 	int ret;
-	int lock = 0, retry = 0;
+	int lock, retry;
 
 	state = fe->demodulator_priv;
 
-	if (re_tune)
+	if (params != NULL)
 		state->tune_state = VA1J5JF8007T_SET_FREQUENCY;
 
 	switch (state->tune_state) {
@@ -428,9 +382,9 @@ static void va1j5jf8007t_release(struct dvb_frontend *fe)
 }
 
 static struct dvb_frontend_ops va1j5jf8007t_ops = {
-	.delsys = { SYS_ISDBT },
 	.info = {
-		.name = "VA1J5JF8007/VA1J5JF8011 ISDB-T",
+		.name = "VA1J5JF8007 ISDB-T",
+		.type = FE_OFDM,
 		.frequency_min = 90000000,
 		.frequency_max = 770000000,
 		.frequency_stepsize = 142857,
@@ -439,7 +393,6 @@ static struct dvb_frontend_ops va1j5jf8007t_ops = {
 			FE_CAN_GUARD_INTERVAL_AUTO | FE_CAN_HIERARCHY_AUTO,
 	},
 
-	.read_snr = va1j5jf8007t_read_snr,
 	.get_frontend_algo = va1j5jf8007t_get_frontend_algo,
 	.read_status = va1j5jf8007t_read_status,
 	.tune = va1j5jf8007t_tune,
@@ -448,50 +401,29 @@ static struct dvb_frontend_ops va1j5jf8007t_ops = {
 	.release = va1j5jf8007t_release,
 };
 
-static const u8 va1j5jf8007t_20mhz_prepare_bufs[][2] = {
+static const u8 va1j5jf8007t_prepare_bufs[][2] = {
 	{0x03, 0x90}, {0x14, 0x8f}, {0x1c, 0x2a}, {0x1d, 0xa8}, {0x1e, 0xa2},
 	{0x22, 0x83}, {0x31, 0x0d}, {0x32, 0xe0}, {0x39, 0xd3}, {0x3a, 0x00},
 	{0x5c, 0x40}, {0x5f, 0x80}, {0x75, 0x02}, {0x76, 0x4e}, {0x77, 0x03},
 	{0xef, 0x01}
 };
 
-static const u8 va1j5jf8007t_25mhz_prepare_bufs[][2] = {
-	{0x03, 0x90}, {0x1c, 0x2a}, {0x1d, 0xa8}, {0x1e, 0xa2}, {0x22, 0x83},
-	{0x3a, 0x00}, {0x5c, 0x40}, {0x5f, 0x80}, {0x75, 0x0a}, {0x76, 0x4c},
-	{0x77, 0x03}, {0xef, 0x01}
-};
-
 int va1j5jf8007t_prepare(struct dvb_frontend *fe)
 {
 	struct va1j5jf8007t_state *state;
-	const u8 (*bufs)[2];
-	int size;
 	u8 buf[2];
 	struct i2c_msg msg;
 	int i;
 
 	state = fe->demodulator_priv;
 
-	switch (state->config->frequency) {
-	case VA1J5JF8007T_20MHZ:
-		bufs = va1j5jf8007t_20mhz_prepare_bufs;
-		size = ARRAY_SIZE(va1j5jf8007t_20mhz_prepare_bufs);
-		break;
-	case VA1J5JF8007T_25MHZ:
-		bufs = va1j5jf8007t_25mhz_prepare_bufs;
-		size = ARRAY_SIZE(va1j5jf8007t_25mhz_prepare_bufs);
-		break;
-	default:
-		return -EINVAL;
-	}
-
 	msg.addr = state->config->demod_address;
 	msg.flags = 0;
 	msg.len = sizeof(buf);
 	msg.buf = buf;
 
-	for (i = 0; i < size; i++) {
-		memcpy(buf, bufs[i], sizeof(buf));
+	for (i = 0; i < ARRAY_SIZE(va1j5jf8007t_prepare_bufs); i++) {
+		memcpy(buf, va1j5jf8007t_prepare_bufs[i], sizeof(buf));
 		if (i2c_transfer(state->adap, &msg, 1) != 1)
 			return -EREMOTEIO;
 	}

@@ -90,9 +90,9 @@ ENTRY(xen_iret)
 	GET_THREAD_INFO(%eax)
 	movl %ss:TI_cpu(%eax), %eax
 	movl %ss:__per_cpu_offset(,%eax,4), %eax
-	mov %ss:xen_vcpu(%eax), %eax
+	mov %ss:per_cpu__xen_vcpu(%eax), %eax
 #else
-	movl %ss:xen_vcpu, %eax
+	movl %ss:per_cpu__xen_vcpu, %eax
 #endif
 
 	/* check IF state we're restoring */

@@ -35,16 +35,17 @@
 #include <asm/sim.h>
 #include <asm/uaccess.h>
 #include <asm/ucontext.h>
+#include <asm/system.h>
 #include <asm/fpu.h>
 #include <asm/cpu-features.h>
 #include <asm/war.h>
-#include <asm/vdso.h>
 
 #include "signal-common.h"
 
 /*
  * Including <asm/unistd.h> would give use the 64-bit syscall numbers ...
  */
+#define __NR_N32_rt_sigreturn		6211
 #define __NR_N32_restart_syscall	6214
 
 extern int setup_sigcontext(struct pt_regs *, struct sigcontext __user *);
@@ -66,12 +67,26 @@ struct ucontextn32 {
 	compat_sigset_t     uc_sigmask;   /* mask last for extensibility */
 };
 
+#if ICACHE_REFILLS_WORKAROUND_WAR == 0
+
 struct rt_sigframe_n32 {
 	u32 rs_ass[4];			/* argument save space for o32 */
-	u32 rs_pad[2];			/* Was: signal trampoline */
+	u32 rs_code[2];			/* signal trampoline */
 	struct compat_siginfo rs_info;
 	struct ucontextn32 rs_uc;
 };
+
+#else  /* ICACHE_REFILLS_WORKAROUND_WAR */
+
+struct rt_sigframe_n32 {
+	u32 rs_ass[4];			/* argument save space for o32 */
+	u32 rs_pad[2];
+	struct compat_siginfo rs_info;
+	struct ucontextn32 rs_uc;
+	u32 rs_code[8] ____cacheline_aligned;		/* signal trampoline */
+};
+
+#endif	/* !ICACHE_REFILLS_WORKAROUND_WAR */
 
 extern void sigset_from_compat(sigset_t *set, compat_sigset_t *compat);
 
@@ -93,8 +108,11 @@ asmlinkage int sysn32_rt_sigsuspend(nabi_no_regargs struct pt_regs regs)
 	sigset_from_compat(&newset, &uset);
 	sigdelsetmask(&newset, ~_BLOCKABLE);
 
+	spin_lock_irq(&current->sighand->siglock);
 	current->saved_sigmask = current->blocked;
-	set_current_blocked(&newset);
+	current->blocked = newset;
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
 
 	current->state = TASK_INTERRUPTIBLE;
 	schedule();
@@ -105,7 +123,6 @@ asmlinkage int sysn32_rt_sigsuspend(nabi_no_regargs struct pt_regs regs)
 asmlinkage void sysn32_rt_sigreturn(nabi_no_regargs struct pt_regs regs)
 {
 	struct rt_sigframe_n32 __user *frame;
-	mm_segment_t old_fs;
 	sigset_t set;
 	stack_t st;
 	s32 sp;
@@ -118,7 +135,10 @@ asmlinkage void sysn32_rt_sigreturn(nabi_no_regargs struct pt_regs regs)
 		goto badframe;
 
 	sigdelsetmask(&set, ~_BLOCKABLE);
-	set_current_blocked(&set);
+	spin_lock_irq(&current->sighand->siglock);
+	current->blocked = set;
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
 
 	sig = restore_sigcontext(&regs, &frame->rs_uc.uc_mcontext);
 	if (sig < 0)
@@ -137,11 +157,7 @@ asmlinkage void sysn32_rt_sigreturn(nabi_no_regargs struct pt_regs regs)
 
 	/* It is more difficult to avoid calling this function than to
 	   call it and ignore errors.  */
-	old_fs = get_fs();
-	set_fs(KERNEL_DS);
 	do_sigaltstack((stack_t __user *)&st, NULL, regs.regs[29]);
-	set_fs(old_fs);
-
 
 	/*
 	 * Don't let your children do this ...
@@ -157,7 +173,7 @@ badframe:
 	force_sig(SIGSEGV, current);
 }
 
-static int setup_rt_frame_n32(void *sig_return, struct k_sigaction *ka,
+static int setup_rt_frame_n32(struct k_sigaction * ka,
 	struct pt_regs *regs, int signr, sigset_t *set, siginfo_t *info)
 {
 	struct rt_sigframe_n32 __user *frame;
@@ -167,6 +183,8 @@ static int setup_rt_frame_n32(void *sig_return, struct k_sigaction *ka,
 	frame = get_sigframe(ka, regs, sizeof(*frame));
 	if (!access_ok(VERIFY_WRITE, frame, sizeof (*frame)))
 		goto give_sigsegv;
+
+	install_sigtramp(frame->rs_code, __NR_N32_rt_sigreturn);
 
 	/* Create siginfo.  */
 	err |= copy_siginfo_to_user32(&frame->rs_info, info);
@@ -201,7 +219,7 @@ static int setup_rt_frame_n32(void *sig_return, struct k_sigaction *ka,
 	regs->regs[ 5] = (unsigned long) &frame->rs_info;
 	regs->regs[ 6] = (unsigned long) &frame->rs_uc;
 	regs->regs[29] = (unsigned long) frame;
-	regs->regs[31] = (unsigned long) sig_return;
+	regs->regs[31] = (unsigned long) frame->rs_code;
 	regs->cp0_epc = regs->regs[25] = (unsigned long) ka->sa.sa_handler;
 
 	DEBUGP("SIG deliver (%s:%d): sp=0x%p pc=0x%lx ra=0x%lx\n",
@@ -217,7 +235,5 @@ give_sigsegv:
 
 struct mips_abi mips_abi_n32 = {
 	.setup_rt_frame	= setup_rt_frame_n32,
-	.rt_signal_return_offset =
-		offsetof(struct mips_vdso, n32_rt_signal_trampoline),
 	.restart	= __NR_N32_restart_syscall
 };

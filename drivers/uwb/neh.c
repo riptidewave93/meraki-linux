@@ -83,9 +83,7 @@
  */
 #include <linux/kernel.h>
 #include <linux/timer.h>
-#include <linux/slab.h>
 #include <linux/err.h>
-#include <linux/export.h>
 
 #include "uwb-internal.h"
 
@@ -107,7 +105,6 @@ struct uwb_rc_neh {
 	u8 evt_type;
 	__le16 evt;
 	u8 context;
-	u8 completed;
 	uwb_rc_cmd_cb_f cb;
 	void *arg;
 
@@ -153,7 +150,7 @@ void uwb_rc_neh_put(struct uwb_rc_neh *neh)
  *	 0xff is invalid, so they must not be used. Initialization
  *	 fills up those two in the bitmap so they are not allocated.
  *
- * We spread the allocation around to reduce the possibility of two
+ * We spread the allocation around to reduce the posiblity of two
  * consecutive opened @neh's getting the same context ID assigned (to
  * avoid surprises with late events that timed out long time ago). So
  * first we search from where @rc->ctx_roll is, if not found, we
@@ -410,7 +407,6 @@ static void uwb_rc_neh_grok_event(struct uwb_rc *rc, struct uwb_rceb *rceb, size
 	struct device *dev = &rc->uwb_dev.dev;
 	struct uwb_rc_neh *neh;
 	struct uwb_rceb *notif;
-	unsigned long flags;
 
 	if (rceb->bEventContext == 0) {
 		notif = kmalloc(size, GFP_ATOMIC);
@@ -424,11 +420,7 @@ static void uwb_rc_neh_grok_event(struct uwb_rc *rc, struct uwb_rceb *rceb, size
 	} else {
 		neh = uwb_rc_neh_lookup(rc, rceb);
 		if (neh) {
-			spin_lock_irqsave(&rc->neh_lock, flags);
-			/* to guard against a timeout */
-			neh->completed = 1;
-			del_timer(&neh->timer);
-			spin_unlock_irqrestore(&rc->neh_lock, flags);
+			del_timer_sync(&neh->timer);
 			uwb_rc_neh_cb(neh, rceb, size);
 		} else
 			dev_warn(dev, "event 0x%02x/%04x/%02x (%zu bytes): nobody cared\n",
@@ -574,10 +566,6 @@ static void uwb_rc_neh_timer(unsigned long arg)
 	unsigned long flags;
 
 	spin_lock_irqsave(&rc->neh_lock, flags);
-	if (neh->completed) {
-		spin_unlock_irqrestore(&rc->neh_lock, flags);
-		return;
-	}
 	if (neh->context)
 		__uwb_rc_neh_rm(rc, neh);
 	else

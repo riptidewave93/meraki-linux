@@ -36,22 +36,16 @@
 #include <linux/errno.h>
 #include <linux/delay.h>
 #include <linux/mutex.h>
-#include <linux/slab.h>
 
 #include <linux/dvb/frontend.h>
 
 #include "dvbdev.h"
 
-/*
- * Maximum number of Delivery systems per frontend. It
- * should be smaller or equal to 32
- */
-#define MAX_DELSYS	8
-
 struct dvb_frontend_tune_settings {
 	int min_delay_ms;
 	int step_size;
 	int max_drift;
+	struct dvb_frontend_parameters parameters;
 };
 
 struct dvb_frontend;
@@ -166,7 +160,7 @@ struct tuner_state {
  * search callback possible return status
  *
  * DVBFE_ALGO_SEARCH_SUCCESS
- * The frontend search algorithm completed and returned successfully
+ * The frontend search algorithm completed and returned succesfully
  *
  * DVBFE_ALGO_SEARCH_ASLEEP
  * The frontend search algorithm is sleeping
@@ -203,32 +197,31 @@ struct dvb_tuner_ops {
 	int (*sleep)(struct dvb_frontend *fe);
 
 	/** This is for simple PLLs - set all parameters in one go. */
-	int (*set_params)(struct dvb_frontend *fe);
+	int (*set_params)(struct dvb_frontend *fe, struct dvb_frontend_parameters *p);
 	int (*set_analog_params)(struct dvb_frontend *fe, struct analog_parameters *p);
 
 	/** This is support for demods like the mt352 - fills out the supplied buffer with what to write. */
-	int (*calc_regs)(struct dvb_frontend *fe, u8 *buf, int buf_len);
+	int (*calc_regs)(struct dvb_frontend *fe, struct dvb_frontend_parameters *p, u8 *buf, int buf_len);
 
 	/** This is to allow setting tuner-specific configs */
 	int (*set_config)(struct dvb_frontend *fe, void *priv_cfg);
 
 	int (*get_frequency)(struct dvb_frontend *fe, u32 *frequency);
 	int (*get_bandwidth)(struct dvb_frontend *fe, u32 *bandwidth);
-	int (*get_if_frequency)(struct dvb_frontend *fe, u32 *frequency);
 
 #define TUNER_STATUS_LOCKED 1
 #define TUNER_STATUS_STEREO 2
 	int (*get_status)(struct dvb_frontend *fe, u32 *status);
 	int (*get_rf_strength)(struct dvb_frontend *fe, u16 *strength);
 
-	/** These are provided separately from set_params in order to facilitate silicon
-	 * tuners which require sophisticated tuning loops, controlling each parameter separately. */
+	/** These are provided seperately from set_params in order to facilitate silicon
+	 * tuners which require sophisticated tuning loops, controlling each parameter seperately. */
 	int (*set_frequency)(struct dvb_frontend *fe, u32 frequency);
 	int (*set_bandwidth)(struct dvb_frontend *fe, u32 bandwidth);
 
 	/*
-	 * These are provided separately from set_params in order to facilitate silicon
-	 * tuners which require sophisticated tuning loops, controlling each parameter separately.
+	 * These are provided seperately from set_params in order to facilitate silicon
+	 * tuners which require sophisticated tuning loops, controlling each parameter seperately.
 	 */
 	int (*set_state)(struct dvb_frontend *fe, enum tuner_param param, struct tuner_state *state);
 	int (*get_state)(struct dvb_frontend *fe, enum tuner_param param, struct tuner_state *state);
@@ -245,6 +238,7 @@ struct analog_demod_ops {
 	void (*set_params)(struct dvb_frontend *fe,
 			   struct analog_parameters *params);
 	int  (*has_signal)(struct dvb_frontend *fe);
+	int  (*is_stereo)(struct dvb_frontend *fe);
 	int  (*get_afc)(struct dvb_frontend *fe);
 	void (*tuner_status)(struct dvb_frontend *fe);
 	void (*standby)(struct dvb_frontend *fe);
@@ -255,13 +249,9 @@ struct analog_demod_ops {
 	int (*set_config)(struct dvb_frontend *fe, void *priv_cfg);
 };
 
-struct dtv_frontend_properties;
-
 struct dvb_frontend_ops {
 
 	struct dvb_frontend_info info;
-
-	u8 delsys[MAX_DELSYS];
 
 	void (*release)(struct dvb_frontend* fe);
 	void (*release_sec)(struct dvb_frontend* fe);
@@ -269,11 +259,11 @@ struct dvb_frontend_ops {
 	int (*init)(struct dvb_frontend* fe);
 	int (*sleep)(struct dvb_frontend* fe);
 
-	int (*write)(struct dvb_frontend* fe, const u8 buf[], int len);
+	int (*write)(struct dvb_frontend* fe, u8* buf, int len);
 
 	/* if this is set, it overrides the default swzigzag */
 	int (*tune)(struct dvb_frontend* fe,
-		    bool re_tune,
+		    struct dvb_frontend_parameters* params,
 		    unsigned int mode_flags,
 		    unsigned int *delay,
 		    fe_status_t *status);
@@ -281,10 +271,10 @@ struct dvb_frontend_ops {
 	enum dvbfe_algo (*get_frontend_algo)(struct dvb_frontend *fe);
 
 	/* these two are only used for the swzigzag code */
-	int (*set_frontend)(struct dvb_frontend *fe);
+	int (*set_frontend)(struct dvb_frontend* fe, struct dvb_frontend_parameters* params);
 	int (*get_tune_settings)(struct dvb_frontend* fe, struct dvb_frontend_tune_settings* settings);
 
-	int (*get_frontend)(struct dvb_frontend *fe);
+	int (*get_frontend)(struct dvb_frontend* fe, struct dvb_frontend_parameters* params);
 
 	int (*read_status)(struct dvb_frontend* fe, fe_status_t* status);
 	int (*read_ber)(struct dvb_frontend* fe, u32* ber);
@@ -306,7 +296,8 @@ struct dvb_frontend_ops {
 	/* These callbacks are for devices that implement their own
 	 * tuning algorithms, rather than a simple swzigzag
 	 */
-	enum dvbfe_search (*search)(struct dvb_frontend *fe);
+	enum dvbfe_search (*search)(struct dvb_frontend *fe, struct dvb_frontend_parameters *p);
+	int (*track)(struct dvb_frontend *fe, struct dvb_frontend_parameters *p);
 
 	struct dvb_tuner_ops tuner_ops;
 	struct analog_demod_ops analog_ops;
@@ -315,7 +306,6 @@ struct dvb_frontend_ops {
 	int (*get_property)(struct dvb_frontend* fe, struct dtv_property* tvp);
 };
 
-#ifdef __DVB_CORE__
 #define MAX_EVENT 8
 
 struct dvb_fe_events {
@@ -326,7 +316,6 @@ struct dvb_fe_events {
 	wait_queue_head_t	  wait_queue;
 	struct mutex		  mtx;
 };
-#endif
 
 struct dtv_frontend_properties {
 
@@ -369,9 +358,6 @@ struct dtv_frontend_properties {
 
 	/* ISDB-T specifics */
 	u32			isdbs_ts_id;
-
-	/* DVB-T2 specifics */
-	u32                     dvbt2_plp_id;
 };
 
 struct dvb_frontend {
@@ -384,7 +370,6 @@ struct dvb_frontend {
 	void *analog_demod_priv;
 	struct dtv_frontend_properties dtv_property_cache;
 #define DVB_FRONTEND_COMPONENT_TUNER 0
-#define DVB_FRONTEND_COMPONENT_DEMOD 1
 	int (*callback)(void *adapter_priv, int component, int cmd, int arg);
 	int id;
 };

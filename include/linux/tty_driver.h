@@ -47,11 +47,6 @@
  *
  * 	This routine is called synchronously when a particular tty device
  *	is closed for the last time freeing up the resources.
- *	Note that tty_shutdown() is not called if ops->shutdown is defined.
- *	This means one is responsible to take care of calling ops->remove (e.g.
- *	via tty_driver_remove_tty) and releasing tty->termios.
- *	Note that this hook may be called from *all* the contexts where one
- *	uses tty refcounting (e.g. tty_port_tty_get).
  *
  *
  * void (*cleanup)(struct tty_struct * tty);
@@ -103,15 +98,16 @@
  *
  *	Note: Do not call this function directly, call tty_write_room
  * 
- * int  (*ioctl)(struct tty_struct *tty, unsigned int cmd, unsigned long arg);
+ * int  (*ioctl)(struct tty_struct *tty, struct file * file,
+ * 	    unsigned int cmd, unsigned long arg);
  *
  * 	This routine allows the tty driver to implement
- *	device-specific ioctls.  If the ioctl number passed in cmd
+ *	device-specific ioctl's.  If the ioctl number passed in cmd
  * 	is not recognized by the driver, it should return ENOIOCTLCMD.
  *
  *	Optional
  *
- * long (*compat_ioctl)(struct tty_struct *tty,,
+ * long (*compat_ioctl)(struct tty_struct *tty, struct file * file,
  * 	                unsigned int cmd, unsigned long arg);
  *
  * 	implement ioctl processing for 32 bit process on 64 bit system
@@ -171,12 +167,12 @@
  * 
  * void (*hangup)(struct tty_struct *tty);
  *
- * 	This routine notifies the tty driver that it should hang up the
+ * 	This routine notifies the tty driver that it should hangup the
  * 	tty device.
  *
  *	Optional:
  *
- * int (*break_ctl)(struct tty_struct *tty, int state);
+ * int (*break_ctl)(struct tty_stuct *tty, int state);
  *
  * 	This optional routine requests the tty driver to turn on or
  * 	off BREAK status on the RS-232 port.  If state is -1,
@@ -236,11 +232,9 @@
  *	if provided (otherwise EINVAL will be returned).
  */
 
-#include <linux/export.h>
 #include <linux/fs.h>
 #include <linux/list.h>
 #include <linux/cdev.h>
-#include <linux/termios.h>
 
 struct tty_struct;
 struct tty_driver;
@@ -261,9 +255,9 @@ struct tty_operations {
 	void (*flush_chars)(struct tty_struct *tty);
 	int  (*write_room)(struct tty_struct *tty);
 	int  (*chars_in_buffer)(struct tty_struct *tty);
-	int  (*ioctl)(struct tty_struct *tty,
+	int  (*ioctl)(struct tty_struct *tty, struct file * file,
 		    unsigned int cmd, unsigned long arg);
-	long (*compat_ioctl)(struct tty_struct *tty,
+	long (*compat_ioctl)(struct tty_struct *tty, struct file * file,
 			     unsigned int cmd, unsigned long arg);
 	void (*set_termios)(struct tty_struct *tty, struct ktermios * old);
 	void (*throttle)(struct tty_struct * tty);
@@ -276,8 +270,8 @@ struct tty_operations {
 	void (*set_ldisc)(struct tty_struct *tty);
 	void (*wait_until_sent)(struct tty_struct *tty, int timeout);
 	void (*send_xchar)(struct tty_struct *tty, char ch);
-	int (*tiocmget)(struct tty_struct *tty);
-	int (*tiocmset)(struct tty_struct *tty,
+	int (*tiocmget)(struct tty_struct *tty, struct file *file);
+	int (*tiocmset)(struct tty_struct *tty, struct file *file,
 			unsigned int set, unsigned int clear);
 	int (*resize)(struct tty_struct *tty, struct winsize *ws);
 	int (*set_termiox)(struct tty_struct *tty, struct termiox *tnew);
@@ -301,6 +295,7 @@ struct tty_driver {
 	int	name_base;	/* offset of printed name */
 	int	major;		/* major device number */
 	int	minor_start;	/* start of minor device number */
+	int	minor_num;	/* number of *possible* devices */
 	int	num;		/* number of devices allocated */
 	short	type;		/* type of tty driver */
 	short	subtype;	/* subtype of tty driver */
@@ -314,6 +309,7 @@ struct tty_driver {
 	 */
 	struct tty_struct **ttys;
 	struct ktermios **termios;
+	struct ktermios **termios_locked;
 	void *driver_state;
 
 	/*
@@ -326,15 +322,13 @@ struct tty_driver {
 
 extern struct list_head tty_drivers;
 
-extern struct tty_driver *__alloc_tty_driver(int lines, struct module *owner);
+extern struct tty_driver *alloc_tty_driver(int lines);
 extern void put_tty_driver(struct tty_driver *driver);
 extern void tty_set_operations(struct tty_driver *driver,
 			const struct tty_operations *op);
 extern struct tty_driver *tty_find_polling_driver(char *name, int *line);
 
 extern void tty_driver_kref_put(struct tty_driver *driver);
-
-#define alloc_tty_driver(lines) __alloc_tty_driver(lines, THIS_MODULE)
 
 static inline struct tty_driver *tty_driver_kref_get(struct tty_driver *d)
 {
@@ -363,7 +357,7 @@ static inline struct tty_driver *tty_driver_kref_get(struct tty_driver *d)
  * 	overruns, either.)
  *
  * TTY_DRIVER_DYNAMIC_DEV --- if set, the individual tty devices need
- *	to be registered with a call to tty_register_device() when the
+ *	to be registered with a call to tty_register_driver() when the
  *	device is found in the system and unregistered with a call to
  *	tty_unregister_device() so the devices will be show up
  *	properly in sysfs.  If not set, driver->num entries will be

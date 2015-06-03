@@ -33,11 +33,11 @@ ENTRY(__strncpy_from_user)
 	mov	pc, lr
 ENDPROC(__strncpy_from_user)
 
-	.pushsection .fixup,"ax"
+	.section .fixup,"ax"
 	.align	0
 9001:	mov	r3, #0
 	strb	r3, [r0, #0]	@ null terminate
 	mov	r0, #-EFAULT
 	mov	pc, lr
-	.popsection
+	.previous
 

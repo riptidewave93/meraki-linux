@@ -14,7 +14,6 @@
 #include <linux/types.h>
 #include <linux/stddef.h>
 #include <linux/kernel.h>
-#include <linux/gfp.h>
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <net/sock.h>
@@ -49,8 +48,8 @@ int ipv4_skb_to_auditdata(struct sk_buff *skb,
 	if (ih == NULL)
 		return -EINVAL;
 
-	ad->u.net->v4info.saddr = ih->saddr;
-	ad->u.net->v4info.daddr = ih->daddr;
+	ad->u.net.v4info.saddr = ih->saddr;
+	ad->u.net.v4info.daddr = ih->daddr;
 
 	if (proto)
 		*proto = ih->protocol;
@@ -64,8 +63,8 @@ int ipv4_skb_to_auditdata(struct sk_buff *skb,
 		if (th == NULL)
 			break;
 
-		ad->u.net->sport = th->source;
-		ad->u.net->dport = th->dest;
+		ad->u.net.sport = th->source;
+		ad->u.net.dport = th->dest;
 		break;
 	}
 	case IPPROTO_UDP: {
@@ -73,8 +72,8 @@ int ipv4_skb_to_auditdata(struct sk_buff *skb,
 		if (uh == NULL)
 			break;
 
-		ad->u.net->sport = uh->source;
-		ad->u.net->dport = uh->dest;
+		ad->u.net.sport = uh->source;
+		ad->u.net.dport = uh->dest;
 		break;
 	}
 	case IPPROTO_DCCP: {
@@ -82,16 +81,16 @@ int ipv4_skb_to_auditdata(struct sk_buff *skb,
 		if (dh == NULL)
 			break;
 
-		ad->u.net->sport = dh->dccph_sport;
-		ad->u.net->dport = dh->dccph_dport;
+		ad->u.net.sport = dh->dccph_sport;
+		ad->u.net.dport = dh->dccph_dport;
 		break;
 	}
 	case IPPROTO_SCTP: {
 		struct sctphdr *sh = sctp_hdr(skb);
 		if (sh == NULL)
 			break;
-		ad->u.net->sport = sh->source;
-		ad->u.net->dport = sh->dest;
+		ad->u.net.sport = sh->source;
+		ad->u.net.dport = sh->dest;
 		break;
 	}
 	default:
@@ -114,20 +113,19 @@ int ipv6_skb_to_auditdata(struct sk_buff *skb,
 	int offset, ret = 0;
 	struct ipv6hdr *ip6;
 	u8 nexthdr;
-	__be16 frag_off;
 
 	ip6 = ipv6_hdr(skb);
 	if (ip6 == NULL)
 		return -EINVAL;
-	ad->u.net->v6info.saddr = ip6->saddr;
-	ad->u.net->v6info.daddr = ip6->daddr;
+	ipv6_addr_copy(&ad->u.net.v6info.saddr, &ip6->saddr);
+	ipv6_addr_copy(&ad->u.net.v6info.daddr, &ip6->daddr);
 	ret = 0;
 	/* IPv6 can have several extension header before the Transport header
 	 * skip them */
 	offset = skb_network_offset(skb);
 	offset += sizeof(*ip6);
 	nexthdr = ip6->nexthdr;
-	offset = ipv6_skip_exthdr(skb, offset, &nexthdr, &frag_off);
+	offset = ipv6_skip_exthdr(skb, offset, &nexthdr);
 	if (offset < 0)
 		return 0;
 	if (proto)
@@ -140,8 +138,8 @@ int ipv6_skb_to_auditdata(struct sk_buff *skb,
 		if (th == NULL)
 			break;
 
-		ad->u.net->sport = th->source;
-		ad->u.net->dport = th->dest;
+		ad->u.net.sport = th->source;
+		ad->u.net.dport = th->dest;
 		break;
 	}
 	case IPPROTO_UDP: {
@@ -151,8 +149,8 @@ int ipv6_skb_to_auditdata(struct sk_buff *skb,
 		if (uh == NULL)
 			break;
 
-		ad->u.net->sport = uh->source;
-		ad->u.net->dport = uh->dest;
+		ad->u.net.sport = uh->source;
+		ad->u.net.dport = uh->dest;
 		break;
 	}
 	case IPPROTO_DCCP: {
@@ -162,8 +160,8 @@ int ipv6_skb_to_auditdata(struct sk_buff *skb,
 		if (dh == NULL)
 			break;
 
-		ad->u.net->sport = dh->dccph_sport;
-		ad->u.net->dport = dh->dccph_dport;
+		ad->u.net.sport = dh->dccph_sport;
+		ad->u.net.dport = dh->dccph_dport;
 		break;
 	}
 	case IPPROTO_SCTP: {
@@ -172,8 +170,8 @@ int ipv6_skb_to_auditdata(struct sk_buff *skb,
 		sh = skb_header_pointer(skb, offset, sizeof(_sctph), &_sctph);
 		if (sh == NULL)
 			break;
-		ad->u.net->sport = sh->source;
-		ad->u.net->dport = sh->dest;
+		ad->u.net.sport = sh->source;
+		ad->u.net.dport = sh->dest;
 		break;
 	}
 	default:
@@ -211,6 +209,7 @@ static inline void print_ipv4_addr(struct audit_buffer *ab, __be32 addr,
 static void dump_common_audit_data(struct audit_buffer *ab,
 				   struct common_audit_data *a)
 {
+	struct inode *inode = NULL;
 	struct task_struct *tsk = current;
 
 	if (a->tsk)
@@ -221,7 +220,7 @@ static void dump_common_audit_data(struct audit_buffer *ab,
 	}
 
 	switch (a->type) {
-	case LSM_AUDIT_DATA_NONE:
+	case LSM_AUDIT_NO_AUDIT:
 		return;
 	case LSM_AUDIT_DATA_IPC:
 		audit_log_format(ab, " key=%d ", a->u.ipc_id);
@@ -229,50 +228,33 @@ static void dump_common_audit_data(struct audit_buffer *ab,
 	case LSM_AUDIT_DATA_CAP:
 		audit_log_format(ab, " capability=%d ", a->u.cap);
 		break;
-	case LSM_AUDIT_DATA_PATH: {
-		struct inode *inode;
-
-		audit_log_d_path(ab, " path=", &a->u.path);
-
-		inode = a->u.path.dentry->d_inode;
-		if (inode) {
-			audit_log_format(ab, " dev=");
-			audit_log_untrustedstring(ab, inode->i_sb->s_id);
-			audit_log_format(ab, " ino=%lu", inode->i_ino);
+	case LSM_AUDIT_DATA_FS:
+		if (a->u.fs.path.dentry) {
+			struct dentry *dentry = a->u.fs.path.dentry;
+			if (a->u.fs.path.mnt) {
+				audit_log_d_path(ab, "path=", &a->u.fs.path);
+			} else {
+				audit_log_format(ab, " name=");
+				audit_log_untrustedstring(ab,
+						 dentry->d_name.name);
+			}
+			inode = dentry->d_inode;
+		} else if (a->u.fs.inode) {
+			struct dentry *dentry;
+			inode = a->u.fs.inode;
+			dentry = d_find_alias(inode);
+			if (dentry) {
+				audit_log_format(ab, " name=");
+				audit_log_untrustedstring(ab,
+						 dentry->d_name.name);
+				dput(dentry);
+			}
 		}
+		if (inode)
+			audit_log_format(ab, " dev=%s ino=%lu",
+					inode->i_sb->s_id,
+					inode->i_ino);
 		break;
-	}
-	case LSM_AUDIT_DATA_DENTRY: {
-		struct inode *inode;
-
-		audit_log_format(ab, " name=");
-		audit_log_untrustedstring(ab, a->u.dentry->d_name.name);
-
-		inode = a->u.dentry->d_inode;
-		if (inode) {
-			audit_log_format(ab, " dev=");
-			audit_log_untrustedstring(ab, inode->i_sb->s_id);
-			audit_log_format(ab, " ino=%lu", inode->i_ino);
-		}
-		break;
-	}
-	case LSM_AUDIT_DATA_INODE: {
-		struct dentry *dentry;
-		struct inode *inode;
-
-		inode = a->u.inode;
-		dentry = d_find_alias(inode);
-		if (dentry) {
-			audit_log_format(ab, " name=");
-			audit_log_untrustedstring(ab,
-					 dentry->d_name.name);
-			dput(dentry);
-		}
-		audit_log_format(ab, " dev=");
-		audit_log_untrustedstring(ab, inode->i_sb->s_id);
-		audit_log_format(ab, " ino=%lu", inode->i_ino);
-		break;
-	}
 	case LSM_AUDIT_DATA_TASK:
 		tsk = a->u.tsk;
 		if (tsk && tsk->pid) {
@@ -281,8 +263,8 @@ static void dump_common_audit_data(struct audit_buffer *ab,
 		}
 		break;
 	case LSM_AUDIT_DATA_NET:
-		if (a->u.net->sk) {
-			struct sock *sk = a->u.net->sk;
+		if (a->u.net.sk) {
+			struct sock *sk = a->u.net.sk;
 			struct unix_sock *u;
 			int len = 0;
 			char *p = NULL;
@@ -291,11 +273,11 @@ static void dump_common_audit_data(struct audit_buffer *ab,
 			case AF_INET: {
 				struct inet_sock *inet = inet_sk(sk);
 
-				print_ipv4_addr(ab, inet->inet_rcv_saddr,
-						inet->inet_sport,
+				print_ipv4_addr(ab, inet->rcv_saddr,
+						inet->sport,
 						"laddr", "lport");
-				print_ipv4_addr(ab, inet->inet_daddr,
-						inet->inet_dport,
+				print_ipv4_addr(ab, inet->daddr,
+						inet->dport,
 						"faddr", "fport");
 				break;
 			}
@@ -304,17 +286,21 @@ static void dump_common_audit_data(struct audit_buffer *ab,
 				struct ipv6_pinfo *inet6 = inet6_sk(sk);
 
 				print_ipv6_addr(ab, &inet6->rcv_saddr,
-						inet->inet_sport,
+						inet->sport,
 						"laddr", "lport");
 				print_ipv6_addr(ab, &inet6->daddr,
-						inet->inet_dport,
+						inet->dport,
 						"faddr", "fport");
 				break;
 			}
 			case AF_UNIX:
 				u = unix_sk(sk);
-				if (u->path.dentry) {
-					audit_log_d_path(ab, " path=", &u->path);
+				if (u->dentry) {
+					struct path path = {
+						.dentry = u->dentry,
+						.mnt = u->mnt
+					};
+					audit_log_d_path(ab, "path=", &path);
 					break;
 				}
 				if (!u->addr)
@@ -330,29 +316,29 @@ static void dump_common_audit_data(struct audit_buffer *ab,
 			}
 		}
 
-		switch (a->u.net->family) {
+		switch (a->u.net.family) {
 		case AF_INET:
-			print_ipv4_addr(ab, a->u.net->v4info.saddr,
-					a->u.net->sport,
+			print_ipv4_addr(ab, a->u.net.v4info.saddr,
+					a->u.net.sport,
 					"saddr", "src");
-			print_ipv4_addr(ab, a->u.net->v4info.daddr,
-					a->u.net->dport,
+			print_ipv4_addr(ab, a->u.net.v4info.daddr,
+					a->u.net.dport,
 					"daddr", "dest");
 			break;
 		case AF_INET6:
-			print_ipv6_addr(ab, &a->u.net->v6info.saddr,
-					a->u.net->sport,
+			print_ipv6_addr(ab, &a->u.net.v6info.saddr,
+					a->u.net.sport,
 					"saddr", "src");
-			print_ipv6_addr(ab, &a->u.net->v6info.daddr,
-					a->u.net->dport,
+			print_ipv6_addr(ab, &a->u.net.v6info.daddr,
+					a->u.net.dport,
 					"daddr", "dest");
 			break;
 		}
-		if (a->u.net->netif > 0) {
+		if (a->u.net.netif > 0) {
 			struct net_device *dev;
 
 			/* NOTE: we always use init's namespace */
-			dev = dev_get_by_index(&init_net, a->u.net->netif);
+			dev = dev_get_by_index(&init_net, a->u.net.netif);
 			if (dev) {
 				audit_log_format(ab, " netif=%s", dev->name);
 				dev_put(dev);
@@ -368,25 +354,17 @@ static void dump_common_audit_data(struct audit_buffer *ab,
 		}
 		break;
 #endif
-	case LSM_AUDIT_DATA_KMOD:
-		audit_log_format(ab, " kmod=");
-		audit_log_untrustedstring(ab, a->u.kmod_name);
-		break;
 	} /* switch (a->type) */
 }
 
 /**
  * common_lsm_audit - generic LSM auditing function
  * @a:  auxiliary audit data
- * @pre_audit: lsm-specific pre-audit callback
- * @post_audit: lsm-specific post-audit callback
  *
  * setup the audit buffer for common security information
  * uses callback to print LSM specific information
  */
-void common_lsm_audit(struct common_audit_data *a,
-	void (*pre_audit)(struct audit_buffer *, void *),
-	void (*post_audit)(struct audit_buffer *, void *))
+void common_lsm_audit(struct common_audit_data *a)
 {
 	struct audit_buffer *ab;
 
@@ -398,13 +376,13 @@ void common_lsm_audit(struct common_audit_data *a,
 	if (ab == NULL)
 		return;
 
-	if (pre_audit)
-		pre_audit(ab, a);
+	if (a->lsm_pre_audit)
+		a->lsm_pre_audit(ab, a);
 
 	dump_common_audit_data(ab, a);
 
-	if (post_audit)
-		post_audit(ab, a);
+	if (a->lsm_post_audit)
+		a->lsm_post_audit(ab, a);
 
 	audit_log_end(ab);
 }

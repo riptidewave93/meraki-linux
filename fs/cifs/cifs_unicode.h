@@ -30,8 +30,6 @@
  *     This is a compressed table of upper and lower case conversion.
  *
  */
-#ifndef _CIFS_UNICODE_H
-#define _CIFS_UNICODE_H
 
 #include <asm/byteorder.h>
 #include <linux/types.h>
@@ -44,7 +42,7 @@
  * reserved symbols (along with \ and /), otherwise illegal to store
  * in filenames in NTFS
  */
-#define UNI_ASTERISK    (__u16) ('*' + 0xF000)
+#define UNI_ASTERIK     (__u16) ('*' + 0xF000)
 #define UNI_QUESTION    (__u16) ('?' + 0xF000)
 #define UNI_COLON       (__u16) (':' + 0xF000)
 #define UNI_GRTRTHAN    (__u16) ('>' + 0xF000)
@@ -69,22 +67,19 @@ extern const struct UniCaseRange CifsUniUpperRange[];
 #endif				/* UNIUPR_NOUPPER */
 
 #ifndef UNIUPR_NOLOWER
-extern signed char CifsUniLowerTable[512];
-extern const struct UniCaseRange CifsUniLowerRange[];
+extern signed char UniLowerTable[512];
+extern struct UniCaseRange UniLowerRange[];
 #endif				/* UNIUPR_NOLOWER */
 
 #ifdef __KERNEL__
-int cifs_from_utf16(char *to, const __le16 *from, int tolen, int fromlen,
-		    const struct nls_table *codepage, bool mapchar);
-int cifs_utf16_bytes(const __le16 *from, int maxbytes,
-		     const struct nls_table *codepage);
-int cifs_strtoUTF16(__le16 *, const char *, int, const struct nls_table *);
-char *cifs_strndup_from_utf16(const char *src, const int maxlen,
-			      const bool is_unicode,
-			      const struct nls_table *codepage);
-extern int cifsConvertToUTF16(__le16 *target, const char *source, int maxlen,
-			      const struct nls_table *cp, int mapChars);
-
+int cifs_from_ucs2(char *to, const __le16 *from, int tolen, int fromlen,
+		   const struct nls_table *codepage, bool mapchar);
+int cifs_ucs2_bytes(const __le16 *from, int maxbytes,
+		    const struct nls_table *codepage);
+int cifs_strtoUCS(__le16 *, const char *, int, const struct nls_table *);
+char *cifs_strndup_from_ucs(const char *src, const int maxlen,
+			    const bool is_unicode,
+			    const struct nls_table *codepage);
 #endif
 
 /*
@@ -323,14 +318,14 @@ UniToupper(register wchar_t uc)
 /*
  * UniStrupr:  Upper case a unicode string
  */
-static inline __le16 *
-UniStrupr(register __le16 *upin)
+static inline wchar_t *
+UniStrupr(register wchar_t *upin)
 {
-	register __le16 *up;
+	register wchar_t *up;
 
 	up = upin;
 	while (*up) {		/* For all characters */
-		*up = cpu_to_le16(UniToupper(le16_to_cpu(*up)));
+		*up = UniToupper(*up);
 		up++;
 	}
 	return upin;		/* Return input pointer */
@@ -342,15 +337,15 @@ UniStrupr(register __le16 *upin)
  * UniTolower:  Convert a unicode character to lower case
  */
 static inline wchar_t
-UniTolower(register wchar_t uc)
+UniTolower(wchar_t uc)
 {
-	register const struct UniCaseRange *rp;
+	register struct UniCaseRange *rp;
 
-	if (uc < sizeof(CifsUniLowerTable)) {
+	if (uc < sizeof(UniLowerTable)) {
 		/* Latin characters */
-		return uc + CifsUniLowerTable[uc];	/* Use base tables */
+		return uc + UniLowerTable[uc];	/* Use base tables */
 	} else {
-		rp = CifsUniLowerRange;	/* Use range tables */
+		rp = UniLowerRange;	/* Use range tables */
 		while (rp->start) {
 			if (uc < rp->start)	/* Before start of range */
 				return uc;	/* Uppercase = input */
@@ -379,5 +374,3 @@ UniStrlwr(register wchar_t *upin)
 }
 
 #endif
-
-#endif /* _CIFS_UNICODE_H */

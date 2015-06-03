@@ -54,7 +54,7 @@ static int __blk_rq_map_user(struct request_queue *q, struct request *rq,
 	 * direct dma. else, set up kernel bounce buffers
 	 */
 	uaddr = (unsigned long) ubuf;
-	if (blk_rq_aligned(q, uaddr, len) && !map_data)
+	if (blk_rq_aligned(q, ubuf, len) && !map_data)
 		bio = bio_map_user(q, NULL, uaddr, len, reading, gfp_mask);
 	else
 		bio = bio_copy_user(q, map_data, uaddr, len, reading, gfp_mask);
@@ -201,14 +201,12 @@ int blk_rq_map_user_iov(struct request_queue *q, struct request *rq,
 	for (i = 0; i < iov_count; i++) {
 		unsigned long uaddr = (unsigned long)iov[i].iov_base;
 
+		if (uaddr & queue_dma_alignment(q)) {
+			unaligned = 1;
+			break;
+		}
 		if (!iov[i].iov_len)
 			return -EINVAL;
-
-		/*
-		 * Keep going so we check length of all segments
-		 */
-		if (uaddr & queue_dma_alignment(q))
-			unaligned = 1;
 	}
 
 	if (unaligned || (q->dma_pad_mask & len) || map_data)
@@ -292,7 +290,6 @@ int blk_rq_map_kern(struct request_queue *q, struct request *rq, void *kbuf,
 		    unsigned int len, gfp_t gfp_mask)
 {
 	int reading = rq_data_dir(rq) == READ;
-	unsigned long addr = (unsigned long) kbuf;
 	int do_copy = 0;
 	struct bio *bio;
 	int ret;
@@ -302,7 +299,7 @@ int blk_rq_map_kern(struct request_queue *q, struct request *rq, void *kbuf,
 	if (!len || !kbuf)
 		return -EINVAL;
 
-	do_copy = !blk_rq_aligned(q, addr, len) || object_is_on_stack(kbuf);
+	do_copy = !blk_rq_aligned(q, kbuf, len) || object_is_on_stack(kbuf);
 	if (do_copy)
 		bio = bio_copy_kern(q, kbuf, len, gfp_mask, reading);
 	else
@@ -311,8 +308,8 @@ int blk_rq_map_kern(struct request_queue *q, struct request *rq, void *kbuf,
 	if (IS_ERR(bio))
 		return PTR_ERR(bio);
 
-	if (!reading)
-		bio->bi_rw |= REQ_WRITE;
+	if (rq_data_dir(rq) == WRITE)
+		bio->bi_rw |= (1 << BIO_RW);
 
 	if (do_copy)
 		rq->cmd_flags |= REQ_COPY_USER;

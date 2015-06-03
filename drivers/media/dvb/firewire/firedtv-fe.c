@@ -36,14 +36,14 @@ static int fdtv_dvb_init(struct dvb_frontend *fe)
 		return err;
 	}
 
-	return fdtv_start_iso(fdtv);
+	return fdtv->backend->start_iso(fdtv);
 }
 
 static int fdtv_sleep(struct dvb_frontend *fe)
 {
 	struct firedtv *fdtv = fe->sec_priv;
 
-	fdtv_stop_iso(fdtv);
+	fdtv->backend->stop_iso(fdtv);
 	cmp_break_pp_connection(fdtv, fdtv->subunit, fdtv->isochannel);
 	fdtv->isochannel = -1;
 	return 0;
@@ -141,15 +141,21 @@ static int fdtv_read_uncorrected_blocks(struct dvb_frontend *fe, u32 *ucblocks)
 	return -EOPNOTSUPP;
 }
 
-static int fdtv_set_frontend(struct dvb_frontend *fe)
+static int fdtv_set_frontend(struct dvb_frontend *fe,
+			     struct dvb_frontend_parameters *params)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct firedtv *fdtv = fe->sec_priv;
 
-	return avc_tuner_dsd(fdtv, p);
+	return avc_tuner_dsd(fdtv, params);
 }
 
-void fdtv_frontend_init(struct firedtv *fdtv, const char *name)
+static int fdtv_get_frontend(struct dvb_frontend *fe,
+			     struct dvb_frontend_parameters *params)
+{
+	return -EOPNOTSUPP;
+}
+
+void fdtv_frontend_init(struct firedtv *fdtv)
 {
 	struct dvb_frontend_ops *ops = &fdtv->fe.ops;
 	struct dvb_frontend_info *fi = &ops->info;
@@ -158,6 +164,7 @@ void fdtv_frontend_init(struct firedtv *fdtv, const char *name)
 	ops->sleep			= fdtv_sleep;
 
 	ops->set_frontend		= fdtv_set_frontend;
+	ops->get_frontend		= fdtv_get_frontend;
 
 	ops->read_status		= fdtv_read_status;
 	ops->read_ber			= fdtv_read_ber;
@@ -172,7 +179,8 @@ void fdtv_frontend_init(struct firedtv *fdtv, const char *name)
 
 	switch (fdtv->type) {
 	case FIREDTV_DVB_S:
-		ops->delsys[0]		= SYS_DVBS;
+	case FIREDTV_DVB_S2:
+		fi->type		= FE_QPSK;
 
 		fi->frequency_min	= 950000;
 		fi->frequency_max	= 2150000;
@@ -180,7 +188,7 @@ void fdtv_frontend_init(struct firedtv *fdtv, const char *name)
 		fi->symbol_rate_min	= 1000000;
 		fi->symbol_rate_max	= 40000000;
 
-		fi->caps		= FE_CAN_INVERSION_AUTO |
+		fi->caps 		= FE_CAN_INVERSION_AUTO	|
 					  FE_CAN_FEC_1_2	|
 					  FE_CAN_FEC_2_3	|
 					  FE_CAN_FEC_3_4	|
@@ -190,29 +198,8 @@ void fdtv_frontend_init(struct firedtv *fdtv, const char *name)
 					  FE_CAN_QPSK;
 		break;
 
-	case FIREDTV_DVB_S2:
-		ops->delsys[0]		= SYS_DVBS;
-		ops->delsys[1]		= SYS_DVBS2;
-
-		fi->frequency_min	= 950000;
-		fi->frequency_max	= 2150000;
-		fi->frequency_stepsize	= 125;
-		fi->symbol_rate_min	= 1000000;
-		fi->symbol_rate_max	= 40000000;
-
-		fi->caps		= FE_CAN_INVERSION_AUTO |
-					  FE_CAN_FEC_1_2        |
-					  FE_CAN_FEC_2_3        |
-					  FE_CAN_FEC_3_4        |
-					  FE_CAN_FEC_5_6        |
-					  FE_CAN_FEC_7_8        |
-					  FE_CAN_FEC_AUTO       |
-					  FE_CAN_QPSK           |
-					  FE_CAN_2G_MODULATION;
-		break;
-
 	case FIREDTV_DVB_C:
-		ops->delsys[0]		= SYS_DVBC_ANNEX_A;
+		fi->type		= FE_QAM;
 
 		fi->frequency_min	= 47000000;
 		fi->frequency_max	= 866000000;
@@ -230,7 +217,7 @@ void fdtv_frontend_init(struct firedtv *fdtv, const char *name)
 		break;
 
 	case FIREDTV_DVB_T:
-		ops->delsys[0]		= SYS_DVBT;
+		fi->type		= FE_OFDM;
 
 		fi->frequency_min	= 49000000;
 		fi->frequency_max	= 861000000;
@@ -247,7 +234,7 @@ void fdtv_frontend_init(struct firedtv *fdtv, const char *name)
 		dev_err(fdtv->device, "no frontend for model type %d\n",
 			fdtv->type);
 	}
-	strcpy(fi->name, name);
+	strcpy(fi->name, fdtv_model_names[fdtv->type]);
 
 	fdtv->fe.dvb = &fdtv->adapter;
 	fdtv->fe.sec_priv = fdtv;

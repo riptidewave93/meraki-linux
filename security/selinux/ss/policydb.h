@@ -24,13 +24,9 @@
 #ifndef _SS_POLICYDB_H_
 #define _SS_POLICYDB_H_
 
-#include <linux/flex_array.h>
-
 #include "symtab.h"
 #include "avtab.h"
 #include "sidtab.h"
-#include "ebitmap.h"
-#include "mls_types.h"
 #include "context.h"
 #include "constraint.h"
 
@@ -72,21 +68,9 @@ struct role_datum {
 
 struct role_trans {
 	u32 role;		/* current role */
-	u32 type;		/* program executable type, or new object type */
-	u32 tclass;		/* process class, or new object class */
+	u32 type;		/* program executable type */
 	u32 new_role;		/* new role */
 	struct role_trans *next;
-};
-
-struct filename_trans {
-	u32 stype;		/* current process */
-	u32 ttype;		/* parent dir context */
-	u16 tclass;		/* class of new object */
-	const char *name;	/* last path component */
-};
-
-struct filename_trans_datum {
-	u32 otype;		/* expected of new object */
 };
 
 struct role_allow {
@@ -129,6 +113,8 @@ struct range_trans {
 	u32 source_type;
 	u32 target_type;
 	u32 target_class;
+	struct mls_range target_range;
+	struct range_trans *next;
 };
 
 /* Boolean data type */
@@ -201,8 +187,6 @@ struct genfs {
 
 /* The policy database */
 struct policydb {
-	int mls_enabled;
-
 	/* symbol tables */
 	struct symtab symtab[SYM_NUM];
 #define p_commons symtab[SYM_COMMONS]
@@ -215,25 +199,27 @@ struct policydb {
 #define p_cats symtab[SYM_CATS]
 
 	/* symbol names indexed by (value - 1) */
-	struct flex_array *sym_val_to_name[SYM_NUM];
+	char **sym_val_to_name[SYM_NUM];
+#define p_common_val_to_name sym_val_to_name[SYM_COMMONS]
+#define p_class_val_to_name sym_val_to_name[SYM_CLASSES]
+#define p_role_val_to_name sym_val_to_name[SYM_ROLES]
+#define p_type_val_to_name sym_val_to_name[SYM_TYPES]
+#define p_user_val_to_name sym_val_to_name[SYM_USERS]
+#define p_bool_val_to_name sym_val_to_name[SYM_BOOLS]
+#define p_sens_val_to_name sym_val_to_name[SYM_LEVELS]
+#define p_cat_val_to_name sym_val_to_name[SYM_CATS]
 
 	/* class, role, and user attributes indexed by (value - 1) */
 	struct class_datum **class_val_to_struct;
 	struct role_datum **role_val_to_struct;
 	struct user_datum **user_val_to_struct;
-	struct flex_array *type_val_to_struct_array;
+	struct type_datum **type_val_to_struct;
 
 	/* type enforcement access vectors and transitions */
 	struct avtab te_avtab;
 
 	/* role transitions */
 	struct role_trans *role_tr;
-
-	/* file transitions with the last path component */
-	/* quickly exclude lookups when parent ttype has no rules */
-	struct ebitmap filename_trans_ttypes;
-	/* actual set of filename_trans rules */
-	struct hashtab *filename_trans;
 
 	/* bools indexed by (value - 1) */
 	struct cond_bool_datum **bool_val_to_struct;
@@ -254,26 +240,21 @@ struct policydb {
 	   fixed labeling behavior. */
 	struct genfs *genfs;
 
-	/* range transitions table (range_trans_key -> mls_range) */
-	struct hashtab *range_tr;
+	/* range transitions */
+	struct range_trans *range_tr;
 
 	/* type -> attribute reverse mapping */
-	struct flex_array *type_attr_map_array;
+	struct ebitmap *type_attr_map;
 
 	struct ebitmap policycaps;
 
 	struct ebitmap permissive_map;
 
-	/* length of this policy when it was loaded */
-	size_t len;
-
 	unsigned int policyvers;
 
 	unsigned int reject_unknown : 1;
 	unsigned int allow_unknown : 1;
-
-	u16 process_class;
-	u32 process_trans_perms;
+	u32 *undefined_perms;
 };
 
 extern void policydb_destroy(struct policydb *p);
@@ -283,7 +264,6 @@ extern int policydb_class_isvalid(struct policydb *p, unsigned int class);
 extern int policydb_type_isvalid(struct policydb *p, unsigned int type);
 extern int policydb_role_isvalid(struct policydb *p, unsigned int role);
 extern int policydb_read(struct policydb *p, void *fp);
-extern int policydb_write(struct policydb *p, void *fp);
 
 #define PERM_SYMTAB_SIZE 32
 
@@ -304,11 +284,6 @@ struct policy_file {
 	size_t len;
 };
 
-struct policy_data {
-	struct policydb *p;
-	void *fp;
-};
-
 static inline int next_entry(void *buf, struct policy_file *fp, size_t bytes)
 {
 	if (bytes > fp->len)
@@ -319,27 +294,6 @@ static inline int next_entry(void *buf, struct policy_file *fp, size_t bytes)
 	fp->len -= bytes;
 	return 0;
 }
-
-static inline int put_entry(const void *buf, size_t bytes, int num, struct policy_file *fp)
-{
-	size_t len = bytes * num;
-
-	memcpy(fp->data, buf, len);
-	fp->data += len;
-	fp->len -= len;
-
-	return 0;
-}
-
-static inline char *sym_name(struct policydb *p, unsigned int sym_num, unsigned int element_nr)
-{
-	struct flex_array *fa = p->sym_val_to_name[sym_num];
-
-	return flex_array_get_ptr(fa, element_nr);
-}
-
-extern u16 string_to_security_class(struct policydb *p, const char *name);
-extern u32 string_to_av_perm(struct policydb *p, u16 tclass, const char *name);
 
 #endif	/* _SS_POLICYDB_H_ */
 

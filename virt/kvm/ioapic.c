@@ -1,6 +1,5 @@
 /*
  *  Copyright (C) 2001  MandrakeSoft S.A.
- *  Copyright 2010 Red Hat, Inc. and/or its affiliates.
  *
  *    MandrakeSoft S.A.
  *    43, rue d'Aboukir
@@ -34,7 +33,6 @@
 #include <linux/smp.h>
 #include <linux/hrtimer.h>
 #include <linux/io.h>
-#include <linux/slab.h>
 #include <asm/processor.h>
 #include <asm/page.h>
 #include <asm/current.h>
@@ -105,19 +103,6 @@ static int ioapic_service(struct kvm_ioapic *ioapic, unsigned int idx)
 	return injected;
 }
 
-static void update_handled_vectors(struct kvm_ioapic *ioapic)
-{
-	DECLARE_BITMAP(handled_vectors, 256);
-	int i;
-
-	memset(handled_vectors, 0, sizeof(handled_vectors));
-	for (i = 0; i < IOAPIC_NUM_PINS; ++i)
-		__set_bit(ioapic->redirtbl[i].fields.vector, handled_vectors);
-	memcpy(ioapic->handled_vectors, handled_vectors,
-	       sizeof(handled_vectors));
-	smp_wmb();
-}
-
 static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 {
 	unsigned index;
@@ -152,10 +137,9 @@ static void ioapic_write_indirect(struct kvm_ioapic *ioapic, u32 val)
 			e->bits |= (u32) val;
 			e->fields.remote_irr = 0;
 		}
-		update_handled_vectors(ioapic);
 		mask_after = e->fields.mask;
 		if (mask_before != mask_after)
-			kvm_fire_mask_notifiers(ioapic->kvm, KVM_IRQCHIP_IOAPIC, index, mask_after);
+			kvm_fire_mask_notifiers(ioapic->kvm, index, mask_after);
 		if (e->fields.trig_mode == IOAPIC_LEVEL_TRIG
 		    && ioapic->irr & (1 << index))
 			ioapic_service(ioapic, index);
@@ -170,7 +154,7 @@ static int ioapic_deliver(struct kvm_ioapic *ioapic, int irq)
 
 	ioapic_debug("dest=%x dest_mode=%x delivery_mode=%x "
 		     "vector=%x trig_mode=%x\n",
-		     entry->fields.dest_id, entry->fields.dest_mode,
+		     entry->fields.dest, entry->fields.dest_mode,
 		     entry->fields.delivery_mode, entry->fields.vector,
 		     entry->fields.trig_mode);
 
@@ -188,7 +172,7 @@ static int ioapic_deliver(struct kvm_ioapic *ioapic, int irq)
 		irqe.dest_mode = 0; /* Physical mode. */
 		/* need to read apic_id from apic regiest since
 		 * it can be rewritten */
-		irqe.dest_id = ioapic->kvm->bsp_vcpu_id;
+		irqe.dest_id = ioapic->kvm->bsp_vcpu->vcpu_id;
 	}
 #endif
 	return kvm_irq_delivery_to_apic(ioapic->kvm, NULL, &irqe);
@@ -196,13 +180,11 @@ static int ioapic_deliver(struct kvm_ioapic *ioapic, int irq)
 
 int kvm_ioapic_set_irq(struct kvm_ioapic *ioapic, int irq, int level)
 {
-	u32 old_irr;
+	u32 old_irr = ioapic->irr;
 	u32 mask = 1 << irq;
 	union kvm_ioapic_redirect_entry entry;
 	int ret = 1;
 
-	spin_lock(&ioapic->lock);
-	old_irr = ioapic->irr;
 	if (irq >= 0 && irq < IOAPIC_NUM_PINS) {
 		entry = ioapic->redirtbl[irq];
 		level ^= entry.fields.polarity;
@@ -219,54 +201,34 @@ int kvm_ioapic_set_irq(struct kvm_ioapic *ioapic, int irq, int level)
 		}
 		trace_kvm_ioapic_set_irq(entry.bits, irq, ret == 0);
 	}
-	spin_unlock(&ioapic->lock);
-
 	return ret;
 }
 
-static void __kvm_ioapic_update_eoi(struct kvm_ioapic *ioapic, int vector,
-				     int trigger_mode)
+static void __kvm_ioapic_update_eoi(struct kvm_ioapic *ioapic, int pin,
+				    int trigger_mode)
 {
-	int i;
+	union kvm_ioapic_redirect_entry *ent;
 
-	for (i = 0; i < IOAPIC_NUM_PINS; i++) {
-		union kvm_ioapic_redirect_entry *ent = &ioapic->redirtbl[i];
+	ent = &ioapic->redirtbl[pin];
 
-		if (ent->fields.vector != vector)
-			continue;
+	kvm_notify_acked_irq(ioapic->kvm, KVM_IRQCHIP_IOAPIC, pin);
 
-		/*
-		 * We are dropping lock while calling ack notifiers because ack
-		 * notifier callbacks for assigned devices call into IOAPIC
-		 * recursively. Since remote_irr is cleared only after call
-		 * to notifiers if the same vector will be delivered while lock
-		 * is dropped it will be put into irr and will be delivered
-		 * after ack notifier returns.
-		 */
-		spin_unlock(&ioapic->lock);
-		kvm_notify_acked_irq(ioapic->kvm, KVM_IRQCHIP_IOAPIC, i);
-		spin_lock(&ioapic->lock);
-
-		if (trigger_mode != IOAPIC_LEVEL_TRIG)
-			continue;
-
+	if (trigger_mode == IOAPIC_LEVEL_TRIG) {
 		ASSERT(ent->fields.trig_mode == IOAPIC_LEVEL_TRIG);
 		ent->fields.remote_irr = 0;
-		if (!ent->fields.mask && (ioapic->irr & (1 << i)))
-			ioapic_service(ioapic, i);
+		if (!ent->fields.mask && (ioapic->irr & (1 << pin)))
+			ioapic_service(ioapic, pin);
 	}
 }
 
 void kvm_ioapic_update_eoi(struct kvm *kvm, int vector, int trigger_mode)
 {
 	struct kvm_ioapic *ioapic = kvm->arch.vioapic;
+	int i;
 
-	smp_rmb();
-	if (!test_bit(vector, ioapic->handled_vectors))
-		return;
-	spin_lock(&ioapic->lock);
-	__kvm_ioapic_update_eoi(ioapic, vector, trigger_mode);
-	spin_unlock(&ioapic->lock);
+	for (i = 0; i < IOAPIC_NUM_PINS; i++)
+		if (ioapic->redirtbl[i].fields.vector == vector)
+			__kvm_ioapic_update_eoi(ioapic, i, trigger_mode);
 }
 
 static inline struct kvm_ioapic *to_ioapic(struct kvm_io_device *dev)
@@ -291,8 +253,8 @@ static int ioapic_mmio_read(struct kvm_io_device *this, gpa_t addr, int len,
 	ioapic_debug("addr %lx\n", (unsigned long)addr);
 	ASSERT(!(addr & 0xf));	/* check alignment */
 
+	mutex_lock(&ioapic->kvm->irq_lock);
 	addr &= 0xff;
-	spin_lock(&ioapic->lock);
 	switch (addr) {
 	case IOAPIC_REG_SELECT:
 		result = ioapic->ioregsel;
@@ -306,8 +268,6 @@ static int ioapic_mmio_read(struct kvm_io_device *this, gpa_t addr, int len,
 		result = 0;
 		break;
 	}
-	spin_unlock(&ioapic->lock);
-
 	switch (len) {
 	case 8:
 		*(u64 *) val = result;
@@ -320,6 +280,7 @@ static int ioapic_mmio_read(struct kvm_io_device *this, gpa_t addr, int len,
 	default:
 		printk(KERN_WARNING "ioapic: wrong length %d\n", len);
 	}
+	mutex_unlock(&ioapic->kvm->irq_lock);
 	return 0;
 }
 
@@ -335,27 +296,18 @@ static int ioapic_mmio_write(struct kvm_io_device *this, gpa_t addr, int len,
 		     (void*)addr, len, val);
 	ASSERT(!(addr & 0xf));	/* check alignment */
 
-	switch (len) {
-	case 8:
-	case 4:
+	mutex_lock(&ioapic->kvm->irq_lock);
+	if (len == 4 || len == 8)
 		data = *(u32 *) val;
-		break;
-	case 2:
-		data = *(u16 *) val;
-		break;
-	case 1:
-		data = *(u8  *) val;
-		break;
-	default:
+	else {
 		printk(KERN_WARNING "ioapic: Unsupported size %d\n", len);
-		return 0;
+		goto unlock;
 	}
 
 	addr &= 0xff;
-	spin_lock(&ioapic->lock);
 	switch (addr) {
 	case IOAPIC_REG_SELECT:
-		ioapic->ioregsel = data & 0xFF; /* 8-bit register */
+		ioapic->ioregsel = data;
 		break;
 
 	case IOAPIC_REG_WINDOW:
@@ -363,14 +315,15 @@ static int ioapic_mmio_write(struct kvm_io_device *this, gpa_t addr, int len,
 		break;
 #ifdef	CONFIG_IA64
 	case IOAPIC_REG_EOI:
-		__kvm_ioapic_update_eoi(ioapic, data, IOAPIC_LEVEL_TRIG);
+		kvm_ioapic_update_eoi(ioapic->kvm, data, IOAPIC_LEVEL_TRIG);
 		break;
 #endif
 
 	default:
 		break;
 	}
-	spin_unlock(&ioapic->lock);
+unlock:
+	mutex_unlock(&ioapic->kvm->irq_lock);
 	return 0;
 }
 
@@ -384,7 +337,6 @@ void kvm_ioapic_reset(struct kvm_ioapic *ioapic)
 	ioapic->ioregsel = 0;
 	ioapic->irr = 0;
 	ioapic->id = 0;
-	update_handled_vectors(ioapic);
 }
 
 static const struct kvm_io_device_ops ioapic_mmio_ops = {
@@ -400,55 +352,14 @@ int kvm_ioapic_init(struct kvm *kvm)
 	ioapic = kzalloc(sizeof(struct kvm_ioapic), GFP_KERNEL);
 	if (!ioapic)
 		return -ENOMEM;
-	spin_lock_init(&ioapic->lock);
 	kvm->arch.vioapic = ioapic;
 	kvm_ioapic_reset(ioapic);
 	kvm_iodevice_init(&ioapic->dev, &ioapic_mmio_ops);
 	ioapic->kvm = kvm;
-	mutex_lock(&kvm->slots_lock);
-	ret = kvm_io_bus_register_dev(kvm, KVM_MMIO_BUS, ioapic->base_address,
-				      IOAPIC_MEM_LENGTH, &ioapic->dev);
-	mutex_unlock(&kvm->slots_lock);
-	if (ret < 0) {
-		kvm->arch.vioapic = NULL;
+	ret = kvm_io_bus_register_dev(kvm, &kvm->mmio_bus, &ioapic->dev);
+	if (ret < 0)
 		kfree(ioapic);
-	}
 
 	return ret;
 }
 
-void kvm_ioapic_destroy(struct kvm *kvm)
-{
-	struct kvm_ioapic *ioapic = kvm->arch.vioapic;
-
-	if (ioapic) {
-		kvm_io_bus_unregister_dev(kvm, KVM_MMIO_BUS, &ioapic->dev);
-		kvm->arch.vioapic = NULL;
-		kfree(ioapic);
-	}
-}
-
-int kvm_get_ioapic(struct kvm *kvm, struct kvm_ioapic_state *state)
-{
-	struct kvm_ioapic *ioapic = ioapic_irqchip(kvm);
-	if (!ioapic)
-		return -EINVAL;
-
-	spin_lock(&ioapic->lock);
-	memcpy(state, ioapic, sizeof(struct kvm_ioapic_state));
-	spin_unlock(&ioapic->lock);
-	return 0;
-}
-
-int kvm_set_ioapic(struct kvm *kvm, struct kvm_ioapic_state *state)
-{
-	struct kvm_ioapic *ioapic = ioapic_irqchip(kvm);
-	if (!ioapic)
-		return -EINVAL;
-
-	spin_lock(&ioapic->lock);
-	memcpy(ioapic, state, sizeof(struct kvm_ioapic_state));
-	update_handled_vectors(ioapic);
-	spin_unlock(&ioapic->lock);
-	return 0;
-}

@@ -24,6 +24,25 @@ static inline void pte_free(struct mm_struct *mm, pgtable_t ptepage)
 	__free_page(ptepage);
 }
 
+typedef struct pgtable_free {
+	unsigned long val;
+} pgtable_free_t;
+
+/* This needs to be big enough to allow for MMU_PAGE_COUNT + 2 to be stored
+ * and small enough to fit in the low bits of any naturally aligned page
+ * table cache entry. Arbitrarily set to 0x1f, that should give us some
+ * room to grow
+ */
+#define PGF_CACHENUM_MASK	0x1f
+
+static inline pgtable_free_t pgtable_free_cache(void *p, int cachenum,
+						unsigned long mask)
+{
+	BUG_ON(cachenum > PGF_CACHENUM_MASK);
+
+	return (pgtable_free_t){.val = ((unsigned long) p & ~mask) | cachenum};
+}
+
 #ifdef CONFIG_PPC64
 #include <asm/pgalloc-64.h>
 #else
@@ -31,37 +50,25 @@ static inline void pte_free(struct mm_struct *mm, pgtable_t ptepage)
 #endif
 
 #ifdef CONFIG_SMP
-struct mmu_gather;
-extern void tlb_remove_table(struct mmu_gather *, void *);
-
-static inline void pgtable_free_tlb(struct mmu_gather *tlb, void *table, int shift)
-{
-	unsigned long pgf = (unsigned long)table;
-	BUG_ON(shift > MAX_PGTABLE_INDEX_SIZE);
-	pgf |= shift;
-	tlb_remove_table(tlb, (void *)pgf);
-}
-
-static inline void __tlb_remove_table(void *_table)
-{
-	void *table = (void *)((unsigned long)_table & ~MAX_PGTABLE_INDEX_SIZE);
-	unsigned shift = (unsigned long)_table & MAX_PGTABLE_INDEX_SIZE;
-
-	pgtable_free(table, shift);
-}
+extern void pgtable_free_tlb(struct mmu_gather *tlb, pgtable_free_t pgf);
+extern void pte_free_finish(void);
 #else /* CONFIG_SMP */
-static inline void pgtable_free_tlb(struct mmu_gather *tlb, void *table, unsigned shift)
+static inline void pgtable_free_tlb(struct mmu_gather *tlb, pgtable_free_t pgf)
 {
-	pgtable_free(table, shift);
+	pgtable_free(pgf);
 }
+static inline void pte_free_finish(void) { }
 #endif /* !CONFIG_SMP */
 
 static inline void __pte_free_tlb(struct mmu_gather *tlb, struct page *ptepage,
 				  unsigned long address)
 {
+	pgtable_free_t pgf = pgtable_free_cache(page_address(ptepage),
+						PTE_NONCACHE_NUM,
+						PTE_TABLE_SIZE-1);
 	tlb_flush_pgtable(tlb, address);
 	pgtable_page_dtor(ptepage);
-	pgtable_free_tlb(tlb, page_address(ptepage), 0);
+	pgtable_free_tlb(tlb, pgf);
 }
 
 #endif /* __KERNEL__ */

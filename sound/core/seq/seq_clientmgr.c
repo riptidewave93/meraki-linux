@@ -22,7 +22,6 @@
  */
 
 #include <linux/init.h>
-#include <linux/export.h>
 #include <linux/slab.h>
 #include <sound/core.h>
 #include <sound/minors.h>
@@ -319,11 +318,6 @@ static int snd_seq_open(struct inode *inode, struct file *file)
 	int c, mode;			/* client id */
 	struct snd_seq_client *client;
 	struct snd_seq_user_client *user;
-	int err;
-
-	err = nonseekable_open(inode, file);
-	if (err < 0)
-		return err;
 
 	if (mutex_lock_interruptible(&register_mutex))
 		return -ERESTARTSYS;
@@ -1053,7 +1047,7 @@ static ssize_t snd_seq_write(struct file *file, const char __user *buf,
 		} else {
 #ifdef CONFIG_COMPAT
 			if (client->convert32 && snd_seq_ev_is_varusr(&event)) {
-				void *ptr = (void __force *)compat_ptr(event.data.raw32.d[1]);
+				void *ptr = compat_ptr(event.data.raw32.d[1]);
 				event.data.ext.ptr = ptr;
 			}
 #endif
@@ -2196,7 +2190,7 @@ static int snd_seq_do_ioctl(struct snd_seq_client *client, unsigned int cmd,
 		if (p->cmd == cmd)
 			return p->func(client, arg);
 	}
-	snd_printd("seq unknown ioctl() 0x%x (type='%c', number=0x%02x)\n",
+	snd_printd("seq unknown ioctl() 0x%x (type='%c', number=0x%2x)\n",
 		   cmd, _IOC_TYPE(cmd), _IOC_NR(cmd));
 	return -ENOTTY;
 }
@@ -2408,7 +2402,7 @@ int snd_seq_kernel_client_ctl(int clientid, unsigned int cmd, void *arg)
 	if (client == NULL)
 		return -ENXIO;
 	fs = snd_enter_user();
-	result = snd_seq_do_ioctl(client, cmd, (void __force __user *)arg);
+	result = snd_seq_do_ioctl(client, cmd, (void __user *)arg);
 	snd_leave_user(fs);
 	return result;
 }
@@ -2498,6 +2492,9 @@ static void snd_seq_info_dump_ports(struct snd_info_buffer *buffer,
 }
 
 
+void snd_seq_info_pool(struct snd_info_buffer *buffer,
+		       struct snd_seq_pool *pool, char *space);
+
 /* exported to seq_info.c */
 void snd_seq_info_clients_read(struct snd_info_entry *entry, 
 			       struct snd_info_buffer *buffer)
@@ -2553,7 +2550,6 @@ static const struct file_operations snd_seq_f_ops =
 	.write =	snd_seq_write,
 	.open =		snd_seq_open,
 	.release =	snd_seq_release,
-	.llseek =	no_llseek,
 	.poll =		snd_seq_poll,
 	.unlocked_ioctl =	snd_seq_ioctl,
 	.compat_ioctl =	snd_seq_ioctl_compat,

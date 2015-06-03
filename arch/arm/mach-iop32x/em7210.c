@@ -42,6 +42,7 @@ static void __init em7210_timer_init(void)
 
 static struct sys_timer em7210_timer = {
 	.init		= em7210_timer_init,
+	.offset		= iop_gettimeoffset,
 };
 
 /*
@@ -81,7 +82,7 @@ void __init em7210_map_io(void)
 #define INTD	IRQ_IOP32X_XINT3
 
 static int __init
-em7210_pci_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+em7210_pci_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	static int pci_irq_table[][4] = {
 		/*
@@ -203,10 +204,11 @@ static void __init em7210_init_machine(void)
 }
 
 MACHINE_START(EM7210, "Lanner EM7210")
-	.atag_offset	= 0x100,
+	.phys_io	= IQ31244_UART,
+	.io_pg_offst	= ((IQ31244_UART) >> 18) & 0xfffc,
+	.boot_params	= 0xa0000100,
 	.map_io		= em7210_map_io,
 	.init_irq	= iop32x_init_irq,
 	.timer		= &em7210_timer,
 	.init_machine	= em7210_init_machine,
-	.restart	= iop3xx_restart,
 MACHINE_END

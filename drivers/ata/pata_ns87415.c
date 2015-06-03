@@ -126,7 +126,7 @@ static void ns87415_bmdma_setup(struct ata_queued_cmd *qc)
 
 	/* load PRD table addr. */
 	mb();	/* make sure PRD table writes are visible to controller */
-	iowrite32(ap->bmdma_prd_dma, ap->ioaddr.bmdma_addr + ATA_DMA_TABLE_OFS);
+	iowrite32(ap->prd_dma, ap->ioaddr.bmdma_addr + ATA_DMA_TABLE_OFS);
 
 	/* specify data direction, triple-check start bit is clear */
 	dmactl = ioread8(ap->ioaddr.bmdma_addr + ATA_DMA_CMD);
@@ -325,13 +325,6 @@ static struct scsi_host_template ns87415_sht = {
 	ATA_BMDMA_SHT(DRV_NAME),
 };
 
-static void ns87415_fixup(struct pci_dev *pdev)
-{
-	/* Select 512 byte sectors */
-	pci_write_config_byte(pdev, 0x55, 0xEE);
-	/* Select PIO0 8bit clocking */
-	pci_write_config_byte(pdev, 0x54, 0xB7);
-}
 
 /**
  *	ns87415_init_one - Register 87415 ATA PCI device with kernel services
@@ -350,6 +343,7 @@ static void ns87415_fixup(struct pci_dev *pdev)
 
 static int ns87415_init_one (struct pci_dev *pdev, const struct pci_device_id *ent)
 {
+	static int printed_version;
 	static const struct ata_port_info info = {
 		.flags		= ATA_FLAG_SLAVE_POSS,
 		.pio_mask	= ATA_PIO4,
@@ -369,15 +363,19 @@ static int ns87415_init_one (struct pci_dev *pdev, const struct pci_device_id *e
 	if (PCI_SLOT(pdev->devfn) == 0x0E)
 		ppi[0] = &info87560;
 #endif
-	ata_print_version_once(&pdev->dev, DRV_VERSION);
+	if (!printed_version++)
+		dev_printk(KERN_DEBUG, &pdev->dev,
+			   "version " DRV_VERSION "\n");
 
 	rc = pcim_enable_device(pdev);
 	if (rc)
 		return rc;
 
-	ns87415_fixup(pdev);
-
-	return ata_pci_bmdma_init_one(pdev, ppi, &ns87415_sht, NULL, 0);
+	/* Select 512 byte sectors */
+	pci_write_config_byte(pdev, 0x55, 0xEE);
+	/* Select PIO0 8bit clocking */
+	pci_write_config_byte(pdev, 0x54, 0xB7);
+	return ata_pci_sff_init_one(pdev, ppi, &ns87415_sht, NULL);
 }
 
 static const struct pci_device_id ns87415_pci_tbl[] = {
@@ -386,23 +384,6 @@ static const struct pci_device_id ns87415_pci_tbl[] = {
 	{ }	/* terminate list */
 };
 
-#ifdef CONFIG_PM
-static int ns87415_reinit_one(struct pci_dev *pdev)
-{
-	struct ata_host *host = dev_get_drvdata(&pdev->dev);
-	int rc;
-
-	rc = ata_pci_device_do_resume(pdev);
-	if (rc)
-		return rc;
-
-	ns87415_fixup(pdev);
-
-	ata_host_resume(host);
-	return 0;
-}
-#endif
-
 static struct pci_driver ns87415_pci_driver = {
 	.name			= DRV_NAME,
 	.id_table		= ns87415_pci_tbl,
@@ -410,7 +391,7 @@ static struct pci_driver ns87415_pci_driver = {
 	.remove			= ata_pci_remove_one,
 #ifdef CONFIG_PM
 	.suspend		= ata_pci_device_suspend,
-	.resume			= ns87415_reinit_one,
+	.resume			= ata_pci_device_resume,
 #endif
 };
 

@@ -11,7 +11,6 @@
 
 #include <linux/types.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/smp.h>
 #include <linux/reboot.h>
 #include <linux/kexec.h>
@@ -173,10 +172,8 @@ static int __init cbe_ptcal_enable(void)
 		return -ENODEV;
 
 	size = of_get_property(np, "ibm,cbe-ptcal-size", NULL);
-	if (!size) {
-		of_node_put(np);
+	if (!size)
 		return -ENODEV;
-	}
 
 	pr_debug("%s: enabling PTCAL, size = 0x%x\n", __func__, *size);
 	order = get_order(*size);
@@ -258,7 +255,7 @@ static int __init cbe_sysreset_init(void)
 {
 	struct cbe_pmd_regs __iomem *regs;
 
-	sysreset_hack = of_machine_is_compatible("IBM,CBPLUS-1.0");
+	sysreset_hack = machine_is_compatible("IBM,CBPLUS-1.0");
 	if (!sysreset_hack)
 		return 0;
 

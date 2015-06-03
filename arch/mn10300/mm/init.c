@@ -17,6 +17,7 @@
 #include <linux/types.h>
 #include <linux/ptrace.h>
 #include <linux/mman.h>
+#include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/mm.h>
 #include <linux/swap.h>
@@ -26,9 +27,9 @@
 #include <linux/highmem.h>
 #include <linux/pagemap.h>
 #include <linux/bootmem.h>
-#include <linux/gfp.h>
 
 #include <asm/processor.h>
+#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
@@ -36,11 +37,9 @@
 #include <asm/tlb.h>
 #include <asm/sections.h>
 
-unsigned long highstart_pfn, highend_pfn;
+DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
 
-#ifdef CONFIG_MN10300_HAS_ATOMIC_OPS_UNIT
-static struct vm_struct user_iomap_vm;
-#endif
+unsigned long highstart_pfn, highend_pfn;
 
 /*
  * set up paging
@@ -74,24 +73,7 @@ void __init paging_init(void)
 	/* pass the memory from the bootmem allocator to the main allocator */
 	free_area_init(zones_size);
 
-#ifdef CONFIG_MN10300_HAS_ATOMIC_OPS_UNIT
-	/* The Atomic Operation Unit registers need to be mapped to userspace
-	 * for all processes.  The following uses vm_area_register_early() to
-	 * reserve the first page of the vmalloc area and sets the pte for that
-	 * page.
-	 *
-	 * glibc hardcodes this virtual mapping, so we're pretty much stuck with
-	 * it from now on.
-	 */
-	user_iomap_vm.flags = VM_USERMAP;
-	user_iomap_vm.size = 1 << PAGE_SHIFT;
-	vm_area_register_early(&user_iomap_vm, PAGE_SIZE);
-	ppte = kernel_vmalloc_ptes;
-	set_pte(ppte, pfn_pte(USER_ATOMIC_OPS_PAGE_ADDR >> PAGE_SHIFT,
-			      PAGE_USERIO));
-#endif
-
-	local_flush_tlb_all();
+	__flush_tlb_all();
 }
 
 /*
@@ -102,7 +84,8 @@ void __init mem_init(void)
 	int codesize, reservedpages, datasize, initsize;
 	int tmp;
 
-	BUG_ON(!mem_map);
+	if (!mem_map)
+		BUG();
 
 #define START_PFN	(contig_page_data.bdata->node_min_pfn)
 #define MAX_LOW_PFN	(contig_page_data.bdata->node_low_pfn)
@@ -135,7 +118,8 @@ void __init mem_init(void)
 	       reservedpages << (PAGE_SHIFT - 10),
 	       datasize >> 10,
 	       initsize >> 10,
-	       totalhigh_pages << (PAGE_SHIFT - 10));
+	       (unsigned long) (totalhigh_pages << (PAGE_SHIFT - 10))
+	       );
 }
 
 /*

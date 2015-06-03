@@ -24,10 +24,6 @@ assumed to be in the resume mode.  The device cannot be open for simultaneous
 reading and writing.  It is also impossible to have the device open more than
 once at a time.
 
-Even opening the device has side effects. Data structures are
-allocated, and PM_HIBERNATION_PREPARE / PM_RESTORE_PREPARE chains are
-called.
-
 The ioctl() commands recognized by the device are:
 
 SNAPSHOT_FREEZE - freeze user space processes (the current process is
@@ -77,8 +73,7 @@ SNAPSHOT_SET_SWAP_AREA - set the resume partition and the offset (in <PAGE_SIZE>
 	resume_swap_area, as defined in kernel/power/suspend_ioctls.h,
 	containing the resume device specification and the offset); for swap
 	partitions the offset is always 0, but it is different from zero for
-	swap files (see Documentation/power/swsusp-and-swap-files.txt for
-	details).
+	swap files (see Documentation/swsusp-and-swap-files.txt for details).
 
 SNAPSHOT_PLATFORM_SUPPORT - enable/disable the hibernation platform support,
 	depending on the argument value (enable, if the argument is nonzero)
@@ -99,7 +94,7 @@ SNAPSHOT_S2RAM - suspend to RAM; using this call causes the kernel to
 The device's read() operation can be used to transfer the snapshot image from
 the kernel.  It has the following limitations:
 - you cannot read() more than one virtual memory page at a time
-- read()s across page boundaries are impossible (ie. if ypu read() 1/2 of
+- read()s accross page boundaries are impossible (ie. if ypu read() 1/2 of
 	a page in the previous call, you will only be able to read()
 	_at_ _most_ 1/2 of the page in the next call)
 
@@ -138,7 +133,7 @@ mechanism and the userland utilities using the interface SHOULD use additional
 means, such as checksums, to ensure the integrity of the snapshot image.
 
 The suspending and resuming utilities MUST lock themselves in memory,
-preferably using mlockall(), before calling SNAPSHOT_FREEZE.
+preferrably using mlockall(), before calling SNAPSHOT_FREEZE.
 
 The suspending utility MUST check the value stored by SNAPSHOT_CREATE_IMAGE
 in the memory location pointed to by the last argument of ioctl() and proceed
@@ -148,7 +143,7 @@ in accordance with it:
 	(a)	The suspending utility MUST NOT close the snapshot device
 		_unless_ the whole suspend procedure is to be cancelled, in
 		which case, if the snapshot image has already been saved, the
-		suspending utility SHOULD destroy it, preferably by zapping
+		suspending utility SHOULD destroy it, preferrably by zapping
 		its header.  If the suspend is not to be cancelled, the
 		system MUST be powered off or rebooted after the snapshot
 		image has been saved.

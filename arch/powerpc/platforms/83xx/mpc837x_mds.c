@@ -48,10 +48,8 @@ static int mpc837xmds_usb_cfg(void)
 		return -1;
 
 	np = of_find_node_by_name(NULL, "usb");
-	if (!np) {
-		ret = -ENODEV;
-		goto out;
-	}
+	if (!np)
+		return -ENODEV;
 	phy_type = of_get_property(np, "phy_type", NULL);
 	if (phy_type && !strcmp(phy_type, "ulpi")) {
 		clrbits8(bcsr_regs + 12, BCSR12_USB_SER_PIN);
@@ -67,9 +65,8 @@ static int mpc837xmds_usb_cfg(void)
 	}
 
 	of_node_put(np);
-out:
 	iounmap(bcsr_regs);
-	return ret;
+	return 0;
 }
 
 /* ************************************************************************
@@ -79,14 +76,54 @@ out:
  */
 static void __init mpc837x_mds_setup_arch(void)
 {
+#ifdef CONFIG_PCI
+	struct device_node *np;
+#endif
+
 	if (ppc_md.progress)
 		ppc_md.progress("mpc837x_mds_setup_arch()", 0);
 
-	mpc83xx_setup_pci();
+#ifdef CONFIG_PCI
+	for_each_compatible_node(np, "pci", "fsl,mpc8349-pci")
+		mpc83xx_add_bridge(np);
+	for_each_compatible_node(np, "pci", "fsl,mpc8314-pcie")
+		mpc83xx_add_bridge(np);
+#endif
 	mpc837xmds_usb_cfg();
 }
 
-machine_device_initcall(mpc837x_mds, mpc83xx_declare_of_platform_devices);
+static struct of_device_id mpc837x_ids[] = {
+	{ .type = "soc", },
+	{ .compatible = "soc", },
+	{ .compatible = "simple-bus", },
+	{ .compatible = "gianfar", },
+	{},
+};
+
+static int __init mpc837x_declare_of_platform_devices(void)
+{
+	/* Publish of_device */
+	of_platform_bus_probe(NULL, mpc837x_ids, NULL);
+
+	return 0;
+}
+machine_device_initcall(mpc837x_mds, mpc837x_declare_of_platform_devices);
+
+static void __init mpc837x_mds_init_IRQ(void)
+{
+	struct device_node *np;
+
+	np = of_find_compatible_node(NULL, NULL, "fsl,ipic");
+	if (!np)
+		return;
+
+	ipic_init(np, 0);
+
+	/* Initialize the default interrupt mapping priorities,
+	 * in case the boot rom changed something on us.
+	 */
+	ipic_set_default_priority();
+}
 
 /*
  * Called very early, MMU is off, device-tree isn't unflattened
@@ -102,7 +139,7 @@ define_machine(mpc837x_mds) {
 	.name			= "MPC837x MDS",
 	.probe			= mpc837x_mds_probe,
 	.setup_arch		= mpc837x_mds_setup_arch,
-	.init_IRQ		= mpc83xx_ipic_init_IRQ,
+	.init_IRQ		= mpc837x_mds_init_IRQ,
 	.get_irq		= ipic_get_irq,
 	.restart		= mpc83xx_restart,
 	.time_init		= mpc83xx_time_init,

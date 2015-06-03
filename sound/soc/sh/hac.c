@@ -239,7 +239,8 @@ static int hac_hw_params(struct snd_pcm_substream *substream,
 			 struct snd_pcm_hw_params *params,
 			 struct snd_soc_dai *dai)
 {
-	struct hac_priv *hac = &hac_cpu_data[dai->id];
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct hac_priv *hac = &hac_cpu_data[rtd->dai->cpu_dai->id];
 	int d = substream->stream == SNDRV_PCM_STREAM_PLAYBACK ? 0 : 1;
 
 	switch (params->msbits) {
@@ -266,13 +267,14 @@ static int hac_hw_params(struct snd_pcm_substream *substream,
 #define AC97_FMTS	\
 	SNDRV_PCM_FMTBIT_S16_LE
 
-static const struct snd_soc_dai_ops hac_dai_ops = {
+static struct snd_soc_dai_ops hac_dai_ops = {
 	.hw_params	= hac_hw_params,
 };
 
-static struct snd_soc_dai_driver sh4_hac_dai[] = {
+struct snd_soc_dai sh4_hac_dai[] = {
 {
-	.name			= "hac-dai.0",
+	.name			= "HAC0",
+	.id			= 0,
 	.ac97_control		= 1,
 	.playback = {
 		.rates		= AC97_RATES,
@@ -290,7 +292,8 @@ static struct snd_soc_dai_driver sh4_hac_dai[] = {
 },
 #ifdef CONFIG_CPU_SUBTYPE_SH7760
 {
-	.name			= "hac-dai.1",
+	.name			= "HAC1",
+	.ac97_control		= 1,
 	.id			= 1,
 	.playback = {
 		.rates		= AC97_RATES,
@@ -309,30 +312,19 @@ static struct snd_soc_dai_driver sh4_hac_dai[] = {
 },
 #endif
 };
+EXPORT_SYMBOL_GPL(sh4_hac_dai);
 
-static int __devinit hac_soc_platform_probe(struct platform_device *pdev)
+static int __init sh4_hac_init(void)
 {
-	return snd_soc_register_dais(&pdev->dev, sh4_hac_dai,
-			ARRAY_SIZE(sh4_hac_dai));
+	return snd_soc_register_dais(sh4_hac_dai, ARRAY_SIZE(sh4_hac_dai));
 }
+module_init(sh4_hac_init);
 
-static int __devexit hac_soc_platform_remove(struct platform_device *pdev)
+static void __exit sh4_hac_exit(void)
 {
-	snd_soc_unregister_dais(&pdev->dev, ARRAY_SIZE(sh4_hac_dai));
-	return 0;
+	snd_soc_unregister_dais(sh4_hac_dai, ARRAY_SIZE(sh4_hac_dai));
 }
-
-static struct platform_driver hac_pcm_driver = {
-	.driver = {
-			.name = "hac-pcm-audio",
-			.owner = THIS_MODULE,
-	},
-
-	.probe = hac_soc_platform_probe,
-	.remove = __devexit_p(hac_soc_platform_remove),
-};
-
-module_platform_driver(hac_pcm_driver);
+module_exit(sh4_hac_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("SuperH onchip HAC (AC97) audio driver");

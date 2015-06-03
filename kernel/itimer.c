@@ -52,22 +52,22 @@ static void get_cpu_itimer(struct task_struct *tsk, unsigned int clock_id,
 
 	cval = it->expires;
 	cinterval = it->incr;
-	if (cval) {
+	if (!cputime_eq(cval, cputime_zero)) {
 		struct task_cputime cputime;
 		cputime_t t;
 
 		thread_group_cputimer(tsk, &cputime);
 		if (clock_id == CPUCLOCK_PROF)
-			t = cputime.utime + cputime.stime;
+			t = cputime_add(cputime.utime, cputime.stime);
 		else
 			/* CPUCLOCK_VIRT */
 			t = cputime.utime;
 
-		if (cval < t)
+		if (cputime_le(cval, t))
 			/* about to fire */
 			cval = cputime_one_jiffy;
 		else
-			cval = cval - t;
+			cval = cputime_sub(cval, t);
 	}
 
 	spin_unlock_irq(&tsk->sighand->siglock);
@@ -146,7 +146,6 @@ static void set_cpu_itimer(struct task_struct *tsk, unsigned int clock_id,
 {
 	cputime_t cval, nval, cinterval, ninterval;
 	s64 ns_ninterval, ns_nval;
-	u32 error, incr_error;
 	struct cpu_itimer *it = &tsk->signal->it[clock_id];
 
 	nval = timeval_to_cputime(&value->it_value);
@@ -154,22 +153,21 @@ static void set_cpu_itimer(struct task_struct *tsk, unsigned int clock_id,
 	ninterval = timeval_to_cputime(&value->it_interval);
 	ns_ninterval = timeval_to_ns(&value->it_interval);
 
-	error = cputime_sub_ns(nval, ns_nval);
-	incr_error = cputime_sub_ns(ninterval, ns_ninterval);
+	it->incr_error = cputime_sub_ns(ninterval, ns_ninterval);
+	it->error = cputime_sub_ns(nval, ns_nval);
 
 	spin_lock_irq(&tsk->sighand->siglock);
 
 	cval = it->expires;
 	cinterval = it->incr;
-	if (cval || nval) {
-		if (nval > 0)
-			nval += cputime_one_jiffy;
+	if (!cputime_eq(cval, cputime_zero) ||
+	    !cputime_eq(nval, cputime_zero)) {
+		if (cputime_gt(nval, cputime_zero))
+			nval = cputime_add(nval, cputime_one_jiffy);
 		set_process_cpu_timer(tsk, clock_id, &nval, &cval);
 	}
 	it->expires = nval;
 	it->incr = ninterval;
-	it->error = error;
-	it->incr_error = incr_error;
 	trace_itimer_state(clock_id == CPUCLOCK_VIRT ?
 			   ITIMER_VIRTUAL : ITIMER_PROF, value, nval);
 
@@ -284,12 +282,8 @@ SYSCALL_DEFINE3(setitimer, int, which, struct itimerval __user *, value,
 	if (value) {
 		if(copy_from_user(&set_buffer, value, sizeof(set_buffer)))
 			return -EFAULT;
-	} else {
-		memset(&set_buffer, 0, sizeof(set_buffer));
-		printk_once(KERN_WARNING "%s calls setitimer() with new_value NULL pointer."
-			    " Misfeature support will be removed\n",
-			    current->comm);
-	}
+	} else
+		memset((char *) &set_buffer, 0, sizeof(set_buffer));
 
 	error = do_setitimer(which, &set_buffer, ovalue ? &get_buffer : NULL);
 	if (error || !ovalue)

@@ -47,12 +47,20 @@ static inline int mmap_is_legacy(void)
 	if (current->personality & ADDR_COMPAT_LAYOUT)
 		return 1;
 
-	if (rlimit(RLIMIT_STACK) == RLIM_INFINITY)
+	if (current->signal->rlim[RLIMIT_STACK].rlim_cur == RLIM_INFINITY)
 		return 1;
 
 	return sysctl_legacy_va_layout;
 }
 
+/*
+ * Since get_random_int() returns the same value within a 1 jiffy window,
+ * we will almost always get the same randomisation for the stack and mmap
+ * region. This will mean the relative distance between stack and mmap will
+ * be the same.
+ *
+ * To avoid this we can shift the randomness by 1 bit.
+ */
 static unsigned long mmap_rnd(void)
 {
 	unsigned long rnd = 0;
@@ -60,16 +68,16 @@ static unsigned long mmap_rnd(void)
 	if (current->flags & PF_RANDOMIZE) {
 		/* 8MB for 32bit, 1GB for 64bit */
 		if (is_32bit_task())
-			rnd = (long)(get_random_int() % (1<<(23-PAGE_SHIFT)));
+			rnd = (long)(get_random_int() % (1<<(22-PAGE_SHIFT)));
 		else
-			rnd = (long)(get_random_int() % (1<<(30-PAGE_SHIFT)));
+			rnd = (long)(get_random_int() % (1<<(29-PAGE_SHIFT)));
 	}
-	return rnd << PAGE_SHIFT;
+	return (rnd << PAGE_SHIFT) * 2;
 }
 
 static inline unsigned long mmap_base(void)
 {
-	unsigned long gap = rlimit(RLIMIT_STACK);
+	unsigned long gap = current->signal->rlim[RLIMIT_STACK].rlim_cur;
 
 	if (gap < MIN_GAP)
 		gap = MIN_GAP;

@@ -23,9 +23,8 @@
 
 /* #define DEBUG */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+#define debug(format, arg...) pr_debug("ff-memless: " format "\n", ## arg)
 
-#include <linux/slab.h>
 #include <linux/input.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
@@ -129,7 +128,7 @@ static void ml_schedule_timer(struct ml_device *ml)
 	int events = 0;
 	int i;
 
-	pr_debug("calculating next timer\n");
+	debug("calculating next timer");
 
 	for (i = 0; i < FF_MEMLESS_EFFECTS; i++) {
 
@@ -149,10 +148,10 @@ static void ml_schedule_timer(struct ml_device *ml)
 	}
 
 	if (!events) {
-		pr_debug("no actions\n");
+		debug("no actions");
 		del_timer(&ml->timer);
 	} else {
-		pr_debug("timer set\n");
+		debug("timer set");
 		mod_timer(&ml->timer, earliest);
 	}
 }
@@ -173,8 +172,8 @@ static int apply_envelope(struct ml_effect_state *state, int value,
 	if (envelope->attack_length &&
 	    time_before(now,
 			state->play_at + msecs_to_jiffies(envelope->attack_length))) {
-		pr_debug("value = 0x%x, attack_level = 0x%x\n",
-			 value, envelope->attack_level);
+		debug("value = 0x%x, attack_level = 0x%x", value,
+		      envelope->attack_level);
 		time_from_level = jiffies_to_msecs(now - state->play_at);
 		time_of_envelope = envelope->attack_length;
 		envelope_level = min_t(__s16, envelope->attack_level, 0x7fff);
@@ -191,13 +190,13 @@ static int apply_envelope(struct ml_effect_state *state, int value,
 
 	difference = abs(value) - envelope_level;
 
-	pr_debug("difference = %d\n", difference);
-	pr_debug("time_from_level = 0x%x\n", time_from_level);
-	pr_debug("time_of_envelope = 0x%x\n", time_of_envelope);
+	debug("difference = %d", difference);
+	debug("time_from_level = 0x%x", time_from_level);
+	debug("time_of_envelope = 0x%x", time_of_envelope);
 
 	difference = difference * time_from_level / time_of_envelope;
 
-	pr_debug("difference = %d\n", difference);
+	debug("difference = %d", difference);
 
 	return value < 0 ?
 		-(difference + envelope_level) : (difference + envelope_level);
@@ -215,25 +214,10 @@ static int get_compatible_type(struct ff_device *ff, int effect_type)
 	if (effect_type == FF_PERIODIC && test_bit(FF_RUMBLE, ff->ffbit))
 		return FF_RUMBLE;
 
-	pr_err("invalid type in get_compatible_type()\n");
+	printk(KERN_ERR
+	       "ff-memless: invalid type in get_compatible_type()\n");
 
 	return 0;
-}
-
-/*
- * Only left/right direction should be used (under/over 0x8000) for
- * forward/reverse motor direction (to keep calculation fast & simple).
- */
-static u16 ml_calculate_direction(u16 direction, u16 force,
-				  u16 new_direction, u16 new_force)
-{
-	if (!force)
-		return new_direction;
-	if (!new_force)
-		return direction;
-	return (((u32)(direction >> 1) * force +
-		 (new_direction >> 1) * new_force) /
-		(force + new_force)) << 1;
 }
 
 /*
@@ -241,7 +225,7 @@ static u16 ml_calculate_direction(u16 direction, u16 force,
  */
 static void ml_combine_effects(struct ff_effect *effect,
 			       struct ml_effect_state *state,
-			       int gain)
+			       unsigned int gain)
 {
 	struct ff_effect *new = state->effect;
 	unsigned int strong, weak, i;
@@ -268,21 +252,8 @@ static void ml_combine_effects(struct ff_effect *effect,
 		break;
 
 	case FF_RUMBLE:
-		strong = (u32)new->u.rumble.strong_magnitude * gain / 0xffff;
-		weak = (u32)new->u.rumble.weak_magnitude * gain / 0xffff;
-
-		if (effect->u.rumble.strong_magnitude + strong)
-			effect->direction = ml_calculate_direction(
-				effect->direction,
-				effect->u.rumble.strong_magnitude,
-				new->direction, strong);
-		else if (effect->u.rumble.weak_magnitude + weak)
-			effect->direction = ml_calculate_direction(
-				effect->direction,
-				effect->u.rumble.weak_magnitude,
-				new->direction, weak);
-		else
-			effect->direction = 0;
+		strong = new->u.rumble.strong_magnitude * gain / 0xffff;
+		weak = new->u.rumble.weak_magnitude * gain / 0xffff;
 		effect->u.rumble.strong_magnitude =
 			min(strong + effect->u.rumble.strong_magnitude,
 			    0xffffU);
@@ -297,13 +268,6 @@ static void ml_combine_effects(struct ff_effect *effect,
 		/* here we also scale it 0x7fff => 0xffff */
 		i = i * gain / 0x7fff;
 
-		if (effect->u.rumble.strong_magnitude + i)
-			effect->direction = ml_calculate_direction(
-				effect->direction,
-				effect->u.rumble.strong_magnitude,
-				new->direction, i);
-		else
-			effect->direction = 0;
 		effect->u.rumble.strong_magnitude =
 			min(i + effect->u.rumble.strong_magnitude, 0xffffU);
 		effect->u.rumble.weak_magnitude =
@@ -311,7 +275,7 @@ static void ml_combine_effects(struct ff_effect *effect,
 		break;
 
 	default:
-		pr_err("invalid type in ml_combine_effects()\n");
+		printk(KERN_ERR "ff-memless: invalid type in ml_combine_effects()\n");
 		break;
 	}
 
@@ -405,7 +369,7 @@ static void ml_effect_timer(unsigned long timer_data)
 	struct ml_device *ml = dev->ff->private;
 	unsigned long flags;
 
-	pr_debug("timer: updating effects\n");
+	debug("timer: updating effects");
 
 	spin_lock_irqsave(&dev->event_lock, flags);
 	ml_play_effects(ml);
@@ -437,7 +401,7 @@ static int ml_ff_playback(struct input_dev *dev, int effect_id, int value)
 	struct ml_effect_state *state = &ml->states[effect_id];
 
 	if (value > 0) {
-		pr_debug("initiated play\n");
+		debug("initiated play");
 
 		__set_bit(FF_EFFECT_STARTED, &state->flags);
 		state->count = value;
@@ -447,16 +411,18 @@ static int ml_ff_playback(struct input_dev *dev, int effect_id, int value)
 				 msecs_to_jiffies(state->effect->replay.length);
 		state->adj_at = state->play_at;
 
+		ml_schedule_timer(ml);
+
 	} else {
-		pr_debug("initiated stop\n");
+		debug("initiated stop");
 
 		if (test_bit(FF_EFFECT_PLAYING, &state->flags))
 			__set_bit(FF_EFFECT_ABORTING, &state->flags);
 		else
 			__clear_bit(FF_EFFECT_STARTED, &state->flags);
-	}
 
-	ml_play_effects(ml);
+		ml_play_effects(ml);
+	}
 
 	return 0;
 }

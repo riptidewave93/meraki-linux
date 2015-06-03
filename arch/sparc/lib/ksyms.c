@@ -30,6 +30,7 @@ EXPORT_SYMBOL(__memscan_generic);
 EXPORT_SYMBOL(memcmp);
 EXPORT_SYMBOL(memcpy);
 EXPORT_SYMBOL(memset);
+EXPORT_SYMBOL(__memset);
 EXPORT_SYMBOL(memmove);
 EXPORT_SYMBOL(__bzero);
 
@@ -62,6 +63,8 @@ extern void ___rw_read_enter(void);
 extern void ___rw_read_try(void);
 extern void ___rw_read_exit(void);
 extern void ___rw_write_enter(void);
+extern void ___atomic24_add(void);
+extern void ___atomic24_sub(void);
 
 /* Alias functions whose names begin with "." and export the aliases.
  * The module references will be fixed up by module_frob_arch_sections.
@@ -78,6 +81,7 @@ EXPORT_SYMBOL(__csum_partial_copy_sparc_generic);
 
 /* Special internal versions of library functions. */
 EXPORT_SYMBOL(__copy_1page);
+EXPORT_SYMBOL(__memcpy);
 EXPORT_SYMBOL(__memmove);
 EXPORT_SYMBOL(bzero_1page);
 
@@ -94,6 +98,10 @@ EXPORT_SYMBOL(___rw_read_try);
 EXPORT_SYMBOL(___rw_read_exit);
 EXPORT_SYMBOL(___rw_write_enter);
 #endif
+
+/* Atomic operations. */
+EXPORT_SYMBOL(___atomic24_add);
+EXPORT_SYMBOL(___atomic24_sub);
 
 EXPORT_SYMBOL(__ashrdi3);
 EXPORT_SYMBOL(__ashldi3);
@@ -124,6 +132,15 @@ EXPORT_SYMBOL(___copy_to_user);
 EXPORT_SYMBOL(___copy_from_user);
 EXPORT_SYMBOL(___copy_in_user);
 EXPORT_SYMBOL(__clear_user);
+
+/* RW semaphores */
+EXPORT_SYMBOL(__down_read);
+EXPORT_SYMBOL(__down_read_trylock);
+EXPORT_SYMBOL(__down_write);
+EXPORT_SYMBOL(__down_write_trylock);
+EXPORT_SYMBOL(__up_read);
+EXPORT_SYMBOL(__up_write);
+EXPORT_SYMBOL(__downgrade_write);
 
 /* Atomic counter implementation. */
 EXPORT_SYMBOL(atomic_add);

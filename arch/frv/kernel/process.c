@@ -16,6 +16,7 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/stddef.h>
 #include <linux/unistd.h>
 #include <linux/ptrace.h>
@@ -25,10 +26,10 @@
 #include <linux/reboot.h>
 #include <linux/interrupt.h>
 #include <linux/pagemap.h>
-#include <linux/rcupdate.h>
 
 #include <asm/asm-offsets.h>
 #include <asm/uaccess.h>
+#include <asm/system.h>
 #include <asm/setup.h>
 #include <asm/pgtable.h>
 #include <asm/tlb.h>
@@ -43,6 +44,20 @@ asmlinkage void ret_from_fork(void);
 
 void (*pm_power_off)(void);
 EXPORT_SYMBOL(pm_power_off);
+
+struct task_struct *alloc_task_struct(void)
+{
+	struct task_struct *p = kmalloc(THREAD_SIZE, GFP_KERNEL);
+	if (p)
+		atomic_set((atomic_t *)(p+1), 1);
+	return p;
+}
+
+void free_task_struct(struct task_struct *p)
+{
+	if (atomic_dec_and_test((atomic_t *)(p+1)))
+		kfree(p);
+}
 
 static void core_sleep_idle(void)
 {
@@ -70,16 +85,16 @@ void cpu_idle(void)
 {
 	/* endless idle loop with no priority at all */
 	while (1) {
-		rcu_idle_enter();
 		while (!need_resched()) {
 			check_pgt_cache();
 
 			if (!frv_dma_inprogress && idle)
 				idle();
 		}
-		rcu_idle_exit();
 
-		schedule_preempt_disabled();
+		preempt_enable_no_resched();
+		schedule();
+		preempt_disable();
 	}
 }
 
@@ -128,7 +143,10 @@ void machine_power_off(void)
 
 void flush_thread(void)
 {
-	/* nothing */
+#if 0 //ndef NO_FPU
+	unsigned long zero = 0;
+#endif
+	set_fs(USER_DS);
 }
 
 inline unsigned long user_stack(const struct pt_regs *regs)
@@ -232,19 +250,20 @@ int copy_thread(unsigned long clone_flags,
 /*
  * sys_execve() executes a new program.
  */
-asmlinkage int sys_execve(const char __user *name,
-			  const char __user *const __user *argv,
-			  const char __user *const __user *envp)
+asmlinkage int sys_execve(char __user *name, char __user * __user *argv, char __user * __user *envp)
 {
 	int error;
 	char * filename;
 
+	lock_kernel();
 	filename = getname(name);
 	error = PTR_ERR(filename);
 	if (IS_ERR(filename))
-		return error;
+		goto out;
 	error = do_execve(filename, argv, envp, __frame);
 	putname(filename);
+ out:
+	unlock_kernel();
 	return error;
 }
 

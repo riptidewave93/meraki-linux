@@ -6,7 +6,7 @@
  ******************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -42,7 +42,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-#include <linux/export.h>
 #include <acpi/acpi.h>
 #include "accommon.h"
 #include "acnamesp.h"
@@ -80,7 +79,7 @@ acpi_status acpi_get_id(acpi_handle handle, acpi_owner_id * ret_id)
 
 	/* Convert and validate the handle */
 
-	node = acpi_ns_validate_handle(handle);
+	node = acpi_ns_map_handle_to_node(handle);
 	if (!node) {
 		(void)acpi_ut_release_mutex(ACPI_MTX_NAMESPACE);
 		return (AE_BAD_PARAMETER);
@@ -133,7 +132,7 @@ acpi_status acpi_get_type(acpi_handle handle, acpi_object_type * ret_type)
 
 	/* Convert and validate the handle */
 
-	node = acpi_ns_validate_handle(handle);
+	node = acpi_ns_map_handle_to_node(handle);
 	if (!node) {
 		(void)acpi_ut_release_mutex(ACPI_MTX_NAMESPACE);
 		return (AE_BAD_PARAMETER);
@@ -183,7 +182,7 @@ acpi_status acpi_get_parent(acpi_handle handle, acpi_handle * ret_handle)
 
 	/* Convert and validate the handle */
 
-	node = acpi_ns_validate_handle(handle);
+	node = acpi_ns_map_handle_to_node(handle);
 	if (!node) {
 		status = AE_BAD_PARAMETER;
 		goto unlock_and_exit;
@@ -191,8 +190,8 @@ acpi_status acpi_get_parent(acpi_handle handle, acpi_handle * ret_handle)
 
 	/* Get the parent entry */
 
-	parent_node = node->parent;
-	*ret_handle = ACPI_CAST_PTR(acpi_handle, parent_node);
+	parent_node = acpi_ns_get_parent_node(node);
+	*ret_handle = acpi_ns_convert_entry_to_handle(parent_node);
 
 	/* Return exception if parent is null */
 
@@ -252,7 +251,7 @@ acpi_get_next_object(acpi_object_type type,
 
 		/* Start search at the beginning of the specified scope */
 
-		parent_node = acpi_ns_validate_handle(parent);
+		parent_node = acpi_ns_map_handle_to_node(parent);
 		if (!parent_node) {
 			status = AE_BAD_PARAMETER;
 			goto unlock_and_exit;
@@ -261,7 +260,7 @@ acpi_get_next_object(acpi_object_type type,
 		/* Non-null handle, ignore the parent */
 		/* Convert and validate the handle */
 
-		child_node = acpi_ns_validate_handle(child);
+		child_node = acpi_ns_map_handle_to_node(child);
 		if (!child_node) {
 			status = AE_BAD_PARAMETER;
 			goto unlock_and_exit;
@@ -277,7 +276,7 @@ acpi_get_next_object(acpi_object_type type,
 	}
 
 	if (ret_handle) {
-		*ret_handle = ACPI_CAST_PTR(acpi_handle, node);
+		*ret_handle = acpi_ns_convert_entry_to_handle(node);
 	}
 
       unlock_and_exit:

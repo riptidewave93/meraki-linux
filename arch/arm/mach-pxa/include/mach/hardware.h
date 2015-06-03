@@ -13,7 +13,10 @@
 #ifndef __ASM_ARCH_HARDWARE_H
 #define __ASM_ARCH_HARDWARE_H
 
-#include <mach/addr-map.h>
+/*
+ * We requires absolute addresses.
+ */
+#define PCIO_BASE		0
 
 /*
  * Workarounds for at least 2 errata so far require this.
@@ -36,16 +39,17 @@
  * Note that not all PXA2xx chips implement all those addresses, and the
  * kernel only maps the minimum needed range of this mapping.
  */
+#define io_p2v(x) (0xf2000000 + ((x) & 0x01ffffff) + (((x) & 0x1c000000) >> 1))
 #define io_v2p(x) (0x3c000000 + ((x) & 0x01ffffff) + (((x) & 0x0e000000) << 1))
-#define io_p2v(x) IOMEM(0xf2000000 + ((x) & 0x01ffffff) + (((x) & 0x1c000000) >> 1))
 
 #ifndef __ASSEMBLY__
-# define __REG(x)	(*((volatile u32 __iomem *)io_p2v(x)))
+
+# define __REG(x)	(*((volatile u32 *)io_p2v(x)))
 
 /* With indexed regs we don't want to feed the index through io_p2v()
    especially if it is a variable, otherwise horrible code will result. */
 # define __REG2(x,y)	\
-	(*(volatile u32 __iomem*)((u32)&__REG(x) + (y)))
+	(*(volatile u32 *)((u32)&__REG(x) + (y)))
 
 # define __PREG(x)	(io_v2p((u32)&(x)))
 
@@ -101,7 +105,6 @@
  *
  *  PXA935	A0	0x56056931	0x1E653013
  *  PXA935	B0	0x56056936	0x6E653013
- *  PXA935	B1	0x56056938	0x8E653013
  */
 #ifdef CONFIG_PXA25x
 #define __cpu_is_pxa210(id)				\
@@ -194,15 +197,14 @@
 #define __cpu_is_pxa935(id)	(0)
 #endif
 
-#ifdef CONFIG_CPU_PXA955
-#define __cpu_is_pxa955(id)				\
-	({						\
+#ifdef CONFIG_CPU_PXA950
+#define __cpu_is_pxa950(id)                             \
+	({                                              \
 		unsigned int _id = (id) >> 4 & 0xfff;	\
-		_id == 0x581 || _id == 0xc08		\
-			|| _id == 0xb76;		\
-	})
+		id == 0x697;				\
+	 })
 #else
-#define __cpu_is_pxa955(id)	(0)
+#define __cpu_is_pxa950(id)	(0)
 #endif
 
 #define cpu_is_pxa210()					\
@@ -247,64 +249,45 @@
 
 #define cpu_is_pxa930()					\
 	({						\
-		__cpu_is_pxa930(read_cpuid_id());	\
+		unsigned int id = read_cpuid(CPUID_ID);	\
+		__cpu_is_pxa930(id);			\
 	 })
 
 #define cpu_is_pxa935()					\
 	({						\
-		__cpu_is_pxa935(read_cpuid_id());	\
+		unsigned int id = read_cpuid(CPUID_ID);	\
+		__cpu_is_pxa935(id);			\
 	 })
 
-#define cpu_is_pxa955()					\
+#define cpu_is_pxa950()					\
 	({						\
-		__cpu_is_pxa955(read_cpuid_id());	\
-	})
+		unsigned int id = read_cpuid(CPUID_ID);	\
+		__cpu_is_pxa950(id);			\
+	 })
 
 
 /*
  * CPUID Core Generation Bit
  * <= 0x2 for pxa21x/pxa25x/pxa26x/pxa27x
+ * == 0x3 for pxa300/pxa310/pxa320
  */
-#if defined(CONFIG_PXA25x) || defined(CONFIG_PXA27x)
 #define __cpu_is_pxa2xx(id)				\
 	({						\
 		unsigned int _id = (id) >> 13 & 0x7;	\
 		_id <= 0x2;				\
 	 })
-#else
-#define __cpu_is_pxa2xx(id)	(0)
-#endif
 
-#ifdef CONFIG_PXA3xx
 #define __cpu_is_pxa3xx(id)				\
 	({						\
-		__cpu_is_pxa300(id)			\
-			|| __cpu_is_pxa310(id)		\
-			|| __cpu_is_pxa320(id)		\
-			|| __cpu_is_pxa93x(id);		\
+		unsigned int _id = (id) >> 13 & 0x7;	\
+		_id == 0x3;				\
 	 })
-#else
-#define __cpu_is_pxa3xx(id)	(0)
-#endif
 
-#if defined(CONFIG_CPU_PXA930) || defined(CONFIG_CPU_PXA935)
-#define __cpu_is_pxa93x(id)				\
+#define __cpu_is_pxa9xx(id)				\
 	({						\
-		__cpu_is_pxa930(id)			\
-			|| __cpu_is_pxa935(id);		\
+		unsigned int _id = (id) >> 4 & 0xfff;	\
+		_id == 0x683 || _id == 0x693;		\
 	 })
-#else
-#define __cpu_is_pxa93x(id)	(0)
-#endif
-
-#ifdef CONFIG_PXA95x
-#define __cpu_is_pxa95x(id)				\
-	({						\
-		__cpu_is_pxa955(id);			\
-	})
-#else
-#define __cpu_is_pxa95x(id)	(0)
-#endif
 
 #define cpu_is_pxa2xx()					\
 	({						\
@@ -316,16 +299,10 @@
 		__cpu_is_pxa3xx(read_cpuid_id());	\
 	 })
 
-#define cpu_is_pxa93x()					\
+#define cpu_is_pxa9xx()					\
 	({						\
-		__cpu_is_pxa93x(read_cpuid_id());	\
+		__cpu_is_pxa9xx(read_cpuid_id());	\
 	 })
-
-#define cpu_is_pxa95x()					\
-	({						\
-		__cpu_is_pxa95x(read_cpuid_id());	\
-	})
-
 /*
  * return current memory and LCD clock frequency in units of 10kHz
  */
@@ -334,5 +311,13 @@ extern unsigned int get_memclk_frequency_10khz(void);
 /* return the clock tick rate of the OS timer */
 extern unsigned long get_clock_tick_rate(void);
 #endif
+
+#if defined(CONFIG_MACH_ARMCORE) && defined(CONFIG_PCI)
+#define PCIBIOS_MIN_IO		0
+#define PCIBIOS_MIN_MEM		0
+#define pcibios_assign_all_busses()	1
+#define HAVE_ARCH_PCI_SET_DMA_MASK	1
+#endif
+
 
 #endif  /* _ASM_ARCH_HARDWARE_H */

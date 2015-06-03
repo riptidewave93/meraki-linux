@@ -15,7 +15,7 @@
 #include <linux/errno.h>
 #include <linux/stddef.h>
 #include <linux/slab.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/string.h>
 #include <linux/relay.h>
 #include <linux/vmalloc.h>
@@ -70,10 +70,17 @@ static const struct vm_operations_struct relay_file_mmap_ops = {
  */
 static struct page **relay_alloc_page_array(unsigned int n_pages)
 {
-	const size_t pa_size = n_pages * sizeof(struct page *);
-	if (pa_size > PAGE_SIZE)
-		return vzalloc(pa_size);
-	return kzalloc(pa_size, GFP_KERNEL);
+	struct page **array;
+	size_t pa_size = n_pages * sizeof(struct page *);
+
+	if (pa_size > PAGE_SIZE) {
+		array = vmalloc(pa_size);
+		if (array)
+			memset(array, 0, pa_size);
+	} else {
+		array = kzalloc(pa_size, GFP_KERNEL);
+	}
+	return array;
 }
 
 /*
@@ -306,7 +313,7 @@ static void buf_unmapped_default_callback(struct rchan_buf *buf,
  */
 static struct dentry *create_buf_file_default_callback(const char *filename,
 						       struct dentry *parent,
-						       umode_t mode,
+						       int mode,
 						       struct rchan_buf *buf,
 						       int *is_global)
 {
@@ -536,7 +543,7 @@ static int __cpuinit relay_hotcpu_callback(struct notifier_block *nb,
 					"relay_hotcpu_callback: cpu %d buffer "
 					"creation failed\n", hotcpu);
 				mutex_unlock(&relay_channels_mutex);
-				return notifier_from_errno(-ENOMEM);
+				return NOTIFY_BAD;
 			}
 		}
 		mutex_unlock(&relay_channels_mutex);
@@ -1197,7 +1204,7 @@ static void relay_pipe_buf_release(struct pipe_inode_info *pipe,
 	relay_consume_bytes(rbuf, buf->private);
 }
 
-static const struct pipe_buf_operations relay_pipe_buf_ops = {
+static struct pipe_buf_operations relay_pipe_buf_ops = {
 	.can_merge = 0,
 	.map = generic_pipe_buf_map,
 	.unmap = generic_pipe_buf_unmap,
@@ -1214,14 +1221,14 @@ static void relay_page_release(struct splice_pipe_desc *spd, unsigned int i)
 /*
  *	subbuf_splice_actor - splice up to one subbuf's worth of data
  */
-static ssize_t subbuf_splice_actor(struct file *in,
+static int subbuf_splice_actor(struct file *in,
 			       loff_t *ppos,
 			       struct pipe_inode_info *pipe,
 			       size_t len,
 			       unsigned int flags,
 			       int *nonpad_ret)
 {
-	unsigned int pidx, poff, total_len, subbuf_pages, nr_pages;
+	unsigned int pidx, poff, total_len, subbuf_pages, nr_pages, ret;
 	struct rchan_buf *rbuf = in->private_data;
 	unsigned int subbuf_size = rbuf->chan->subbuf_size;
 	uint64_t pos = (uint64_t) *ppos;
@@ -1230,23 +1237,19 @@ static ssize_t subbuf_splice_actor(struct file *in,
 	size_t read_subbuf = read_start / subbuf_size;
 	size_t padding = rbuf->padding[read_subbuf];
 	size_t nonpad_end = read_subbuf * subbuf_size + subbuf_size - padding;
-	struct page *pages[PIPE_DEF_BUFFERS];
-	struct partial_page partial[PIPE_DEF_BUFFERS];
+	struct page *pages[PIPE_BUFFERS];
+	struct partial_page partial[PIPE_BUFFERS];
 	struct splice_pipe_desc spd = {
 		.pages = pages,
 		.nr_pages = 0,
-		.nr_pages_max = PIPE_DEF_BUFFERS,
 		.partial = partial,
 		.flags = flags,
 		.ops = &relay_pipe_buf_ops,
 		.spd_release = relay_page_release,
 	};
-	ssize_t ret;
 
 	if (rbuf->subbufs_produced == rbuf->subbufs_consumed)
 		return 0;
-	if (splice_grow_spd(pipe, &spd))
-		return -ENOMEM;
 
 	/*
 	 * Adjust read len, if longer than what is available
@@ -1257,7 +1260,7 @@ static ssize_t subbuf_splice_actor(struct file *in,
 	subbuf_pages = rbuf->chan->alloc_size >> PAGE_SHIFT;
 	pidx = (read_start / PAGE_SIZE) % subbuf_pages;
 	poff = read_start & ~PAGE_MASK;
-	nr_pages = min_t(unsigned int, subbuf_pages, pipe->buffers);
+	nr_pages = min_t(unsigned int, subbuf_pages, PIPE_BUFFERS);
 
 	for (total_len = 0; spd.nr_pages < nr_pages; spd.nr_pages++) {
 		unsigned int this_len, this_end, private;
@@ -1291,20 +1294,17 @@ static ssize_t subbuf_splice_actor(struct file *in,
 		}
 	}
 
-	ret = 0;
 	if (!spd.nr_pages)
-		goto out;
+		return 0;
 
 	ret = *nonpad_ret = splice_to_pipe(pipe, &spd);
 	if (ret < 0 || ret < total_len)
-		goto out;
+		return ret;
 
         if (read_start + ret == nonpad_end)
                 ret += padding;
 
-out:
-	splice_shrink_spd(&spd);
-	return ret;
+        return ret;
 }
 
 static ssize_t relay_file_splice_read(struct file *in,

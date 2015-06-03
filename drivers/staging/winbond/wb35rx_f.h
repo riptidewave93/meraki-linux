@@ -2,7 +2,7 @@
 #define __WINBOND_WB35RX_F_H
 
 #include <net/mac80211.h>
-#include "wbhal.h"
+#include "wbhal_s.h"
 
 //====================================
 // Interface function declare

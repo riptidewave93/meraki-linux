@@ -164,12 +164,7 @@ static int __init atevklcd10x_init(void)
 
 	at32_add_device_lcdc(0, &atevklcd10x_lcdc_data,
 			fbmem_start, fbmem_size,
-#ifdef CONFIG_BOARD_ATNGW100_MKII
-			ATMEL_LCDC_PRI_18BIT | ATMEL_LCDC_PC_DVAL
-#else
-			ATMEL_LCDC_ALT_18BIT | ATMEL_LCDC_PE_DVAL
-#endif
-			);
+			ATMEL_LCDC_ALT_18BIT | ATMEL_LCDC_PE_DVAL);
 
 	at32_add_device_ac97c(0, &ac97c0_data, AC97C_BOTH);
 

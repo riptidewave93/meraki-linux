@@ -92,8 +92,7 @@ struct pxafb_layer_ops {
 struct pxafb_layer {
 	struct fb_info		fb;
 	int			id;
-	int			registered;
-	uint32_t		usage;
+	atomic_t		usage;
 	uint32_t		control[2];
 
 	struct pxafb_layer_ops	*ops;

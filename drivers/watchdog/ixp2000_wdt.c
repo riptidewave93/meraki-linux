@@ -16,12 +16,9 @@
  * warranty of any kind, whether express or implied.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/types.h>
-#include <linux/timer.h>
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
@@ -31,10 +28,10 @@
 #include <linux/uaccess.h>
 #include <mach/hardware.h>
 
-static bool nowayout = WATCHDOG_NOWAYOUT;
+static int nowayout = WATCHDOG_NOWAYOUT;
 static unsigned int heartbeat = 60;	/* (secs) Default is 1 minute */
 static unsigned long wdt_status;
-static DEFINE_SPINLOCK(wdt_lock);
+static spinlock_t wdt_lock;
 
 #define	WDT_IN_USE		0
 #define	WDT_OK_TO_CLOSE		1
@@ -102,7 +99,7 @@ static ssize_t ixp2000_wdt_write(struct file *file, const char *data,
 }
 
 
-static const struct watchdog_info ident = {
+static struct watchdog_info ident = {
 	.options	= WDIOF_MAGICCLOSE | WDIOF_SETTIMEOUT |
 				WDIOF_KEEPALIVEPING,
 	.identity	= "IXP2000 Watchdog",
@@ -160,7 +157,8 @@ static int ixp2000_wdt_release(struct inode *inode, struct file *file)
 	if (test_bit(WDT_OK_TO_CLOSE, &wdt_status))
 		wdt_disable();
 	else
-		pr_crit("Device closed unexpectedly - timer will not stop\n");
+		printk(KERN_CRIT "WATCHDOG: Device closed unexpectedly - "
+					"timer will not stop\n");
 	clear_bit(WDT_IN_USE, &wdt_status);
 	clear_bit(WDT_OK_TO_CLOSE, &wdt_status);
 
@@ -186,10 +184,11 @@ static struct miscdevice ixp2000_wdt_miscdev = {
 static int __init ixp2000_wdt_init(void)
 {
 	if ((*IXP2000_PRODUCT_ID & 0x001ffef0) == 0x00000000) {
-		pr_info("Unable to use IXP2000 watchdog due to IXP2800 erratum #25\n");
+		printk(KERN_INFO "Unable to use IXP2000 watchdog due to IXP2800 erratum #25.\n");
 		return -EIO;
 	}
 	wdt_tick_rate = (*IXP2000_T1_CLD * HZ) / 256;
+	spin_lock_init(&wdt_lock);
 	return misc_register(&ixp2000_wdt_miscdev);
 }
 
@@ -207,7 +206,7 @@ MODULE_DESCRIPTION("IXP2000 Network Processor Watchdog");
 module_param(heartbeat, int, 0);
 MODULE_PARM_DESC(heartbeat, "Watchdog heartbeat in seconds (default 60s)");
 
-module_param(nowayout, bool, 0);
+module_param(nowayout, int, 0);
 MODULE_PARM_DESC(nowayout, "Watchdog cannot be stopped once started");
 
 MODULE_LICENSE("GPL");

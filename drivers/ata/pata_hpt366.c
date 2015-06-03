@@ -11,10 +11,11 @@
  *
  *
  * TODO
- *	Look into engine reset on timeout errors. Should not be required.
+ *	Maybe PLL mode
+ *	Look into engine reset on timeout errors. Should not be
+ *		required.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -26,7 +27,7 @@
 #include <linux/libata.h>
 
 #define DRV_NAME	"pata_hpt366"
-#define DRV_VERSION	"0.6.11"
+#define DRV_VERSION	"0.6.2"
 
 struct hpt_clock {
 	u8	xfer_mode;
@@ -35,22 +36,24 @@ struct hpt_clock {
 
 /* key for bus clock timings
  * bit
- * 0:3    data_high_time. Inactive time of DIOW_/DIOR_ for PIO and MW DMA.
- *        cycles = value + 1
- * 4:7    data_low_time. Active time of DIOW_/DIOR_ for PIO and MW DMA.
- *        cycles = value + 1
- * 8:11   cmd_high_time. Inactive time of DIOW_/DIOR_ during task file
+ * 0:3    data_high_time. inactive time of DIOW_/DIOR_ for PIO and MW
+ *        DMA. cycles = value + 1
+ * 4:8    data_low_time. active time of DIOW_/DIOR_ for PIO and MW
+ *        DMA. cycles = value + 1
+ * 9:12   cmd_high_time. inactive time of DIOW_/DIOR_ during task file
  *        register access.
- * 12:15  cmd_low_time. Active time of DIOW_/DIOR_ during task file
+ * 13:17  cmd_low_time. active time of DIOW_/DIOR_ during task file
  *        register access.
- * 16:18  udma_cycle_time. Clock cycles for UDMA xfer?
- * 19:21  pre_high_time. Time to initialize 1st cycle for PIO and MW DMA xfer.
- * 22:24  cmd_pre_high_time. Time to initialize 1st PIO cycle for task file
+ * 18:21  udma_cycle_time. clock freq and clock cycles for UDMA xfer.
+ *        during task file register access.
+ * 22:24  pre_high_time. time to initialize 1st cycle for PIO and MW DMA
+ *        xfer.
+ * 25:27  cmd_pre_high_time. time to initialize 1st PIO cycle for task
  *        register access.
- * 28     UDMA enable.
- * 29     DMA  enable.
- * 30     PIO_MST enable. If set, the chip is in bus master mode during
- *        PIO xfer.
+ * 28     UDMA enable
+ * 29     DMA enable
+ * 30     PIO_MST enable. if set, the chip is in bus master mode during
+ *        PIO.
  * 31     FIFO enable.
  */
 
@@ -111,45 +114,18 @@ static const struct hpt_clock hpt366_25[] = {
 	{	0,		0x01208585	}
 };
 
-/**
- *	hpt36x_find_mode	-	find the hpt36x timing
- *	@ap: ATA port
- *	@speed: transfer mode
- *
- *	Return the 32bit register programming information for this channel
- *	that matches the speed provided.
- */
-
-static u32 hpt36x_find_mode(struct ata_port *ap, int speed)
-{
-	struct hpt_clock *clocks = ap->host->private_data;
-
-	while (clocks->xfer_mode) {
-		if (clocks->xfer_mode == speed)
-			return clocks->timing;
-		clocks++;
-	}
-	BUG();
-	return 0xffffffffU;	/* silence compiler warning */
-}
-
-static const char * const bad_ata33[] = {
-	"Maxtor 92720U8", "Maxtor 92040U6", "Maxtor 91360U4", "Maxtor 91020U3",
-	"Maxtor 90845U3", "Maxtor 90650U2",
-	"Maxtor 91360D8", "Maxtor 91190D7", "Maxtor 91020D6", "Maxtor 90845D5",
-	"Maxtor 90680D4", "Maxtor 90510D3", "Maxtor 90340D2",
-	"Maxtor 91152D8", "Maxtor 91008D7", "Maxtor 90845D6", "Maxtor 90840D6",
-	"Maxtor 90720D5", "Maxtor 90648D5", "Maxtor 90576D4",
+static const char *bad_ata33[] = {
+	"Maxtor 92720U8", "Maxtor 92040U6", "Maxtor 91360U4", "Maxtor 91020U3", "Maxtor 90845U3", "Maxtor 90650U2",
+	"Maxtor 91360D8", "Maxtor 91190D7", "Maxtor 91020D6", "Maxtor 90845D5", "Maxtor 90680D4", "Maxtor 90510D3", "Maxtor 90340D2",
+	"Maxtor 91152D8", "Maxtor 91008D7", "Maxtor 90845D6", "Maxtor 90840D6", "Maxtor 90720D5", "Maxtor 90648D5", "Maxtor 90576D4",
 	"Maxtor 90510D4",
 	"Maxtor 90432D3", "Maxtor 90288D2", "Maxtor 90256D2",
-	"Maxtor 91000D8", "Maxtor 90910D8", "Maxtor 90875D7", "Maxtor 90840D7",
-	"Maxtor 90750D6", "Maxtor 90625D5", "Maxtor 90500D4",
-	"Maxtor 91728D8", "Maxtor 91512D7", "Maxtor 91303D6", "Maxtor 91080D5",
-	"Maxtor 90845D4", "Maxtor 90680D4", "Maxtor 90648D3", "Maxtor 90432D2",
+	"Maxtor 91000D8", "Maxtor 90910D8", "Maxtor 90875D7", "Maxtor 90840D7", "Maxtor 90750D6", "Maxtor 90625D5", "Maxtor 90500D4",
+	"Maxtor 91728D8", "Maxtor 91512D7", "Maxtor 91303D6", "Maxtor 91080D5", "Maxtor 90845D4", "Maxtor 90680D4", "Maxtor 90648D3", "Maxtor 90432D2",
 	NULL
 };
 
-static const char * const bad_ata66_4[] = {
+static const char *bad_ata66_4[] = {
 	"IBM-DTLA-307075",
 	"IBM-DTLA-307060",
 	"IBM-DTLA-307045",
@@ -168,13 +144,12 @@ static const char * const bad_ata66_4[] = {
 	NULL
 };
 
-static const char * const bad_ata66_3[] = {
+static const char *bad_ata66_3[] = {
 	"WDC AC310200R",
 	NULL
 };
 
-static int hpt_dma_blacklisted(const struct ata_device *dev, char *modestr,
-			       const char * const list[])
+static int hpt_dma_blacklisted(const struct ata_device *dev, char *modestr, const char *list[])
 {
 	unsigned char model_num[ATA_ID_PROD_LEN + 1];
 	int i = 0;
@@ -183,7 +158,7 @@ static int hpt_dma_blacklisted(const struct ata_device *dev, char *modestr,
 
 	while (list[i] != NULL) {
 		if (!strcmp(list[i], model_num)) {
-			pr_warn("%s is not supported for %s\n",
+			printk(KERN_WARNING DRV_NAME ": %s is not supported for %s.\n",
 				modestr, list[i]);
 			return 1;
 		}
@@ -211,7 +186,7 @@ static unsigned long hpt366_filter(struct ata_device *adev, unsigned long mask)
 	} else if (adev->class == ATA_DEV_ATAPI)
 		mask &= ~(ATA_MASK_MWDMA | ATA_MASK_UDMA);
 
-	return mask;
+	return ata_bmdma_mode_filter(adev, mask);
 }
 
 static int hpt36x_cable_detect(struct ata_port *ap)
@@ -232,9 +207,19 @@ static int hpt36x_cable_detect(struct ata_port *ap)
 static void hpt366_set_mode(struct ata_port *ap, struct ata_device *adev,
 			    u8 mode)
 {
+	struct hpt_clock *clocks = ap->host->private_data;
 	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
-	u32 addr = 0x40 + 4 * adev->devno;
-	u32 mask, reg, t;
+	u32 addr1 = 0x40 + 4 * (adev->devno + 2 * ap->port_no);
+	u32 addr2 = 0x51 + 4 * ap->port_no;
+	u32 mask, reg;
+	u8 fast;
+
+	/* Fast interrupt prediction disable, hold off interrupt disable */
+	pci_read_config_byte(pdev, addr2, &fast);
+	if (fast & 0x80) {
+		fast &= ~0x80;
+		pci_write_config_byte(pdev, addr2, fast);
+	}
 
 	/* determine timing mask and find matching clock entry */
 	if (mode < XFER_MW_DMA_0)
@@ -244,16 +229,22 @@ static void hpt366_set_mode(struct ata_port *ap, struct ata_device *adev,
 	else
 		mask = 0x30070000;
 
-	t = hpt36x_find_mode(ap, mode);
+	while (clocks->xfer_mode) {
+		if (clocks->xfer_mode == mode)
+			break;
+		clocks++;
+	}
+	if (!clocks->xfer_mode)
+		BUG();
 
 	/*
 	 * Combine new mode bits with old config bits and disable
 	 * on-chip PIO FIFO/buffer (and PIO MST mode as well) to avoid
 	 * problems handling I/O errors later.
 	 */
-	pci_read_config_dword(pdev, addr, &reg);
-	reg = ((reg & ~mask) | (t & mask)) & ~0xc0000000;
-	pci_write_config_dword(pdev, addr, reg);
+	pci_read_config_dword(pdev, addr1, &reg);
+	reg = ((reg & ~mask) | (clocks->timing & mask)) & ~0xc0000000;
+	pci_write_config_dword(pdev, addr1, reg);
 }
 
 /**
@@ -310,7 +301,6 @@ static struct ata_port_operations hpt366_port_ops = {
 static void hpt36x_init_chipset(struct pci_dev *dev)
 {
 	u8 drive_fast;
-
 	pci_write_config_byte(dev, PCI_CACHE_LINE_SIZE, (L1_CACHE_BYTES / 4));
 	pci_write_config_byte(dev, PCI_LATENCY_TIMER, 0x78);
 	pci_write_config_byte(dev, PCI_MIN_GNT, 0x08);
@@ -372,19 +362,19 @@ static int hpt36x_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 
 	/* PCI clocking determines the ATA timing values to use */
 	/* info_hpt366 is safe against re-entry so we can scribble on it */
-	switch ((reg1 & 0x700) >> 8) {
-	case 9:
-		hpriv = &hpt366_40;
-		break;
-	case 5:
-		hpriv = &hpt366_25;
-		break;
-	default:
-		hpriv = &hpt366_33;
-		break;
+	switch((reg1 & 0x700) >> 8) {
+		case 9:
+			hpriv = &hpt366_40;
+			break;
+		case 5:
+			hpriv = &hpt366_25;
+			break;
+		default:
+			hpriv = &hpt366_33;
+			break;
 	}
 	/* Now kick off ATA set up */
-	return ata_pci_bmdma_init_one(dev, ppi, &hpt36x_sht, hpriv, 0);
+	return ata_pci_sff_init_one(dev, ppi, &hpt36x_sht, hpriv);
 }
 
 #ifdef CONFIG_PM
@@ -408,9 +398,9 @@ static const struct pci_device_id hpt36x[] = {
 };
 
 static struct pci_driver hpt36x_pci_driver = {
-	.name		= DRV_NAME,
+	.name 		= DRV_NAME,
 	.id_table	= hpt36x,
-	.probe		= hpt36x_init_one,
+	.probe 		= hpt36x_init_one,
 	.remove		= ata_pci_remove_one,
 #ifdef CONFIG_PM
 	.suspend	= ata_pci_device_suspend,

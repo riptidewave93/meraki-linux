@@ -11,23 +11,12 @@
  *
  * Changes:
  *
- * Description of forwarding methods:
- * - all transmitters are called from LOCAL_IN (remote clients) and
- * LOCAL_OUT (local clients) but for ICMP can be called from FORWARD
- * - not all connections have destination server, for example,
- * connections in backup server when fwmark is used
- * - bypass connections use daddr from packet
- * LOCAL_OUT rules:
- * - skb->dev is NULL, skb->protocol is not set (both are set in POST_ROUTING)
- * - skb->pkt_type is not set yet
- * - the only place where we can see skb->sk != NULL
  */
 
 #define KMSG_COMPONENT "IPVS"
 #define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/tcp.h>                  /* for tcphdr */
 #include <net/ip.h>
 #include <net/tcp.h>                    /* for csum_tcpudp_magic */
@@ -36,46 +25,37 @@
 #include <net/route.h>                  /* for ip_route_output */
 #include <net/ipv6.h>
 #include <net/ip6_route.h>
-#include <net/addrconf.h>
 #include <linux/icmpv6.h>
 #include <linux/netfilter.h>
 #include <linux/netfilter_ipv4.h>
 
 #include <net/ip_vs.h>
 
-enum {
-	IP_VS_RT_MODE_LOCAL	= 1, /* Allow local dest */
-	IP_VS_RT_MODE_NON_LOCAL	= 2, /* Allow non-local dest */
-	IP_VS_RT_MODE_RDR	= 4, /* Allow redirect from remote daddr to
-				      * local
-				      */
-};
 
 /*
  *      Destination cache to speed up outgoing route lookup
  */
 static inline void
-__ip_vs_dst_set(struct ip_vs_dest *dest, u32 rtos, struct dst_entry *dst,
-		u32 dst_cookie)
+__ip_vs_dst_set(struct ip_vs_dest *dest, u32 rtos, struct dst_entry *dst)
 {
 	struct dst_entry *old_dst;
 
 	old_dst = dest->dst_cache;
 	dest->dst_cache = dst;
 	dest->dst_rtos = rtos;
-	dest->dst_cookie = dst_cookie;
 	dst_release(old_dst);
 }
 
 static inline struct dst_entry *
-__ip_vs_dst_check(struct ip_vs_dest *dest, u32 rtos)
+__ip_vs_dst_check(struct ip_vs_dest *dest, u32 rtos, u32 cookie)
 {
 	struct dst_entry *dst = dest->dst_cache;
 
 	if (!dst)
 		return NULL;
-	if ((dst->obsolete || rtos != dest->dst_rtos) &&
-	    dst->ops->check(dst, dest->dst_cookie) == NULL) {
+	if ((dst->obsolete
+	     || (dest->af == AF_INET && rtos != dest->dst_rtos)) &&
+	    dst->ops->check(dst, cookie) == NULL) {
 		dest->dst_cache = NULL;
 		dst_release(dst);
 		return NULL;
@@ -84,235 +64,123 @@ __ip_vs_dst_check(struct ip_vs_dest *dest, u32 rtos)
 	return dst;
 }
 
-/* Get route to destination or remote server */
-static struct rtable *
-__ip_vs_get_out_rt(struct sk_buff *skb, struct ip_vs_dest *dest,
-		   __be32 daddr, u32 rtos, int rt_mode, __be32 *ret_saddr)
+static inline bool
+__mtu_check_toobig_v6(const struct sk_buff *skb, u32 mtu)
 {
-	struct net *net = dev_net(skb_dst(skb)->dev);
+	if (skb->len > mtu && !skb_is_gso(skb)) {
+		return true; /* Packet size violate MTU size */
+	}
+	return false;
+}
+
+static struct rtable *
+__ip_vs_get_out_rt(struct ip_vs_conn *cp, u32 rtos)
+{
 	struct rtable *rt;			/* Route to the other host */
-	struct rtable *ort;			/* Original route */
-	int local;
+	struct ip_vs_dest *dest = cp->dest;
 
 	if (dest) {
 		spin_lock(&dest->dst_lock);
 		if (!(rt = (struct rtable *)
-		      __ip_vs_dst_check(dest, rtos))) {
-			struct flowi4 fl4;
+		      __ip_vs_dst_check(dest, rtos, 0))) {
+			struct flowi fl = {
+				.oif = 0,
+				.nl_u = {
+					.ip4_u = {
+						.daddr = dest->addr.ip,
+						.saddr = 0,
+						.tos = rtos, } },
+			};
 
-			memset(&fl4, 0, sizeof(fl4));
-			fl4.daddr = dest->addr.ip;
-			fl4.flowi4_tos = rtos;
-			rt = ip_route_output_key(net, &fl4);
-			if (IS_ERR(rt)) {
+			if (ip_route_output_key(&init_net, &rt, &fl)) {
 				spin_unlock(&dest->dst_lock);
 				IP_VS_DBG_RL("ip_route_output error, dest: %pI4\n",
 					     &dest->addr.ip);
 				return NULL;
 			}
-			__ip_vs_dst_set(dest, rtos, dst_clone(&rt->dst), 0);
-			dest->dst_saddr.ip = fl4.saddr;
-			IP_VS_DBG(10, "new dst %pI4, src %pI4, refcnt=%d, "
-				  "rtos=%X\n",
-				  &dest->addr.ip, &dest->dst_saddr.ip,
-				  atomic_read(&rt->dst.__refcnt), rtos);
+			__ip_vs_dst_set(dest, rtos, dst_clone(&rt->u.dst));
+			IP_VS_DBG(10, "new dst %pI4, refcnt=%d, rtos=%X\n",
+				  &dest->addr.ip,
+				  atomic_read(&rt->u.dst.__refcnt), rtos);
 		}
-		daddr = dest->addr.ip;
-		if (ret_saddr)
-			*ret_saddr = dest->dst_saddr.ip;
 		spin_unlock(&dest->dst_lock);
 	} else {
-		struct flowi4 fl4;
+		struct flowi fl = {
+			.oif = 0,
+			.nl_u = {
+				.ip4_u = {
+					.daddr = cp->daddr.ip,
+					.saddr = 0,
+					.tos = rtos, } },
+		};
 
-		memset(&fl4, 0, sizeof(fl4));
-		fl4.daddr = daddr;
-		fl4.flowi4_tos = rtos;
-		rt = ip_route_output_key(net, &fl4);
-		if (IS_ERR(rt)) {
+		if (ip_route_output_key(&init_net, &rt, &fl)) {
 			IP_VS_DBG_RL("ip_route_output error, dest: %pI4\n",
-				     &daddr);
+				     &cp->daddr.ip);
 			return NULL;
 		}
-		if (ret_saddr)
-			*ret_saddr = fl4.saddr;
-	}
-
-	local = rt->rt_flags & RTCF_LOCAL;
-	if (!((local ? IP_VS_RT_MODE_LOCAL : IP_VS_RT_MODE_NON_LOCAL) &
-	      rt_mode)) {
-		IP_VS_DBG_RL("Stopping traffic to %s address, dest: %pI4\n",
-			     (rt->rt_flags & RTCF_LOCAL) ?
-			     "local":"non-local", &daddr);
-		ip_rt_put(rt);
-		return NULL;
-	}
-	if (local && !(rt_mode & IP_VS_RT_MODE_RDR) &&
-	    !((ort = skb_rtable(skb)) && ort->rt_flags & RTCF_LOCAL)) {
-		IP_VS_DBG_RL("Redirect from non-local address %pI4 to local "
-			     "requires NAT method, dest: %pI4\n",
-			     &ip_hdr(skb)->daddr, &daddr);
-		ip_rt_put(rt);
-		return NULL;
-	}
-	if (unlikely(!local && ipv4_is_loopback(ip_hdr(skb)->saddr))) {
-		IP_VS_DBG_RL("Stopping traffic from loopback address %pI4 "
-			     "to non-local address, dest: %pI4\n",
-			     &ip_hdr(skb)->saddr, &daddr);
-		ip_rt_put(rt);
-		return NULL;
 	}
 
 	return rt;
 }
 
-/* Reroute packet to local IPv4 stack after DNAT */
-static int
-__ip_vs_reroute_locally(struct sk_buff *skb)
-{
-	struct rtable *rt = skb_rtable(skb);
-	struct net_device *dev = rt->dst.dev;
-	struct net *net = dev_net(dev);
-	struct iphdr *iph = ip_hdr(skb);
-
-	if (rt_is_input_route(rt)) {
-		unsigned long orefdst = skb->_skb_refdst;
-
-		if (ip_route_input(skb, iph->daddr, iph->saddr,
-				   iph->tos, skb->dev))
-			return 0;
-		refdst_drop(orefdst);
-	} else {
-		struct flowi4 fl4 = {
-			.daddr = iph->daddr,
-			.saddr = iph->saddr,
-			.flowi4_tos = RT_TOS(iph->tos),
-			.flowi4_mark = skb->mark,
-		};
-
-		rt = ip_route_output_key(net, &fl4);
-		if (IS_ERR(rt))
-			return 0;
-		if (!(rt->rt_flags & RTCF_LOCAL)) {
-			ip_rt_put(rt);
-			return 0;
-		}
-		/* Drop old route. */
-		skb_dst_drop(skb);
-		skb_dst_set(skb, &rt->dst);
-	}
-	return 1;
-}
-
 #ifdef CONFIG_IP_VS_IPV6
-
-static inline int __ip_vs_is_local_route6(struct rt6_info *rt)
-{
-	return rt->dst.dev && rt->dst.dev->flags & IFF_LOOPBACK;
-}
-
-static struct dst_entry *
-__ip_vs_route_output_v6(struct net *net, struct in6_addr *daddr,
-			struct in6_addr *ret_saddr, int do_xfrm)
-{
-	struct dst_entry *dst;
-	struct flowi6 fl6 = {
-		.daddr = *daddr,
-	};
-
-	dst = ip6_route_output(net, NULL, &fl6);
-	if (dst->error)
-		goto out_err;
-	if (!ret_saddr)
-		return dst;
-	if (ipv6_addr_any(&fl6.saddr) &&
-	    ipv6_dev_get_saddr(net, ip6_dst_idev(dst)->dev,
-			       &fl6.daddr, 0, &fl6.saddr) < 0)
-		goto out_err;
-	if (do_xfrm) {
-		dst = xfrm_lookup(net, dst, flowi6_to_flowi(&fl6), NULL, 0);
-		if (IS_ERR(dst)) {
-			dst = NULL;
-			goto out_err;
-		}
-	}
-	*ret_saddr = fl6.saddr;
-	return dst;
-
-out_err:
-	dst_release(dst);
-	IP_VS_DBG_RL("ip6_route_output error, dest: %pI6\n", daddr);
-	return NULL;
-}
-
-/*
- * Get route to destination or remote server
- */
 static struct rt6_info *
-__ip_vs_get_out_rt_v6(struct sk_buff *skb, struct ip_vs_dest *dest,
-		      struct in6_addr *daddr, struct in6_addr *ret_saddr,
-		      int do_xfrm, int rt_mode)
+__ip_vs_get_out_rt_v6(struct ip_vs_conn *cp)
 {
-	struct net *net = dev_net(skb_dst(skb)->dev);
 	struct rt6_info *rt;			/* Route to the other host */
-	struct rt6_info *ort;			/* Original route */
-	struct dst_entry *dst;
-	int local;
+	struct ip_vs_dest *dest = cp->dest;
 
 	if (dest) {
 		spin_lock(&dest->dst_lock);
-		rt = (struct rt6_info *)__ip_vs_dst_check(dest, 0);
+		rt = (struct rt6_info *)__ip_vs_dst_check(dest, 0, 0);
 		if (!rt) {
-			u32 cookie;
+			struct flowi fl = {
+				.oif = 0,
+				.nl_u = {
+					.ip6_u = {
+						.daddr = dest->addr.in6,
+						.saddr = {
+							.s6_addr32 =
+								{ 0, 0, 0, 0 },
+						},
+					},
+				},
+			};
 
-			dst = __ip_vs_route_output_v6(net, &dest->addr.in6,
-						      &dest->dst_saddr.in6,
-						      do_xfrm);
-			if (!dst) {
+			rt = (struct rt6_info *)ip6_route_output(&init_net,
+								 NULL, &fl);
+			if (!rt) {
 				spin_unlock(&dest->dst_lock);
+				IP_VS_DBG_RL("ip6_route_output error, dest: %pI6\n",
+					     &dest->addr.in6);
 				return NULL;
 			}
-			rt = (struct rt6_info *) dst;
-			cookie = rt->rt6i_node ? rt->rt6i_node->fn_sernum : 0;
-			__ip_vs_dst_set(dest, 0, dst_clone(&rt->dst), cookie);
-			IP_VS_DBG(10, "new dst %pI6, src %pI6, refcnt=%d\n",
-				  &dest->addr.in6, &dest->dst_saddr.in6,
-				  atomic_read(&rt->dst.__refcnt));
+			__ip_vs_dst_set(dest, 0, dst_clone(&rt->u.dst));
+			IP_VS_DBG(10, "new dst %pI6, refcnt=%d\n",
+				  &dest->addr.in6,
+				  atomic_read(&rt->u.dst.__refcnt));
 		}
-		if (ret_saddr)
-			*ret_saddr = dest->dst_saddr.in6;
 		spin_unlock(&dest->dst_lock);
 	} else {
-		dst = __ip_vs_route_output_v6(net, daddr, ret_saddr, do_xfrm);
-		if (!dst)
-			return NULL;
-		rt = (struct rt6_info *) dst;
-	}
+		struct flowi fl = {
+			.oif = 0,
+			.nl_u = {
+				.ip6_u = {
+					.daddr = cp->daddr.in6,
+					.saddr = {
+						.s6_addr32 = { 0, 0, 0, 0 },
+					},
+				},
+			},
+		};
 
-	local = __ip_vs_is_local_route6(rt);
-	if (!((local ? IP_VS_RT_MODE_LOCAL : IP_VS_RT_MODE_NON_LOCAL) &
-	      rt_mode)) {
-		IP_VS_DBG_RL("Stopping traffic to %s address, dest: %pI6\n",
-			     local ? "local":"non-local", daddr);
-		dst_release(&rt->dst);
-		return NULL;
-	}
-	if (local && !(rt_mode & IP_VS_RT_MODE_RDR) &&
-	    !((ort = (struct rt6_info *) skb_dst(skb)) &&
-	      __ip_vs_is_local_route6(ort))) {
-		IP_VS_DBG_RL("Redirect from non-local address %pI6 to local "
-			     "requires NAT method, dest: %pI6\n",
-			     &ipv6_hdr(skb)->daddr, daddr);
-		dst_release(&rt->dst);
-		return NULL;
-	}
-	if (unlikely(!local && (!skb->dev || skb->dev->flags & IFF_LOOPBACK) &&
-		     ipv6_addr_type(&ipv6_hdr(skb)->saddr) &
-				    IPV6_ADDR_LOOPBACK)) {
-		IP_VS_DBG_RL("Stopping traffic from loopback address %pI6 "
-			     "to non-local address, dest: %pI6\n",
-			     &ipv6_hdr(skb)->saddr, daddr);
-		dst_release(&rt->dst);
-		return NULL;
+		rt = (struct rt6_info *)ip6_route_output(&init_net, NULL, &fl);
+		if (!rt) {
+			IP_VS_DBG_RL("ip6_route_output error, dest: %pI6\n",
+				     &cp->daddr.in6);
+			return NULL;
+		}
 	}
 
 	return rt;
@@ -333,44 +201,12 @@ ip_vs_dst_reset(struct ip_vs_dest *dest)
 	dst_release(old_dst);
 }
 
-#define IP_VS_XMIT_TUNNEL(skb, cp)				\
-({								\
-	int __ret = NF_ACCEPT;					\
-								\
-	(skb)->ipvs_property = 1;				\
-	if (unlikely((cp)->flags & IP_VS_CONN_F_NFCT))		\
-		__ret = ip_vs_confirm_conntrack(skb);		\
-	if (__ret == NF_ACCEPT) {				\
-		nf_reset(skb);					\
-		skb_forward_csum(skb);				\
-	}							\
-	__ret;							\
-})
-
-#define IP_VS_XMIT_NAT(pf, skb, cp, local)		\
+#define IP_VS_XMIT(pf, skb, rt)				\
 do {							\
 	(skb)->ipvs_property = 1;			\
-	if (likely(!((cp)->flags & IP_VS_CONN_F_NFCT)))	\
-		ip_vs_notrack(skb);			\
-	else						\
-		ip_vs_update_conntrack(skb, cp, 1);	\
-	if (local)					\
-		return NF_ACCEPT;			\
 	skb_forward_csum(skb);				\
 	NF_HOOK(pf, NF_INET_LOCAL_OUT, (skb), NULL,	\
-		skb_dst(skb)->dev, dst_output);		\
-} while (0)
-
-#define IP_VS_XMIT(pf, skb, cp, local)			\
-do {							\
-	(skb)->ipvs_property = 1;			\
-	if (likely(!((cp)->flags & IP_VS_CONN_F_NFCT)))	\
-		ip_vs_notrack(skb);			\
-	if (local)					\
-		return NF_ACCEPT;			\
-	skb_forward_csum(skb);				\
-	NF_HOOK(pf, NF_INET_LOCAL_OUT, (skb), NULL,	\
-		skb_dst(skb)->dev, dst_output);		\
+		(rt)->u.dst.dev, dst_output);		\
 } while (0)
 
 
@@ -382,7 +218,7 @@ ip_vs_null_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 		struct ip_vs_protocol *pp)
 {
 	/* we do not touch skb and do not need pskb ptr */
-	IP_VS_XMIT(NFPROTO_IPV4, skb, cp, 1);
+	return NF_ACCEPT;
 }
 
 
@@ -397,16 +233,27 @@ ip_vs_bypass_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 {
 	struct rtable *rt;			/* Route to the other host */
 	struct iphdr  *iph = ip_hdr(skb);
+	u8     tos = iph->tos;
 	int    mtu;
+	struct flowi fl = {
+		.oif = 0,
+		.nl_u = {
+			.ip4_u = {
+				.daddr = iph->daddr,
+				.saddr = 0,
+				.tos = RT_TOS(tos), } },
+	};
 
 	EnterFunction(10);
 
-	if (!(rt = __ip_vs_get_out_rt(skb, NULL, iph->daddr, RT_TOS(iph->tos),
-				      IP_VS_RT_MODE_NON_LOCAL, NULL)))
+	if (ip_route_output_key(&init_net, &rt, &fl)) {
+		IP_VS_DBG_RL("%s(): ip_route_output error, dest: %pI4\n",
+			     __func__, &iph->daddr);
 		goto tx_error_icmp;
+	}
 
 	/* MTU checking */
-	mtu = dst_mtu(&rt->dst);
+	mtu = dst_mtu(&rt->u.dst);
 	if ((skb->len > mtu) && (iph->frag_off & htons(IP_DF)) &&
 	    !skb_is_gso(skb)) {
 		ip_rt_put(rt);
@@ -427,12 +274,12 @@ ip_vs_bypass_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 
 	/* drop old route */
 	skb_dst_drop(skb);
-	skb_dst_set(skb, &rt->dst);
+	skb_dst_set(skb, &rt->u.dst);
 
 	/* Another hack: avoid icmp_send in ip_fragment */
 	skb->local_df = 1;
 
-	IP_VS_XMIT(NFPROTO_IPV4, skb, cp, 0);
+	IP_VS_XMIT(PF_INET, skb, rt);
 
 	LeaveFunction(10);
 	return NF_STOLEN;
@@ -453,23 +300,28 @@ ip_vs_bypass_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 	struct rt6_info *rt;			/* Route to the other host */
 	struct ipv6hdr  *iph = ipv6_hdr(skb);
 	int    mtu;
+	struct flowi fl = {
+		.oif = 0,
+		.nl_u = {
+			.ip6_u = {
+				.daddr = iph->daddr,
+				.saddr = { .s6_addr32 = {0, 0, 0, 0} }, } },
+	};
 
 	EnterFunction(10);
 
-	if (!(rt = __ip_vs_get_out_rt_v6(skb, NULL, &iph->daddr, NULL, 0,
-					 IP_VS_RT_MODE_NON_LOCAL)))
+	rt = (struct rt6_info *)ip6_route_output(&init_net, NULL, &fl);
+	if (!rt) {
+		IP_VS_DBG_RL("%s(): ip6_route_output error, dest: %pI6\n",
+			     __func__, &iph->daddr);
 		goto tx_error_icmp;
+	}
 
 	/* MTU checking */
-	mtu = dst_mtu(&rt->dst);
-	if (skb->len > mtu && !skb_is_gso(skb)) {
-		if (!skb->dev) {
-			struct net *net = dev_net(skb_dst(skb)->dev);
-
-			skb->dev = net->loopback_dev;
-		}
-		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu);
-		dst_release(&rt->dst);
+	mtu = dst_mtu(&rt->u.dst);
+	if (__mtu_check_toobig_v6(skb, mtu)) {
+		dst_release(&rt->u.dst);
+		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu, skb->dev);
 		IP_VS_DBG_RL("%s(): frag needed\n", __func__);
 		goto tx_error;
 	}
@@ -480,18 +332,18 @@ ip_vs_bypass_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 	 */
 	skb = skb_share_check(skb, GFP_ATOMIC);
 	if (unlikely(skb == NULL)) {
-		dst_release(&rt->dst);
+		dst_release(&rt->u.dst);
 		return NF_STOLEN;
 	}
 
 	/* drop old route */
 	skb_dst_drop(skb);
-	skb_dst_set(skb, &rt->dst);
+	skb_dst_set(skb, &rt->u.dst);
 
 	/* Another hack: avoid icmp_send in ip_fragment */
 	skb->local_df = 1;
 
-	IP_VS_XMIT(NFPROTO_IPV6, skb, cp, 0);
+	IP_VS_XMIT(PF_INET6, skb, rt);
 
 	LeaveFunction(10);
 	return NF_STOLEN;
@@ -516,7 +368,6 @@ ip_vs_nat_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 	struct rtable *rt;		/* Route to the other host */
 	int mtu;
 	struct iphdr *iph = ip_hdr(skb);
-	int local;
 
 	EnterFunction(10);
 
@@ -530,78 +381,36 @@ ip_vs_nat_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 		IP_VS_DBG(10, "filled cport=%d\n", ntohs(*p));
 	}
 
-	if (!(rt = __ip_vs_get_out_rt(skb, cp->dest, cp->daddr.ip,
-				      RT_TOS(iph->tos),
-				      IP_VS_RT_MODE_LOCAL |
-					IP_VS_RT_MODE_NON_LOCAL |
-					IP_VS_RT_MODE_RDR, NULL)))
+	if (!(rt = __ip_vs_get_out_rt(cp, RT_TOS(iph->tos))))
 		goto tx_error_icmp;
-	local = rt->rt_flags & RTCF_LOCAL;
-	/*
-	 * Avoid duplicate tuple in reply direction for NAT traffic
-	 * to local address when connection is sync-ed
-	 */
-#if IS_ENABLED(CONFIG_NF_CONNTRACK)
-	if (cp->flags & IP_VS_CONN_F_SYNC && local) {
-		enum ip_conntrack_info ctinfo;
-		struct nf_conn *ct = ct = nf_ct_get(skb, &ctinfo);
-
-		if (ct && !nf_ct_is_untracked(ct)) {
-			IP_VS_DBG_RL_PKT(10, AF_INET, pp, skb, 0,
-					 "ip_vs_nat_xmit(): "
-					 "stopping DNAT to local address");
-			goto tx_error_put;
-		}
-	}
-#endif
-
-	/* From world but DNAT to loopback address? */
-	if (local && ipv4_is_loopback(cp->daddr.ip) &&
-	    rt_is_input_route(skb_rtable(skb))) {
-		IP_VS_DBG_RL_PKT(1, AF_INET, pp, skb, 0, "ip_vs_nat_xmit(): "
-				 "stopping DNAT to loopback address");
-		goto tx_error_put;
-	}
 
 	/* MTU checking */
-	mtu = dst_mtu(&rt->dst);
-	if ((skb->len > mtu) && (iph->frag_off & htons(IP_DF)) &&
-	    !skb_is_gso(skb)) {
+	mtu = dst_mtu(&rt->u.dst);
+	if ((skb->len > mtu) && (iph->frag_off & htons(IP_DF)) && !skb_is_gso(skb)) {
+		ip_rt_put(rt);
 		icmp_send(skb, ICMP_DEST_UNREACH,ICMP_FRAG_NEEDED, htonl(mtu));
-		IP_VS_DBG_RL_PKT(0, AF_INET, pp, skb, 0,
-				 "ip_vs_nat_xmit(): frag needed for");
-		goto tx_error_put;
+		IP_VS_DBG_RL_PKT(0, pp, skb, 0, "ip_vs_nat_xmit(): frag needed for");
+		goto tx_error;
 	}
 
 	/* copy-on-write the packet before mangling it */
 	if (!skb_make_writable(skb, sizeof(struct iphdr)))
 		goto tx_error_put;
 
-	if (skb_cow(skb, rt->dst.dev->hard_header_len))
+	if (skb_cow(skb, rt->u.dst.dev->hard_header_len))
 		goto tx_error_put;
+
+	/* drop old route */
+	skb_dst_drop(skb);
+	skb_dst_set(skb, &rt->u.dst);
 
 	/* mangle the packet */
 	if (pp->dnat_handler && !pp->dnat_handler(skb, pp, cp))
-		goto tx_error_put;
+		goto tx_error;
 	ip_hdr(skb)->daddr = cp->daddr.ip;
 	ip_send_check(ip_hdr(skb));
 
-	if (!local) {
-		/* drop old route */
-		skb_dst_drop(skb);
-		skb_dst_set(skb, &rt->dst);
-	} else {
-		ip_rt_put(rt);
-		/*
-		 * Some IPv4 replies get local address from routes,
-		 * not from iph, so while we DNAT after routing
-		 * we need this second input/output route.
-		 */
-		if (!__ip_vs_reroute_locally(skb))
-			goto tx_error;
-	}
-
-	IP_VS_DBG_PKT(10, AF_INET, pp, skb, 0, "After DNAT");
+	IP_VS_DBG_PKT(10, pp, skb, 0, "After DNAT");
 
 	/* FIXME: when application helper enlarges the packet and the length
 	   is larger than the MTU of outgoing device, there will be still
@@ -610,7 +419,7 @@ ip_vs_nat_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 	/* Another hack: avoid icmp_send in ip_fragment */
 	skb->local_df = 1;
 
-	IP_VS_XMIT_NAT(NFPROTO_IPV4, skb, cp, local);
+	IP_VS_XMIT(PF_INET, skb, rt);
 
 	LeaveFunction(10);
 	return NF_STOLEN;
@@ -618,8 +427,8 @@ ip_vs_nat_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
   tx_error_icmp:
 	dst_link_failure(skb);
   tx_error:
-	kfree_skb(skb);
 	LeaveFunction(10);
+	kfree_skb(skb);
 	return NF_STOLEN;
   tx_error_put:
 	ip_rt_put(rt);
@@ -633,7 +442,6 @@ ip_vs_nat_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 {
 	struct rt6_info *rt;		/* Route to the other host */
 	int mtu;
-	int local;
 
 	EnterFunction(10);
 
@@ -648,75 +456,37 @@ ip_vs_nat_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 		IP_VS_DBG(10, "filled cport=%d\n", ntohs(*p));
 	}
 
-	if (!(rt = __ip_vs_get_out_rt_v6(skb, cp->dest, &cp->daddr.in6, NULL,
-					 0, (IP_VS_RT_MODE_LOCAL |
-					     IP_VS_RT_MODE_NON_LOCAL |
-					     IP_VS_RT_MODE_RDR))))
+	rt = __ip_vs_get_out_rt_v6(cp);
+	if (!rt)
 		goto tx_error_icmp;
-	local = __ip_vs_is_local_route6(rt);
-	/*
-	 * Avoid duplicate tuple in reply direction for NAT traffic
-	 * to local address when connection is sync-ed
-	 */
-#if IS_ENABLED(CONFIG_NF_CONNTRACK)
-	if (cp->flags & IP_VS_CONN_F_SYNC && local) {
-		enum ip_conntrack_info ctinfo;
-		struct nf_conn *ct = ct = nf_ct_get(skb, &ctinfo);
-
-		if (ct && !nf_ct_is_untracked(ct)) {
-			IP_VS_DBG_RL_PKT(10, AF_INET6, pp, skb, 0,
-					 "ip_vs_nat_xmit_v6(): "
-					 "stopping DNAT to local address");
-			goto tx_error_put;
-		}
-	}
-#endif
-
-	/* From world but DNAT to loopback address? */
-	if (local && skb->dev && !(skb->dev->flags & IFF_LOOPBACK) &&
-	    ipv6_addr_type(&rt->rt6i_dst.addr) & IPV6_ADDR_LOOPBACK) {
-		IP_VS_DBG_RL_PKT(1, AF_INET6, pp, skb, 0,
-				 "ip_vs_nat_xmit_v6(): "
-				 "stopping DNAT to loopback address");
-		goto tx_error_put;
-	}
 
 	/* MTU checking */
-	mtu = dst_mtu(&rt->dst);
-	if (skb->len > mtu && !skb_is_gso(skb)) {
-		if (!skb->dev) {
-			struct net *net = dev_net(skb_dst(skb)->dev);
-
-			skb->dev = net->loopback_dev;
-		}
-		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu);
-		IP_VS_DBG_RL_PKT(0, AF_INET6, pp, skb, 0,
+	mtu = dst_mtu(&rt->u.dst);
+	if (__mtu_check_toobig_v6(skb, mtu)) {
+		dst_release(&rt->u.dst);
+		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu, skb->dev);
+		IP_VS_DBG_RL_PKT(0, pp, skb, 0,
 				 "ip_vs_nat_xmit_v6(): frag needed for");
-		goto tx_error_put;
+		goto tx_error;
 	}
 
 	/* copy-on-write the packet before mangling it */
 	if (!skb_make_writable(skb, sizeof(struct ipv6hdr)))
 		goto tx_error_put;
 
-	if (skb_cow(skb, rt->dst.dev->hard_header_len))
+	if (skb_cow(skb, rt->u.dst.dev->hard_header_len))
 		goto tx_error_put;
+
+	/* drop old route */
+	skb_dst_drop(skb);
+	skb_dst_set(skb, &rt->u.dst);
 
 	/* mangle the packet */
 	if (pp->dnat_handler && !pp->dnat_handler(skb, pp, cp))
 		goto tx_error;
 	ipv6_hdr(skb)->daddr = cp->daddr.in6;
 
-	if (!local || !skb->dev) {
-		/* drop the old route when skb is not shared */
-		skb_dst_drop(skb);
-		skb_dst_set(skb, &rt->dst);
-	} else {
-		/* destined to loopback, do we need to change route? */
-		dst_release(&rt->dst);
-	}
-
-	IP_VS_DBG_PKT(10, AF_INET6, pp, skb, 0, "After DNAT");
+	IP_VS_DBG_PKT(10, pp, skb, 0, "After DNAT");
 
 	/* FIXME: when application helper enlarges the packet and the length
 	   is larger than the MTU of outgoing device, there will be still
@@ -725,7 +495,7 @@ ip_vs_nat_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 	/* Another hack: avoid icmp_send in ip_fragment */
 	skb->local_df = 1;
 
-	IP_VS_XMIT_NAT(NFPROTO_IPV6, skb, cp, local);
+	IP_VS_XMIT(PF_INET6, skb, rt);
 
 	LeaveFunction(10);
 	return NF_STOLEN;
@@ -737,7 +507,7 @@ tx_error:
 	kfree_skb(skb);
 	return NF_STOLEN;
 tx_error_put:
-	dst_release(&rt->dst);
+	dst_release(&rt->u.dst);
 	goto tx_error;
 }
 #endif
@@ -767,34 +537,34 @@ ip_vs_tunnel_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 		  struct ip_vs_protocol *pp)
 {
 	struct rtable *rt;			/* Route to the other host */
-	__be32 saddr;				/* Source for tunnel */
 	struct net_device *tdev;		/* Device to other host */
 	struct iphdr  *old_iph = ip_hdr(skb);
 	u8     tos = old_iph->tos;
 	__be16 df = old_iph->frag_off;
+	sk_buff_data_t old_transport_header = skb->transport_header;
 	struct iphdr  *iph;			/* Our new IP header */
 	unsigned int max_headroom;		/* The extra header space needed */
 	int    mtu;
-	int ret;
 
 	EnterFunction(10);
 
-	if (!(rt = __ip_vs_get_out_rt(skb, cp->dest, cp->daddr.ip,
-				      RT_TOS(tos), IP_VS_RT_MODE_LOCAL |
-						   IP_VS_RT_MODE_NON_LOCAL,
-						   &saddr)))
-		goto tx_error_icmp;
-	if (rt->rt_flags & RTCF_LOCAL) {
-		ip_rt_put(rt);
-		IP_VS_XMIT(NFPROTO_IPV4, skb, cp, 1);
+	if (skb->protocol != htons(ETH_P_IP)) {
+		IP_VS_DBG_RL("%s(): protocol error, "
+			     "ETH_P_IP: %d, skb protocol: %d\n",
+			     __func__, htons(ETH_P_IP), skb->protocol);
+		goto tx_error;
 	}
 
-	tdev = rt->dst.dev;
+	if (!(rt = __ip_vs_get_out_rt(cp, RT_TOS(tos))))
+		goto tx_error_icmp;
 
-	mtu = dst_mtu(&rt->dst) - sizeof(struct iphdr);
+	tdev = rt->u.dst.dev;
+
+	mtu = dst_mtu(&rt->u.dst) - sizeof(struct iphdr);
 	if (mtu < 68) {
+		ip_rt_put(rt);
 		IP_VS_DBG_RL("%s(): mtu less than 68\n", __func__);
-		goto tx_error_put;
+		goto tx_error;
 	}
 	if (skb_dst(skb))
 		skb_dst(skb)->ops->update_pmtu(skb_dst(skb), mtu);
@@ -804,8 +574,9 @@ ip_vs_tunnel_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 	if ((old_iph->frag_off & htons(IP_DF) &&
 	    mtu < ntohs(old_iph->tot_len) && !skb_is_gso(skb))) {
 		icmp_send(skb, ICMP_DEST_UNREACH,ICMP_FRAG_NEEDED, htonl(mtu));
+		ip_rt_put(rt);
 		IP_VS_DBG_RL("%s(): frag needed\n", __func__);
-		goto tx_error_put;
+		goto tx_error;
 	}
 
 	/*
@@ -828,7 +599,7 @@ ip_vs_tunnel_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 		old_iph = ip_hdr(skb);
 	}
 
-	skb->transport_header = skb->network_header;
+	skb->transport_header = old_transport_header;
 
 	/* fix old IP header checksum */
 	ip_send_check(old_iph);
@@ -839,7 +610,7 @@ ip_vs_tunnel_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 
 	/* drop old route */
 	skb_dst_drop(skb);
-	skb_dst_set(skb, &rt->dst);
+	skb_dst_set(skb, &rt->u.dst);
 
 	/*
 	 *	Push down and install the IPIP header.
@@ -850,19 +621,15 @@ ip_vs_tunnel_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 	iph->frag_off		=	df;
 	iph->protocol		=	IPPROTO_IPIP;
 	iph->tos		=	tos;
-	iph->daddr		=	cp->daddr.ip;
-	iph->saddr		=	saddr;
+	iph->daddr		=	rt->rt_dst;
+	iph->saddr		=	rt->rt_src;
 	iph->ttl		=	old_iph->ttl;
-	ip_select_ident(skb, NULL);
+	ip_select_ident(iph, &rt->u.dst, NULL);
 
 	/* Another hack: avoid icmp_send in ip_fragment */
 	skb->local_df = 1;
 
-	ret = IP_VS_XMIT_TUNNEL(skb, cp);
-	if (ret == NF_ACCEPT)
-		ip_local_out(skb);
-	else if (ret == NF_DROP)
-		kfree_skb(skb);
+	ip_local_out(skb);
 
 	LeaveFunction(10);
 
@@ -874,9 +641,6 @@ ip_vs_tunnel_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 	kfree_skb(skb);
 	LeaveFunction(10);
 	return NF_STOLEN;
-tx_error_put:
-	ip_rt_put(rt);
-	goto tx_error;
 }
 
 #ifdef CONFIG_IP_VS_IPV6
@@ -885,46 +649,44 @@ ip_vs_tunnel_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 		     struct ip_vs_protocol *pp)
 {
 	struct rt6_info *rt;		/* Route to the other host */
-	struct in6_addr saddr;		/* Source for tunnel */
 	struct net_device *tdev;	/* Device to other host */
 	struct ipv6hdr  *old_iph = ipv6_hdr(skb);
+	sk_buff_data_t old_transport_header = skb->transport_header;
 	struct ipv6hdr  *iph;		/* Our new IP header */
 	unsigned int max_headroom;	/* The extra header space needed */
 	int    mtu;
-	int ret;
 
 	EnterFunction(10);
 
-	if (!(rt = __ip_vs_get_out_rt_v6(skb, cp->dest, &cp->daddr.in6,
-					 &saddr, 1, (IP_VS_RT_MODE_LOCAL |
-						     IP_VS_RT_MODE_NON_LOCAL))))
-		goto tx_error_icmp;
-	if (__ip_vs_is_local_route6(rt)) {
-		dst_release(&rt->dst);
-		IP_VS_XMIT(NFPROTO_IPV6, skb, cp, 1);
+	if (skb->protocol != htons(ETH_P_IPV6)) {
+		IP_VS_DBG_RL("%s(): protocol error, "
+			     "ETH_P_IPV6: %d, skb protocol: %d\n",
+			     __func__, htons(ETH_P_IPV6), skb->protocol);
+		goto tx_error;
 	}
 
-	tdev = rt->dst.dev;
+	rt = __ip_vs_get_out_rt_v6(cp);
+	if (!rt)
+		goto tx_error_icmp;
 
-	mtu = dst_mtu(&rt->dst) - sizeof(struct ipv6hdr);
-	if (mtu < IPV6_MIN_MTU) {
-		IP_VS_DBG_RL("%s(): mtu less than %d\n", __func__,
-			     IPV6_MIN_MTU);
-		goto tx_error_put;
+	tdev = rt->u.dst.dev;
+
+	mtu = dst_mtu(&rt->u.dst) - sizeof(struct ipv6hdr);
+	/* TODO IPv6: do we need this check in IPv6? */
+	if (mtu < 1280) {
+		dst_release(&rt->u.dst);
+		IP_VS_DBG_RL("%s(): mtu less than 1280\n", __func__);
+		goto tx_error;
 	}
 	if (skb_dst(skb))
 		skb_dst(skb)->ops->update_pmtu(skb_dst(skb), mtu);
 
-	if (mtu < ntohs(old_iph->payload_len) + sizeof(struct ipv6hdr) &&
-	    !skb_is_gso(skb)) {
-		if (!skb->dev) {
-			struct net *net = dev_net(skb_dst(skb)->dev);
-
-			skb->dev = net->loopback_dev;
-		}
-		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu);
+	/* MTU checking: Notice that 'mtu' have been adjusted before hand */
+	if (__mtu_check_toobig_v6(skb, mtu)) {
+		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu, skb->dev);
+		dst_release(&rt->u.dst);
 		IP_VS_DBG_RL("%s(): frag needed\n", __func__);
-		goto tx_error_put;
+		goto tx_error;
 	}
 
 	/*
@@ -937,7 +699,7 @@ ip_vs_tunnel_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 		struct sk_buff *new_skb =
 			skb_realloc_headroom(skb, max_headroom);
 		if (!new_skb) {
-			dst_release(&rt->dst);
+			dst_release(&rt->u.dst);
 			kfree_skb(skb);
 			IP_VS_ERR_RL("%s(): no memory\n", __func__);
 			return NF_STOLEN;
@@ -947,7 +709,7 @@ ip_vs_tunnel_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 		old_iph = ipv6_hdr(skb);
 	}
 
-	skb->transport_header = skb->network_header;
+	skb->transport_header = old_transport_header;
 
 	skb_push(skb, sizeof(struct ipv6hdr));
 	skb_reset_network_header(skb);
@@ -955,7 +717,7 @@ ip_vs_tunnel_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 
 	/* drop old route */
 	skb_dst_drop(skb);
-	skb_dst_set(skb, &rt->dst);
+	skb_dst_set(skb, &rt->u.dst);
 
 	/*
 	 *	Push down and install the IPIP header.
@@ -967,18 +729,14 @@ ip_vs_tunnel_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 	be16_add_cpu(&iph->payload_len, sizeof(*old_iph));
 	iph->priority		=	old_iph->priority;
 	memset(&iph->flow_lbl, 0, sizeof(iph->flow_lbl));
-	iph->daddr = cp->daddr.in6;
-	iph->saddr = saddr;
+	iph->daddr		=	rt->rt6i_dst.addr;
+	iph->saddr		=	cp->vaddr.in6; /* rt->rt6i_src.addr; */
 	iph->hop_limit		=	old_iph->hop_limit;
 
 	/* Another hack: avoid icmp_send in ip_fragment */
 	skb->local_df = 1;
 
-	ret = IP_VS_XMIT_TUNNEL(skb, cp);
-	if (ret == NF_ACCEPT)
-		ip6_local_out(skb);
-	else if (ret == NF_DROP)
-		kfree_skb(skb);
+	ip6_local_out(skb);
 
 	LeaveFunction(10);
 
@@ -990,9 +748,6 @@ tx_error:
 	kfree_skb(skb);
 	LeaveFunction(10);
 	return NF_STOLEN;
-tx_error_put:
-	dst_release(&rt->dst);
-	goto tx_error;
 }
 #endif
 
@@ -1011,20 +766,12 @@ ip_vs_dr_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 
 	EnterFunction(10);
 
-	if (!(rt = __ip_vs_get_out_rt(skb, cp->dest, cp->daddr.ip,
-				      RT_TOS(iph->tos),
-				      IP_VS_RT_MODE_LOCAL |
-					IP_VS_RT_MODE_NON_LOCAL, NULL)))
+	if (!(rt = __ip_vs_get_out_rt(cp, RT_TOS(iph->tos))))
 		goto tx_error_icmp;
-	if (rt->rt_flags & RTCF_LOCAL) {
-		ip_rt_put(rt);
-		IP_VS_XMIT(NFPROTO_IPV4, skb, cp, 1);
-	}
 
 	/* MTU checking */
-	mtu = dst_mtu(&rt->dst);
-	if ((iph->frag_off & htons(IP_DF)) && skb->len > mtu &&
-	    !skb_is_gso(skb)) {
+	mtu = dst_mtu(&rt->u.dst);
+	if ((iph->frag_off & htons(IP_DF)) && skb->len > mtu && !skb_is_gso(skb)) {
 		icmp_send(skb, ICMP_DEST_UNREACH,ICMP_FRAG_NEEDED, htonl(mtu));
 		ip_rt_put(rt);
 		IP_VS_DBG_RL("%s(): frag needed\n", __func__);
@@ -1043,12 +790,12 @@ ip_vs_dr_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 
 	/* drop old route */
 	skb_dst_drop(skb);
-	skb_dst_set(skb, &rt->dst);
+	skb_dst_set(skb, &rt->u.dst);
 
 	/* Another hack: avoid icmp_send in ip_fragment */
 	skb->local_df = 1;
 
-	IP_VS_XMIT(NFPROTO_IPV4, skb, cp, 0);
+	IP_VS_XMIT(PF_INET, skb, rt);
 
 	LeaveFunction(10);
 	return NF_STOLEN;
@@ -1071,25 +818,15 @@ ip_vs_dr_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 
 	EnterFunction(10);
 
-	if (!(rt = __ip_vs_get_out_rt_v6(skb, cp->dest, &cp->daddr.in6, NULL,
-					 0, (IP_VS_RT_MODE_LOCAL |
-					     IP_VS_RT_MODE_NON_LOCAL))))
+	rt = __ip_vs_get_out_rt_v6(cp);
+	if (!rt)
 		goto tx_error_icmp;
-	if (__ip_vs_is_local_route6(rt)) {
-		dst_release(&rt->dst);
-		IP_VS_XMIT(NFPROTO_IPV6, skb, cp, 1);
-	}
 
 	/* MTU checking */
-	mtu = dst_mtu(&rt->dst);
-	if (skb->len > mtu) {
-		if (!skb->dev) {
-			struct net *net = dev_net(skb_dst(skb)->dev);
-
-			skb->dev = net->loopback_dev;
-		}
-		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu);
-		dst_release(&rt->dst);
+	mtu = dst_mtu(&rt->u.dst);
+	if (__mtu_check_toobig_v6(skb, mtu)) {
+		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu, skb->dev);
+		dst_release(&rt->u.dst);
 		IP_VS_DBG_RL("%s(): frag needed\n", __func__);
 		goto tx_error;
 	}
@@ -1100,18 +837,18 @@ ip_vs_dr_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 	 */
 	skb = skb_share_check(skb, GFP_ATOMIC);
 	if (unlikely(skb == NULL)) {
-		dst_release(&rt->dst);
+		dst_release(&rt->u.dst);
 		return NF_STOLEN;
 	}
 
 	/* drop old route */
 	skb_dst_drop(skb);
-	skb_dst_set(skb, &rt->dst);
+	skb_dst_set(skb, &rt->u.dst);
 
 	/* Another hack: avoid icmp_send in ip_fragment */
 	skb->local_df = 1;
 
-	IP_VS_XMIT(NFPROTO_IPV6, skb, cp, 0);
+	IP_VS_XMIT(PF_INET6, skb, rt);
 
 	LeaveFunction(10);
 	return NF_STOLEN;
@@ -1132,13 +869,11 @@ tx_error:
  */
 int
 ip_vs_icmp_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
-		struct ip_vs_protocol *pp, int offset, unsigned int hooknum)
+		struct ip_vs_protocol *pp, int offset)
 {
 	struct rtable	*rt;	/* Route to the other host */
 	int mtu;
 	int rc;
-	int local;
-	int rt_mode;
 
 	EnterFunction(10);
 
@@ -1159,80 +894,35 @@ ip_vs_icmp_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 	 * mangle and send the packet here (only for VS/NAT)
 	 */
 
-	/* LOCALNODE from FORWARD hook is not supported */
-	rt_mode = (hooknum != NF_INET_FORWARD) ?
-		  IP_VS_RT_MODE_LOCAL | IP_VS_RT_MODE_NON_LOCAL |
-		  IP_VS_RT_MODE_RDR : IP_VS_RT_MODE_NON_LOCAL;
-	if (!(rt = __ip_vs_get_out_rt(skb, cp->dest, cp->daddr.ip,
-				      RT_TOS(ip_hdr(skb)->tos),
-				      rt_mode, NULL)))
+	if (!(rt = __ip_vs_get_out_rt(cp, RT_TOS(ip_hdr(skb)->tos))))
 		goto tx_error_icmp;
-	local = rt->rt_flags & RTCF_LOCAL;
-
-	/*
-	 * Avoid duplicate tuple in reply direction for NAT traffic
-	 * to local address when connection is sync-ed
-	 */
-#if IS_ENABLED(CONFIG_NF_CONNTRACK)
-	if (cp->flags & IP_VS_CONN_F_SYNC && local) {
-		enum ip_conntrack_info ctinfo;
-		struct nf_conn *ct = ct = nf_ct_get(skb, &ctinfo);
-
-		if (ct && !nf_ct_is_untracked(ct)) {
-			IP_VS_DBG(10, "%s(): "
-				  "stopping DNAT to local address %pI4\n",
-				  __func__, &cp->daddr.ip);
-			goto tx_error_put;
-		}
-	}
-#endif
-
-	/* From world but DNAT to loopback address? */
-	if (local && ipv4_is_loopback(cp->daddr.ip) &&
-	    rt_is_input_route(skb_rtable(skb))) {
-		IP_VS_DBG(1, "%s(): "
-			  "stopping DNAT to loopback %pI4\n",
-			  __func__, &cp->daddr.ip);
-		goto tx_error_put;
-	}
 
 	/* MTU checking */
-	mtu = dst_mtu(&rt->dst);
-	if ((skb->len > mtu) && (ip_hdr(skb)->frag_off & htons(IP_DF)) &&
-	    !skb_is_gso(skb)) {
+	mtu = dst_mtu(&rt->u.dst);
+	if ((skb->len > mtu) && (ip_hdr(skb)->frag_off & htons(IP_DF)) && !skb_is_gso(skb)) {
+		ip_rt_put(rt);
 		icmp_send(skb, ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED, htonl(mtu));
 		IP_VS_DBG_RL("%s(): frag needed\n", __func__);
-		goto tx_error_put;
+		goto tx_error;
 	}
 
 	/* copy-on-write the packet before mangling it */
 	if (!skb_make_writable(skb, offset))
 		goto tx_error_put;
 
-	if (skb_cow(skb, rt->dst.dev->hard_header_len))
+	if (skb_cow(skb, rt->u.dst.dev->hard_header_len))
 		goto tx_error_put;
 
-	ip_vs_nat_icmp(skb, pp, cp, 0);
+	/* drop the old route when skb is not shared */
+	skb_dst_drop(skb);
+	skb_dst_set(skb, &rt->u.dst);
 
-	if (!local) {
-		/* drop the old route when skb is not shared */
-		skb_dst_drop(skb);
-		skb_dst_set(skb, &rt->dst);
-	} else {
-		ip_rt_put(rt);
-		/*
-		 * Some IPv4 replies get local address from routes,
-		 * not from iph, so while we DNAT after routing
-		 * we need this second input/output route.
-		 */
-		if (!__ip_vs_reroute_locally(skb))
-			goto tx_error;
-	}
+	ip_vs_nat_icmp(skb, pp, cp, 0);
 
 	/* Another hack: avoid icmp_send in ip_fragment */
 	skb->local_df = 1;
 
-	IP_VS_XMIT_NAT(NFPROTO_IPV4, skb, cp, local);
+	IP_VS_XMIT(PF_INET, skb, rt);
 
 	rc = NF_STOLEN;
 	goto out;
@@ -1253,13 +943,11 @@ ip_vs_icmp_xmit(struct sk_buff *skb, struct ip_vs_conn *cp,
 #ifdef CONFIG_IP_VS_IPV6
 int
 ip_vs_icmp_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
-		struct ip_vs_protocol *pp, int offset, unsigned int hooknum)
+		struct ip_vs_protocol *pp, int offset)
 {
 	struct rt6_info	*rt;	/* Route to the other host */
 	int mtu;
 	int rc;
-	int local;
-	int rt_mode;
 
 	EnterFunction(10);
 
@@ -1280,77 +968,36 @@ ip_vs_icmp_xmit_v6(struct sk_buff *skb, struct ip_vs_conn *cp,
 	 * mangle and send the packet here (only for VS/NAT)
 	 */
 
-	/* LOCALNODE from FORWARD hook is not supported */
-	rt_mode = (hooknum != NF_INET_FORWARD) ?
-		  IP_VS_RT_MODE_LOCAL | IP_VS_RT_MODE_NON_LOCAL |
-		  IP_VS_RT_MODE_RDR : IP_VS_RT_MODE_NON_LOCAL;
-	if (!(rt = __ip_vs_get_out_rt_v6(skb, cp->dest, &cp->daddr.in6, NULL,
-					 0, rt_mode)))
+	rt = __ip_vs_get_out_rt_v6(cp);
+	if (!rt)
 		goto tx_error_icmp;
 
-	local = __ip_vs_is_local_route6(rt);
-	/*
-	 * Avoid duplicate tuple in reply direction for NAT traffic
-	 * to local address when connection is sync-ed
-	 */
-#if IS_ENABLED(CONFIG_NF_CONNTRACK)
-	if (cp->flags & IP_VS_CONN_F_SYNC && local) {
-		enum ip_conntrack_info ctinfo;
-		struct nf_conn *ct = ct = nf_ct_get(skb, &ctinfo);
-
-		if (ct && !nf_ct_is_untracked(ct)) {
-			IP_VS_DBG(10, "%s(): "
-				  "stopping DNAT to local address %pI6\n",
-				  __func__, &cp->daddr.in6);
-			goto tx_error_put;
-		}
-	}
-#endif
-
-	/* From world but DNAT to loopback address? */
-	if (local && skb->dev && !(skb->dev->flags & IFF_LOOPBACK) &&
-	    ipv6_addr_type(&rt->rt6i_dst.addr) & IPV6_ADDR_LOOPBACK) {
-		IP_VS_DBG(1, "%s(): "
-			  "stopping DNAT to loopback %pI6\n",
-			  __func__, &cp->daddr.in6);
-		goto tx_error_put;
-	}
-
 	/* MTU checking */
-	mtu = dst_mtu(&rt->dst);
-	if (skb->len > mtu && !skb_is_gso(skb)) {
-		if (!skb->dev) {
-			struct net *net = dev_net(skb_dst(skb)->dev);
-
-			skb->dev = net->loopback_dev;
-		}
-		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu);
+	mtu = dst_mtu(&rt->u.dst);
+	if (__mtu_check_toobig_v6(skb, mtu)) {
+		dst_release(&rt->u.dst);
+		icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu, skb->dev);
 		IP_VS_DBG_RL("%s(): frag needed\n", __func__);
-		goto tx_error_put;
+		goto tx_error;
 	}
 
 	/* copy-on-write the packet before mangling it */
 	if (!skb_make_writable(skb, offset))
 		goto tx_error_put;
 
-	if (skb_cow(skb, rt->dst.dev->hard_header_len))
+	if (skb_cow(skb, rt->u.dst.dev->hard_header_len))
 		goto tx_error_put;
 
-	ip_vs_nat_icmp_v6(skb, pp, cp, 0);
+	/* drop the old route when skb is not shared */
+	skb_dst_drop(skb);
+	skb_dst_set(skb, &rt->u.dst);
 
-	if (!local || !skb->dev) {
-		/* drop the old route when skb is not shared */
-		skb_dst_drop(skb);
-		skb_dst_set(skb, &rt->dst);
-	} else {
-		/* destined to loopback, do we need to change route? */
-		dst_release(&rt->dst);
-	}
+	ip_vs_nat_icmp_v6(skb, pp, cp, 0);
 
 	/* Another hack: avoid icmp_send in ip_fragment */
 	skb->local_df = 1;
 
-	IP_VS_XMIT_NAT(NFPROTO_IPV6, skb, cp, local);
+	IP_VS_XMIT(PF_INET6, skb, rt);
 
 	rc = NF_STOLEN;
 	goto out;
@@ -1364,7 +1011,7 @@ out:
 	LeaveFunction(10);
 	return rc;
 tx_error_put:
-	dst_release(&rt->dst);
+	dst_release(&rt->u.dst);
 	goto tx_error;
 }
 #endif

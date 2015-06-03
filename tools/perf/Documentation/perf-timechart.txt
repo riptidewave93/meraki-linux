@@ -27,19 +27,14 @@ OPTIONS
         Select the output file (default: output.svg)
 -i::
 --input=::
-        Select the input file (default: perf.data unless stdin is a fifo)
+        Select the input file (default: perf.data)
 -w::
 --width=::
         Select the width of the SVG file (default: 1000)
--P::
+-p::
 --power-only::
         Only output the CPU power section of the diagram
--p::
---process::
-        Select the processes to display, by name or PID
 
---symfs=<directory>::
-        Look for files with symbols relative to this directory.
 
 SEE ALSO
 --------

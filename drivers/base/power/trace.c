@@ -8,7 +8,6 @@
  */
 
 #include <linux/resume-trace.h>
-#include <linux/export.h>
 #include <linux/rtc.h>
 
 #include <asm/rtc.h>
@@ -113,7 +112,7 @@ static unsigned int read_magic_time(void)
 	unsigned int val;
 
 	get_rtc_time(&time);
-	pr_info("RTC time: %2d:%02d:%02d, date: %02d/%02d/%02d\n",
+	printk("Time: %2d:%02d:%02d  Date: %02d/%02d/%02d\n",
 		time.tm_hour, time.tm_min, time.tm_sec,
 		time.tm_mon + 1, time.tm_mday, time.tm_year % 100);
 	val = time.tm_year;				/* 100 years */
@@ -180,7 +179,7 @@ static int show_file_hash(unsigned int value)
 		unsigned int hash = hash_string(lineno, file, FILEHASH);
 		if (hash != value)
 			continue;
-		pr_info("  hash matches %s:%u\n", file, lineno);
+		printk("  hash matches %s:%u\n", file, lineno);
 		match++;
 	}
 	return match;
@@ -189,10 +188,8 @@ static int show_file_hash(unsigned int value)
 static int show_dev_hash(unsigned int value)
 {
 	int match = 0;
-	struct list_head *entry;
+	struct list_head *entry = dpm_list.prev;
 
-	device_pm_lock();
-	entry = dpm_list.prev;
 	while (entry != &dpm_list) {
 		struct device * dev = to_device(entry);
 		unsigned int hash = hash_string(DEVSEED, dev_name(dev), DEVHASH);
@@ -202,42 +199,10 @@ static int show_dev_hash(unsigned int value)
 		}
 		entry = entry->prev;
 	}
-	device_pm_unlock();
 	return match;
 }
 
 static unsigned int hash_value_early_read;
-
-int show_trace_dev_match(char *buf, size_t size)
-{
-	unsigned int value = hash_value_early_read / (USERHASH * FILEHASH);
-	int ret = 0;
-	struct list_head *entry;
-
-	/*
-	 * It's possible that multiple devices will match the hash and we can't
-	 * tell which is the culprit, so it's best to output them all.
-	 */
-	device_pm_lock();
-	entry = dpm_list.prev;
-	while (size && entry != &dpm_list) {
-		struct device *dev = to_device(entry);
-		unsigned int hash = hash_string(DEVSEED, dev_name(dev),
-						DEVHASH);
-		if (hash == value) {
-			int len = snprintf(buf, size, "%s\n",
-					    dev_driver_string(dev));
-			if (len > size)
-				len = size;
-			buf += len;
-			ret += len;
-			size -= len;
-		}
-		entry = entry->prev;
-	}
-	device_pm_unlock();
-	return ret;
-}
 
 static int early_resume_init(void)
 {
@@ -256,7 +221,7 @@ static int late_resume_init(void)
 	val = val / FILEHASH;
 	dev = val /* % DEVHASH */;
 
-	pr_info("  Magic number: %d:%d:%d\n", user, file, dev);
+	printk("  Magic number: %d:%d:%d\n", user, file, dev);
 	show_file_hash(file);
 	show_dev_hash(dev);
 	return 0;

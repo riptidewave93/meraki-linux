@@ -1,45 +1,43 @@
-#include "reiserfs.h"
+#include <linux/reiserfs_fs.h>
 #include <linux/errno.h>
 #include <linux/fs.h>
 #include <linux/pagemap.h>
 #include <linux/xattr.h>
-#include <linux/slab.h>
-#include "xattr.h"
+#include <linux/reiserfs_xattr.h>
 #include <linux/security.h>
 #include <asm/uaccess.h>
 
 static int
-security_get(struct dentry *dentry, const char *name, void *buffer, size_t size,
-		int handler_flags)
+security_get(struct inode *inode, const char *name, void *buffer, size_t size)
 {
 	if (strlen(name) < sizeof(XATTR_SECURITY_PREFIX))
 		return -EINVAL;
 
-	if (IS_PRIVATE(dentry->d_inode))
+	if (IS_PRIVATE(inode))
 		return -EPERM;
 
-	return reiserfs_xattr_get(dentry->d_inode, name, buffer, size);
+	return reiserfs_xattr_get(inode, name, buffer, size);
 }
 
 static int
-security_set(struct dentry *dentry, const char *name, const void *buffer,
-	     size_t size, int flags, int handler_flags)
+security_set(struct inode *inode, const char *name, const void *buffer,
+	     size_t size, int flags)
 {
 	if (strlen(name) < sizeof(XATTR_SECURITY_PREFIX))
 		return -EINVAL;
 
-	if (IS_PRIVATE(dentry->d_inode))
+	if (IS_PRIVATE(inode))
 		return -EPERM;
 
-	return reiserfs_xattr_set(dentry->d_inode, name, buffer, size, flags);
+	return reiserfs_xattr_set(inode, name, buffer, size, flags);
 }
 
-static size_t security_list(struct dentry *dentry, char *list, size_t list_len,
-			    const char *name, size_t namelen, int handler_flags)
+static size_t security_list(struct inode *inode, char *list, size_t list_len,
+			    const char *name, size_t namelen)
 {
 	const size_t len = namelen + 1;
 
-	if (IS_PRIVATE(dentry->d_inode))
+	if (IS_PRIVATE(inode))
 		return 0;
 
 	if (list && len <= list_len) {
@@ -54,7 +52,6 @@ static size_t security_list(struct dentry *dentry, char *list, size_t list_len,
  * of blocks needed for the transaction. If successful, reiserfs_security
  * must be released using reiserfs_security_free when the caller is done. */
 int reiserfs_security_init(struct inode *dir, struct inode *inode,
-			   const struct qstr *qstr,
 			   struct reiserfs_security_handle *sec)
 {
 	int blocks = 0;
@@ -66,8 +63,8 @@ int reiserfs_security_init(struct inode *dir, struct inode *inode,
 	if (IS_PRIVATE(dir))
 		return 0;
 
-	error = security_old_inode_init_security(inode, dir, qstr, &sec->name,
-						 &sec->value, &sec->length);
+	error = security_inode_init_security(inode, dir, &sec->name,
+					     &sec->value, &sec->length);
 	if (error) {
 		if (error == -EOPNOTSUPP)
 			error = 0;
@@ -112,7 +109,7 @@ void reiserfs_security_free(struct reiserfs_security_handle *sec)
 	sec->value = NULL;
 }
 
-const struct xattr_handler reiserfs_xattr_security_handler = {
+struct xattr_handler reiserfs_xattr_security_handler = {
 	.prefix = XATTR_SECURITY_PREFIX,
 	.get = security_get,
 	.set = security_set,

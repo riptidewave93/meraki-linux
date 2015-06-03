@@ -16,7 +16,6 @@
 #include <linux/linkage.h>
 #include <asm/asm-offsets.h>
 #include <asm/processor.h>
-#include <asm/coprocessor.h>
 #include <asm/thread_info.h>
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
@@ -105,7 +104,7 @@
  *   excsave has been restored, and
  *   stack pointer (a1) has been set.
  *
- * Note: _user_exception might be at an odd address. Don't use call0..call12
+ * Note: _user_exception might be at an odd adress. Don't use call0..call12
  */
 
 ENTRY(user_exception)
@@ -245,7 +244,7 @@ _user_exception:
  *   excsave has been restored, and
  *   stack pointer (a1) has been set.
  *
- * Note: _kernel_exception might be at an odd address. Don't use call0..call12
+ * Note: _kernel_exception might be at an odd adress. Don't use call0..call12
  */
 
 ENTRY(kernel_exception)
@@ -1026,7 +1025,7 @@ ENTRY(fast_syscall_unrecoverable)
  * TRY	 adds an entry to the __ex_table fixup table for the immediately
  *	 following instruction.
  *
- * CATCH catches any exception that occurred at one of the preceding TRY
+ * CATCH catches any exception that occurred at one of the preceeding TRY
  *       statements and continues from there
  *
  * Usage TRY	l32i	a0, a1, 0
@@ -1053,8 +1052,9 @@ ENTRY(fast_syscall_xtensa)
 	movi	a7, 4			# sizeof(unsigned int)
 	access_ok a3, a7, a0, a2, .Leac	# a0: scratch reg, a2: sp
 
-	_bgeui	a6, SYS_XTENSA_COUNT, .Lill
-	_bnei	a6, SYS_XTENSA_ATOMIC_CMP_SWP, .Lnswp
+	addi	a6, a6, -1		# assuming SYS_XTENSA_ATOMIC_SET = 1
+	_bgeui	a6, SYS_XTENSA_COUNT - 1, .Lill
+	_bnei	a6, SYS_XTENSA_ATOMIC_CMP_SWP - 1, .Lnswp
 
 	/* Fall through for ATOMIC_CMP_SWP. */
 
@@ -1066,26 +1066,27 @@ TRY	s32i	a5, a3, 0		# different, modify value
 	l32i	a7, a2, PT_AREG7	# restore a7
 	l32i	a0, a2, PT_AREG0	# restore a0
 	movi	a2, 1			# and return 1
+	addi	a6, a6, 1		# restore a6 (really necessary?)
 	rfe
 
 1:	l32i	a7, a2, PT_AREG7	# restore a7
 	l32i	a0, a2, PT_AREG0	# restore a0
 	movi	a2, 0			# return 0 (note that we cannot set
+	addi	a6, a6, 1		# restore a6 (really necessary?)
 	rfe
 
 .Lnswp:	/* Atomic set, add, and exg_add. */
 
 TRY	l32i	a7, a3, 0		# orig
-	addi	a6, a6, -SYS_XTENSA_ATOMIC_SET
 	add	a0, a4, a7		# + arg
 	moveqz	a0, a4, a6		# set
-	addi	a6, a6, SYS_XTENSA_ATOMIC_SET
 TRY	s32i	a0, a3, 0		# write new value
 
 	mov	a0, a2
 	mov	a2, a7
 	l32i	a7, a0, PT_AREG7	# restore a7
 	l32i	a0, a0, PT_AREG0	# restore a0
+	addi	a6, a6, 1		# restore a6 (really necessary?)
 	rfe
 
 CATCH
@@ -1094,7 +1095,7 @@ CATCH
 	movi	a2, -EFAULT
 	rfe
 
-.Lill:	l32i	a7, a2, PT_AREG7	# restore a7
+.Lill:	l32i	a7, a2, PT_AREG0	# restore a7
 	l32i	a0, a2, PT_AREG0	# restore a0
 	movi	a2, -EINVAL
 	rfe
@@ -1627,7 +1628,7 @@ ENTRY(fast_second_level_miss)
 	rsr	a0, EXCVADDR
 	bltu	a0, a3, 2f
 
-	addi	a1, a0, -TLBTEMP_SIZE
+	addi	a1, a0, -(2 << (DCACHE_ALIAS_ORDER + PAGE_SHIFT))
 	bgeu	a1, a3, 2f
 
 	/* Check if we have to restore an ITLB mapping. */

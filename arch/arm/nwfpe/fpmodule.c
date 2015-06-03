@@ -24,7 +24,6 @@
 #include "fpa11.h"
 
 #include <linux/module.h>
-#include <linux/moduleparam.h>
 
 /* XXX */
 #include <linux/errno.h>
@@ -135,17 +134,13 @@ a SIGFPE exception if necessary.  If not the relevant bits in the
 cumulative exceptions flag byte are set and we return.
 */
 
-#ifdef CONFIG_DEBUG_USER
-/* By default, ignore inexact errors as there are far too many of them to log */
-static int debug = ~BIT_IXC;
-#endif
-
 void float_raise(signed char flags)
 {
 	register unsigned int fpsr, cumulativeTraps;
 
 #ifdef CONFIG_DEBUG_USER
-	if (flags & debug)
+ 	/* Ignore inexact errors as there are far too many of them to log */
+ 	if (flags & ~BIT_IXC)
  		printk(KERN_DEBUG
 		       "NWFPE: %s[%d] takes exception %08x at %p from %08lx\n",
 		       current->comm, current->pid, flags,
@@ -184,7 +179,3 @@ module_exit(fpe_exit);
 MODULE_AUTHOR("Scott Bambrough <scottb@rebel.com>");
 MODULE_DESCRIPTION("NWFPE floating point emulator (" NWFPE_BITS " precision)");
 MODULE_LICENSE("GPL");
-
-#ifdef CONFIG_DEBUG_USER
-module_param(debug, int, 0644);
-#endif

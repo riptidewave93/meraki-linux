@@ -1,5 +1,4 @@
 #include <linux/kernel.h>
-#include <linux/gfp.h>
 #include <linux/ide.h>
 
 int generic_ide_suspend(struct device *dev, pm_message_t mesg)
@@ -191,10 +190,10 @@ void ide_complete_pm_rq(ide_drive_t *drive, struct request *rq)
 
 #ifdef DEBUG_PM
 	printk("%s: completing PM request, %s\n", drive->name,
-	       (rq->cmd_type == REQ_TYPE_PM_SUSPEND) ? "suspend" : "resume");
+	       blk_pm_suspend_request(rq) ? "suspend" : "resume");
 #endif
 	spin_lock_irqsave(q->queue_lock, flags);
-	if (rq->cmd_type == REQ_TYPE_PM_SUSPEND)
+	if (blk_pm_suspend_request(rq))
 		blk_stop_queue(q);
 	else
 		drive->dev_flags &= ~IDE_DFLAG_BLOCKED;
@@ -210,11 +209,11 @@ void ide_check_pm_state(ide_drive_t *drive, struct request *rq)
 {
 	struct request_pm_state *pm = rq->special;
 
-	if (rq->cmd_type == REQ_TYPE_PM_SUSPEND &&
+	if (blk_pm_suspend_request(rq) &&
 	    pm->pm_step == IDE_PM_START_SUSPEND)
 		/* Mark drive blocked when starting the suspend sequence. */
 		drive->dev_flags |= IDE_DFLAG_BLOCKED;
-	else if (rq->cmd_type == REQ_TYPE_PM_RESUME &&
+	else if (blk_pm_resume_request(rq) &&
 		 pm->pm_step == IDE_PM_START_RESUME) {
 		/*
 		 * The first thing we do on wakeup is to wait for BSY bit to

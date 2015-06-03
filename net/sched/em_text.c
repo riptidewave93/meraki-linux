@@ -9,7 +9,6 @@
  * Authors:	Thomas Graf <tgraf@suug.ch>
  */
 
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -19,7 +18,8 @@
 #include <linux/tc_ematch/tc_em_text.h>
 #include <net/pkt_cls.h>
 
-struct text_match {
+struct text_match
+{
 	u16			from_offset;
 	u16			to_offset;
 	u8			from_layer;
@@ -102,8 +102,7 @@ retry:
 
 static void em_text_destroy(struct tcf_proto *tp, struct tcf_ematch *m)
 {
-	if (EM_TEXT_PRIV(m) && EM_TEXT_PRIV(m)->config)
-		textsearch_destroy(EM_TEXT_PRIV(m)->config);
+	textsearch_destroy(EM_TEXT_PRIV(m)->config);
 }
 
 static int em_text_dump(struct sk_buff *skb, struct tcf_ematch *m)

@@ -305,7 +305,7 @@ static int __init vr41xx_pciu_init(void)
 		struct resource *res = vr41xx_pci_controller.io_resource;
 		master = setup->master_io;
 		io_map_base = ioremap(master->bus_base_address,
-				      resource_size(res));
+				      res->end - res->start + 1);
 		if (!io_map_base)
 			return -EBUSY;
 

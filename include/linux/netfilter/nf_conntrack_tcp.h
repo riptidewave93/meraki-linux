@@ -18,10 +18,7 @@ enum tcp_conntrack {
 	TCP_CONNTRACK_LISTEN,	/* obsolete */
 #define TCP_CONNTRACK_SYN_SENT2	TCP_CONNTRACK_LISTEN
 	TCP_CONNTRACK_MAX,
-	TCP_CONNTRACK_IGNORE,
-	TCP_CONNTRACK_RETRANS,
-	TCP_CONNTRACK_UNACK,
-	TCP_CONNTRACK_TIMEOUT_MAX
+	TCP_CONNTRACK_IGNORE
 };
 
 /* Window scaling is advertised by the sender */
@@ -58,7 +55,8 @@ struct ip_ct_tcp_state {
 	u_int8_t	flags;		/* per direction options */
 };
 
-struct ip_ct_tcp {
+struct ip_ct_tcp
+{
 	struct ip_ct_tcp_state seen[2];	/* connection parameters per direction */
 	u_int8_t	state;		/* state of the connection (enum tcp_conntrack) */
 	/* For detecting stale connections */
@@ -69,9 +67,6 @@ struct ip_ct_tcp {
 	u_int32_t	last_ack;	/* Last sequence number seen in opposite dir */
 	u_int32_t	last_end;	/* Last seq + len */
 	u_int16_t	last_win;	/* Last window advertisement seen in dir */
-	/* For SYN packets while we may be out-of-sync */
-	u_int8_t	last_wscale;	/* Last window scaling factor seen */
-	u_int8_t	last_flags;	/* Last flags set */
 };
 
 #endif /* __KERNEL__ */

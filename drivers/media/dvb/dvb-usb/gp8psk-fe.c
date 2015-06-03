@@ -109,16 +109,32 @@ static int gp8psk_fe_read_signal_strength(struct dvb_frontend* fe, u16 *strength
 
 static int gp8psk_fe_get_tune_settings(struct dvb_frontend* fe, struct dvb_frontend_tune_settings *tune)
 {
-	tune->min_delay_ms = 800;
+	tune->min_delay_ms = 200;
 	return 0;
 }
 
-static int gp8psk_fe_set_frontend(struct dvb_frontend *fe)
+static int gp8psk_fe_set_property(struct dvb_frontend *fe,
+	struct dtv_property *tvp)
+{
+	deb_fe("%s(..)\n", __func__);
+	return 0;
+}
+
+static int gp8psk_fe_get_property(struct dvb_frontend *fe,
+	struct dtv_property *tvp)
+{
+	deb_fe("%s(..)\n", __func__);
+	return 0;
+}
+
+
+static int gp8psk_fe_set_frontend(struct dvb_frontend* fe,
+				  struct dvb_frontend_parameters *fep)
 {
 	struct gp8psk_fe_state *state = fe->demodulator_priv;
 	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	u8 cmd[10];
-	u32 freq = c->frequency * 1000;
+	u32 freq = fep->frequency * 1000;
 	int gp_product_id = le16_to_cpu(state->d->udev->descriptor.idProduct);
 
 	deb_fe("%s()\n", __func__);
@@ -128,12 +144,9 @@ static int gp8psk_fe_set_frontend(struct dvb_frontend *fe)
 	cmd[6] = (freq >> 16) & 0xff;
 	cmd[7] = (freq >> 24) & 0xff;
 
-	/* backwards compatibility: DVB-S + 8-PSK were used for Turbo-FEC */
-	if (c->delivery_system == SYS_DVBS && c->modulation == PSK_8)
-		c->delivery_system = SYS_TURBO;
-
 	switch (c->delivery_system) {
 	case SYS_DVBS:
+		/* Only QPSK is supported for DVB-S */
 		if (c->modulation != QPSK) {
 			deb_fe("%s: unsupported modulation selected (%d)\n",
 				__func__, c->modulation);
@@ -141,11 +154,8 @@ static int gp8psk_fe_set_frontend(struct dvb_frontend *fe)
 		}
 		c->fec_inner = FEC_AUTO;
 		break;
-	case SYS_DVBS2: /* kept for backwards compatibility */
+	case SYS_DVBS2:
 		deb_fe("%s: DVB-S2 delivery system selected\n", __func__);
-		break;
-	case SYS_TURBO:
-		deb_fe("%s: Turbo-FEC delivery system selected\n", __func__);
 		break;
 
 	default:
@@ -179,10 +189,7 @@ static int gp8psk_fe_set_frontend(struct dvb_frontend *fe)
 		default:
 			cmd[9] = 5; break;
 		}
-		if (c->delivery_system == SYS_TURBO)
-			cmd[8] = ADV_MOD_TURBO_QPSK;
-		else
-			cmd[8] = ADV_MOD_DVB_QPSK;
+		cmd[8] = ADV_MOD_DVB_QPSK;
 		break;
 	case PSK_8: /* PSK_8 is for compatibility with DN */
 		cmd[8] = ADV_MOD_TURBO_8PSK;
@@ -326,9 +333,9 @@ success:
 
 
 static struct dvb_frontend_ops gp8psk_fe_ops = {
-	.delsys = { SYS_DVBS },
 	.info = {
-		.name			= "Genpix DVB-S",
+		.name			= "Genpix 8psk-to-USB2 DVB-S",
+		.type			= FE_QPSK,
 		.frequency_min		= 800000,
 		.frequency_max		= 2250000,
 		.frequency_stepsize	= 100,
@@ -342,7 +349,7 @@ static struct dvb_frontend_ops gp8psk_fe_ops = {
 			 * FE_CAN_QAM_16 is for compatibility
 			 * (Myth incorrectly detects Turbo-QPSK as plain QAM-16)
 			 */
-			FE_CAN_QPSK | FE_CAN_QAM_16 | FE_CAN_TURBO_FEC
+			FE_CAN_QPSK | FE_CAN_QAM_16
 	},
 
 	.release = gp8psk_fe_release,
@@ -350,6 +357,8 @@ static struct dvb_frontend_ops gp8psk_fe_ops = {
 	.init = NULL,
 	.sleep = NULL,
 
+	.set_property = gp8psk_fe_set_property,
+	.get_property = gp8psk_fe_get_property,
 	.set_frontend = gp8psk_fe_set_frontend,
 
 	.get_tune_settings = gp8psk_fe_get_tune_settings,

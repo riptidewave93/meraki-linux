@@ -17,6 +17,7 @@
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/unistd.h>
+#include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/init.h>
 #include <linux/delay.h>
@@ -137,10 +138,3 @@ static void __exit qs6612_exit(void)
 
 module_init(qs6612_init);
 module_exit(qs6612_exit);
-
-static struct mdio_device_id __maybe_unused qs6612_tbl[] = {
-	{ 0x00181440, 0xfffffff0 },
-	{ }
-};
-
-MODULE_DEVICE_TABLE(mdio, qs6612_tbl);

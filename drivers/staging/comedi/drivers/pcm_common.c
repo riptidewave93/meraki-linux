@@ -41,8 +41,7 @@ int comedi_pcm_cmdtest(struct comedi_device *dev,
 	if (err)
 		return 1;
 
-	/* step 2: make sure trigger sources are unique and
-	 * mutually compatible */
+	/* step 2: make sure trigger sources are unique and mutually compatible */
 
 	/* these tests are true if more than one _src bit is set */
 	if ((cmd->start_src & (cmd->start_src - 1)) != 0)
@@ -108,8 +107,5 @@ int comedi_pcm_cmdtest(struct comedi_device *dev,
 
 	return 0;
 }
-EXPORT_SYMBOL(comedi_pcm_cmdtest);
 
-MODULE_AUTHOR("Comedi http://www.comedi.org");
-MODULE_DESCRIPTION("Comedi low-level driver");
-MODULE_LICENSE("GPL");
+EXPORT_SYMBOL(comedi_pcm_cmdtest);

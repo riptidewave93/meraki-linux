@@ -15,7 +15,6 @@
  */
 
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/device.h>
 #include <sound/core.h>
@@ -25,6 +24,7 @@
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
 #include <sound/tlv.h>
+#include <sound/soc-of-simple.h>
 
 #include "stac9766.h"
 
@@ -191,7 +191,6 @@ static int ac97_analog_prepare(struct snd_pcm_substream *substream,
 	vra = stac9766_ac97_read(codec, AC97_EXTENDED_STATUS);
 
 	vra |= 0x1; /* enable variable rate audio */
-	vra &= ~0x4; /* disable SPDIF output */
 
 	stac9766_ac97_write(codec, AC97_EXTENDED_STATUS, vra);
 
@@ -222,6 +221,22 @@ static int ac97_digital_prepare(struct snd_pcm_substream *substream,
 	return stac9766_ac97_write(codec, reg, runtime->rate);
 }
 
+static int ac97_digital_trigger(struct snd_pcm_substream *substream,
+				int cmd, struct snd_soc_dai *dai)
+{
+	struct snd_soc_codec *codec = dai->codec;
+	unsigned short vra;
+
+	switch (cmd) {
+	case SNDRV_PCM_TRIGGER_STOP:
+		vra = stac9766_ac97_read(codec, AC97_EXTENDED_STATUS);
+		vra &= !0x04;
+		stac9766_ac97_write(codec, AC97_EXTENDED_STATUS, vra);
+		break;
+	}
+	return 0;
+}
+
 static int stac9766_set_bias_level(struct snd_soc_codec *codec,
 				   enum snd_soc_bias_level level)
 {
@@ -236,7 +251,7 @@ static int stac9766_set_bias_level(struct snd_soc_codec *codec,
 		stac9766_ac97_write(codec, AC97_POWERDOWN, 0xffff);
 		break;
 	}
-	codec->dapm.bias_level = level;
+	codec->bias_level = level;
 	return 0;
 }
 
@@ -256,14 +271,20 @@ static int stac9766_reset(struct snd_soc_codec *codec, int try_warm)
 	return 0;
 }
 
-static int stac9766_codec_suspend(struct snd_soc_codec *codec)
+static int stac9766_codec_suspend(struct platform_device *pdev,
+				  pm_message_t state)
 {
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
+
 	stac9766_set_bias_level(codec, SND_SOC_BIAS_OFF);
 	return 0;
 }
 
-static int stac9766_codec_resume(struct snd_soc_codec *codec)
+static int stac9766_codec_resume(struct platform_device *pdev)
 {
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
 	u16 id, reset;
 
 	reset = 0;
@@ -282,20 +303,25 @@ reset:
 	}
 	stac9766_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
 
+	if (codec->suspend_bias_level == SND_SOC_BIAS_ON)
+		stac9766_set_bias_level(codec, SND_SOC_BIAS_ON);
+
 	return 0;
 }
 
-static const struct snd_soc_dai_ops stac9766_dai_ops_analog = {
+static struct snd_soc_dai_ops stac9766_dai_ops_analog = {
 	.prepare = ac97_analog_prepare,
 };
 
-static const struct snd_soc_dai_ops stac9766_dai_ops_digital = {
+static struct snd_soc_dai_ops stac9766_dai_ops_digital = {
 	.prepare = ac97_digital_prepare,
+	.trigger = ac97_digital_trigger,
 };
 
-static struct snd_soc_dai_driver stac9766_dai[] = {
+struct snd_soc_dai stac9766_dai[] = {
 {
-	.name = "stac9766-hifi-analog",
+	.name = "stac9766 analog",
+	.id = 0,
 	.ac97_control = 1,
 
 	/* stream cababilities */
@@ -317,7 +343,8 @@ static struct snd_soc_dai_driver stac9766_dai[] = {
 	.ops = &stac9766_dai_ops_analog,
 },
 {
-	.name = "stac9766-hifi-IEC958",
+	.name = "stac9766 IEC958",
+	.id = 1,
 	.ac97_control = 1,
 
 	/* stream cababilities */
@@ -333,16 +360,49 @@ static struct snd_soc_dai_driver stac9766_dai[] = {
 	.ops = &stac9766_dai_ops_digital,
 }
 };
+EXPORT_SYMBOL_GPL(stac9766_dai);
 
-static int stac9766_codec_probe(struct snd_soc_codec *codec)
+static int stac9766_codec_probe(struct platform_device *pdev)
 {
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec;
 	int ret = 0;
 
 	printk(KERN_INFO "STAC9766 SoC Audio Codec %s\n", STAC9766_VERSION);
 
+	socdev->card->codec = kzalloc(sizeof(struct snd_soc_codec), GFP_KERNEL);
+	if (socdev->card->codec == NULL)
+		return -ENOMEM;
+	codec = socdev->card->codec;
+	mutex_init(&codec->mutex);
+
+	codec->reg_cache = kmemdup(stac9766_reg, sizeof(stac9766_reg),
+				   GFP_KERNEL);
+	if (codec->reg_cache == NULL) {
+		ret = -ENOMEM;
+		goto cache_err;
+	}
+	codec->reg_cache_size = sizeof(stac9766_reg);
+	codec->reg_cache_step = 2;
+
+	codec->name = "STAC9766";
+	codec->owner = THIS_MODULE;
+	codec->dai = stac9766_dai;
+	codec->num_dai = ARRAY_SIZE(stac9766_dai);
+	codec->write = stac9766_ac97_write;
+	codec->read = stac9766_ac97_read;
+	codec->set_bias_level = stac9766_set_bias_level;
+	INIT_LIST_HEAD(&codec->dapm_widgets);
+	INIT_LIST_HEAD(&codec->dapm_paths);
+
 	ret = snd_soc_new_ac97_codec(codec, &soc_ac97_ops, 0);
 	if (ret < 0)
 		goto codec_err;
+
+	/* register pcms */
+	ret = snd_soc_new_pcms(socdev, SNDRV_DEFAULT_IDX1, SNDRV_DEFAULT_STR1);
+	if (ret < 0)
+		goto pcm_err;
 
 	/* do a cold reset for the controller and then try
 	 * a warm reset followed by an optional cold reset for codec */
@@ -350,64 +410,53 @@ static int stac9766_codec_probe(struct snd_soc_codec *codec)
 	ret = stac9766_reset(codec, 1);
 	if (ret < 0) {
 		printk(KERN_ERR "Failed to reset STAC9766: AC97 link error\n");
-		goto codec_err;
+		goto reset_err;
 	}
 
 	stac9766_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
 
-	snd_soc_add_codec_controls(codec, stac9766_snd_ac97_controls,
+	snd_soc_add_controls(codec, stac9766_snd_ac97_controls,
 			     ARRAY_SIZE(stac9766_snd_ac97_controls));
 
+	ret = snd_soc_init_card(socdev);
+	if (ret < 0)
+		goto reset_err;
 	return 0;
 
-codec_err:
+reset_err:
+	snd_soc_free_pcms(socdev);
+pcm_err:
 	snd_soc_free_ac97_codec(codec);
+codec_err:
+	kfree(codec->private_data);
+cache_err:
+	kfree(socdev->card->codec);
+	socdev->card->codec = NULL;
 	return ret;
 }
 
-static int stac9766_codec_remove(struct snd_soc_codec *codec)
+static int stac9766_codec_remove(struct platform_device *pdev)
 {
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
+
+	if (codec == NULL)
+		return 0;
+
+	snd_soc_free_pcms(socdev);
 	snd_soc_free_ac97_codec(codec);
+	kfree(codec->reg_cache);
+	kfree(codec);
 	return 0;
 }
 
-static struct snd_soc_codec_driver soc_codec_dev_stac9766 = {
-	.write = stac9766_ac97_write,
-	.read = stac9766_ac97_read,
-	.set_bias_level = stac9766_set_bias_level,
+struct snd_soc_codec_device soc_codec_dev_stac9766 = {
 	.probe = stac9766_codec_probe,
 	.remove = stac9766_codec_remove,
 	.suspend = stac9766_codec_suspend,
 	.resume = stac9766_codec_resume,
-	.reg_cache_size = ARRAY_SIZE(stac9766_reg),
-	.reg_word_size = sizeof(u16),
-	.reg_cache_step = 2,
-	.reg_cache_default = stac9766_reg,
 };
-
-static __devinit int stac9766_probe(struct platform_device *pdev)
-{
-	return snd_soc_register_codec(&pdev->dev,
-			&soc_codec_dev_stac9766, stac9766_dai, ARRAY_SIZE(stac9766_dai));
-}
-
-static int __devexit stac9766_remove(struct platform_device *pdev)
-{
-	snd_soc_unregister_codec(&pdev->dev);
-	return 0;
-}
-
-static struct platform_driver stac9766_codec_driver = {
-	.driver = {
-			.name = "stac9766-codec",
-			.owner = THIS_MODULE,
-	},
-
-	.probe = stac9766_probe,
-	.remove = __devexit_p(stac9766_remove),
-};
-
-module_platform_driver(stac9766_codec_driver);
+EXPORT_SYMBOL_GPL(soc_codec_dev_stac9766);
 
 MODULE_DESCRIPTION("ASoC stac9766 driver");
 MODULE_AUTHOR("Jon Smirl <jonsmirl@gmail.com>");

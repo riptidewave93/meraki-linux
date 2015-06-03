@@ -12,7 +12,6 @@
 #include <asm/prom.h>
 #include <linux/list.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include "../aoa.h"
 #include "../soundbus/soundbus.h"
 
@@ -769,7 +768,7 @@ static int check_codec(struct aoa_codec *codec,
 				"required property %s not present\n", propname);
 			return -ENODEV;
 		}
-		if (*ref != codec->node->phandle) {
+		if (*ref != codec->node->linux_phandle) {
 			printk(KERN_INFO "snd-aoa-fabric-layout: "
 				"%s doesn't match!\n", propname);
 			return -ENODEV;
@@ -992,7 +991,7 @@ static int aoa_fabric_layout_probe(struct soundbus_dev *sdev)
 		return -ENODEV;
 
 	/* by breaking out we keep a reference */
-	while ((sound = of_get_next_child(sdev->ofdev.dev.of_node, sound))) {
+	while ((sound = of_get_next_child(sdev->ofdev.node, sound))) {
 		if (sound->type && strcasecmp(sound->type, "soundchip") == 0)
 			break;
 	}
@@ -1073,10 +1072,10 @@ static int aoa_fabric_layout_probe(struct soundbus_dev *sdev)
 	sdev->pcmid = -1;
 	list_del(&ldev->list);
 	layouts_list_items--;
-	kfree(ldev);
  outnodev:
  	of_node_put(sound);
  	layout_device = NULL;
+ 	kfree(ldev);
 	return -ENODEV;
 }
 

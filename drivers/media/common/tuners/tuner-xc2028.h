@@ -33,14 +33,12 @@ enum firmware_type {
 struct xc2028_ctrl {
 	char			*fname;
 	int			max_len;
-	int			msleep;
 	unsigned int		scode_table;
 	unsigned int		mts   :1;
 	unsigned int		input1:1;
 	unsigned int		vhfbw7:1;
 	unsigned int		uhfbw8:1;
 	unsigned int		disable_power_mgmt:1;
-	unsigned int            read_not_reliable:1;
 	unsigned int		demod;
 	enum firmware_type	type:2;
 };
@@ -54,7 +52,6 @@ struct xc2028_config {
 /* xc2028 commands for callback */
 #define XC2028_TUNER_RESET	0
 #define XC2028_RESET_CLK	1
-#define XC2028_I2C_FLUSH	2
 
 #if defined(CONFIG_MEDIA_TUNER_XC2028) || (defined(CONFIG_MEDIA_TUNER_XC2028_MODULE) && defined(MODULE))
 extern struct dvb_frontend *xc2028_attach(struct dvb_frontend *fe,

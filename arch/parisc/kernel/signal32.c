@@ -23,6 +23,7 @@
  */
 
 #include <linux/compat.h>
+#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/unistd.h>
 #include <linux/init.h>

@@ -149,7 +149,10 @@ static void __init d2net_sata_power_init(void)
 
 /*
  * The blue front LED is wired to the CPLD and can blink in relation with the
- * SATA activity.
+ * SATA activity. This feature is disabled to make this LED compatible with
+ * the leds-gpio driver: MPP14 and MPP15 are configured to act like output
+ * GPIO's and have to stay in an active state. This is needed to set the blue
+ * LED in a "fix on" state regardless of the SATA activity.
  *
  * The following array detail the different LED registers and the combination
  * of their possible values:
@@ -168,11 +171,12 @@ static void __init d2net_sata_power_init(void)
 #define D2NET_GPIO_RED_LED		6
 #define D2NET_GPIO_BLUE_LED_BLINK_CTRL	16
 #define D2NET_GPIO_BLUE_LED_OFF		23
+#define D2NET_GPIO_SATA0_ACT		14
+#define D2NET_GPIO_SATA1_ACT		15
 
 static struct gpio_led d2net_leds[] = {
 	{
-		.name = "d2net:blue:sata",
-		.default_trigger = "default-on",
+		.name = "d2net:blue:power",
 		.gpio = D2NET_GPIO_BLUE_LED_OFF,
 		.active_low = 1,
 	},
@@ -197,22 +201,25 @@ static struct platform_device d2net_gpio_leds = {
 
 static void __init d2net_gpio_leds_init(void)
 {
-	int err;
-
 	/* Configure GPIO over MPP max number. */
 	orion_gpio_set_valid(D2NET_GPIO_BLUE_LED_OFF, 1);
 
-	/* Configure register blink_ctrl to allow SATA activity LED blinking. */
-	err = gpio_request(D2NET_GPIO_BLUE_LED_BLINK_CTRL, "blue LED blink");
-	if (err == 0) {
-		err = gpio_direction_output(D2NET_GPIO_BLUE_LED_BLINK_CTRL, 1);
-		if (err)
-			gpio_free(D2NET_GPIO_BLUE_LED_BLINK_CTRL);
-	}
-	if (err)
-		pr_err("d2net: failed to configure blue LED blink GPIO\n");
-
+	if (gpio_request(D2NET_GPIO_SATA0_ACT, "LED SATA0 activity") != 0)
+		return;
+	if (gpio_direction_output(D2NET_GPIO_SATA0_ACT, 1) != 0)
+		goto err_free_1;
+	if (gpio_request(D2NET_GPIO_SATA1_ACT, "LED SATA1 activity") != 0)
+		goto err_free_1;
+	if (gpio_direction_output(D2NET_GPIO_SATA1_ACT, 1) != 0)
+		goto err_free_2;
 	platform_device_register(&d2net_gpio_leds);
+	return;
+
+err_free_2:
+	gpio_free(D2NET_GPIO_SATA1_ACT);
+err_free_1:
+	gpio_free(D2NET_GPIO_SATA0_ACT);
+	return;
 }
 
 /****************************************************************************
@@ -267,34 +274,32 @@ static struct platform_device d2net_gpio_buttons = {
  * General Setup
  ****************************************************************************/
 
-static unsigned int d2net_mpp_modes[] __initdata = {
-	MPP0_GPIO,	/* Board ID (bit 0) */
-	MPP1_GPIO,	/* Board ID (bit 1) */
-	MPP2_GPIO,	/* Board ID (bit 2) */
-	MPP3_GPIO,	/* SATA 0 power */
-	MPP4_UNUSED,
-	MPP5_GPIO,	/* Fan fail detection */
-	MPP6_GPIO,	/* Red front LED */
-	MPP7_UNUSED,
-	MPP8_GPIO,	/* Rear power switch (on|auto) */
-	MPP9_GPIO,	/* Rear power switch (auto|off) */
-	MPP10_UNUSED,
-	MPP11_UNUSED,
-	MPP12_GPIO,	/* SATA 1 power */
-	MPP13_UNUSED,
-	MPP14_SATA_LED,	/* SATA 0 active */
-	MPP15_SATA_LED,	/* SATA 1 active */
-	MPP16_GPIO,	/* Blue front LED blink control */
-	MPP17_UNUSED,
-	MPP18_GPIO,	/* Front button (0 = Released, 1 = Pushed ) */
-	MPP19_UNUSED,
-	0,
+static struct orion5x_mpp_mode d2net_mpp_modes[] __initdata = {
+	{  0, MPP_GPIO },	/* Board ID (bit 0) */
+	{  1, MPP_GPIO },	/* Board ID (bit 1) */
+	{  2, MPP_GPIO },	/* Board ID (bit 2) */
+	{  3, MPP_GPIO },	/* SATA 0 power */
+	{  4, MPP_UNUSED },
+	{  5, MPP_GPIO },	/* Fan fail detection */
+	{  6, MPP_GPIO },	/* Red front LED */
+	{  7, MPP_UNUSED },
+	{  8, MPP_GPIO },	/* Rear power switch (on|auto) */
+	{  9, MPP_GPIO },	/* Rear power switch (auto|off) */
+	{ 10, MPP_UNUSED },
+	{ 11, MPP_UNUSED },
+	{ 12, MPP_GPIO },	/* SATA 1 power */
+	{ 13, MPP_UNUSED },
+	{ 14, MPP_GPIO },	/* SATA 0 active */
+	{ 15, MPP_GPIO },	/* SATA 1 active */
+	{ 16, MPP_GPIO },	/* Blue front LED blink control */
+	{ 17, MPP_UNUSED },
+	{ 18, MPP_GPIO },	/* Front button (0 = Released, 1 = Pushed ) */
+	{ 19, MPP_UNUSED },
+	{ -1 }
 	/* 22: USB port 1 fuse (0 = Fail, 1 = Ok) */
 	/* 23: Blue front LED off */
 	/* 24: Inhibit board power off (0 = Disabled, 1 = Enabled) */
 };
-
-#define D2NET_GPIO_INHIBIT_POWER_OFF    24
 
 static void __init d2net_init(void)
 {
@@ -328,35 +333,33 @@ static void __init d2net_init(void)
 
 	i2c_register_board_info(0, d2net_i2c_devices,
 				ARRAY_SIZE(d2net_i2c_devices));
-
-	orion_gpio_set_valid(D2NET_GPIO_INHIBIT_POWER_OFF, 1);
 }
 
 /* Warning: LaCie use a wrong mach-type (0x20e=526) in their bootloader. */
 
 #ifdef CONFIG_MACH_D2NET
 MACHINE_START(D2NET, "LaCie d2 Network")
-	.atag_offset	= 0x100,
+	.phys_io	= ORION5X_REGS_PHYS_BASE,
+	.io_pg_offst	= ((ORION5X_REGS_VIRT_BASE) >> 18) & 0xFFFC,
+	.boot_params	= 0x00000100,
 	.init_machine	= d2net_init,
 	.map_io		= orion5x_map_io,
-	.init_early	= orion5x_init_early,
 	.init_irq	= orion5x_init_irq,
 	.timer		= &orion5x_timer,
 	.fixup		= tag_fixup_mem32,
-	.restart	= orion5x_restart,
 MACHINE_END
 #endif
 
 #ifdef CONFIG_MACH_BIGDISK
 MACHINE_START(BIGDISK, "LaCie Big Disk Network")
-	.atag_offset	= 0x100,
+	.phys_io	= ORION5X_REGS_PHYS_BASE,
+	.io_pg_offst	= ((ORION5X_REGS_VIRT_BASE) >> 18) & 0xFFFC,
+	.boot_params	= 0x00000100,
 	.init_machine	= d2net_init,
 	.map_io		= orion5x_map_io,
-	.init_early	= orion5x_init_early,
 	.init_irq	= orion5x_init_irq,
 	.timer		= &orion5x_timer,
 	.fixup		= tag_fixup_mem32,
-	.restart	= orion5x_restart,
 MACHINE_END
 #endif
 

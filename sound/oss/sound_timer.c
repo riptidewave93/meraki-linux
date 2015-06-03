@@ -26,7 +26,7 @@ static unsigned long prev_event_time;
 static volatile unsigned long usecs_per_tmr;	/* Length of the current interval */
 
 static struct sound_lowlev_timer *tmr;
-static DEFINE_SPINLOCK(lock);
+static spinlock_t lock;
 
 static unsigned long tmr2ticks(int tmr_value)
 {
@@ -320,7 +320,7 @@ void  sound_timer_init(struct sound_lowlev_timer *t, char *name)
 	n = sound_alloc_timerdev();
 	if (n == -1)
 		n = 0;		/* Overwrite the system timer */
-	strlcpy(sound_timer.info.name, name, sizeof(sound_timer.info.name));
+	strcpy(sound_timer.info.name, name);
 	sound_timer_devs[n] = &sound_timer;
 }
 EXPORT_SYMBOL(sound_timer_init);

@@ -3,7 +3,7 @@
  *
  * Copyright 2006-2009 Wolfson Microelectronics PLC.
  *
- * Author: Liam Girdwood <Liam.Girdwood@wolfsonmicro.com>
+ * Author: Liam Girdwood <linux@wolfsonmicro.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -17,11 +17,12 @@
 #include <linux/delay.h>
 #include <linux/pm.h>
 #include <linux/i2c.h>
-#include <linux/slab.h>
+#include <linux/platform_device.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 #include <sound/initval.h>
 #include <sound/tlv.h>
 
@@ -47,6 +48,13 @@ static const u16 wm8974_reg[WM8974_CACHEREGNUM] = {
 
 #define WM8974_POWER1_BIASEN  0x08
 #define WM8974_POWER1_BUFIOEN 0x04
+
+struct wm8974_priv {
+	struct snd_soc_codec codec;
+	u16 reg_cache[WM8974_CACHEREGNUM];
+};
+
+static struct snd_soc_codec *wm8974_codec;
 
 #define wm8974_reset(c)	snd_soc_write(c, WM8974_RESET, 0)
 
@@ -162,17 +170,13 @@ SOC_ENUM("Aux Mode", wm8974_auxmode),
 
 SOC_SINGLE("Capture Boost(+20dB)", WM8974_ADCBOOST,  8, 1, 0),
 SOC_SINGLE("Mono Playback Switch", WM8974_MONOMIX, 6, 1, 1),
-
-/* DAC / ADC oversampling */
-SOC_SINGLE("DAC 128x Oversampling Switch", WM8974_DAC, 8, 1, 0),
-SOC_SINGLE("ADC 128x Oversampling Switch", WM8974_ADC, 8, 1, 0),
 };
 
 /* Speaker Output Mixer */
 static const struct snd_kcontrol_new wm8974_speaker_mixer_controls[] = {
 SOC_DAPM_SINGLE("Line Bypass Switch", WM8974_SPKMIX, 1, 1, 0),
 SOC_DAPM_SINGLE("Aux Playback Switch", WM8974_SPKMIX, 5, 1, 0),
-SOC_DAPM_SINGLE("PCM Playback Switch", WM8974_SPKMIX, 0, 1, 0),
+SOC_DAPM_SINGLE("PCM Playback Switch", WM8974_SPKMIX, 0, 1, 1),
 };
 
 /* Mono Output Mixer */
@@ -221,7 +225,7 @@ SND_SOC_DAPM_MIXER("Input PGA", WM8974_POWER2, 2, 0, wm8974_inpga,
 SND_SOC_DAPM_MIXER("Boost Mixer", WM8974_POWER2, 4, 0,
 		   wm8974_boost_mixer, ARRAY_SIZE(wm8974_boost_mixer)),
 
-SND_SOC_DAPM_SUPPLY("Mic Bias", WM8974_POWER1, 4, 0, NULL, 0),
+SND_SOC_DAPM_MICBIAS("Mic Bias", WM8974_POWER1, 4, 0),
 
 SND_SOC_DAPM_INPUT("MICN"),
 SND_SOC_DAPM_INPUT("MICP"),
@@ -231,7 +235,7 @@ SND_SOC_DAPM_OUTPUT("SPKOUTP"),
 SND_SOC_DAPM_OUTPUT("SPKOUTN"),
 };
 
-static const struct snd_soc_dapm_route wm8974_dapm_routes[] = {
+static const struct snd_soc_dapm_route audio_map[] = {
 	/* Mono output mixer */
 	{"Mono Mixer", "PCM Playback Switch", "DAC"},
 	{"Mono Mixer", "Aux Playback Switch", "Aux Input"},
@@ -265,39 +269,48 @@ static const struct snd_soc_dapm_route wm8974_dapm_routes[] = {
 	{"Aux Input", NULL, "AUX"},
 };
 
+static int wm8974_add_widgets(struct snd_soc_codec *codec)
+{
+	snd_soc_dapm_new_controls(codec, wm8974_dapm_widgets,
+				  ARRAY_SIZE(wm8974_dapm_widgets));
+
+	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
+
+	snd_soc_dapm_new_widgets(codec);
+	return 0;
+}
+
 struct pll_ {
-	unsigned int pre_div:1;
+	unsigned int pre_div:4; /* prescale - 1 */
 	unsigned int n:4;
 	unsigned int k;
 };
+
+static struct pll_ pll_div;
 
 /* The size in bits of the pll divide multiplied by 10
  * to allow rounding later */
 #define FIXED_PLL_SIZE ((1 << 24) * 10)
 
-static void pll_factors(struct pll_ *pll_div,
-			unsigned int target, unsigned int source)
+static void pll_factors(unsigned int target, unsigned int source)
 {
 	unsigned long long Kpart;
 	unsigned int K, Ndiv, Nmod;
 
-	/* There is a fixed divide by 4 in the output path */
-	target *= 4;
-
 	Ndiv = target / source;
 	if (Ndiv < 6) {
-		source /= 2;
-		pll_div->pre_div = 1;
+		source >>= 1;
+		pll_div.pre_div = 1;
 		Ndiv = target / source;
 	} else
-		pll_div->pre_div = 0;
+		pll_div.pre_div = 0;
 
 	if ((Ndiv < 6) || (Ndiv > 12))
 		printk(KERN_WARNING
 			"WM8974 N value %u outwith recommended range!\n",
 			Ndiv);
 
-	pll_div->n = Ndiv;
+	pll_div.n = Ndiv;
 	Nmod = target % source;
 	Kpart = FIXED_PLL_SIZE * (long long)Nmod;
 
@@ -312,14 +325,13 @@ static void pll_factors(struct pll_ *pll_div,
 	/* Move down to proper range now rounding is done */
 	K /= 10;
 
-	pll_div->k = K;
+	pll_div.k = K;
 }
 
-static int wm8974_set_dai_pll(struct snd_soc_dai *codec_dai, int pll_id,
-		int source, unsigned int freq_in, unsigned int freq_out)
+static int wm8974_set_dai_pll(struct snd_soc_dai *codec_dai,
+		int pll_id, unsigned int freq_in, unsigned int freq_out)
 {
 	struct snd_soc_codec *codec = codec_dai->codec;
-	struct pll_ pll_div;
 	u16 reg;
 
 	if (freq_in == 0 || freq_out == 0) {
@@ -333,7 +345,7 @@ static int wm8974_set_dai_pll(struct snd_soc_dai *codec_dai, int pll_id,
 		return 0;
 	}
 
-	pll_factors(&pll_div, freq_out, freq_in);
+	pll_factors(freq_out*4, freq_in);
 
 	snd_soc_write(codec, WM8974_PLLN, (pll_div.pre_div << 4) | pll_div.n);
 	snd_soc_write(codec, WM8974_PLLK1, pll_div.k >> 18);
@@ -366,6 +378,14 @@ static int wm8974_set_dai_clkdiv(struct snd_soc_dai *codec_dai,
 	case WM8974_MCLKDIV:
 		reg = snd_soc_read(codec, WM8974_CLOCK) & 0x11f;
 		snd_soc_write(codec, WM8974_CLOCK, reg | div);
+		break;
+	case WM8974_ADCCLK:
+		reg = snd_soc_read(codec, WM8974_ADC) & 0x1f7;
+		snd_soc_write(codec, WM8974_ADC, reg | div);
+		break;
+	case WM8974_DACCLK:
+		reg = snd_soc_read(codec, WM8974_DAC) & 0x1f7;
+		snd_soc_write(codec, WM8974_DAC, reg | div);
 		break;
 	case WM8974_BCLKDIV:
 		reg = snd_soc_read(codec, WM8974_CLOCK) & 0x1e3;
@@ -513,9 +533,7 @@ static int wm8974_set_bias_level(struct snd_soc_codec *codec,
 	case SND_SOC_BIAS_STANDBY:
 		power1 |= WM8974_POWER1_BIASEN | WM8974_POWER1_BUFIOEN;
 
-		if (codec->dapm.bias_level == SND_SOC_BIAS_OFF) {
-			snd_soc_cache_sync(codec);
-
+		if (codec->bias_level == SND_SOC_BIAS_OFF) {
 			/* Initial cap charge at VMID 5k */
 			snd_soc_write(codec, WM8974_POWER1, power1 | 0x3);
 			mdelay(100);
@@ -532,7 +550,7 @@ static int wm8974_set_bias_level(struct snd_soc_codec *codec,
 		break;
 	}
 
-	codec->dapm.bias_level = level;
+	codec->bias_level = level;
 	return 0;
 }
 
@@ -541,7 +559,7 @@ static int wm8974_set_bias_level(struct snd_soc_codec *codec,
 #define WM8974_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S20_3LE |\
 	SNDRV_PCM_FMTBIT_S24_LE)
 
-static const struct snd_soc_dai_ops wm8974_ops = {
+static struct snd_soc_dai_ops wm8974_ops = {
 	.hw_params = wm8974_pcm_hw_params,
 	.digital_mute = wm8974_mute,
 	.set_fmt = wm8974_set_dai_fmt,
@@ -549,8 +567,8 @@ static const struct snd_soc_dai_ops wm8974_ops = {
 	.set_pll = wm8974_set_dai_pll,
 };
 
-static struct snd_soc_dai_driver wm8974_dai = {
-	.name = "wm8974-hifi",
+struct snd_soc_dai wm8974_dai = {
+	.name = "WM8974 HiFi",
 	.playback = {
 		.stream_name = "Playback",
 		.channels_min = 1,
@@ -566,80 +584,193 @@ static struct snd_soc_dai_driver wm8974_dai = {
 	.ops = &wm8974_ops,
 	.symmetric_rates = 1,
 };
+EXPORT_SYMBOL_GPL(wm8974_dai);
 
-static int wm8974_suspend(struct snd_soc_codec *codec)
+static int wm8974_suspend(struct platform_device *pdev, pm_message_t state)
 {
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
+
 	wm8974_set_bias_level(codec, SND_SOC_BIAS_OFF);
 	return 0;
 }
 
-static int wm8974_resume(struct snd_soc_codec *codec)
+static int wm8974_resume(struct platform_device *pdev)
 {
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
+	int i;
+	u8 data[2];
+	u16 *cache = codec->reg_cache;
+
+	/* Sync reg_cache with the hardware */
+	for (i = 0; i < ARRAY_SIZE(wm8974_reg); i++) {
+		data[0] = (i << 1) | ((cache[i] >> 8) & 0x0001);
+		data[1] = cache[i] & 0x00ff;
+		codec->hw_write(codec->control_data, data, 2);
+	}
 	wm8974_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
+	wm8974_set_bias_level(codec, codec->suspend_bias_level);
 	return 0;
 }
 
-static int wm8974_probe(struct snd_soc_codec *codec)
+static int wm8974_probe(struct platform_device *pdev)
 {
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec;
 	int ret = 0;
 
-	ret = snd_soc_codec_set_cache_io(codec, 7, 9, SND_SOC_I2C);
-	if (ret < 0) {
-		dev_err(codec->dev, "Failed to set cache I/O: %d\n", ret);
-		return ret;
+	if (wm8974_codec == NULL) {
+		dev_err(&pdev->dev, "Codec device not registered\n");
+		return -ENODEV;
 	}
 
-	ret = wm8974_reset(codec);
+	socdev->card->codec = wm8974_codec;
+	codec = wm8974_codec;
+
+	/* register pcms */
+	ret = snd_soc_new_pcms(socdev, SNDRV_DEFAULT_IDX1, SNDRV_DEFAULT_STR1);
 	if (ret < 0) {
-		dev_err(codec->dev, "Failed to issue reset\n");
-		return ret;
+		dev_err(codec->dev, "failed to create pcms: %d\n", ret);
+		goto pcm_err;
 	}
 
-	wm8974_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
+	snd_soc_add_controls(codec, wm8974_snd_controls,
+			     ARRAY_SIZE(wm8974_snd_controls));
+	wm8974_add_widgets(codec);
+	ret = snd_soc_init_card(socdev);
+	if (ret < 0) {
+		dev_err(codec->dev, "failed to register card: %d\n", ret);
+		goto card_err;
+	}
 
+	return ret;
+
+card_err:
+	snd_soc_free_pcms(socdev);
+	snd_soc_dapm_free(socdev);
+pcm_err:
 	return ret;
 }
 
 /* power down chip */
-static int wm8974_remove(struct snd_soc_codec *codec)
+static int wm8974_remove(struct platform_device *pdev)
 {
-	wm8974_set_bias_level(codec, SND_SOC_BIAS_OFF);
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+
+	snd_soc_free_pcms(socdev);
+	snd_soc_dapm_free(socdev);
+
 	return 0;
 }
 
-static struct snd_soc_codec_driver soc_codec_dev_wm8974 = {
+struct snd_soc_codec_device soc_codec_dev_wm8974 = {
 	.probe = 	wm8974_probe,
 	.remove = 	wm8974_remove,
 	.suspend = 	wm8974_suspend,
 	.resume =	wm8974_resume,
-	.set_bias_level = wm8974_set_bias_level,
-	.reg_cache_size = ARRAY_SIZE(wm8974_reg),
-	.reg_word_size = sizeof(u16),
-	.reg_cache_default = wm8974_reg,
-
-	.controls = wm8974_snd_controls,
-	.num_controls = ARRAY_SIZE(wm8974_snd_controls),
-	.dapm_widgets = wm8974_dapm_widgets,
-	.num_dapm_widgets = ARRAY_SIZE(wm8974_dapm_widgets),
-	.dapm_routes = wm8974_dapm_routes,
-	.num_dapm_routes = ARRAY_SIZE(wm8974_dapm_routes),
 };
+EXPORT_SYMBOL_GPL(soc_codec_dev_wm8974);
+
+static __devinit int wm8974_register(struct wm8974_priv *wm8974)
+{
+	int ret;
+	struct snd_soc_codec *codec = &wm8974->codec;
+
+	if (wm8974_codec) {
+		dev_err(codec->dev, "Another WM8974 is registered\n");
+		return -EINVAL;
+	}
+
+	mutex_init(&codec->mutex);
+	INIT_LIST_HEAD(&codec->dapm_widgets);
+	INIT_LIST_HEAD(&codec->dapm_paths);
+
+	codec->private_data = wm8974;
+	codec->name = "WM8974";
+	codec->owner = THIS_MODULE;
+	codec->bias_level = SND_SOC_BIAS_OFF;
+	codec->set_bias_level = wm8974_set_bias_level;
+	codec->dai = &wm8974_dai;
+	codec->num_dai = 1;
+	codec->reg_cache_size = WM8974_CACHEREGNUM;
+	codec->reg_cache = &wm8974->reg_cache;
+
+	ret = snd_soc_codec_set_cache_io(codec, 7, 9, SND_SOC_I2C);
+	if (ret < 0) {
+		dev_err(codec->dev, "Failed to set cache I/O: %d\n", ret);
+		goto err;
+	}
+
+	memcpy(codec->reg_cache, wm8974_reg, sizeof(wm8974_reg));
+
+	ret = wm8974_reset(codec);
+	if (ret < 0) {
+		dev_err(codec->dev, "Failed to issue reset\n");
+		goto err;
+	}
+
+	wm8974_dai.dev = codec->dev;
+
+	wm8974_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
+
+	wm8974_codec = codec;
+
+	ret = snd_soc_register_codec(codec);
+	if (ret != 0) {
+		dev_err(codec->dev, "Failed to register codec: %d\n", ret);
+		goto err;
+	}
+
+	ret = snd_soc_register_dai(&wm8974_dai);
+	if (ret != 0) {
+		dev_err(codec->dev, "Failed to register DAI: %d\n", ret);
+		goto err_codec;
+	}
+
+	return 0;
+
+err_codec:
+	snd_soc_unregister_codec(codec);
+err:
+	kfree(wm8974);
+	return ret;
+}
+
+static __devexit void wm8974_unregister(struct wm8974_priv *wm8974)
+{
+	wm8974_set_bias_level(&wm8974->codec, SND_SOC_BIAS_OFF);
+	snd_soc_unregister_dai(&wm8974_dai);
+	snd_soc_unregister_codec(&wm8974->codec);
+	kfree(wm8974);
+	wm8974_codec = NULL;
+}
 
 static __devinit int wm8974_i2c_probe(struct i2c_client *i2c,
 				      const struct i2c_device_id *id)
 {
-	int ret;
+	struct wm8974_priv *wm8974;
+	struct snd_soc_codec *codec;
 
-	ret = snd_soc_register_codec(&i2c->dev,
-			&soc_codec_dev_wm8974, &wm8974_dai, 1);
+	wm8974 = kzalloc(sizeof(struct wm8974_priv), GFP_KERNEL);
+	if (wm8974 == NULL)
+		return -ENOMEM;
 
-	return ret;
+	codec = &wm8974->codec;
+	codec->hw_write = (hw_write_t)i2c_master_send;
+
+	i2c_set_clientdata(i2c, wm8974);
+	codec->control_data = i2c;
+
+	codec->dev = &i2c->dev;
+
+	return wm8974_register(wm8974);
 }
 
 static __devexit int wm8974_i2c_remove(struct i2c_client *client)
 {
-	snd_soc_unregister_codec(&client->dev);
-
+	struct wm8974_priv *wm8974 = i2c_get_clientdata(client);
+	wm8974_unregister(wm8974);
 	return 0;
 }
 
@@ -651,7 +782,7 @@ MODULE_DEVICE_TABLE(i2c, wm8974_i2c_id);
 
 static struct i2c_driver wm8974_i2c_driver = {
 	.driver = {
-		.name = "wm8974",
+		.name = "WM8974",
 		.owner = THIS_MODULE,
 	},
 	.probe =    wm8974_i2c_probe,
@@ -661,13 +792,7 @@ static struct i2c_driver wm8974_i2c_driver = {
 
 static int __init wm8974_modinit(void)
 {
-	int ret = 0;
-	ret = i2c_add_driver(&wm8974_i2c_driver);
-	if (ret != 0) {
-		printk(KERN_ERR "Failed to register wm8974 I2C driver: %d\n",
-		       ret);
-	}
-	return ret;
+	return i2c_add_driver(&wm8974_i2c_driver);
 }
 module_init(wm8974_modinit);
 

@@ -17,24 +17,16 @@ config I2C_MUX_GPIO
 	  This driver can also be built as a module.  If so, the module
 	  will be called gpio-i2cmux.
 
-config I2C_MUX_PCA9541
-	tristate "NXP PCA9541 I2C Master Selector"
-	depends on EXPERIMENTAL
-	help
-	  If you say yes here you get support for the NXP PCA9541
-	  I2C Master Selector.
+config I2C_GPIO_SCL
+       boolean "GPIO-based SCL multiplexer"
+       depends on I2C_GPIO
+       help
+         If you say yes to this option, support will be included for a
+         GPIO based I2C multiplexer and adapter, where the method of
+         multiplexing is multiple I2C busses with separate SCL lines
+         and a shared SDA line. This driver relies on the i2c-gpio
+         driver to handle communication across the busses.
 
-	  This driver can also be built as a module.  If so, the module
-	  will be called pca9541.
-
-config I2C_MUX_PCA954x
-	tristate "Philips PCA954x I2C Mux/switches"
-	depends on EXPERIMENTAL
-	help
-	  If you say yes here you get support for the Philips PCA954x
-	  I2C mux/switch devices.
-
-	  This driver can also be built as a module.  If so, the module
-	  will be called pca954x.
+         This driver cannot be built as a module yet.
 
 endmenu

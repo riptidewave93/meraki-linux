@@ -6,7 +6,7 @@
  * system manages static and dynamic label mappings for network protocols such
  * as CIPSO and RIPSO.
  *
- * Author: Paul Moore <paul@paul-moore.com>
+ * Author: Paul Moore <paul.moore@hp.com>
  *
  */
 
@@ -96,12 +96,12 @@ static inline struct netlbl_af4list *__af4list_valid_rcu(struct list_head *s,
 
 #define netlbl_af4list_foreach(iter, head)				\
 	for (iter = __af4list_valid((head)->next, head);		\
-	     &iter->list != (head);					\
+	     prefetch(iter->list.next), &iter->list != (head);		\
 	     iter = __af4list_valid(iter->list.next, head))
 
 #define netlbl_af4list_foreach_rcu(iter, head)				\
 	for (iter = __af4list_valid_rcu((head)->next, head);		\
-	     &iter->list != (head);					\
+	     prefetch(iter->list.next),	&iter->list != (head);		\
 	     iter = __af4list_valid_rcu(iter->list.next, head))
 
 #define netlbl_af4list_foreach_safe(iter, tmp, head)			\
@@ -130,10 +130,11 @@ static inline void netlbl_af4list_audit_addr(struct audit_buffer *audit_buf,
 					     int src, const char *dev,
 					     __be32 addr, __be32 mask)
 {
+	return;
 }
 #endif
 
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 
 #define __af6list_entry(ptr) container_of(ptr, struct netlbl_af6list, list)
 
@@ -163,12 +164,12 @@ static inline struct netlbl_af6list *__af6list_valid_rcu(struct list_head *s,
 
 #define netlbl_af6list_foreach(iter, head)				\
 	for (iter = __af6list_valid((head)->next, head);		\
-	     &iter->list != (head);					\
+	     prefetch(iter->list.next),	&iter->list != (head);		\
 	     iter = __af6list_valid(iter->list.next, head))
 
 #define netlbl_af6list_foreach_rcu(iter, head)				\
 	for (iter = __af6list_valid_rcu((head)->next, head);		\
-	     &iter->list != (head);					\
+	     prefetch(iter->list.next),	&iter->list != (head);		\
 	     iter = __af6list_valid_rcu(iter->list.next, head))
 
 #define netlbl_af6list_foreach_safe(iter, tmp, head)			\
@@ -202,6 +203,7 @@ static inline void netlbl_af6list_audit_addr(struct audit_buffer *audit_buf,
 					     const struct in6_addr *addr,
 					     const struct in6_addr *mask)
 {
+	return;
 }
 #endif
 #endif /* IPV6 */

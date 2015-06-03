@@ -38,11 +38,13 @@ DEFINE_PER_CPU(struct ppc64_tlb_batch, ppc64_tlb_batch);
  * neesd to be flushed. This function will either perform the flush
  * immediately or will batch it up if the current CPU has an active
  * batch on it.
+ *
+ * Must be called from within some kind of spinlock/non-preempt region...
  */
 void hpte_need_flush(struct mm_struct *mm, unsigned long addr,
 		     pte_t *ptep, unsigned long pte, int huge)
 {
-	struct ppc64_tlb_batch *batch = &get_cpu_var(ppc64_tlb_batch);
+	struct ppc64_tlb_batch *batch = &__get_cpu_var(ppc64_tlb_batch);
 	unsigned long vsid, vaddr;
 	unsigned int psize;
 	int ssize;
@@ -50,6 +52,11 @@ void hpte_need_flush(struct mm_struct *mm, unsigned long addr,
 	int i;
 
 	i = batch->index;
+
+	/* We mask the address for the base page size. Huge pages will
+	 * have applied their own masking already
+	 */
+	addr &= PAGE_MASK;
 
 	/* Get page size (maybe move back to caller).
 	 *
@@ -61,21 +68,12 @@ void hpte_need_flush(struct mm_struct *mm, unsigned long addr,
 	if (huge) {
 #ifdef CONFIG_HUGETLB_PAGE
 		psize = get_slice_psize(mm, addr);
-		/* Mask the address for the correct page size */
-		addr &= ~((1UL << mmu_psize_defs[psize].shift) - 1);
 #else
 		BUG();
 		psize = pte_pagesize_index(mm, addr, pte); /* shutup gcc */
 #endif
-	} else {
+	} else
 		psize = pte_pagesize_index(mm, addr, pte);
-		/* Mask the address for the standard page size.  If we
-		 * have a 64k page kernel, but the hardware does not
-		 * support 64k pages, this might be different from the
-		 * hardware page size encoded in the slice table. */
-		addr &= PAGE_MASK;
-	}
-
 
 	/* Build full vaddr */
 	if (!is_kernel_addr(addr)) {
@@ -97,7 +95,6 @@ void hpte_need_flush(struct mm_struct *mm, unsigned long addr,
 	 */
 	if (!batch->active) {
 		flush_hash_page(vaddr, rpte, psize, ssize, 0);
-		put_cpu_var(ppc64_tlb_batch);
 		return;
 	}
 
@@ -126,7 +123,6 @@ void hpte_need_flush(struct mm_struct *mm, unsigned long addr,
 	batch->index = ++i;
 	if (i >= PPC64_TLB_BATCH_NR)
 		__flush_tlb_pending(batch);
-	put_cpu_var(ppc64_tlb_batch);
 }
 
 /*
@@ -155,7 +151,7 @@ void __flush_tlb_pending(struct ppc64_tlb_batch *batch)
 
 void tlb_flush(struct mmu_gather *tlb)
 {
-	struct ppc64_tlb_batch *tlbbatch = &get_cpu_var(ppc64_tlb_batch);
+	struct ppc64_tlb_batch *tlbbatch = &__get_cpu_var(ppc64_tlb_batch);
 
 	/* If there's a TLB batch pending, then we must flush it because the
 	 * pages are going to be freed and we really don't want to have a CPU
@@ -164,7 +160,8 @@ void tlb_flush(struct mmu_gather *tlb)
 	if (tlbbatch->index)
 		__flush_tlb_pending(tlbbatch);
 
-	put_cpu_var(ppc64_tlb_batch);
+	/* Push out batch of freed page tables */
+	pte_free_finish();
 }
 
 /**

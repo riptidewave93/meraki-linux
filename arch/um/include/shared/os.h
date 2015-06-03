@@ -10,6 +10,7 @@
 #include "irq_user.h"
 #include "longjmp.h"
 #include "mm_id.h"
+#include "sysdep/tls.h"
 
 #define CATCH_EINTR(expr) while ((errno = 0, ((expr) < 0)) && (errno == EINTR))
 
@@ -27,12 +28,6 @@
 #define OS_ACC_W_OK    2       /* Test for write permission.  */
 #define OS_ACC_R_OK    4       /* Test for read permission.  */
 #define OS_ACC_RW_OK   (OS_ACC_W_OK | OS_ACC_R_OK) /* Test for RW permission */
-
-#ifdef CONFIG_64BIT
-#define OS_LIB_PATH	"/usr/lib64/"
-#else
-#define OS_LIB_PATH	"/usr/lib/"
-#endif
 
 /*
  * types taken from stat_file() in hostfs_user.c
@@ -166,9 +161,6 @@ extern int os_stat_filesystem(char *path, long *bsize_out,
 			      long *spare_out);
 extern int os_change_dir(char *dir);
 extern int os_fchange_dir(int fd);
-extern unsigned os_major(unsigned long long dev);
-extern unsigned os_minor(unsigned long long dev);
-extern unsigned long long os_makedev(unsigned major, unsigned minor);
 
 /* start_up.c */
 extern void os_early_checks(void);
@@ -202,6 +194,12 @@ extern int os_drop_memory(void *addr, int length);
 extern int can_drop_memory(void);
 extern void os_flush_stdout(void);
 
+/* uaccess.c */
+extern unsigned long __do_user_copy(void *to, const void *from, int n,
+				    void **fault_addr, jmp_buf **fault_catcher,
+				    void (*op)(void *to, const void *from,
+					       int n), int *faulted_out);
+
 /* execvp.c */
 extern int execvp_noalloc(char *buf, const char *file, char *const argv[]);
 /* helper.c */
@@ -210,6 +208,10 @@ extern int run_helper_thread(int (*proc)(void *), void *arg,
 			     unsigned int flags, unsigned long *stack_out);
 extern int helper_wait(int pid);
 
+
+/* tls.c */
+extern int os_set_thread_area(user_desc_t *info, int pid);
+extern int os_get_thread_area(user_desc_t *info, int pid);
 
 /* umid.c */
 extern int umid_file_name(char *name, char *buf, int len);
@@ -220,7 +222,7 @@ extern char *get_umid(void);
 extern void timer_init(void);
 extern void set_sigstack(void *sig_stack, int size);
 extern void remove_sigstack(void);
-extern void set_handler(int sig);
+extern void set_handler(int sig, void (*handler)(int), int flags, ...);
 extern int change_sig(int signal, int on);
 extern void block_signals(void);
 extern void unblock_signals(void);
@@ -233,7 +235,6 @@ extern int raw(int fd);
 extern void setup_machinename(char *machine_out);
 extern void setup_hostinfo(char *buf, int len);
 extern void os_dump_core(void) __attribute__ ((noreturn));
-extern void um_early_printk(const char *s, unsigned int n);
 
 /* time.c */
 extern void idle_sleep(unsigned long long nsecs);

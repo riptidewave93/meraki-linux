@@ -45,7 +45,6 @@
 #include <scsi/libiscsi.h>
 #include <scsi/scsi_transport_iscsi.h>
 
-#include <linux/interrupt.h>
 #include <linux/wait.h>
 #include <linux/sched.h>
 #include <linux/list.h>
@@ -89,10 +88,10 @@
 	} while (0)
 
 #define SHIFT_4K	12
-#define SIZE_4K	(1ULL << SHIFT_4K)
+#define SIZE_4K	(1UL << SHIFT_4K)
 #define MASK_4K	(~(SIZE_4K-1))
 
-					/* support up to 512KB in one RDMA */
+					/* support upto 512KB in one RDMA */
 #define ISCSI_ISER_SG_TABLESIZE         (0x80000 >> SHIFT_4K)
 #define ISER_DEF_CMD_PER_LUN		128
 
@@ -103,9 +102,9 @@
 #define ISER_MAX_TX_MISC_PDUS		6 /* NOOP_OUT(2), TEXT(1),         *
 					   * SCSI_TMFUNC(2), LOGOUT(1) */
 
-#define ISER_QP_MAX_RECV_DTOS		(ISCSI_DEF_XMIT_CMDS_MAX)
-
-#define ISER_MIN_POSTED_RX		(ISCSI_DEF_XMIT_CMDS_MAX >> 2)
+#define ISER_QP_MAX_RECV_DTOS		(ISCSI_DEF_XMIT_CMDS_MAX + \
+					ISER_MAX_RX_MISC_PDUS    +  \
+					ISER_MAX_TX_MISC_PDUS)
 
 /* the max TX (send) WR supported by the iSER QP is defined by                 *
  * max_send_wr = T * (1 + D) + C ; D is how many inflight dataouts we expect   *
@@ -133,12 +132,6 @@ struct iser_hdr {
 	__be64  read_va;
 } __attribute__((packed));
 
-/* Constant PDU lengths calculations */
-#define ISER_HEADERS_LEN  (sizeof(struct iser_hdr) + sizeof(struct iscsi_hdr))
-
-#define ISER_RECV_DATA_SEG_LEN	128
-#define ISER_RX_PAYLOAD_SIZE	(ISER_HEADERS_LEN + ISER_RECV_DATA_SEG_LEN)
-#define ISER_RX_LOGIN_SIZE	(ISER_HEADERS_LEN + ISCSI_DEF_MAX_RECV_SEG_LEN)
 
 /* Length of an object name string */
 #define ISER_OBJECT_NAME_SIZE		    64
@@ -194,46 +187,53 @@ struct iser_regd_buf {
 	struct iser_mem_reg     reg;        /* memory registration info        */
 	void                    *virt_addr;
 	struct iser_device      *device;    /* device->device for dma_unmap    */
+	u64                     dma_addr;   /* if non zero, addr for dma_unmap */
 	enum dma_data_direction direction;  /* direction for dma_unmap	       */
 	unsigned int            data_size;
+	atomic_t                ref_count;  /* refcount, freed when dec to 0   */
+};
+
+#define MAX_REGD_BUF_VECTOR_LEN	2
+
+struct iser_dto {
+	struct iscsi_iser_task *task;
+	struct iser_conn *ib_conn;
+	int                        notify_enable;
+
+	/* vector of registered buffers */
+	unsigned int               regd_vector_len;
+	struct iser_regd_buf       *regd[MAX_REGD_BUF_VECTOR_LEN];
+
+	/* offset into the registered buffer may be specified */
+	unsigned int               offset[MAX_REGD_BUF_VECTOR_LEN];
+
+	/* a smaller size may be specified, if 0, then full size is used */
+	unsigned int               used_sz[MAX_REGD_BUF_VECTOR_LEN];
 };
 
 enum iser_desc_type {
+	ISCSI_RX,
 	ISCSI_TX_CONTROL ,
 	ISCSI_TX_SCSI_COMMAND,
 	ISCSI_TX_DATAOUT
 };
 
-struct iser_tx_desc {
+struct iser_desc {
 	struct iser_hdr              iser_header;
 	struct iscsi_hdr             iscsi_header;
+	struct iser_regd_buf         hdr_regd_buf;
+	void                         *data;         /* used by RX & TX_CONTROL */
+	struct iser_regd_buf         data_regd_buf; /* used by RX & TX_CONTROL */
 	enum   iser_desc_type        type;
-	u64		             dma_addr;
-	/* sg[0] points to iser/iscsi headers, sg[1] optionally points to either
-	of immediate data, unsolicited data-out or control (login,text) */
-	struct ib_sge		     tx_sg[2];
-	int                          num_sge;
+	struct iser_dto              dto;
 };
-
-#define ISER_RX_PAD_SIZE	(256 - (ISER_RX_PAYLOAD_SIZE + \
-					sizeof(u64) + sizeof(struct ib_sge)))
-struct iser_rx_desc {
-	struct iser_hdr              iser_header;
-	struct iscsi_hdr             iscsi_header;
-	char		             data[ISER_RECV_DATA_SEG_LEN];
-	u64		             dma_addr;
-	struct ib_sge		     rx_sg;
-	char		             pad[ISER_RX_PAD_SIZE];
-} __attribute__((packed));
 
 struct iser_device {
 	struct ib_device             *ib_device;
 	struct ib_pd	             *pd;
-	struct ib_cq	             *rx_cq;
-	struct ib_cq	             *tx_cq;
+	struct ib_cq	             *cq;
 	struct ib_mr	             *mr;
 	struct tasklet_struct	     cq_tasklet;
-	struct ib_event_handler      event_handler;
 	struct list_head             ig_list; /* entry in ig devices list */
 	int                          refcount;
 };
@@ -248,20 +248,17 @@ struct iser_conn {
 	struct rdma_cm_id            *cma_id;       /* CMA ID		       */
 	struct ib_qp	             *qp;           /* QP 		       */
 	struct ib_fmr_pool           *fmr_pool;     /* pool of IB FMRs         */
+	int                          disc_evt_flag; /* disconn event delivered */
 	wait_queue_head_t	     wait;          /* waitq for conn/disconn  */
-	int                          post_recv_buf_count; /* posted rx count  */
+	atomic_t                     post_recv_buf_count; /* posted rx count   */
 	atomic_t                     post_send_buf_count; /* posted tx count   */
+	atomic_t                     unexpected_pdu_count;/* count of received *
+							   * unexpected pdus   *
+							   * not yet retired   */
 	char 			     name[ISER_OBJECT_NAME_SIZE];
 	struct iser_page_vec         *page_vec;     /* represents SG to fmr maps*
 						     * maps serialized as tx is*/
 	struct list_head	     conn_list;       /* entry in ig conn list */
-
-	char  			     *login_buf;
-	char			     *login_req_buf, *login_resp_buf;
-	u64			     login_req_dma, login_resp_dma;
-	unsigned int 		     rx_desc_head;
-	struct iser_rx_desc	     *rx_descs;
-	struct ib_recv_wr	     rx_wr[ISER_MIN_POSTED_RX];
 };
 
 struct iscsi_iser_conn {
@@ -270,7 +267,7 @@ struct iscsi_iser_conn {
 };
 
 struct iscsi_iser_task {
-	struct iser_tx_desc          desc;
+	struct iser_desc             desc;
 	struct iscsi_iser_conn	     *iser_conn;
 	enum iser_task_status 	     status;
 	int                          command_sent;  /* set if command  sent  */
@@ -321,21 +318,26 @@ void iser_conn_init(struct iser_conn *ib_conn);
 
 void iser_conn_get(struct iser_conn *ib_conn);
 
-int iser_conn_put(struct iser_conn *ib_conn, int destroy_cma_id_allowed);
+void iser_conn_put(struct iser_conn *ib_conn);
 
 void iser_conn_terminate(struct iser_conn *ib_conn);
 
-void iser_rcv_completion(struct iser_rx_desc *desc,
-			 unsigned long    dto_xfer_len,
-			struct iser_conn *ib_conn);
+void iser_rcv_completion(struct iser_desc *desc,
+			 unsigned long    dto_xfer_len);
 
-void iser_snd_completion(struct iser_tx_desc *desc, struct iser_conn *ib_conn);
+void iser_snd_completion(struct iser_desc *desc);
 
 void iser_task_rdma_init(struct iscsi_iser_task *task);
 
 void iser_task_rdma_finalize(struct iscsi_iser_task *task);
 
-void iser_free_rx_descriptors(struct iser_conn *ib_conn);
+void iser_dto_buffs_release(struct iser_dto *dto);
+
+int  iser_regd_buff_release(struct iser_regd_buf *regd_buf);
+
+void iser_reg_single(struct iser_device      *device,
+		     struct iser_regd_buf    *regd_buf,
+		     enum dma_data_direction direction);
 
 void iser_finalize_rdma_unaligned_sg(struct iscsi_iser_task *task,
 				     enum iser_data_dir         cmd_dir);
@@ -354,9 +356,11 @@ int  iser_reg_page_vec(struct iser_conn     *ib_conn,
 
 void iser_unreg_mem(struct iser_mem_reg *mem_reg);
 
-int  iser_post_recvl(struct iser_conn *ib_conn);
-int  iser_post_recvm(struct iser_conn *ib_conn, int count);
-int  iser_post_send(struct iser_conn *ib_conn, struct iser_tx_desc *tx_desc);
+int  iser_post_recv(struct iser_desc *rx_desc);
+int  iser_post_send(struct iser_desc *tx_desc);
+
+int iser_conn_state_comp(struct iser_conn *ib_conn,
+			 enum iser_ib_conn_state comp);
 
 int iser_dma_map_task_data(struct iscsi_iser_task *iser_task,
 			    struct iser_data_buf       *data,
@@ -364,7 +368,4 @@ int iser_dma_map_task_data(struct iscsi_iser_task *iser_task,
 			    enum   dma_data_direction  dma_dir);
 
 void iser_dma_unmap_task_data(struct iscsi_iser_task *iser_task);
-int  iser_initialize_task_headers(struct iscsi_task *task,
-			struct iser_tx_desc *tx_desc);
-int iser_alloc_rx_descriptors(struct iser_conn *ib_conn);
 #endif

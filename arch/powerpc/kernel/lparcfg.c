@@ -24,25 +24,20 @@
 #include <linux/proc_fs.h>
 #include <linux/init.h>
 #include <linux/seq_file.h>
-#include <linux/slab.h>
 #include <asm/uaccess.h>
+#include <asm/iseries/hv_lp_config.h>
 #include <asm/lppaca.h>
 #include <asm/hvcall.h>
 #include <asm/firmware.h>
 #include <asm/rtas.h>
+#include <asm/system.h>
 #include <asm/time.h>
 #include <asm/prom.h>
 #include <asm/vdso_datapage.h>
 #include <asm/vio.h>
 #include <asm/mmu.h>
-#include <asm/machdep.h>
 
-
-/*
- * This isn't a module but we expose that to userspace
- * via /proc so leave the definitions here
- */
-#define MODULE_VERS "1.9"
+#define MODULE_VERS "1.8"
 #define MODULE_NAME "lparcfg"
 
 /* #define LPARCFG_DEBUG */
@@ -59,17 +54,111 @@ static unsigned long get_purr(void)
 	int cpu;
 
 	for_each_possible_cpu(cpu) {
-		struct cpu_usage *cu;
+		if (firmware_has_feature(FW_FEATURE_ISERIES))
+			sum_purr += lppaca[cpu].emulated_time_base;
+		else {
+			struct cpu_usage *cu;
 
-		cu = &per_cpu(cpu_usage_array, cpu);
-		sum_purr += cu->current_tb;
+			cu = &per_cpu(cpu_usage_array, cpu);
+			sum_purr += cu->current_tb;
+		}
 	}
 	return sum_purr;
 }
 
+#ifdef CONFIG_PPC_ISERIES
+
+/*
+ * Methods used to fetch LPAR data when running on an iSeries platform.
+ */
+static int iseries_lparcfg_data(struct seq_file *m, void *v)
+{
+	unsigned long pool_id;
+	int shared, entitled_capacity, max_entitled_capacity;
+	int processors, max_processors;
+	unsigned long purr = get_purr();
+
+	shared = (int)(local_paca->lppaca_ptr->shared_proc);
+
+	seq_printf(m, "system_active_processors=%d\n",
+		   (int)HvLpConfig_getSystemPhysicalProcessors());
+
+	seq_printf(m, "system_potential_processors=%d\n",
+		   (int)HvLpConfig_getSystemPhysicalProcessors());
+
+	processors = (int)HvLpConfig_getPhysicalProcessors();
+	seq_printf(m, "partition_active_processors=%d\n", processors);
+
+	max_processors = (int)HvLpConfig_getMaxPhysicalProcessors();
+	seq_printf(m, "partition_potential_processors=%d\n", max_processors);
+
+	if (shared) {
+		entitled_capacity = HvLpConfig_getSharedProcUnits();
+		max_entitled_capacity = HvLpConfig_getMaxSharedProcUnits();
+	} else {
+		entitled_capacity = processors * 100;
+		max_entitled_capacity = max_processors * 100;
+	}
+	seq_printf(m, "partition_entitled_capacity=%d\n", entitled_capacity);
+
+	seq_printf(m, "partition_max_entitled_capacity=%d\n",
+		   max_entitled_capacity);
+
+	if (shared) {
+		pool_id = HvLpConfig_getSharedPoolIndex();
+		seq_printf(m, "pool=%d\n", (int)pool_id);
+		seq_printf(m, "pool_capacity=%d\n",
+			   (int)(HvLpConfig_getNumProcsInSharedPool(pool_id) *
+				 100));
+		seq_printf(m, "purr=%ld\n", purr);
+	}
+
+	seq_printf(m, "shared_processor_mode=%d\n", shared);
+
+	return 0;
+}
+
+#else				/* CONFIG_PPC_ISERIES */
+
+static int iseries_lparcfg_data(struct seq_file *m, void *v)
+{
+	return 0;
+}
+
+#endif				/* CONFIG_PPC_ISERIES */
+
+#ifdef CONFIG_PPC_PSERIES
 /*
  * Methods used to fetch LPAR data when running on a pSeries platform.
  */
+/**
+ * h_get_mpp
+ * H_GET_MPP hcall returns info in 7 parms
+ */
+int h_get_mpp(struct hvcall_mpp_data *mpp_data)
+{
+	int rc;
+	unsigned long retbuf[PLPAR_HCALL9_BUFSIZE];
+
+	rc = plpar_hcall9(H_GET_MPP, retbuf);
+
+	mpp_data->entitled_mem = retbuf[0];
+	mpp_data->mapped_mem = retbuf[1];
+
+	mpp_data->group_num = (retbuf[2] >> 2 * 8) & 0xffff;
+	mpp_data->pool_num = retbuf[2] & 0xffff;
+
+	mpp_data->mem_weight = (retbuf[3] >> 7 * 8) & 0xff;
+	mpp_data->unallocated_mem_weight = (retbuf[3] >> 6 * 8) & 0xff;
+	mpp_data->unallocated_entitlement = retbuf[3] & 0xffffffffffff;
+
+	mpp_data->pool_size = retbuf[4];
+	mpp_data->loan_request = retbuf[5];
+	mpp_data->backing_mem = retbuf[6];
+
+	return rc;
+}
+EXPORT_SYMBOL(h_get_mpp);
 
 struct hvcall_ppp_data {
 	u64	entitlement;
@@ -172,8 +261,8 @@ static void parse_ppp_data(struct seq_file *m)
 	seq_printf(m, "system_active_processors=%d\n",
 	           ppp_data.active_system_procs);
 
-	/* pool related entries are appropriate for shared configs */
-	if (lppaca_of(0).shared_proc) {
+	/* pool related entries are apropriate for shared configs */
+	if (lppaca[0].shared_proc) {
 		unsigned long pool_idle_time, pool_procs;
 
 		seq_printf(m, "pool=%d\n", ppp_data.pool_num);
@@ -255,30 +344,6 @@ static void parse_mpp_data(struct seq_file *m)
 	seq_printf(m, "backing_memory=%ld bytes\n", mpp_data.backing_mem);
 }
 
-/**
- * parse_mpp_x_data
- * Parse out data returned from h_get_mpp_x
- */
-static void parse_mpp_x_data(struct seq_file *m)
-{
-	struct hvcall_mpp_x_data mpp_x_data;
-
-	if (!firmware_has_feature(FW_FEATURE_XCMO))
-		return;
-	if (h_get_mpp_x(&mpp_x_data))
-		return;
-
-	seq_printf(m, "coalesced_bytes=%ld\n", mpp_x_data.coalesced_bytes);
-
-	if (mpp_x_data.pool_coalesced_bytes)
-		seq_printf(m, "pool_coalesced_bytes=%ld\n",
-			   mpp_x_data.pool_coalesced_bytes);
-	if (mpp_x_data.pool_purr_cycles)
-		seq_printf(m, "coalesce_pool_purr=%ld\n", mpp_x_data.pool_purr_cycles);
-	if (mpp_x_data.pool_spurr_cycles)
-		seq_printf(m, "coalesce_pool_spurr=%ld\n", mpp_x_data.pool_spurr_cycles);
-}
-
 #define SPLPAR_CHARACTERISTICS_TOKEN 20
 #define SPLPAR_MAXLENGTH 1026*(sizeof(char))
 
@@ -294,7 +359,7 @@ static void parse_system_parameter_string(struct seq_file *m)
 
 	unsigned char *local_buffer = kmalloc(SPLPAR_MAXLENGTH, GFP_KERNEL);
 	if (!local_buffer) {
-		printk(KERN_ERR "%s %s kmalloc failure at line %d\n",
+		printk(KERN_ERR "%s %s kmalloc failure at line %d \n",
 		       __FILE__, __func__, __LINE__);
 		return;
 	}
@@ -307,7 +372,6 @@ static void parse_system_parameter_string(struct seq_file *m)
 				__pa(rtas_data_buf),
 				RTAS_DATA_BUF_SIZE);
 	memcpy(local_buffer, rtas_data_buf, SPLPAR_MAXLENGTH);
-	local_buffer[SPLPAR_MAXLENGTH - 1] = '\0';
 	spin_unlock(&rtas_data_buf_lock);
 
 	if (call_status != 0) {
@@ -319,13 +383,13 @@ static void parse_system_parameter_string(struct seq_file *m)
 		int idx, w_idx;
 		char *workbuffer = kzalloc(SPLPAR_MAXLENGTH, GFP_KERNEL);
 		if (!workbuffer) {
-			printk(KERN_ERR "%s %s kmalloc failure at line %d\n",
+			printk(KERN_ERR "%s %s kmalloc failure at line %d \n",
 			       __FILE__, __func__, __LINE__);
 			kfree(local_buffer);
 			return;
 		}
 #ifdef LPARCFG_DEBUG
-		printk(KERN_INFO "success calling get-system-parameter\n");
+		printk(KERN_INFO "success calling get-system-parameter \n");
 #endif
 		splpar_strlen = local_buffer[0] * 256 + local_buffer[1];
 		local_buffer += 2;	/* step over strlen value */
@@ -376,7 +440,7 @@ static int lparcfg_count_active_processors(void)
 
 	while ((cpus_dn = of_find_node_by_type(cpus_dn, "cpu"))) {
 #ifdef LPARCFG_DEBUG
-		printk(KERN_ERR "cpus_dn %p\n", cpus_dn);
+		printk(KERN_ERR "cpus_dn %p \n", cpus_dn);
 #endif
 		count++;
 	}
@@ -395,8 +459,8 @@ static void pseries_cmo_data(struct seq_file *m)
 		return;
 
 	for_each_possible_cpu(cpu) {
-		cmo_faults += lppaca_of(cpu).cmo_faults;
-		cmo_fault_time += lppaca_of(cpu).cmo_fault_time;
+		cmo_faults += lppaca[cpu].cmo_faults;
+		cmo_fault_time += lppaca[cpu].cmo_fault_time;
 	}
 
 	seq_printf(m, "cmo_faults=%lu\n", cmo_faults);
@@ -414,21 +478,12 @@ static void splpar_dispatch_data(struct seq_file *m)
 	unsigned long dispatch_dispersions = 0;
 
 	for_each_possible_cpu(cpu) {
-		dispatches += lppaca_of(cpu).yield_count;
-		dispatch_dispersions += lppaca_of(cpu).dispersion_count;
+		dispatches += lppaca[cpu].yield_count;
+		dispatch_dispersions += lppaca[cpu].dispersion_count;
 	}
 
 	seq_printf(m, "dispatches=%lu\n", dispatches);
 	seq_printf(m, "dispatch_dispersions=%lu\n", dispatch_dispersions);
-}
-
-static void parse_em_data(struct seq_file *m)
-{
-	unsigned long retbuf[PLPAR_HCALL_BUFSIZE];
-
-	if (firmware_has_feature(FW_FEATURE_LPAR) &&
-	    plpar_hcall(H_GET_EM_PARMS, retbuf) == H_SUCCESS)
-		seq_printf(m, "power_mode_data=%016lx\n", retbuf[0]);
 }
 
 static int pseries_lparcfg_data(struct seq_file *m, void *v)
@@ -456,7 +511,6 @@ static int pseries_lparcfg_data(struct seq_file *m, void *v)
 		parse_system_parameter_string(m);
 		parse_ppp_data(m);
 		parse_mpp_data(m);
-		parse_mpp_x_data(m);
 		pseries_cmo_data(m);
 		splpar_dispatch_data(m);
 
@@ -482,11 +536,9 @@ static int pseries_lparcfg_data(struct seq_file *m, void *v)
 	seq_printf(m, "partition_potential_processors=%d\n",
 		   partition_potential_processors);
 
-	seq_printf(m, "shared_processor_mode=%d\n", lppaca_of(0).shared_proc);
+	seq_printf(m, "shared_processor_mode=%d\n", lppaca[0].shared_proc);
 
 	seq_printf(m, "slb_size=%d\n", mmu_slb_size);
-
-	parse_em_data(m);
 
 	return 0;
 }
@@ -588,7 +640,8 @@ static ssize_t lparcfg_write(struct file *file, const char __user * buf,
 	u8 new_weight, *new_weight_ptr = &new_weight;
 	ssize_t retval;
 
-	if (!firmware_has_feature(FW_FEATURE_SPLPAR))
+	if (!firmware_has_feature(FW_FEATURE_SPLPAR) ||
+			firmware_has_feature(FW_FEATURE_ISERIES))
 		return -EINVAL;
 
 	if (count > kbuf_sz)
@@ -648,6 +701,21 @@ static ssize_t lparcfg_write(struct file *file, const char __user * buf,
 	return retval;
 }
 
+#else				/* CONFIG_PPC_PSERIES */
+
+static int pseries_lparcfg_data(struct seq_file *m, void *v)
+{
+	return 0;
+}
+
+static ssize_t lparcfg_write(struct file *file, const char __user * buf,
+			     size_t count, loff_t * off)
+{
+	return -EINVAL;
+}
+
+#endif				/* CONFIG_PPC_PSERIES */
+
 static int lparcfg_data(struct seq_file *m, void *v)
 {
 	struct device_node *rootdn;
@@ -657,16 +725,24 @@ static int lparcfg_data(struct seq_file *m, void *v)
 	const unsigned int *lp_index_ptr;
 	unsigned int lp_index = 0;
 
-	seq_printf(m, "%s %s\n", MODULE_NAME, MODULE_VERS);
+	seq_printf(m, "%s %s \n", MODULE_NAME, MODULE_VERS);
 
 	rootdn = of_find_node_by_path("/");
 	if (rootdn) {
 		tmp = of_get_property(rootdn, "model", NULL);
-		if (tmp)
+		if (tmp) {
 			model = tmp;
+			/* Skip "IBM," - see platforms/iseries/dt.c */
+			if (firmware_has_feature(FW_FEATURE_ISERIES))
+				model += 4;
+		}
 		tmp = of_get_property(rootdn, "system-id", NULL);
-		if (tmp)
+		if (tmp) {
 			system_id = tmp;
+			/* Skip "IBM," - see platforms/iseries/dt.c */
+			if (firmware_has_feature(FW_FEATURE_ISERIES))
+				system_id += 4;
+		}
 		lp_index_ptr = of_get_property(rootdn, "ibm,partition-no",
 					NULL);
 		if (lp_index_ptr)
@@ -677,6 +753,8 @@ static int lparcfg_data(struct seq_file *m, void *v)
 	seq_printf(m, "system_type=%s\n", model);
 	seq_printf(m, "partition_id=%d\n", (int)lp_index);
 
+	if (firmware_has_feature(FW_FEATURE_ISERIES))
+		return iseries_lparcfg_data(m, v);
 	return pseries_lparcfg_data(m, v);
 }
 
@@ -686,29 +764,41 @@ static int lparcfg_open(struct inode *inode, struct file *file)
 }
 
 static const struct file_operations lparcfg_fops = {
+	.owner		= THIS_MODULE,
 	.read		= seq_read,
 	.write		= lparcfg_write,
 	.open		= lparcfg_open,
 	.release	= single_release,
-	.llseek		= seq_lseek,
 };
 
 static int __init lparcfg_init(void)
 {
 	struct proc_dir_entry *ent;
-	umode_t mode = S_IRUSR | S_IRGRP | S_IROTH;
+	mode_t mode = S_IRUSR | S_IRGRP | S_IROTH;
 
 	/* Allow writing if we have FW_FEATURE_SPLPAR */
-	if (firmware_has_feature(FW_FEATURE_SPLPAR))
+	if (firmware_has_feature(FW_FEATURE_SPLPAR) &&
+			!firmware_has_feature(FW_FEATURE_ISERIES))
 		mode |= S_IWUSR;
 
-	ent = proc_create("powerpc/lparcfg", mode, NULL, &lparcfg_fops);
+	ent = proc_create("ppc64/lparcfg", mode, NULL, &lparcfg_fops);
 	if (!ent) {
-		printk(KERN_ERR "Failed to create powerpc/lparcfg\n");
+		printk(KERN_ERR "Failed to create ppc64/lparcfg\n");
 		return -EIO;
 	}
 
 	proc_ppc64_lparcfg = ent;
 	return 0;
 }
-machine_device_initcall(pseries, lparcfg_init);
+
+static void __exit lparcfg_cleanup(void)
+{
+	if (proc_ppc64_lparcfg)
+		remove_proc_entry("lparcfg", proc_ppc64_lparcfg->parent);
+}
+
+module_init(lparcfg_init);
+module_exit(lparcfg_cleanup);
+MODULE_DESCRIPTION("Interface for LPAR configuration data");
+MODULE_AUTHOR("Dave Engebretsen");
+MODULE_LICENSE("GPL");

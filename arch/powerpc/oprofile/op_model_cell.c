@@ -34,6 +34,7 @@
 #include <asm/ptrace.h>
 #include <asm/reg.h>
 #include <asm/rtas.h>
+#include <asm/system.h>
 #include <asm/cell-regs.h>
 
 #include "../platforms/cell/interrupt.h"
@@ -66,7 +67,7 @@
 
 #define MAX_SPU_COUNT 0xFFFFFF	/* maximum 24 bit LFSR value */
 
-/* Minimum HW interval timer setting to send value to trace buffer is 10 cycle.
+/* Minumum HW interval timer setting to send value to trace buffer is 10 cycle.
  * To configure counter to send value every N cycles set counter to
  * 2^32 - 1 - N.
  */
@@ -247,7 +248,7 @@ static int pm_rtas_activate_signals(u32 node, u32 count)
 	 * There is no debug setup required for the cycles event.
 	 * Note that only events in the same group can be used.
 	 * Otherwise, there will be conflicts in correctly routing
-	 * the signals on the debug bus.  It is the responsibility
+	 * the signals on the debug bus.  It is the responsiblity
 	 * of the OProfile user tool to check the events are in
 	 * the same group.
 	 */
@@ -1468,8 +1469,8 @@ static int cell_global_start(struct op_counter_config *ctr)
  * The pm_interval register is setup to write the SPU PC value into the
  * trace buffer at the maximum rate possible.  The trace buffer is configured
  * to store the PCs, wrapping when it is full.  The performance counter is
- * initialized to the max hardware count minus the number of events, N, between
- * samples.  Once the N events have occurred, a HW counter overflow occurs
+ * intialized to the max hardware count minus the number of events, N, between
+ * samples.  Once the N events have occured, a HW counter overflow occurs
  * causing the generation of a HW counter interrupt which also stops the
  * writing of the SPU PC values to the trace buffer.  Hence the last PC
  * written to the trace buffer is the SPU PC that we want.  Unfortunately,
@@ -1593,7 +1594,7 @@ static void cell_handle_interrupt_spu(struct pt_regs *regs,
 		 * to a latch.  The new values (interrupt setting bits, reset
 		 * counter value etc.) are not copied to the actual registers
 		 * until the performance monitor is enabled.  In order to get
-		 * this to work as desired, the performance monitor needs to
+		 * this to work as desired, the permormance monitor needs to
 		 * be disabled while writing to the latches.  This is a
 		 * HW design issue.
 		 */
@@ -1655,7 +1656,7 @@ static void cell_handle_interrupt_ppu(struct pt_regs *regs,
 		 * The counters were frozen by the interrupt.
 		 * Reenable the interrupt and restart the counters.
 		 * If there was a race between the interrupt handler and
-		 * the virtual counter routine.	 The virtual counter
+		 * the virtual counter routine.	 The virutal counter
 		 * routine may have cleared the interrupts.  Hence must
 		 * use the virt_cntr_inter_mask to re-enable the interrupts.
 		 */
@@ -1667,7 +1668,7 @@ static void cell_handle_interrupt_ppu(struct pt_regs *regs,
 		 * to a latch.	The new values (interrupt setting bits, reset
 		 * counter value etc.) are not copied to the actual registers
 		 * until the performance monitor is enabled.  In order to get
-		 * this to work as desired, the performance monitor needs to
+		 * this to work as desired, the permormance monitor needs to
 		 * be disabled while writing to the latches.  This is a
 		 * HW design issue.
 		 */

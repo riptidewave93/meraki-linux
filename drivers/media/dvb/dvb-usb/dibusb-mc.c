@@ -57,8 +57,6 @@ static struct dvb_usb_device_properties dibusb_mc_properties = {
 	.num_adapters = 1,
 	.adapter = {
 		{
-		.num_frontends = 1,
-		.fe = {{
 			.caps = DVB_USB_ADAP_HAS_PID_FILTER | DVB_USB_ADAP_PID_FILTER_CAN_BE_TURNED_OFF,
 			.pid_filter_count = 32,
 			.streaming_ctrl   = dibusb2_0_streaming_ctrl,
@@ -78,18 +76,15 @@ static struct dvb_usb_device_properties dibusb_mc_properties = {
 					}
 				}
 			},
-		}},
 			.size_of_priv     = sizeof(struct dibusb_state),
 		}
 	},
 	.power_ctrl       = dibusb2_0_power_ctrl,
 
-	.rc.legacy = {
-		.rc_interval      = DEFAULT_RC_INTERVAL,
-		.rc_map_table     = rc_map_dibusb_table,
-		.rc_map_size      = 111, /* FIXME */
-		.rc_query         = dibusb_rc_query,
-	},
+	.rc_interval      = DEFAULT_RC_INTERVAL,
+	.rc_key_map       = dibusb_rc_keys,
+	.rc_key_map_size  = 111, /* FIXME */
+	.rc_query         = dibusb_rc_query,
 
 	.i2c_algo         = &dibusb_i2c_algo,
 
@@ -141,7 +136,26 @@ static struct usb_driver dibusb_mc_driver = {
 	.id_table	= dibusb_dib3000mc_table,
 };
 
-module_usb_driver(dibusb_mc_driver);
+/* module stuff */
+static int __init dibusb_mc_module_init(void)
+{
+	int result;
+	if ((result = usb_register(&dibusb_mc_driver))) {
+		err("usb_register failed. Error number %d",result);
+		return result;
+	}
+
+	return 0;
+}
+
+static void __exit dibusb_mc_module_exit(void)
+{
+	/* deregister this driver from the USB subsystem */
+	usb_deregister(&dibusb_mc_driver);
+}
+
+module_init (dibusb_mc_module_init);
+module_exit (dibusb_mc_module_exit);
 
 MODULE_AUTHOR("Patrick Boettcher <patrick.boettcher@desy.de>");
 MODULE_DESCRIPTION("Driver for DiBcom USB2.0 DVB-T (DiB3000M-C/P based) devices");

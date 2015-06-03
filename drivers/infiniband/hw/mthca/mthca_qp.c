@@ -308,6 +308,7 @@ static void store_attrs(struct mthca_sqp *sqp, const struct ib_qp_attr *attr,
 static void init_port(struct mthca_dev *dev, int port)
 {
 	int err;
+	u8 status;
 	struct mthca_init_ib_param param;
 
 	memset(&param, 0, sizeof param);
@@ -318,9 +319,11 @@ static void init_port(struct mthca_dev *dev, int port)
 	param.gid_cap    = dev->limits.gid_table_len;
 	param.pkey_cap   = dev->limits.pkey_table_len;
 
-	err = mthca_INIT_IB(dev, &param, port);
+	err = mthca_INIT_IB(dev, &param, port, &status);
 	if (err)
 		mthca_warn(dev, "INIT_IB failed, return code %d.\n", err);
+	if (status)
+		mthca_warn(dev, "INIT_IB returned status %02x.\n", status);
 }
 
 static __be32 get_hw_access_flags(struct mthca_qp *qp, const struct ib_qp_attr *attr,
@@ -430,6 +433,7 @@ int mthca_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_m
 	struct mthca_qp_param *qp_param;
 	struct mthca_qp_context *context;
 	int mthca_state;
+	u8 status;
 
 	mutex_lock(&qp->mutex);
 
@@ -444,9 +448,12 @@ int mthca_query_qp(struct ib_qp *ibqp, struct ib_qp_attr *qp_attr, int qp_attr_m
 		goto out;
 	}
 
-	err = mthca_QUERY_QP(dev, qp->qpn, 0, mailbox);
-	if (err) {
-		mthca_warn(dev, "QUERY_QP failed (%d)\n", err);
+	err = mthca_QUERY_QP(dev, qp->qpn, 0, mailbox, &status);
+	if (err)
+		goto out_mailbox;
+	if (status) {
+		mthca_warn(dev, "QUERY_QP returned status %02x\n", status);
+		err = -EINVAL;
 		goto out_mailbox;
 	}
 
@@ -548,6 +555,7 @@ static int __mthca_modify_qp(struct ib_qp *ibqp,
 	struct mthca_qp_param *qp_param;
 	struct mthca_qp_context *qp_context;
 	u32 sqd_event = 0;
+	u8 status;
 	int err = -EINVAL;
 
 	mailbox = mthca_alloc_mailbox(dev, GFP_KERNEL);
@@ -773,10 +781,13 @@ static int __mthca_modify_qp(struct ib_qp *ibqp,
 		sqd_event = 1 << 31;
 
 	err = mthca_MODIFY_QP(dev, cur_state, new_state, qp->qpn, 0,
-			      mailbox, sqd_event);
-	if (err) {
-		mthca_warn(dev, "modify QP %d->%d returned %d.\n",
-			   cur_state, new_state, err);
+			      mailbox, sqd_event, &status);
+	if (err)
+		goto out_mailbox;
+	if (status) {
+		mthca_warn(dev, "modify QP %d->%d returned status %02x.\n",
+			   cur_state, new_state, status);
+		err = -EINVAL;
 		goto out_mailbox;
 	}
 
@@ -806,7 +817,7 @@ static int __mthca_modify_qp(struct ib_qp *ibqp,
 		    cur_state != IB_QPS_ERR &&
 		    (new_state == IB_QPS_RESET ||
 		     new_state == IB_QPS_ERR))
-			mthca_CLOSE_IB(dev, qp->port);
+			mthca_CLOSE_IB(dev, qp->port, &status);
 	}
 
 	/*
@@ -1418,6 +1429,7 @@ static inline int get_qp_refcount(struct mthca_dev *dev, struct mthca_qp *qp)
 void mthca_free_qp(struct mthca_dev *dev,
 		   struct mthca_qp *qp)
 {
+	u8 status;
 	struct mthca_cq *send_cq;
 	struct mthca_cq *recv_cq;
 
@@ -1442,7 +1454,7 @@ void mthca_free_qp(struct mthca_dev *dev,
 
 	if (qp->state != IB_QPS_RESET)
 		mthca_MODIFY_QP(dev, qp->state, IB_QPS_RESET, qp->qpn, 0,
-				NULL, 0);
+				NULL, 0, &status);
 
 	/*
 	 * If this is a userspace QP, the buffers, MR, CQs and so on
@@ -1481,8 +1493,8 @@ static int build_mlx_header(struct mthca_dev *dev, struct mthca_sqp *sqp,
 	int err;
 	u16 pkey;
 
-	ib_ud_header_init(256, /* assume a MAD */ 1, 0, 0,
-			  mthca_ah_grh_present(to_mah(wr->wr.ud.ah)), 0,
+	ib_ud_header_init(256, /* assume a MAD */
+			  mthca_ah_grh_present(to_mah(wr->wr.ud.ah)),
 			  &sqp->ud_header);
 
 	err = mthca_read_ah(dev, to_mah(wr->wr.ud.ah), &sqp->ud_header);
@@ -2251,6 +2263,7 @@ void mthca_free_err_wqe(struct mthca_dev *dev, struct mthca_qp *qp, int is_send,
 int mthca_init_qp_table(struct mthca_dev *dev)
 {
 	int err;
+	u8 status;
 	int i;
 
 	spin_lock_init(&dev->qp_table.lock);
@@ -2277,10 +2290,15 @@ int mthca_init_qp_table(struct mthca_dev *dev)
 
 	for (i = 0; i < 2; ++i) {
 		err = mthca_CONF_SPECIAL_QP(dev, i ? IB_QPT_GSI : IB_QPT_SMI,
-				    dev->qp_table.sqp_start + i * 2);
-		if (err) {
+					    dev->qp_table.sqp_start + i * 2,
+					    &status);
+		if (err)
+			goto err_out;
+		if (status) {
 			mthca_warn(dev, "CONF_SPECIAL_QP returned "
-				   "%d, aborting.\n", err);
+				   "status %02x, aborting.\n",
+				   status);
+			err = -EINVAL;
 			goto err_out;
 		}
 	}
@@ -2288,7 +2306,7 @@ int mthca_init_qp_table(struct mthca_dev *dev)
 
  err_out:
 	for (i = 0; i < 2; ++i)
-		mthca_CONF_SPECIAL_QP(dev, i, 0);
+		mthca_CONF_SPECIAL_QP(dev, i, 0, &status);
 
 	mthca_array_cleanup(&dev->qp_table.qp, dev->limits.num_qps);
 	mthca_alloc_cleanup(&dev->qp_table.alloc);
@@ -2299,9 +2317,10 @@ int mthca_init_qp_table(struct mthca_dev *dev)
 void mthca_cleanup_qp_table(struct mthca_dev *dev)
 {
 	int i;
+	u8 status;
 
 	for (i = 0; i < 2; ++i)
-		mthca_CONF_SPECIAL_QP(dev, i, 0);
+		mthca_CONF_SPECIAL_QP(dev, i, 0, &status);
 
 	mthca_array_cleanup(&dev->qp_table.qp, dev->limits.num_qps);
 	mthca_alloc_cleanup(&dev->qp_table.alloc);

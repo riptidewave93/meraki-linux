@@ -18,6 +18,7 @@
 #include <linux/major.h>
 #include <linux/delay.h>
 #include <linux/tty.h>
+#include <asm/system.h>
 #include <arch/svinto.h>
 #include <asm/io.h>             /* Get SIMCOUT. */
 

@@ -33,7 +33,6 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/gfp.h>
 #include <linux/pci.h>
 #include <linux/init.h>
 #include <linux/blkdev.h>
@@ -134,7 +133,9 @@ enum {
 	PDC_IRQ_DISABLE		= (1 << 10),
 	PDC_RESET		= (1 << 11), /* HDMA reset */
 
-	PDC_COMMON_FLAGS	= ATA_FLAG_PIO_POLLING,
+	PDC_COMMON_FLAGS	= ATA_FLAG_NO_LEGACY |
+				  ATA_FLAG_MMIO |
+				  ATA_FLAG_PIO_POLLING,
 
 	/* ap->flags bits */
 	PDC_FLAG_GEN_II		= (1 << 24),
@@ -145,10 +146,6 @@ enum {
 struct pdc_port_priv {
 	u8			*pkt;
 	dma_addr_t		pkt_dma;
-};
-
-struct pdc_host_priv {
-	spinlock_t hard_reset_lock;
 };
 
 static int pdc_sata_scr_read(struct ata_link *link, unsigned int sc_reg, u32 *val);
@@ -335,8 +332,7 @@ static int pdc_common_port_start(struct ata_port *ap)
 	struct pdc_port_priv *pp;
 	int rc;
 
-	/* we use the same prd table as bmdma, allocate it */
-	rc = ata_bmdma_port_start(ap);
+	rc = ata_port_start(ap);
 	if (rc)
 		return rc;
 
@@ -502,7 +498,7 @@ static int pdc_sata_scr_write(struct ata_link *link,
 static void pdc_atapi_pkt(struct ata_queued_cmd *qc)
 {
 	struct ata_port *ap = qc->ap;
-	dma_addr_t sg_table = ap->bmdma_prd_dma;
+	dma_addr_t sg_table = ap->prd_dma;
 	unsigned int cdb_len = qc->dev->cdb_len;
 	u8 *cdb = qc->cdb;
 	struct pdc_port_priv *pp = ap->private_data;
@@ -590,7 +586,6 @@ static void pdc_atapi_pkt(struct ata_queued_cmd *qc)
 static void pdc_fill_sg(struct ata_queued_cmd *qc)
 {
 	struct ata_port *ap = qc->ap;
-	struct ata_bmdma_prd *prd = ap->bmdma_prd;
 	struct scatterlist *sg;
 	const u32 SG_COUNT_ASIC_BUG = 41*4;
 	unsigned int si, idx;
@@ -617,8 +612,8 @@ static void pdc_fill_sg(struct ata_queued_cmd *qc)
 			if ((offset + sg_len) > 0x10000)
 				len = 0x10000 - offset;
 
-			prd[idx].addr = cpu_to_le32(addr);
-			prd[idx].flags_len = cpu_to_le32(len & 0xffff);
+			ap->prd[idx].addr = cpu_to_le32(addr);
+			ap->prd[idx].flags_len = cpu_to_le32(len & 0xffff);
 			VPRINTK("PRD[%u] = (0x%X, 0x%X)\n", idx, addr, len);
 
 			idx++;
@@ -627,27 +622,27 @@ static void pdc_fill_sg(struct ata_queued_cmd *qc)
 		}
 	}
 
-	len = le32_to_cpu(prd[idx - 1].flags_len);
+	len = le32_to_cpu(ap->prd[idx - 1].flags_len);
 
 	if (len > SG_COUNT_ASIC_BUG) {
 		u32 addr;
 
 		VPRINTK("Splitting last PRD.\n");
 
-		addr = le32_to_cpu(prd[idx - 1].addr);
-		prd[idx - 1].flags_len = cpu_to_le32(len - SG_COUNT_ASIC_BUG);
+		addr = le32_to_cpu(ap->prd[idx - 1].addr);
+		ap->prd[idx - 1].flags_len = cpu_to_le32(len - SG_COUNT_ASIC_BUG);
 		VPRINTK("PRD[%u] = (0x%X, 0x%X)\n", idx - 1, addr, SG_COUNT_ASIC_BUG);
 
 		addr = addr + len - SG_COUNT_ASIC_BUG;
 		len = SG_COUNT_ASIC_BUG;
-		prd[idx].addr = cpu_to_le32(addr);
-		prd[idx].flags_len = cpu_to_le32(len);
+		ap->prd[idx].addr = cpu_to_le32(addr);
+		ap->prd[idx].flags_len = cpu_to_le32(len);
 		VPRINTK("PRD[%u] = (0x%X, 0x%X)\n", idx, addr, len);
 
 		idx++;
 	}
 
-	prd[idx - 1].flags_len |= cpu_to_le32(ATA_PRD_EOT);
+	ap->prd[idx - 1].flags_len |= cpu_to_le32(ATA_PRD_EOT);
 }
 
 static void pdc_qc_prep(struct ata_queued_cmd *qc)
@@ -662,7 +657,7 @@ static void pdc_qc_prep(struct ata_queued_cmd *qc)
 		pdc_fill_sg(qc);
 		/*FALLTHROUGH*/
 	case ATA_PROT_NODATA:
-		i = pdc_pkt_header(&qc->tf, qc->ap->bmdma_prd_dma,
+		i = pdc_pkt_header(&qc->tf, qc->ap->prd_dma,
 				   qc->dev->devno, pp->pkt);
 		if (qc->tf.flags & ATA_TFLAG_LBA48)
 			i = pdc_prep_lba48(&qc->tf, pp->pkt, i);
@@ -805,10 +800,9 @@ static void pdc_hard_reset_port(struct ata_port *ap)
 	void __iomem *host_mmio = ap->host->iomap[PDC_MMIO_BAR];
 	void __iomem *pcictl_b1_mmio = host_mmio + PDC_PCI_CTL + 1;
 	unsigned int ata_no = pdc_ata_port_to_ata_no(ap);
-	struct pdc_host_priv *hpriv = ap->host->private_data;
 	u8 tmp;
 
-	spin_lock(&hpriv->hard_reset_lock);
+	spin_lock(&ap->host->lock);
 
 	tmp = readb(pcictl_b1_mmio);
 	tmp &= ~(0x10 << ata_no);
@@ -819,7 +813,7 @@ static void pdc_hard_reset_port(struct ata_port *ap)
 	writeb(tmp, pcictl_b1_mmio);
 	readb(pcictl_b1_mmio); /* flush */
 
-	spin_unlock(&hpriv->hard_reset_lock);
+	spin_unlock(&ap->host->lock);
 }
 
 static int pdc_sata_hardreset(struct ata_link *link, unsigned int *class,
@@ -843,7 +837,7 @@ static void pdc_error_handler(struct ata_port *ap)
 	if (!(ap->pflags & ATA_PFLAG_FROZEN))
 		pdc_reset_port(ap);
 
-	ata_sff_error_handler(ap);
+	ata_std_error_handler(ap);
 }
 
 static void pdc_post_internal_cmd(struct ata_queued_cmd *qc)
@@ -868,7 +862,7 @@ static void pdc_error_intr(struct ata_port *ap, struct ata_queued_cmd *qc,
 	if (port_status & PDC_DRIVE_ERR)
 		ac_err_mask |= AC_ERR_DEV;
 	if (port_status & (PDC_OVERRUN_ERR | PDC_UNDERRUN_ERR))
-		ac_err_mask |= AC_ERR_OTHER;
+		ac_err_mask |= AC_ERR_HSM;
 	if (port_status & (PDC2_ATA_HBA_ERR | PDC2_ATA_DMA_CNT_ERR))
 		ac_err_mask |= AC_ERR_ATA_BUS;
 	if (port_status & (PDC_PH_ERR | PDC_SH_ERR | PDC_DH_ERR | PDC2_HTO_ERR
@@ -989,7 +983,8 @@ static irqreturn_t pdc_interrupt(int irq, void *dev_instance)
 		/* check for a plug or unplug event */
 		ata_no = pdc_port_no_to_ata_no(i, is_sataii_tx4);
 		tmp = hotplug_status & (0x11 << ata_no);
-		if (tmp) {
+		if (tmp && ap &&
+		    !(ap->flags & ATA_FLAG_DISABLED)) {
 			struct ata_eh_info *ehi = &ap->link.eh_info;
 			ata_ehi_clear_desc(ehi);
 			ata_ehi_hotplugged(ehi);
@@ -1001,7 +996,8 @@ static irqreturn_t pdc_interrupt(int irq, void *dev_instance)
 
 		/* check for a packet interrupt */
 		tmp = mask & (1 << (i + 1));
-		if (tmp) {
+		if (tmp && ap &&
+		    !(ap->flags & ATA_FLAG_DISABLED)) {
 			struct ata_queued_cmd *qc;
 
 			qc = ata_qc_from_tag(ap, ap->link.active_tag);
@@ -1184,15 +1180,16 @@ static void pdc_host_init(struct ata_host *host)
 static int pdc_ata_init_one(struct pci_dev *pdev,
 			    const struct pci_device_id *ent)
 {
+	static int printed_version;
 	const struct ata_port_info *pi = &pdc_port_info[ent->driver_data];
 	const struct ata_port_info *ppi[PDC_MAX_PORTS];
 	struct ata_host *host;
-	struct pdc_host_priv *hpriv;
 	void __iomem *host_mmio;
 	int n_ports, i, rc;
 	int is_sataii_tx4;
 
-	ata_print_version_once(&pdev->dev, DRV_VERSION);
+	if (!printed_version++)
+		dev_printk(KERN_DEBUG, &pdev->dev, "version " DRV_VERSION "\n");
 
 	/* enable and acquire resources */
 	rc = pcim_enable_device(pdev);
@@ -1221,14 +1218,9 @@ static int pdc_ata_init_one(struct pci_dev *pdev,
 
 	host = ata_host_alloc_pinfo(&pdev->dev, ppi, n_ports);
 	if (!host) {
-		dev_err(&pdev->dev, "failed to allocate host\n");
+		dev_printk(KERN_ERR, &pdev->dev, "failed to allocate host\n");
 		return -ENOMEM;
 	}
-	hpriv = devm_kzalloc(&pdev->dev, sizeof *hpriv, GFP_KERNEL);
-	if (!hpriv)
-		return -ENOMEM;
-	spin_lock_init(&hpriv->hard_reset_lock);
-	host->private_data = hpriv;
 	host->iomap = pcim_iomap_table(pdev);
 
 	is_sataii_tx4 = pdc_is_sataii_tx4(pi->flags);

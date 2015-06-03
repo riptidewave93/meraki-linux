@@ -13,7 +13,6 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/types.h>
 
 /* include interfaces to usb layer */
@@ -32,13 +31,11 @@
 #define CMD_I2C_IO_BEGIN	(1<<0)
 #define CMD_I2C_IO_END		(1<<1)
 
-/* i2c bit delay, default is 10us -> 100kHz max
-   (in practice, due to additional delays in the i2c bitbanging
-   code this results in a i2c clock of about 50kHz) */
+/* i2c bit delay, default is 10us -> 100kHz */
 static unsigned short delay = 10;
 module_param(delay, ushort, 0);
-MODULE_PARM_DESC(delay, "bit delay in microseconds "
-		 "(default is 10us for 100kHz max)");
+MODULE_PARM_DESC(delay, "bit delay in microseconds, "
+		 "e.g. 10 for 100kHz (default is 100kHz)");
 
 static int usb_read(struct i2c_adapter *adapter, int cmd,
 		    int value, int index, void *data, int len);
@@ -140,7 +137,7 @@ static const struct i2c_algorithm usb_algorithm = {
  * Future Technology Devices International Ltd., later a pair was
  * bought from EZPrototypes
  */
-static const struct usb_device_id i2c_tiny_usb_table[] = {
+static struct usb_device_id i2c_tiny_usb_table [] = {
 	{ USB_DEVICE(0x0403, 0xc631) },   /* FTDI */
 	{ USB_DEVICE(0x1c40, 0x0534) },   /* EZPrototypes */
 	{ }                               /* Terminating entry */
@@ -262,7 +259,20 @@ static struct usb_driver i2c_tiny_usb_driver = {
 	.id_table	= i2c_tiny_usb_table,
 };
 
-module_usb_driver(i2c_tiny_usb_driver);
+static int __init usb_i2c_tiny_usb_init(void)
+{
+	/* register this driver with the USB subsystem */
+	return usb_register(&i2c_tiny_usb_driver);
+}
+
+static void __exit usb_i2c_tiny_usb_exit(void)
+{
+	/* deregister this driver with the USB subsystem */
+	usb_deregister(&i2c_tiny_usb_driver);
+}
+
+module_init(usb_i2c_tiny_usb_init);
+module_exit(usb_i2c_tiny_usb_exit);
 
 /* ----- end of usb layer ------------------------------------------------ */
 

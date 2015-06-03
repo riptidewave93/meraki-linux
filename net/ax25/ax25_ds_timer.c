@@ -25,6 +25,7 @@
 #include <linux/skbuff.h>
 #include <net/sock.h>
 #include <asm/uaccess.h>
+#include <asm/system.h>
 #include <linux/fcntl.h>
 #include <linux/mm.h>
 #include <linux/interrupt.h>
@@ -111,8 +112,8 @@ void ax25_ds_heartbeat_expiry(ax25_cb *ax25)
 			if (sk) {
 				sock_hold(sk);
 				ax25_destroy_socket(ax25);
-				bh_unlock_sock(sk);
 				sock_put(sk);
+				bh_unlock_sock(sk);
 			} else
 				ax25_destroy_socket(ax25);
 			return;

@@ -6,7 +6,7 @@
  * system manages static and dynamic label mappings for network protocols such
  * as CIPSO and RIPSO.
  *
- * Author: Paul Moore <paul@paul-moore.com>
+ * Author: Paul Moore <paul.moore@hp.com>
  *
  */
 
@@ -35,7 +35,6 @@
 #include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/audit.h>
-#include <linux/slab.h>
 #include <net/netlabel.h>
 #include <net/cipso_ipv4.h>
 #include <asm/bug.h>
@@ -51,11 +50,9 @@ struct netlbl_domhsh_tbl {
 };
 
 /* Domain hash table */
-/* updates should be so rare that having one spinlock for the entire hash table
- * should be okay */
+/* XXX - updates should be so rare that having one spinlock for the entire
+ * hash table should be okay */
 static DEFINE_SPINLOCK(netlbl_domhsh_lock);
-#define netlbl_domhsh_rcu_deref(p) \
-	rcu_dereference_check(p, lockdep_is_held(&netlbl_domhsh_lock))
 static struct netlbl_domhsh_tbl *netlbl_domhsh = NULL;
 static struct netlbl_dom_map *netlbl_domhsh_def = NULL;
 
@@ -78,7 +75,7 @@ static void netlbl_domhsh_free_entry(struct rcu_head *entry)
 	struct netlbl_dom_map *ptr;
 	struct netlbl_af4list *iter4;
 	struct netlbl_af4list *tmp4;
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	struct netlbl_af6list *iter6;
 	struct netlbl_af6list *tmp6;
 #endif /* IPv6 */
@@ -90,7 +87,7 @@ static void netlbl_domhsh_free_entry(struct rcu_head *entry)
 			netlbl_af4list_remove_entry(iter4);
 			kfree(netlbl_domhsh_addr4_entry(iter4));
 		}
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 		netlbl_af6list_foreach_safe(iter6, tmp6,
 					    &ptr->type_def.addrsel->list6) {
 			netlbl_af6list_remove_entry(iter6);
@@ -108,9 +105,8 @@ static void netlbl_domhsh_free_entry(struct rcu_head *entry)
  *
  * Description:
  * This is the hashing function for the domain hash table, it returns the
- * correct bucket number for the domain.  The caller is responsible for
- * ensuring that the hash table is protected with either a RCU read lock or the
- * hash table lock.
+ * correct bucket number for the domain.  The caller is responsibile for
+ * calling the rcu_read_[un]lock() functions.
  *
  */
 static u32 netlbl_domhsh_hash(const char *key)
@@ -124,7 +120,7 @@ static u32 netlbl_domhsh_hash(const char *key)
 
 	for (iter = 0, val = 0, len = strlen(key); iter < len; iter++)
 		val = (val << 4 | (val >> (8 * sizeof(u32) - 4))) ^ key[iter];
-	return val & (netlbl_domhsh_rcu_deref(netlbl_domhsh)->size - 1);
+	return val & (rcu_dereference(netlbl_domhsh)->size - 1);
 }
 
 /**
@@ -133,9 +129,8 @@ static u32 netlbl_domhsh_hash(const char *key)
  *
  * Description:
  * Searches the domain hash table and returns a pointer to the hash table
- * entry if found, otherwise NULL is returned.  The caller is responsible for
- * ensuring that the hash table is protected with either a RCU read lock or the
- * hash table lock.
+ * entry if found, otherwise NULL is returned.  The caller is responsibile for
+ * the rcu hash table locks (i.e. the caller much call rcu_read_[un]lock()).
  *
  */
 static struct netlbl_dom_map *netlbl_domhsh_search(const char *domain)
@@ -146,7 +141,7 @@ static struct netlbl_dom_map *netlbl_domhsh_search(const char *domain)
 
 	if (domain != NULL) {
 		bkt = netlbl_domhsh_hash(domain);
-		bkt_list = &netlbl_domhsh_rcu_deref(netlbl_domhsh)->tbl[bkt];
+		bkt_list = &rcu_dereference(netlbl_domhsh)->tbl[bkt];
 		list_for_each_entry_rcu(iter, bkt_list, list)
 			if (iter->valid && strcmp(iter->domain, domain) == 0)
 				return iter;
@@ -164,8 +159,8 @@ static struct netlbl_dom_map *netlbl_domhsh_search(const char *domain)
  * Searches the domain hash table and returns a pointer to the hash table
  * entry if an exact match is found, if an exact match is not present in the
  * hash table then the default entry is returned if valid otherwise NULL is
- * returned.  The caller is responsible ensuring that the hash table is
- * protected with either a RCU read lock or the hash table lock.
+ * returned.  The caller is responsibile for the rcu hash table locks
+ * (i.e. the caller much call rcu_read_[un]lock()).
  *
  */
 static struct netlbl_dom_map *netlbl_domhsh_search_def(const char *domain)
@@ -174,7 +169,7 @@ static struct netlbl_dom_map *netlbl_domhsh_search_def(const char *domain)
 
 	entry = netlbl_domhsh_search(domain);
 	if (entry == NULL) {
-		entry = netlbl_domhsh_rcu_deref(netlbl_domhsh_def);
+		entry = rcu_dereference(netlbl_domhsh_def);
 		if (entry != NULL && !entry->valid)
 			entry = NULL;
 	}
@@ -192,7 +187,7 @@ static struct netlbl_dom_map *netlbl_domhsh_search_def(const char *domain)
  *
  * Description:
  * Generate an audit record for adding a new NetLabel/LSM mapping entry with
- * the given information.  Caller is responsible for holding the necessary
+ * the given information.  Caller is responsibile for holding the necessary
  * locks.
  *
  */
@@ -217,7 +212,7 @@ static void netlbl_domhsh_audit_add(struct netlbl_dom_map *entry,
 			cipsov4 = map4->type_def.cipsov4;
 			netlbl_af4list_audit_addr(audit_buf, 0, NULL,
 						  addr4->addr, addr4->mask);
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 		} else if (addr6 != NULL) {
 			struct netlbl_domaddr6_map *map6;
 			map6 = netlbl_domhsh_addr6_entry(addr6);
@@ -243,71 +238,6 @@ static void netlbl_domhsh_audit_add(struct netlbl_dom_map *entry,
 		audit_log_format(audit_buf, " res=%u", result == 0 ? 1 : 0);
 		audit_log_end(audit_buf);
 	}
-}
-
-/**
- * netlbl_domhsh_validate - Validate a new domain mapping entry
- * @entry: the entry to validate
- *
- * This function validates the new domain mapping entry to ensure that it is
- * a valid entry.  Returns zero on success, negative values on failure.
- *
- */
-static int netlbl_domhsh_validate(const struct netlbl_dom_map *entry)
-{
-	struct netlbl_af4list *iter4;
-	struct netlbl_domaddr4_map *map4;
-#if IS_ENABLED(CONFIG_IPV6)
-	struct netlbl_af6list *iter6;
-	struct netlbl_domaddr6_map *map6;
-#endif /* IPv6 */
-
-	if (entry == NULL)
-		return -EINVAL;
-
-	switch (entry->type) {
-	case NETLBL_NLTYPE_UNLABELED:
-		if (entry->type_def.cipsov4 != NULL ||
-		    entry->type_def.addrsel != NULL)
-			return -EINVAL;
-		break;
-	case NETLBL_NLTYPE_CIPSOV4:
-		if (entry->type_def.cipsov4 == NULL)
-			return -EINVAL;
-		break;
-	case NETLBL_NLTYPE_ADDRSELECT:
-		netlbl_af4list_foreach(iter4, &entry->type_def.addrsel->list4) {
-			map4 = netlbl_domhsh_addr4_entry(iter4);
-			switch (map4->type) {
-			case NETLBL_NLTYPE_UNLABELED:
-				if (map4->type_def.cipsov4 != NULL)
-					return -EINVAL;
-				break;
-			case NETLBL_NLTYPE_CIPSOV4:
-				if (map4->type_def.cipsov4 == NULL)
-					return -EINVAL;
-				break;
-			default:
-				return -EINVAL;
-			}
-		}
-#if IS_ENABLED(CONFIG_IPV6)
-		netlbl_af6list_foreach(iter6, &entry->type_def.addrsel->list6) {
-			map6 = netlbl_domhsh_addr6_entry(iter6);
-			switch (map6->type) {
-			case NETLBL_NLTYPE_UNLABELED:
-				break;
-			default:
-				return -EINVAL;
-			}
-		}
-#endif /* IPv6 */
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	return 0;
 }
 
 /*
@@ -371,20 +301,13 @@ int netlbl_domhsh_add(struct netlbl_dom_map *entry,
 	struct netlbl_dom_map *entry_old;
 	struct netlbl_af4list *iter4;
 	struct netlbl_af4list *tmp4;
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	struct netlbl_af6list *iter6;
 	struct netlbl_af6list *tmp6;
 #endif /* IPv6 */
 
-	ret_val = netlbl_domhsh_validate(entry);
-	if (ret_val != 0)
-		return ret_val;
-
-	/* XXX - we can remove this RCU read lock as the spinlock protects the
-	 *       entire function, but before we do we need to fixup the
-	 *       netlbl_af[4,6]list RCU functions to do "the right thing" with
-	 *       respect to rcu_dereference() when only a spinlock is held. */
 	rcu_read_lock();
+
 	spin_lock(&netlbl_domhsh_lock);
 	if (entry->domain != NULL)
 		entry_old = netlbl_domhsh_search(entry->domain);
@@ -392,6 +315,7 @@ int netlbl_domhsh_add(struct netlbl_dom_map *entry,
 		entry_old = netlbl_domhsh_search_def(entry->domain);
 	if (entry_old == NULL) {
 		entry->valid = 1;
+		INIT_RCU_HEAD(&entry->rcu);
 
 		if (entry->domain != NULL) {
 			u32 bkt = netlbl_domhsh_hash(entry->domain);
@@ -407,7 +331,7 @@ int netlbl_domhsh_add(struct netlbl_dom_map *entry,
 					       &entry->type_def.addrsel->list4)
 				netlbl_domhsh_audit_add(entry, iter4, NULL,
 							ret_val, audit_info);
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 			netlbl_af6list_foreach_rcu(iter6,
 					       &entry->type_def.addrsel->list6)
 				netlbl_domhsh_audit_add(entry, NULL, iter6,
@@ -434,7 +358,7 @@ int netlbl_domhsh_add(struct netlbl_dom_map *entry,
 				ret_val = -EEXIST;
 				goto add_return;
 			}
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 		netlbl_af6list_foreach_rcu(iter6,
 					   &entry->type_def.addrsel->list6)
 			if (netlbl_af6list_search_exact(&iter6->addr,
@@ -455,7 +379,7 @@ int netlbl_domhsh_add(struct netlbl_dom_map *entry,
 			if (ret_val != 0)
 				goto add_return;
 		}
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 		netlbl_af6list_foreach_safe(iter6, tmp6,
 					    &entry->type_def.addrsel->list6) {
 			netlbl_af6list_remove_entry(iter6);
@@ -520,7 +444,7 @@ int netlbl_domhsh_remove_entry(struct netlbl_dom_map *entry,
 		if (entry != rcu_dereference(netlbl_domhsh_def))
 			list_del_rcu(&entry->list);
 		else
-			RCU_INIT_POINTER(netlbl_domhsh_def, NULL);
+			rcu_assign_pointer(netlbl_domhsh_def, NULL);
 	} else
 		ret_val = -ENOENT;
 	spin_unlock(&netlbl_domhsh_lock);
@@ -579,7 +503,7 @@ int netlbl_domhsh_remove_af4(const char *domain,
 	struct netlbl_dom_map *entry_map;
 	struct netlbl_af4list *entry_addr;
 	struct netlbl_af4list *iter4;
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	struct netlbl_af6list *iter6;
 #endif /* IPv6 */
 	struct netlbl_domaddr4_map *entry;
@@ -602,7 +526,7 @@ int netlbl_domhsh_remove_af4(const char *domain,
 		goto remove_af4_failure;
 	netlbl_af4list_foreach_rcu(iter4, &entry_map->type_def.addrsel->list4)
 		goto remove_af4_single_addr;
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	netlbl_af6list_foreach_rcu(iter6, &entry_map->type_def.addrsel->list6)
 		goto remove_af4_single_addr;
 #endif /* IPv6 */
@@ -673,7 +597,7 @@ int netlbl_domhsh_remove_default(struct netlbl_audit *audit_info)
  *
  * Description:
  * Look through the domain hash table searching for an entry to match @domain,
- * return a pointer to a copy of the entry or NULL.  The caller is responsible
+ * return a pointer to a copy of the entry or NULL.  The caller is responsibile
  * for ensuring that rcu_read_[un]lock() is called.
  *
  */
@@ -713,7 +637,7 @@ struct netlbl_domaddr4_map *netlbl_domhsh_getentry_af4(const char *domain,
 	return netlbl_domhsh_addr4_entry(addr_iter);
 }
 
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 /**
  * netlbl_domhsh_getentry_af6 - Get an entry from the domain hash table
  * @domain: the domain name to search for
@@ -758,7 +682,7 @@ struct netlbl_domaddr6_map *netlbl_domhsh_getentry_af6(const char *domain,
  * buckets and @skip_chain entries.  For each entry in the table call
  * @callback, if @callback returns a negative value stop 'walking' through the
  * table and return.  Updates the values in @skip_bkt and @skip_chain on
- * return.  Returns zero on success, negative values on failure.
+ * return.  Returns zero on succcess, negative values on failure.
  *
  */
 int netlbl_domhsh_walk(u32 *skip_bkt,

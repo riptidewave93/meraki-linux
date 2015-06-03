@@ -17,7 +17,6 @@
  */
 #include <linux/kernel.h>
 #include <linux/uwb.h>
-#include <linux/export.h>
 
 #include "uwb-internal.h"
 

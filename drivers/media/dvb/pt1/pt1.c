@@ -1,5 +1,5 @@
 /*
- * driver for Earthsoft PT1/PT2
+ * driver for Earthsoft PT1
  *
  * Copyright (C) 2009 HIRANO Takahito <hiranotaka@zng.info>
  *
@@ -23,12 +23,11 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/pci.h>
 #include <linux/kthread.h>
 #include <linux/freezer.h>
-#include <linux/ratelimit.h>
+#include <linux/vmalloc.h>
 
 #include "dvbdev.h"
 #include "dvb_demux.h"
@@ -78,12 +77,6 @@ struct pt1 {
 	struct pt1_adapter *adaps[PT1_NR_ADAPS];
 	struct pt1_table *tables;
 	struct task_struct *kthread;
-	int table_index;
-	int buf_index;
-
-	struct mutex lock;
-	int power;
-	int reset;
 };
 
 struct pt1_adapter {
@@ -93,20 +86,15 @@ struct pt1_adapter {
 	u8 *buf;
 	int upacket_count;
 	int packet_count;
-	int st_count;
 
 	struct dvb_adapter adap;
 	struct dvb_demux demux;
 	int users;
 	struct dmxdev dmxdev;
+	struct dvb_net net;
 	struct dvb_frontend *fe;
 	int (*orig_set_voltage)(struct dvb_frontend *fe,
 				fe_sec_voltage_t voltage);
-	int (*orig_sleep)(struct dvb_frontend *fe);
-	int (*orig_init)(struct dvb_frontend *fe);
-
-	fe_sec_voltage_t voltage;
-	int sleep;
 };
 
 #define pt1_printk(level, pt1, format, arg...)	\
@@ -122,7 +110,7 @@ static u32 pt1_read_reg(struct pt1 *pt1, int reg)
 	return readl(pt1->regs + reg * 4);
 }
 
-static int pt1_nr_tables = 8;
+static int pt1_nr_tables = 64;
 module_param_named(nr_tables, pt1_nr_tables, int, 0);
 
 static void pt1_increment_table_count(struct pt1 *pt1)
@@ -231,10 +219,8 @@ static int pt1_do_enable_ram(struct pt1 *pt1)
 static int pt1_enable_ram(struct pt1 *pt1)
 {
 	int i, ret;
-	int phase;
 	schedule_timeout_uninterruptible((HZ + 999) / 1000);
-	phase = pt1->pdev->device == 0x211a ? 128 : 166;
-	for (i = 0; i < phase; i++) {
+	for (i = 0; i < 10; i++) {
 		ret = pt1_do_enable_ram(pt1);
 		if (ret < 0)
 			return ret;
@@ -267,7 +253,6 @@ static int pt1_filter(struct pt1 *pt1, struct pt1_buffer_page *page)
 	struct pt1_adapter *adap;
 	int offset;
 	u8 *buf;
-	int sc;
 
 	if (!page->upackets[PT1_NR_UPACKETS - 1])
 		return 0;
@@ -283,16 +268,6 @@ static int pt1_filter(struct pt1 *pt1, struct pt1_buffer_page *page)
 			adap->upacket_count = 0;
 		else if (!adap->upacket_count)
 			continue;
-
-		if (upacket >> 24 & 1)
-			printk_ratelimited(KERN_INFO "earth-pt1: device "
-				"buffer overflowing. table[%d] buf[%d]\n",
-				pt1->table_index, pt1->buf_index);
-		sc = upacket >> 26 & 0x7;
-		if (adap->st_count != -1 && sc != ((adap->st_count + 1) & 0x7))
-			printk_ratelimited(KERN_INFO "earth-pt1: data loss"
-				" in streamID(adapter)[%d]\n", index);
-		adap->st_count = sc;
 
 		buf = adap->buf;
 		offset = adap->packet_count * 188 + adap->upacket_count * 3;
@@ -317,25 +292,30 @@ static int pt1_filter(struct pt1 *pt1, struct pt1_buffer_page *page)
 static int pt1_thread(void *data)
 {
 	struct pt1 *pt1;
+	int table_index;
+	int buf_index;
 	struct pt1_buffer_page *page;
 
 	pt1 = data;
 	set_freezable();
 
+	table_index = 0;
+	buf_index = 0;
+
 	while (!kthread_should_stop()) {
 		try_to_freeze();
 
-		page = pt1->tables[pt1->table_index].bufs[pt1->buf_index].page;
+		page = pt1->tables[table_index].bufs[buf_index].page;
 		if (!pt1_filter(pt1, page)) {
 			schedule_timeout_interruptible((HZ + 999) / 1000);
 			continue;
 		}
 
-		if (++pt1->buf_index >= PT1_NR_BUFS) {
+		if (++buf_index >= PT1_NR_BUFS) {
 			pt1_increment_table_count(pt1);
-			pt1->buf_index = 0;
-			if (++pt1->table_index >= pt1_nr_tables)
-				pt1->table_index = 0;
+			buf_index = 0;
+			if (++table_index >= pt1_nr_tables)
+				table_index = 0;
 		}
 	}
 
@@ -486,105 +466,52 @@ err:
 	return ret;
 }
 
-static int pt1_start_polling(struct pt1 *pt1)
-{
-	int ret = 0;
-
-	mutex_lock(&pt1->lock);
-	if (!pt1->kthread) {
-		pt1->kthread = kthread_run(pt1_thread, pt1, "earth-pt1");
-		if (IS_ERR(pt1->kthread)) {
-			ret = PTR_ERR(pt1->kthread);
-			pt1->kthread = NULL;
-		}
-	}
-	mutex_unlock(&pt1->lock);
-	return ret;
-}
-
 static int pt1_start_feed(struct dvb_demux_feed *feed)
 {
 	struct pt1_adapter *adap;
 	adap = container_of(feed->demux, struct pt1_adapter, demux);
-	if (!adap->users++) {
-		int ret;
-
-		ret = pt1_start_polling(adap->pt1);
-		if (ret)
-			return ret;
+	if (!adap->users++)
 		pt1_set_stream(adap->pt1, adap->index, 1);
-	}
 	return 0;
-}
-
-static void pt1_stop_polling(struct pt1 *pt1)
-{
-	int i, count;
-
-	mutex_lock(&pt1->lock);
-	for (i = 0, count = 0; i < PT1_NR_ADAPS; i++)
-		count += pt1->adaps[i]->users;
-
-	if (count == 0 && pt1->kthread) {
-		kthread_stop(pt1->kthread);
-		pt1->kthread = NULL;
-	}
-	mutex_unlock(&pt1->lock);
 }
 
 static int pt1_stop_feed(struct dvb_demux_feed *feed)
 {
 	struct pt1_adapter *adap;
 	adap = container_of(feed->demux, struct pt1_adapter, demux);
-	if (!--adap->users) {
+	if (!--adap->users)
 		pt1_set_stream(adap->pt1, adap->index, 0);
-		pt1_stop_polling(adap->pt1);
-	}
 	return 0;
 }
 
 static void
-pt1_update_power(struct pt1 *pt1)
+pt1_set_power(struct pt1 *pt1, int power, int lnb, int reset)
 {
-	int bits;
-	int i;
-	struct pt1_adapter *adap;
-	static const int sleep_bits[] = {
-		1 << 4,
-		1 << 6 | 1 << 7,
-		1 << 5,
-		1 << 6 | 1 << 8,
-	};
-
-	bits = pt1->power | !pt1->reset << 3;
-	mutex_lock(&pt1->lock);
-	for (i = 0; i < PT1_NR_ADAPS; i++) {
-		adap = pt1->adaps[i];
-		switch (adap->voltage) {
-		case SEC_VOLTAGE_13: /* actually 11V */
-			bits |= 1 << 1;
-			break;
-		case SEC_VOLTAGE_18: /* actually 15V */
-			bits |= 1 << 1 | 1 << 2;
-			break;
-		default:
-			break;
-		}
-
-		/* XXX: The bits should be changed depending on adap->sleep. */
-		bits |= sleep_bits[i];
-	}
-	pt1_write_reg(pt1, 1, bits);
-	mutex_unlock(&pt1->lock);
+	pt1_write_reg(pt1, 1, power | lnb << 1 | !reset << 3);
 }
 
 static int pt1_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t voltage)
 {
 	struct pt1_adapter *adap;
+	int lnb;
 
 	adap = container_of(fe->dvb, struct pt1_adapter, adap);
-	adap->voltage = voltage;
-	pt1_update_power(adap->pt1);
+
+	switch (voltage) {
+	case SEC_VOLTAGE_13: /* actually 11V */
+		lnb = 2;
+		break;
+	case SEC_VOLTAGE_18: /* actually 15V */
+		lnb = 3;
+		break;
+	case SEC_VOLTAGE_OFF:
+		lnb = 0;
+		break;
+	default:
+		return -EINVAL;
+	}
+
+	pt1_set_power(adap->pt1, 1, lnb, 0);
 
 	if (adap->orig_set_voltage)
 		return adap->orig_set_voltage(fe, voltage);
@@ -592,37 +519,10 @@ static int pt1_set_voltage(struct dvb_frontend *fe, fe_sec_voltage_t voltage)
 		return 0;
 }
 
-static int pt1_sleep(struct dvb_frontend *fe)
-{
-	struct pt1_adapter *adap;
-
-	adap = container_of(fe->dvb, struct pt1_adapter, adap);
-	adap->sleep = 1;
-	pt1_update_power(adap->pt1);
-
-	if (adap->orig_sleep)
-		return adap->orig_sleep(fe);
-	else
-		return 0;
-}
-
-static int pt1_wakeup(struct dvb_frontend *fe)
-{
-	struct pt1_adapter *adap;
-
-	adap = container_of(fe->dvb, struct pt1_adapter, adap);
-	adap->sleep = 0;
-	pt1_update_power(adap->pt1);
-	schedule_timeout_uninterruptible((HZ + 999) / 1000);
-
-	if (adap->orig_init)
-		return adap->orig_init(fe);
-	else
-		return 0;
-}
-
 static void pt1_free_adapter(struct pt1_adapter *adap)
 {
+	dvb_unregister_frontend(adap->fe);
+	dvb_net_release(&adap->net);
 	adap->demux.dmx.close(&adap->demux.dmx);
 	dvb_dmxdev_release(&adap->dmxdev);
 	dvb_dmx_release(&adap->demux);
@@ -634,7 +534,7 @@ static void pt1_free_adapter(struct pt1_adapter *adap)
 DVB_DEFINE_MOD_OPT_ADAPTER_NR(adapter_nr);
 
 static struct pt1_adapter *
-pt1_alloc_adapter(struct pt1 *pt1)
+pt1_alloc_adapter(struct pt1 *pt1, struct dvb_frontend *fe)
 {
 	struct pt1_adapter *adap;
 	void *buf;
@@ -651,8 +551,8 @@ pt1_alloc_adapter(struct pt1 *pt1)
 
 	adap->pt1 = pt1;
 
-	adap->voltage = SEC_VOLTAGE_OFF;
-	adap->sleep = 1;
+	adap->orig_set_voltage = fe->ops.set_voltage;
+	fe->ops.set_voltage = pt1_set_voltage;
 
 	buf = (u8 *)__get_free_page(GFP_KERNEL);
 	if (!buf) {
@@ -663,7 +563,6 @@ pt1_alloc_adapter(struct pt1 *pt1)
 	adap->buf = buf;
 	adap->upacket_count = 0;
 	adap->packet_count = 0;
-	adap->st_count = -1;
 
 	dvb_adap = &adap->adap;
 	dvb_adap->priv = adap;
@@ -692,8 +591,19 @@ pt1_alloc_adapter(struct pt1 *pt1)
 	if (ret < 0)
 		goto err_dmx_release;
 
+	dvb_net_init(dvb_adap, &adap->net, &demux->dmx);
+
+	ret = dvb_register_frontend(dvb_adap, fe);
+	if (ret < 0)
+		goto err_net_release;
+	adap->fe = fe;
+
 	return adap;
 
+err_net_release:
+	dvb_net_release(&adap->net);
+	adap->demux.dmx.close(&adap->demux.dmx);
+	dvb_dmxdev_release(&adap->dmxdev);
 err_dmx_release:
 	dvb_dmx_release(demux);
 err_unregister_adapter:
@@ -713,62 +623,6 @@ static void pt1_cleanup_adapters(struct pt1 *pt1)
 		pt1_free_adapter(pt1->adaps[i]);
 }
 
-static int pt1_init_adapters(struct pt1 *pt1)
-{
-	int i;
-	struct pt1_adapter *adap;
-	int ret;
-
-	for (i = 0; i < PT1_NR_ADAPS; i++) {
-		adap = pt1_alloc_adapter(pt1);
-		if (IS_ERR(adap)) {
-			ret = PTR_ERR(adap);
-			goto err;
-		}
-
-		adap->index = i;
-		pt1->adaps[i] = adap;
-	}
-	return 0;
-
-err:
-	while (i--)
-		pt1_free_adapter(pt1->adaps[i]);
-
-	return ret;
-}
-
-static void pt1_cleanup_frontend(struct pt1_adapter *adap)
-{
-	dvb_unregister_frontend(adap->fe);
-}
-
-static int pt1_init_frontend(struct pt1_adapter *adap, struct dvb_frontend *fe)
-{
-	int ret;
-
-	adap->orig_set_voltage = fe->ops.set_voltage;
-	adap->orig_sleep = fe->ops.sleep;
-	adap->orig_init = fe->ops.init;
-	fe->ops.set_voltage = pt1_set_voltage;
-	fe->ops.sleep = pt1_sleep;
-	fe->ops.init = pt1_wakeup;
-
-	ret = dvb_register_frontend(&adap->adap, fe);
-	if (ret < 0)
-		return ret;
-
-	adap->fe = fe;
-	return 0;
-}
-
-static void pt1_cleanup_frontends(struct pt1 *pt1)
-{
-	int i;
-	for (i = 0; i < PT1_NR_ADAPS; i++)
-		pt1_cleanup_frontend(pt1->adaps[i]);
-}
-
 struct pt1_config {
 	struct va1j5jf8007s_config va1j5jf8007s_config;
 	struct va1j5jf8007t_config va1j5jf8007t_config;
@@ -776,63 +630,29 @@ struct pt1_config {
 
 static const struct pt1_config pt1_configs[2] = {
 	{
-		{
-			.demod_address = 0x1b,
-			.frequency = VA1J5JF8007S_20MHZ,
-		},
-		{
-			.demod_address = 0x1a,
-			.frequency = VA1J5JF8007T_20MHZ,
-		},
+		{ .demod_address = 0x1b },
+		{ .demod_address = 0x1a },
 	}, {
-		{
-			.demod_address = 0x19,
-			.frequency = VA1J5JF8007S_20MHZ,
-		},
-		{
-			.demod_address = 0x18,
-			.frequency = VA1J5JF8007T_20MHZ,
-		},
+		{ .demod_address = 0x19 },
+		{ .demod_address = 0x18 },
 	},
 };
 
-static const struct pt1_config pt2_configs[2] = {
-	{
-		{
-			.demod_address = 0x1b,
-			.frequency = VA1J5JF8007S_25MHZ,
-		},
-		{
-			.demod_address = 0x1a,
-			.frequency = VA1J5JF8007T_25MHZ,
-		},
-	}, {
-		{
-			.demod_address = 0x19,
-			.frequency = VA1J5JF8007S_25MHZ,
-		},
-		{
-			.demod_address = 0x18,
-			.frequency = VA1J5JF8007T_25MHZ,
-		},
-	},
-};
-
-static int pt1_init_frontends(struct pt1 *pt1)
+static int pt1_init_adapters(struct pt1 *pt1)
 {
 	int i, j;
 	struct i2c_adapter *i2c_adap;
-	const struct pt1_config *configs, *config;
+	const struct pt1_config *config;
 	struct dvb_frontend *fe[4];
+	struct pt1_adapter *adap;
 	int ret;
 
 	i = 0;
 	j = 0;
 
 	i2c_adap = &pt1->i2c_adap;
-	configs = pt1->pdev->device == 0x211a ? pt1_configs : pt2_configs;
 	do {
-		config = &configs[i / 2];
+		config = &pt1_configs[i / 2];
 
 		fe[i] = va1j5jf8007s_attach(&config->va1j5jf8007s_config,
 					    i2c_adap);
@@ -861,9 +681,11 @@ static int pt1_init_frontends(struct pt1 *pt1)
 	} while (i < 4);
 
 	do {
-		ret = pt1_init_frontend(pt1->adaps[j], fe[j]);
-		if (ret < 0)
+		adap = pt1_alloc_adapter(pt1, fe[j]);
+		if (IS_ERR(adap))
 			goto err;
+		adap->index = j;
+		pt1->adaps[j] = adap;
 	} while (++j < 4);
 
 	return 0;
@@ -873,7 +695,7 @@ err:
 		fe[i]->ops.release(fe[i]);
 
 	while (j--)
-		dvb_unregister_frontend(fe[j]);
+		pt1_free_adapter(pt1->adaps[j]);
 
 	return ret;
 }
@@ -1066,15 +888,11 @@ static void __devexit pt1_remove(struct pci_dev *pdev)
 	pt1 = pci_get_drvdata(pdev);
 	regs = pt1->regs;
 
-	if (pt1->kthread)
-		kthread_stop(pt1->kthread);
+	kthread_stop(pt1->kthread);
 	pt1_cleanup_tables(pt1);
-	pt1_cleanup_frontends(pt1);
-	pt1_disable_ram(pt1);
-	pt1->power = 0;
-	pt1->reset = 1;
-	pt1_update_power(pt1);
 	pt1_cleanup_adapters(pt1);
+	pt1_disable_ram(pt1);
+	pt1_set_power(pt1, 0, 0, 1);
 	i2c_del_adapter(&pt1->i2c_adap);
 	pci_set_drvdata(pdev, NULL);
 	kfree(pt1);
@@ -1090,6 +908,7 @@ pt1_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	void __iomem *regs;
 	struct pt1 *pt1;
 	struct i2c_adapter *i2c_adap;
+	struct task_struct *kthread;
 
 	ret = pci_enable_device(pdev);
 	if (ret < 0)
@@ -1117,30 +936,21 @@ pt1_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		goto err_pci_iounmap;
 	}
 
-	mutex_init(&pt1->lock);
 	pt1->pdev = pdev;
 	pt1->regs = regs;
 	pci_set_drvdata(pdev, pt1);
 
-	ret = pt1_init_adapters(pt1);
-	if (ret < 0)
-		goto err_kfree;
-
-	mutex_init(&pt1->lock);
-
-	pt1->power = 0;
-	pt1->reset = 1;
-	pt1_update_power(pt1);
-
 	i2c_adap = &pt1->i2c_adap;
+	i2c_adap->class = I2C_CLASS_TV_DIGITAL;
 	i2c_adap->algo = &pt1_i2c_algo;
 	i2c_adap->algo_data = NULL;
 	i2c_adap->dev.parent = &pdev->dev;
-	strcpy(i2c_adap->name, DRIVER_NAME);
 	i2c_set_adapdata(i2c_adap, pt1);
 	ret = i2c_add_adapter(i2c_adap);
 	if (ret < 0)
-		goto err_pt1_cleanup_adapters;
+		goto err_kfree;
+
+	pt1_set_power(pt1, 0, 0, 1);
 
 	pt1_i2c_init(pt1);
 	pt1_i2c_wait(pt1);
@@ -1169,35 +979,38 @@ pt1_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	pt1_init_streams(pt1);
 
-	pt1->power = 1;
-	pt1_update_power(pt1);
+	pt1_set_power(pt1, 1, 0, 1);
 	schedule_timeout_uninterruptible((HZ + 49) / 50);
 
-	pt1->reset = 0;
-	pt1_update_power(pt1);
+	pt1_set_power(pt1, 1, 0, 0);
 	schedule_timeout_uninterruptible((HZ + 999) / 1000);
 
-	ret = pt1_init_frontends(pt1);
+	ret = pt1_init_adapters(pt1);
 	if (ret < 0)
 		goto err_pt1_disable_ram;
 
 	ret = pt1_init_tables(pt1);
 	if (ret < 0)
-		goto err_pt1_cleanup_frontends;
+		goto err_pt1_cleanup_adapters;
 
+	kthread = kthread_run(pt1_thread, pt1, "pt1");
+	if (IS_ERR(kthread)) {
+		ret = PTR_ERR(kthread);
+		goto err_pt1_cleanup_tables;
+	}
+
+	pt1->kthread = kthread;
 	return 0;
 
-err_pt1_cleanup_frontends:
-	pt1_cleanup_frontends(pt1);
-err_pt1_disable_ram:
-	pt1_disable_ram(pt1);
-	pt1->power = 0;
-	pt1->reset = 1;
-	pt1_update_power(pt1);
-err_i2c_del_adapter:
-	i2c_del_adapter(i2c_adap);
+err_pt1_cleanup_tables:
+	pt1_cleanup_tables(pt1);
 err_pt1_cleanup_adapters:
 	pt1_cleanup_adapters(pt1);
+err_pt1_disable_ram:
+	pt1_disable_ram(pt1);
+	pt1_set_power(pt1, 0, 0, 1);
+err_i2c_del_adapter:
+	i2c_del_adapter(i2c_adap);
 err_kfree:
 	pci_set_drvdata(pdev, NULL);
 	kfree(pt1);
@@ -1214,7 +1027,6 @@ err:
 
 static struct pci_device_id pt1_id_table[] = {
 	{ PCI_DEVICE(0x10ee, 0x211a) },
-	{ PCI_DEVICE(0x10ee, 0x222a) },
 	{ },
 };
 MODULE_DEVICE_TABLE(pci, pt1_id_table);
@@ -1242,5 +1054,5 @@ module_init(pt1_init);
 module_exit(pt1_cleanup);
 
 MODULE_AUTHOR("Takahito HIRANO <hiranotaka@zng.info>");
-MODULE_DESCRIPTION("Earthsoft PT1/PT2 Driver");
+MODULE_DESCRIPTION("Earthsoft PT1 Driver");
 MODULE_LICENSE("GPL");

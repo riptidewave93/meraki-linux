@@ -9,7 +9,7 @@ MODULE_AUTHOR("Bart De Schuymer <bdschuym@pandora.be>");
 MODULE_DESCRIPTION("arptables arp payload mangle target");
 
 static unsigned int
-target(struct sk_buff *skb, const struct xt_action_param *par)
+target(struct sk_buff *skb, const struct xt_target_param *par)
 {
 	const struct arpt_mangle *mangle = par->targinfo;
 	const struct arphdr *arp;
@@ -54,18 +54,18 @@ target(struct sk_buff *skb, const struct xt_action_param *par)
 	return mangle->target;
 }
 
-static int checkentry(const struct xt_tgchk_param *par)
+static bool checkentry(const struct xt_tgchk_param *par)
 {
 	const struct arpt_mangle *mangle = par->targinfo;
 
 	if (mangle->flags & ~ARPT_MANGLE_MASK ||
 	    !(mangle->flags & ARPT_MANGLE_MASK))
-		return -EINVAL;
+		return false;
 
 	if (mangle->target != NF_DROP && mangle->target != NF_ACCEPT &&
-	   mangle->target != XT_CONTINUE)
-		return -EINVAL;
-	return 0;
+	   mangle->target != ARPT_CONTINUE)
+		return false;
+	return true;
 }
 
 static struct xt_target arpt_mangle_reg __read_mostly = {

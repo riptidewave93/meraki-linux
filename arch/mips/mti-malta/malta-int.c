@@ -25,6 +25,7 @@
 #include <linux/irq.h>
 #include <linux/sched.h>
 #include <linux/smp.h>
+#include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/kernel_stat.h>
@@ -44,7 +45,6 @@
 #include <asm/msc01_ic.h>
 #include <asm/gic.h>
 #include <asm/gcmpregs.h>
-#include <asm/setup.h>
 
 int gcmp_present = -1;
 int gic_present;
@@ -52,7 +52,7 @@ static unsigned long _msc01_biu_base;
 static unsigned long _gcmp_base;
 static unsigned int ipi_map[NR_CPUS];
 
-static DEFINE_RAW_SPINLOCK(mips_irq_lock);
+static DEFINE_SPINLOCK(mips_irq_lock);
 
 static inline int mips_pcibios_iack(void)
 {
@@ -102,7 +102,7 @@ static inline int get_int(void)
 {
 	unsigned long flags;
 	int irq;
-	raw_spin_lock_irqsave(&mips_irq_lock, flags);
+	spin_lock_irqsave(&mips_irq_lock, flags);
 
 	irq = mips_pcibios_iack();
 
@@ -112,7 +112,7 @@ static inline int get_int(void)
 	 * on an SMP system,  so leave it up to the generic code...
 	 */
 
-	raw_spin_unlock_irqrestore(&mips_irq_lock, flags);
+	spin_unlock_irqrestore(&mips_irq_lock, flags);
 
 	return irq;
 }
@@ -309,8 +309,6 @@ static void ipi_call_dispatch(void)
 
 static irqreturn_t ipi_resched_interrupt(int irq, void *dev_id)
 {
-	scheduler_ipi();
-
 	return IRQ_HANDLED;
 }
 
@@ -323,13 +321,13 @@ static irqreturn_t ipi_call_interrupt(int irq, void *dev_id)
 
 static struct irqaction irq_resched = {
 	.handler	= ipi_resched_interrupt,
-	.flags		= IRQF_PERCPU,
+	.flags		= IRQF_DISABLED|IRQF_PERCPU,
 	.name		= "IPI_resched"
 };
 
 static struct irqaction irq_call = {
 	.handler	= ipi_call_interrupt,
-	.flags		= IRQF_PERCPU,
+	.flags		= IRQF_DISABLED|IRQF_PERCPU,
 	.name		= "IPI_call"
 };
 #endif /* CONFIG_MIPS_MT_SMP */
@@ -351,14 +349,12 @@ unsigned int plat_ipi_resched_int_xlate(unsigned int cpu)
 
 static struct irqaction i8259irq = {
 	.handler = no_action,
-	.name = "XT-PIC cascade",
-	.flags = IRQF_NO_THREAD,
+	.name = "XT-PIC cascade"
 };
 
 static struct irqaction corehi_irqaction = {
 	.handler = no_action,
-	.name = "CoreHi",
-	.flags = IRQF_NO_THREAD,
+	.name = "CoreHi"
 };
 
 static msc_irqmap_t __initdata msc_irqmap[] = {
@@ -389,8 +385,6 @@ static int __initdata msc_nr_eicirqs = ARRAY_SIZE(msc_eicirqmap);
  */
 
 #define GIC_CPU_NMI GIC_MAP_TO_NMI_MSK
-#define X GIC_UNUSED
-
 static struct gic_intr_map gic_intr_map[GIC_NUM_INTRS] = {
 	{ X, X,		   X,		X,		0 },
 	{ X, X,		   X,	 	X,		0 },
@@ -410,7 +404,6 @@ static struct gic_intr_map gic_intr_map[GIC_NUM_INTRS] = {
 	{ X, X,		   X,		X,	        0 },
 	/* The remainder of this table is initialised by fill_ipi_map */
 };
-#undef X
 
 /*
  * GCMP needs to be detected before any SMP initialisation
@@ -476,7 +469,7 @@ static void __init fill_ipi_map(void)
 void __init arch_init_ipiirq(int irq, struct irqaction *action)
 {
 	setup_irq(irq, action);
-	irq_set_handler(irq, handle_percpu_irq);
+	set_irq_handler(irq, handle_percpu_irq);
 }
 
 void __init arch_init_irq(void)

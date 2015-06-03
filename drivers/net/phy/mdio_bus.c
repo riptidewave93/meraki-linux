@@ -37,35 +37,22 @@
 #include <asm/uaccess.h>
 
 /**
- * mdiobus_alloc_size - allocate a mii_bus structure
- * @size: extra amount of memory to allocate for private storage.
- * If non-zero, then bus->priv is points to that memory.
+ * mdiobus_alloc - allocate a mii_bus structure
  *
  * Description: called by a bus driver to allocate an mii_bus
  * structure to fill in.
  */
-struct mii_bus *mdiobus_alloc_size(size_t size)
+struct mii_bus *mdiobus_alloc(void)
 {
 	struct mii_bus *bus;
-	size_t aligned_size = ALIGN(sizeof(*bus), NETDEV_ALIGN);
-	size_t alloc_size;
 
-	/* If we alloc extra space, it should be aligned */
-	if (size)
-		alloc_size = aligned_size + size;
-	else
-		alloc_size = sizeof(*bus);
-
-	bus = kzalloc(alloc_size, GFP_KERNEL);
-	if (bus) {
+	bus = kzalloc(sizeof(*bus), GFP_KERNEL);
+	if (bus != NULL)
 		bus->state = MDIOBUS_ALLOCATED;
-		if (size)
-			bus->priv = (void *)bus + aligned_size;
-	}
 
 	return bus;
 }
-EXPORT_SYMBOL(mdiobus_alloc_size);
+EXPORT_SYMBOL(mdiobus_alloc);
 
 /**
  * mdiobus_release - mii_bus device release callback
@@ -221,7 +208,7 @@ EXPORT_SYMBOL(mdiobus_scan);
  * because the bus read/write functions may wait for an interrupt
  * to conclude the operation.
  */
-int mdiobus_read(struct mii_bus *bus, int addr, u32 regnum)
+int mdiobus_read(struct mii_bus *bus, int addr, u16 regnum)
 {
 	int retval;
 
@@ -246,7 +233,7 @@ EXPORT_SYMBOL(mdiobus_read);
  * because the bus read/write functions may wait for an interrupt
  * to conclude the operation.
  */
-int mdiobus_write(struct mii_bus *bus, int addr, u32 regnum, u16 val)
+int mdiobus_write(struct mii_bus *bus, int addr, u16 regnum, u16 val)
 {
 	int err;
 
@@ -276,8 +263,6 @@ static int mdio_bus_match(struct device *dev, struct device_driver *drv)
 	return ((phydrv->phy_id & phydrv->phy_id_mask) ==
 		(phydev->phy_id & phydrv->phy_id_mask));
 }
-
-#ifdef CONFIG_PM
 
 static bool mdio_bus_phy_may_suspend(struct phy_device *phydev)
 {
@@ -310,88 +295,34 @@ static bool mdio_bus_phy_may_suspend(struct phy_device *phydev)
 	return true;
 }
 
-static int mdio_bus_suspend(struct device *dev)
+/* Suspend and resume.  Copied from platform_suspend and
+ * platform_resume
+ */
+static int mdio_bus_suspend(struct device * dev, pm_message_t state)
 {
 	struct phy_driver *phydrv = to_phy_driver(dev->driver);
 	struct phy_device *phydev = to_phy_device(dev);
 
-	/*
-	 * We must stop the state machine manually, otherwise it stops out of
-	 * control, possibly with the phydev->lock held. Upon resume, netdev
-	 * may call phy routines that try to grab the same lock, and that may
-	 * lead to a deadlock.
-	 */
-	if (phydev->attached_dev && phydev->adjust_link)
-		phy_stop_machine(phydev);
-
 	if (!mdio_bus_phy_may_suspend(phydev))
 		return 0;
-
 	return phydrv->suspend(phydev);
 }
 
-static int mdio_bus_resume(struct device *dev)
+static int mdio_bus_resume(struct device * dev)
 {
 	struct phy_driver *phydrv = to_phy_driver(dev->driver);
 	struct phy_device *phydev = to_phy_device(dev);
-	int ret;
 
 	if (!mdio_bus_phy_may_suspend(phydev))
-		goto no_resume;
-
-	ret = phydrv->resume(phydev);
-	if (ret < 0)
-		return ret;
-
-no_resume:
-	if (phydev->attached_dev && phydev->adjust_link)
-		phy_start_machine(phydev, NULL);
-
-	return 0;
-}
-
-static int mdio_bus_restore(struct device *dev)
-{
-	struct phy_device *phydev = to_phy_device(dev);
-	struct net_device *netdev = phydev->attached_dev;
-	int ret;
-
-	if (!netdev)
 		return 0;
-
-	ret = phy_init_hw(phydev);
-	if (ret < 0)
-		return ret;
-
-	/* The PHY needs to renegotiate. */
-	phydev->link = 0;
-	phydev->state = PHY_UP;
-
-	phy_start_machine(phydev, NULL);
-
-	return 0;
+	return phydrv->resume(phydev);
 }
-
-static struct dev_pm_ops mdio_bus_pm_ops = {
-	.suspend = mdio_bus_suspend,
-	.resume = mdio_bus_resume,
-	.freeze = mdio_bus_suspend,
-	.thaw = mdio_bus_resume,
-	.restore = mdio_bus_restore,
-};
-
-#define MDIO_BUS_PM_OPS (&mdio_bus_pm_ops)
-
-#else
-
-#define MDIO_BUS_PM_OPS NULL
-
-#endif /* CONFIG_PM */
 
 struct bus_type mdio_bus_type = {
 	.name		= "mdio_bus",
 	.match		= mdio_bus_match,
-	.pm		= MDIO_BUS_PM_OPS,
+	.suspend	= mdio_bus_suspend,
+	.resume		= mdio_bus_resume,
 };
 EXPORT_SYMBOL(mdio_bus_type);
 

@@ -2,7 +2,6 @@
  *    pata_efar.c - EFAR PIIX clone controller driver
  *
  *	(C) 2005 Red Hat
- *	(C) 2009-2010 Bartlomiej Zolnierkiewicz
  *
  *    Some parts based on ata_piix.c by Jeff Garzik and others.
  *
@@ -68,12 +67,10 @@ static int efar_cable_detect(struct ata_port *ap)
 	return ATA_CBL_PATA80;
 }
 
-static DEFINE_SPINLOCK(efar_lock);
-
 /**
  *	efar_set_piomode - Initialize host controller PATA PIO timings
  *	@ap: Port whose timings we are configuring
- *	@adev: Device to program
+ *	@adev: um
  *
  *	Set PIO mode for device, in host controller PCI config space.
  *
@@ -85,10 +82,8 @@ static void efar_set_piomode (struct ata_port *ap, struct ata_device *adev)
 {
 	unsigned int pio	= adev->pio_mode - XFER_PIO_0;
 	struct pci_dev *dev	= to_pci_dev(ap->host->dev);
-	unsigned int master_port = ap->port_no ? 0x42 : 0x40;
-	unsigned long flags;
-	u16 master_data;
-	u8 udma_enable;
+	unsigned int idetm_port= ap->port_no ? 0x42 : 0x40;
+	u16 idetm_data;
 	int control = 0;
 
 	/*
@@ -111,37 +106,30 @@ static void efar_set_piomode (struct ata_port *ap, struct ata_device *adev)
 	if (adev->class == ATA_DEV_ATA)
 		control |= 4;	/* PPE */
 
-	spin_lock_irqsave(&efar_lock, flags);
-
-	pci_read_config_word(dev, master_port, &master_data);
+	pci_read_config_word(dev, idetm_port, &idetm_data);
 
 	/* Set PPE, IE, and TIME as appropriate */
 	if (adev->devno == 0) {
-		master_data &= 0xCCF0;
-		master_data |= control;
-		master_data |= (timings[pio][0] << 12) |
+		idetm_data &= 0xCCF0;
+		idetm_data |= control;
+		idetm_data |= (timings[pio][0] << 12) |
 			(timings[pio][1] << 8);
 	} else {
 		int shift = 4 * ap->port_no;
 		u8 slave_data;
 
-		master_data &= 0xFF0F;
-		master_data |= (control << 4);
+		idetm_data &= 0xCC0F;
+		idetm_data |= (control << 4);
 
 		/* Slave timing in separate register */
 		pci_read_config_byte(dev, 0x44, &slave_data);
-		slave_data &= ap->port_no ? 0x0F : 0xF0;
+		slave_data &= 0x0F << shift;
 		slave_data |= ((timings[pio][0] << 2) | timings[pio][1]) << shift;
 		pci_write_config_byte(dev, 0x44, slave_data);
 	}
 
-	master_data |= 0x4000;	/* Ensure SITRE is set */
-	pci_write_config_word(dev, master_port, master_data);
-
-	pci_read_config_byte(dev, 0x48, &udma_enable);
-	udma_enable &= ~(1 << (2 * ap->port_no + adev->devno));
-	pci_write_config_byte(dev, 0x48, udma_enable);
-	spin_unlock_irqrestore(&efar_lock, flags);
+	idetm_data |= 0x4000;	/* Ensure SITRE is set */
+	pci_write_config_word(dev, idetm_port, idetm_data);
 }
 
 /**
@@ -162,7 +150,6 @@ static void efar_set_dmamode (struct ata_port *ap, struct ata_device *adev)
 	u16 master_data;
 	u8 speed		= adev->dma_mode;
 	int devid		= adev->devno + 2 * ap->port_no;
-	unsigned long flags;
 	u8 udma_enable;
 
 	static const	 /* ISP  RTC */
@@ -171,8 +158,6 @@ static void efar_set_dmamode (struct ata_port *ap, struct ata_device *adev)
 			    { 1, 0 },
 			    { 2, 1 },
 			    { 2, 3 }, };
-
-	spin_lock_irqsave(&efar_lock, flags);
 
 	pci_read_config_word(dev, master_port, &master_data);
 	pci_read_config_byte(dev, 0x48, &udma_enable);
@@ -215,7 +200,7 @@ static void efar_set_dmamode (struct ata_port *ap, struct ata_device *adev)
 			master_data &= 0xFF4F;  /* Mask out IORDY|TIME1|DMAONLY */
 			master_data |= control << 4;
 			pci_read_config_byte(dev, 0x44, &slave_data);
-			slave_data &= ap->port_no ? 0x0F : 0xF0;
+			slave_data &= (0x0F + 0xE1 * ap->port_no);
 			/* Load the matching timing */
 			slave_data |= ((timings[pio][0] << 2) | timings[pio][1]) << (ap->port_no ? 4 : 0);
 			pci_write_config_byte(dev, 0x44, slave_data);
@@ -231,7 +216,6 @@ static void efar_set_dmamode (struct ata_port *ap, struct ata_device *adev)
 		pci_write_config_word(dev, master_port, master_data);
 	}
 	pci_write_config_byte(dev, 0x48, udma_enable);
-	spin_unlock_irqrestore(&efar_lock, flags);
 }
 
 static struct scsi_host_template efar_sht = {
@@ -263,19 +247,21 @@ static struct ata_port_operations efar_ops = {
 
 static int efar_init_one (struct pci_dev *pdev, const struct pci_device_id *ent)
 {
+	static int printed_version;
 	static const struct ata_port_info info = {
 		.flags		= ATA_FLAG_SLAVE_POSS,
 		.pio_mask	= ATA_PIO4,
-		.mwdma_mask	= ATA_MWDMA12_ONLY,
+		.mwdma_mask	= ATA_MWDMA2,
 		.udma_mask 	= ATA_UDMA4,
 		.port_ops	= &efar_ops,
 	};
-	const struct ata_port_info *ppi[] = { &info, &info };
+	const struct ata_port_info *ppi[] = { &info, NULL };
 
-	ata_print_version_once(&pdev->dev, DRV_VERSION);
+	if (!printed_version++)
+		dev_printk(KERN_DEBUG, &pdev->dev,
+			   "version " DRV_VERSION "\n");
 
-	return ata_pci_bmdma_init_one(pdev, ppi, &efar_sht, NULL,
-				      ATA_HOST_PARALLEL_SCAN);
+	return ata_pci_sff_init_one(pdev, ppi, &efar_sht, NULL);
 }
 
 static const struct pci_device_id efar_pci_tbl[] = {

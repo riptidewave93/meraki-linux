@@ -26,31 +26,27 @@
 #include <linux/time.h>
 #include <linux/mm.h>
 #include <linux/stat.h>
+#include <linux/slab.h>
 #include <linux/pagemap.h>
+#include <linux/smp_lock.h>
 #include <linux/buffer_head.h>
 #include "udf_i.h"
 
-static void udf_pc_to_char(struct super_block *sb, unsigned char *from,
-			   int fromlen, unsigned char *to)
+static void udf_pc_to_char(struct super_block *sb, char *from, int fromlen,
+			   char *to)
 {
 	struct pathComponent *pc;
 	int elen = 0;
-	unsigned char *p = to;
+	char *p = to;
 
 	while (elen < fromlen) {
 		pc = (struct pathComponent *)(from + elen);
 		switch (pc->componentType) {
 		case 1:
-			/*
-			 * Symlink points to some place which should be agreed
- 			 * upon between originator and receiver of the media. Ignore.
-			 */
-			if (pc->lengthComponentIdent > 0)
-				break;
-			/* Fall through */
-		case 2:
-			p = to;
-			*p++ = '/';
+			if (pc->lengthComponentIdent == 0) {
+				p = to;
+				*p++ = '/';
+			}
 			break;
 		case 3:
 			memcpy(p, "../", 3);
@@ -79,20 +75,17 @@ static int udf_symlink_filler(struct file *file, struct page *page)
 {
 	struct inode *inode = page->mapping->host;
 	struct buffer_head *bh = NULL;
-	unsigned char *symlink;
+	char *symlink;
 	int err = -EIO;
-	unsigned char *p = kmap(page);
+	char *p = kmap(page);
 	struct udf_inode_info *iinfo;
-	uint32_t pos;
 
+	lock_kernel();
 	iinfo = UDF_I(inode);
-	pos = udf_block_map(inode, 0);
-
-	down_read(&iinfo->i_data_sem);
 	if (iinfo->i_alloc_type == ICBTAG_FLAG_AD_IN_ICB) {
 		symlink = iinfo->i_ext.i_data + iinfo->i_lenEAttr;
 	} else {
-		bh = sb_bread(inode->i_sb, pos);
+		bh = sb_bread(inode->i_sb, udf_block_map(inode, 0));
 
 		if (!bh)
 			goto out;
@@ -103,14 +96,14 @@ static int udf_symlink_filler(struct file *file, struct page *page)
 	udf_pc_to_char(inode->i_sb, symlink, inode->i_size, p);
 	brelse(bh);
 
-	up_read(&iinfo->i_data_sem);
+	unlock_kernel();
 	SetPageUptodate(page);
 	kunmap(page);
 	unlock_page(page);
 	return 0;
 
 out:
-	up_read(&iinfo->i_data_sem);
+	unlock_kernel();
 	SetPageError(page);
 	kunmap(page);
 	unlock_page(page);

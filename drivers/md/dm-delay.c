@@ -20,7 +20,6 @@
 struct delay_c {
 	struct timer_list delay_timer;
 	struct mutex timer_lock;
-	struct workqueue_struct *kdelayd_wq;
 	struct work_struct flush_expired_bios;
 	struct list_head delayed_bios;
 	atomic_t may_delay;
@@ -46,13 +45,14 @@ struct dm_delay_info {
 
 static DEFINE_MUTEX(delayed_bios_lock);
 
+static struct workqueue_struct *kdelayd_wq;
 static struct kmem_cache *delayed_cache;
 
 static void handle_delayed_timer(unsigned long data)
 {
 	struct delay_c *dc = (struct delay_c *)data;
 
-	queue_work(dc->kdelayd_wq, &dc->flush_expired_bios);
+	queue_work(kdelayd_wq, &dc->flush_expired_bios);
 }
 
 static void queue_timeout(struct delay_c *dc, unsigned long expires)
@@ -131,7 +131,6 @@ static int delay_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 {
 	struct delay_c *dc;
 	unsigned long long tmpll;
-	char dummy;
 
 	if (argc != 3 && argc != 6) {
 		ti->error = "requires exactly 3 or 6 arguments";
@@ -146,19 +145,19 @@ static int delay_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 
 	dc->reads = dc->writes = 0;
 
-	if (sscanf(argv[1], "%llu%c", &tmpll, &dummy) != 1) {
+	if (sscanf(argv[1], "%llu", &tmpll) != 1) {
 		ti->error = "Invalid device sector";
 		goto bad;
 	}
 	dc->start_read = tmpll;
 
-	if (sscanf(argv[2], "%u%c", &dc->read_delay, &dummy) != 1) {
+	if (sscanf(argv[2], "%u", &dc->read_delay) != 1) {
 		ti->error = "Invalid delay";
 		goto bad;
 	}
 
-	if (dm_get_device(ti, argv[0], dm_table_get_mode(ti->table),
-			  &dc->dev_read)) {
+	if (dm_get_device(ti, argv[0], dc->start_read, ti->len,
+			  dm_table_get_mode(ti->table), &dc->dev_read)) {
 		ti->error = "Device lookup failed";
 		goto bad;
 	}
@@ -167,19 +166,19 @@ static int delay_ctr(struct dm_target *ti, unsigned int argc, char **argv)
 	if (argc == 3)
 		goto out;
 
-	if (sscanf(argv[4], "%llu%c", &tmpll, &dummy) != 1) {
+	if (sscanf(argv[4], "%llu", &tmpll) != 1) {
 		ti->error = "Invalid write device sector";
 		goto bad_dev_read;
 	}
 	dc->start_write = tmpll;
 
-	if (sscanf(argv[5], "%u%c", &dc->write_delay, &dummy) != 1) {
+	if (sscanf(argv[5], "%u", &dc->write_delay) != 1) {
 		ti->error = "Invalid write delay";
 		goto bad_dev_read;
 	}
 
-	if (dm_get_device(ti, argv[3], dm_table_get_mode(ti->table),
-			  &dc->dev_write)) {
+	if (dm_get_device(ti, argv[3], dc->start_write, ti->len,
+			  dm_table_get_mode(ti->table), &dc->dev_write)) {
 		ti->error = "Write device lookup failed";
 		goto bad_dev_read;
 	}
@@ -191,12 +190,6 @@ out:
 		goto bad_dev_write;
 	}
 
-	dc->kdelayd_wq = alloc_workqueue("kdelayd", WQ_MEM_RECLAIM, 0);
-	if (!dc->kdelayd_wq) {
-		DMERR("Couldn't start kdelayd");
-		goto bad_queue;
-	}
-
 	setup_timer(&dc->delay_timer, handle_delayed_timer, (unsigned long)dc);
 
 	INIT_WORK(&dc->flush_expired_bios, flush_expired_bios);
@@ -205,12 +198,9 @@ out:
 	atomic_set(&dc->may_delay, 1);
 
 	ti->num_flush_requests = 1;
-	ti->num_discard_requests = 1;
 	ti->private = dc;
 	return 0;
 
-bad_queue:
-	mempool_destroy(dc->delayed_pool);
 bad_dev_write:
 	if (dc->dev_write)
 		dm_put_device(ti, dc->dev_write);
@@ -225,7 +215,7 @@ static void delay_dtr(struct dm_target *ti)
 {
 	struct delay_c *dc = ti->private;
 
-	destroy_workqueue(dc->kdelayd_wq);
+	flush_workqueue(kdelayd_wq);
 
 	dm_put_device(ti, dc->dev_read);
 
@@ -291,19 +281,20 @@ static int delay_map(struct dm_target *ti, struct bio *bio,
 		bio->bi_bdev = dc->dev_write->bdev;
 		if (bio_sectors(bio))
 			bio->bi_sector = dc->start_write +
-					 dm_target_offset(ti, bio->bi_sector);
+					 (bio->bi_sector - ti->begin);
 
 		return delay_bio(dc, dc->write_delay, bio);
 	}
 
 	bio->bi_bdev = dc->dev_read->bdev;
-	bio->bi_sector = dc->start_read + dm_target_offset(ti, bio->bi_sector);
+	bio->bi_sector = dc->start_read +
+			 (bio->bi_sector - ti->begin);
 
 	return delay_bio(dc, dc->read_delay, bio);
 }
 
-static void delay_status(struct dm_target *ti, status_type_t type,
-			 char *result, unsigned maxlen)
+static int delay_status(struct dm_target *ti, status_type_t type,
+			char *result, unsigned maxlen)
 {
 	struct delay_c *dc = ti->private;
 	int sz = 0;
@@ -323,6 +314,8 @@ static void delay_status(struct dm_target *ti, status_type_t type,
 			       dc->write_delay);
 		break;
 	}
+
+	return 0;
 }
 
 static int delay_iterate_devices(struct dm_target *ti,
@@ -359,6 +352,12 @@ static int __init dm_delay_init(void)
 {
 	int r = -ENOMEM;
 
+	kdelayd_wq = create_workqueue("kdelayd");
+	if (!kdelayd_wq) {
+		DMERR("Couldn't start kdelayd");
+		goto bad_queue;
+	}
+
 	delayed_cache = KMEM_CACHE(dm_delay_info, 0);
 	if (!delayed_cache) {
 		DMERR("Couldn't create delayed bio cache.");
@@ -376,6 +375,8 @@ static int __init dm_delay_init(void)
 bad_register:
 	kmem_cache_destroy(delayed_cache);
 bad_memcache:
+	destroy_workqueue(kdelayd_wq);
+bad_queue:
 	return r;
 }
 
@@ -383,6 +384,7 @@ static void __exit dm_delay_exit(void)
 {
 	dm_unregister_target(&delay_target);
 	kmem_cache_destroy(delayed_cache);
+	destroy_workqueue(kdelayd_wq);
 }
 
 /* Module hooks */

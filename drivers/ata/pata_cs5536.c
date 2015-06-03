@@ -1,7 +1,6 @@
 /*
  * pata_cs5536.c	- CS5536 PATA for new ATA layer
  *			  (C) 2007 Martin K. Petersen <mkp@mkp.net>
- *			  (C) 2011 Bartlomiej Zolnierkiewicz
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -38,34 +37,30 @@
 #include <linux/delay.h>
 #include <linux/libata.h>
 #include <scsi/scsi_host.h>
-
-#ifdef CONFIG_X86_32
 #include <asm/msr.h>
-static int use_msr;
-module_param_named(msr, use_msr, int, 0644);
-MODULE_PARM_DESC(msr, "Force using MSR to configure IDE function (Default: 0)");
-#else
-#undef rdmsr	/* avoid accidental MSR usage on, e.g. x86-64 */
-#undef wrmsr
-#define rdmsr(x, y, z) do { } while (0)
-#define wrmsr(x, y, z) do { } while (0)
-#define use_msr 0
-#endif
 
 #define DRV_NAME	"pata_cs5536"
-#define DRV_VERSION	"0.0.8"
+#define DRV_VERSION	"0.0.7"
 
 enum {
-	MSR_IDE_CFG		= 0x51300010,
-	PCI_IDE_CFG		= 0x40,
-
 	CFG			= 0,
-	DTC			= 2,
-	CAST			= 3,
-	ETC			= 4,
+	DTC			= 1,
+	CAST			= 2,
+	ETC			= 3,
 
-	IDE_CFG_CHANEN		= (1 << 1),
-	IDE_CFG_CABLE		= (1 << 17) | (1 << 16),
+	MSR_IDE_BASE		= 0x51300000,
+	MSR_IDE_CFG		= (MSR_IDE_BASE + 0x10),
+	MSR_IDE_DTC		= (MSR_IDE_BASE + 0x12),
+	MSR_IDE_CAST		= (MSR_IDE_BASE + 0x13),
+	MSR_IDE_ETC		= (MSR_IDE_BASE + 0x14),
+
+	PCI_IDE_CFG		= 0x40,
+	PCI_IDE_DTC		= 0x48,
+	PCI_IDE_CAST		= 0x4c,
+	PCI_IDE_ETC		= 0x50,
+
+	IDE_CFG_CHANEN		= 0x2,
+	IDE_CFG_CABLE		= 0x10000,
 
 	IDE_D0_SHIFT		= 24,
 	IDE_D1_SHIFT		= 16,
@@ -77,50 +72,47 @@ enum {
 	IDE_CAST_CMD_MASK	= 0xff,
 	IDE_CAST_CMD_SHIFT	= 24,
 
-	IDE_ETC_UDMA_MASK	= 0xc0,
+	IDE_ETC_NODMA		= 0x03,
 };
 
-static int cs5536_read(struct pci_dev *pdev, int reg, u32 *val)
+static int use_msr;
+
+static const u32 msr_reg[4] = {
+	MSR_IDE_CFG, MSR_IDE_DTC, MSR_IDE_CAST, MSR_IDE_ETC,
+};
+
+static const u8 pci_reg[4] = {
+	PCI_IDE_CFG, PCI_IDE_DTC, PCI_IDE_CAST, PCI_IDE_ETC,
+};
+
+static inline int cs5536_read(struct pci_dev *pdev, int reg, u32 *val)
 {
 	if (unlikely(use_msr)) {
-		u32 dummy __maybe_unused;
+		u32 dummy;
 
-		rdmsr(MSR_IDE_CFG + reg, *val, dummy);
+		rdmsr(msr_reg[reg], *val, dummy);
 		return 0;
 	}
 
-	return pci_read_config_dword(pdev, PCI_IDE_CFG + reg * 4, val);
+	return pci_read_config_dword(pdev, pci_reg[reg], val);
 }
 
-static int cs5536_write(struct pci_dev *pdev, int reg, int val)
+static inline int cs5536_write(struct pci_dev *pdev, int reg, int val)
 {
 	if (unlikely(use_msr)) {
-		wrmsr(MSR_IDE_CFG + reg, val, 0);
+		wrmsr(msr_reg[reg], val, 0);
 		return 0;
 	}
 
-	return pci_write_config_dword(pdev, PCI_IDE_CFG + reg * 4, val);
-}
-
-static void cs5536_program_dtc(struct ata_device *adev, u8 tim)
-{
-	struct pci_dev *pdev = to_pci_dev(adev->link->ap->host->dev);
-	int dshift = adev->devno ? IDE_D1_SHIFT : IDE_D0_SHIFT;
-	u32 dtc;
-
-	cs5536_read(pdev, DTC, &dtc);
-	dtc &= ~(IDE_DRV_MASK << dshift);
-	dtc |= tim << dshift;
-	cs5536_write(pdev, DTC, dtc);
+	return pci_write_config_dword(pdev, pci_reg[reg], val);
 }
 
 /**
  *	cs5536_cable_detect	-	detect cable type
  *	@ap: Port to detect on
  *
- *	Perform cable detection for ATA66 capable cable.
- *
- *	Returns a cable type.
+ *	Perform cable detection for ATA66 capable cable. Return a libata
+ *	cable type.
  */
 
 static int cs5536_cable_detect(struct ata_port *ap)
@@ -130,7 +122,7 @@ static int cs5536_cable_detect(struct ata_port *ap)
 
 	cs5536_read(pdev, CFG, &cfg);
 
-	if (cfg & IDE_CFG_CABLE)
+	if (cfg & (IDE_CFG_CABLE << ap->port_no))
 		return ATA_CBL_PATA80;
 	else
 		return ATA_CBL_PATA40;
@@ -160,15 +152,19 @@ static void cs5536_set_piomode(struct ata_port *ap, struct ata_device *adev)
 	struct ata_device *pair = ata_dev_pair(adev);
 	int mode = adev->pio_mode - XFER_PIO_0;
 	int cmdmode = mode;
+	int dshift = adev->devno ? IDE_D1_SHIFT : IDE_D0_SHIFT;
 	int cshift = adev->devno ? IDE_CAST_D1_SHIFT : IDE_CAST_D0_SHIFT;
-	u32 cast;
+	u32 dtc, cast, etc;
 
 	if (pair)
 		cmdmode = min(mode, pair->pio_mode - XFER_PIO_0);
 
-	cs5536_program_dtc(adev, drv_timings[mode]);
-
+	cs5536_read(pdev, DTC, &dtc);
 	cs5536_read(pdev, CAST, &cast);
+	cs5536_read(pdev, ETC, &etc);
+
+	dtc &= ~(IDE_DRV_MASK << dshift);
+	dtc |= drv_timings[mode] << dshift;
 
 	cast &= ~(IDE_CAST_DRV_MASK << cshift);
 	cast |= addr_timings[mode] << cshift;
@@ -176,7 +172,12 @@ static void cs5536_set_piomode(struct ata_port *ap, struct ata_device *adev)
 	cast &= ~(IDE_CAST_CMD_MASK << IDE_CAST_CMD_SHIFT);
 	cast |= cmd_timings[cmdmode] << IDE_CAST_CMD_SHIFT;
 
+	etc &= ~(IDE_DRV_MASK << dshift);
+	etc |= IDE_ETC_NODMA << dshift;
+
+	cs5536_write(pdev, DTC, dtc);
 	cs5536_write(pdev, CAST, cast);
+	cs5536_write(pdev, ETC, etc);
 }
 
 /**
@@ -197,21 +198,25 @@ static void cs5536_set_dmamode(struct ata_port *ap, struct ata_device *adev)
 	};
 
 	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
-	u32 etc;
+	u32 dtc, etc;
 	int mode = adev->dma_mode;
 	int dshift = adev->devno ? IDE_D1_SHIFT : IDE_D0_SHIFT;
 
-	cs5536_read(pdev, ETC, &etc);
-
 	if (mode >= XFER_UDMA_0) {
+		cs5536_read(pdev, ETC, &etc);
+
 		etc &= ~(IDE_DRV_MASK << dshift);
 		etc |= udma_timings[mode - XFER_UDMA_0] << dshift;
-	} else { /* MWDMA */
-		etc &= ~(IDE_ETC_UDMA_MASK << dshift);
-		cs5536_program_dtc(adev, mwdma_timings[mode - XFER_MW_DMA_0]);
-	}
 
-	cs5536_write(pdev, ETC, etc);
+		cs5536_write(pdev, ETC, etc);
+	} else { /* MWDMA */
+		cs5536_read(pdev, DTC, &dtc);
+
+		dtc &= ~(IDE_DRV_MASK << dshift);
+		dtc |= mwdma_timings[mode - XFER_MW_DMA_0] << dshift;
+
+		cs5536_write(pdev, DTC, dtc);
+	}
 }
 
 static struct scsi_host_template cs5536_sht = {
@@ -219,7 +224,7 @@ static struct scsi_host_template cs5536_sht = {
 };
 
 static struct ata_port_operations cs5536_port_ops = {
-	.inherits		= &ata_bmdma32_port_ops,
+	.inherits		= &ata_bmdma_port_ops,
 	.cable_detect		= cs5536_cable_detect,
 	.set_piomode		= cs5536_set_piomode,
 	.set_dmamode		= cs5536_set_dmamode,
@@ -255,7 +260,7 @@ static int cs5536_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 		return -ENODEV;
 	}
 
-	return ata_pci_bmdma_init_one(dev, ppi, &cs5536_sht, NULL, 0);
+	return ata_pci_sff_init_one(dev, ppi, &cs5536_sht, NULL);
 }
 
 static const struct pci_device_id cs5536[] = {
@@ -289,6 +294,8 @@ MODULE_DESCRIPTION("low-level driver for the CS5536 IDE controller");
 MODULE_LICENSE("GPL");
 MODULE_DEVICE_TABLE(pci, cs5536);
 MODULE_VERSION(DRV_VERSION);
+module_param_named(msr, use_msr, int, 0644);
+MODULE_PARM_DESC(msr, "Force using MSR to configure IDE function (Default: 0)");
 
 module_init(cs5536_init);
 module_exit(cs5536_exit);

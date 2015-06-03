@@ -19,6 +19,7 @@
  *    the userland interface
  */
 
+#include <linux/smp_lock.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/device.h>
@@ -32,11 +33,11 @@
 #include <linux/completion.h>
 #include <linux/miscdevice.h>
 #include <linux/delay.h>
+#include <linux/sysdev.h>
 #include <linux/poll.h>
 #include <linux/mutex.h>
 #include <linux/of_device.h>
 #include <linux/of_platform.h>
-#include <linux/slab.h>
 
 #include <asm/byteorder.h>
 #include <asm/io.h>
@@ -73,7 +74,7 @@ struct smu_cmd_buf {
 struct smu_device {
 	spinlock_t		lock;
 	struct device_node	*of_node;
-	struct platform_device	*of_dev;
+	struct of_device	*of_dev;
 	int			doorbell;	/* doorbell gpio */
 	u32 __iomem		*db_buf;	/* doorbell buffer */
 	struct device_node	*db_node;
@@ -95,7 +96,6 @@ struct smu_device {
  * I don't think there will ever be more than one SMU, so
  * for now, just hard code that
  */
-static DEFINE_MUTEX(smu_mutex);
 static struct smu_device	*smu;
 static DEFINE_MUTEX(smu_part_access);
 static int smu_irq_inited;
@@ -644,7 +644,8 @@ static void smu_expose_childs(struct work_struct *unused)
 
 static DECLARE_WORK(smu_expose_childs_work, smu_expose_childs);
 
-static int smu_platform_probe(struct platform_device* dev)
+static int smu_platform_probe(struct of_device* dev,
+			      const struct of_device_id *match)
 {
 	if (!smu)
 		return -ENODEV;
@@ -659,7 +660,7 @@ static int smu_platform_probe(struct platform_device* dev)
 	return 0;
 }
 
-static const struct of_device_id smu_platform_match[] =
+static struct of_device_id smu_platform_match[] =
 {
 	{
 		.type		= "smu",
@@ -667,30 +668,30 @@ static const struct of_device_id smu_platform_match[] =
 	{},
 };
 
-static struct platform_driver smu_of_platform_driver =
+static struct of_platform_driver smu_of_platform_driver =
 {
-	.driver = {
-		.name = "smu",
-		.owner = THIS_MODULE,
-		.of_match_table = smu_platform_match,
-	},
+	.name 		= "smu",
+	.match_table	= smu_platform_match,
 	.probe		= smu_platform_probe,
 };
 
 static int __init smu_init_sysfs(void)
 {
 	/*
+	 * Due to sysfs bogosity, a sysdev is not a real device, so
+	 * we should in fact create both if we want sysdev semantics
+	 * for power management.
 	 * For now, we don't power manage machines with an SMU chip,
 	 * I'm a bit too far from figuring out how that works with those
 	 * new chipsets, but that will come back and bite us
 	 */
-	platform_driver_register(&smu_of_platform_driver);
+	of_register_platform_driver(&smu_of_platform_driver);
 	return 0;
 }
 
 device_initcall(smu_init_sysfs);
 
-struct platform_device *smu_get_ofdev(void)
+struct of_device *smu_get_ofdev(void)
 {
 	if (!smu)
 		return NULL;
@@ -1090,12 +1091,12 @@ static int smu_open(struct inode *inode, struct file *file)
 	pp->mode = smu_file_commands;
 	init_waitqueue_head(&pp->wait);
 
-	mutex_lock(&smu_mutex);
+	lock_kernel();
 	spin_lock_irqsave(&smu_clist_lock, flags);
 	list_add(&pp->list, &smu_clist);
 	spin_unlock_irqrestore(&smu_clist_lock, flags);
 	file->private_data = pp;
-	mutex_unlock(&smu_mutex);
+	unlock_kernel();
 
 	return 0;
 }
@@ -1181,10 +1182,8 @@ static ssize_t smu_read_command(struct file *file, struct smu_private *pp,
 		return -EOVERFLOW;
 	spin_lock_irqsave(&pp->lock, flags);
 	if (pp->cmd.status == 1) {
-		if (file->f_flags & O_NONBLOCK) {
-			spin_unlock_irqrestore(&pp->lock, flags);
+		if (file->f_flags & O_NONBLOCK)
 			return -EAGAIN;
-		}
 		add_wait_queue(&pp->wait, &wait);
 		for (;;) {
 			set_current_state(TASK_INTERRUPTIBLE);

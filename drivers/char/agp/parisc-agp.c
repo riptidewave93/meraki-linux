@@ -19,7 +19,6 @@
 #include <linux/klist.h>
 #include <linux/agp_backend.h>
 #include <linux/log2.h>
-#include <linux/slab.h>
 
 #include <asm/parisc-device.h>
 #include <asm/ropes.h>
@@ -359,12 +358,8 @@ parisc_agp_setup(void __iomem *ioc_hpa, void __iomem *lba_hpa)
 	bridge->dev = fake_bridge_dev;
 
 	error = agp_add_bridge(bridge);
-	if (error)
-		goto fail;
-	return 0;
 
 fail:
-	kfree(fake_bridge_dev);
 	return error;
 }
 

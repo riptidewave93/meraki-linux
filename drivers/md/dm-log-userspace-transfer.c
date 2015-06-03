@@ -6,7 +6,6 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 #include <linux/workqueue.h>
 #include <linux/connector.h>
@@ -134,7 +133,7 @@ static void cn_ulog_callback(struct cn_msg *msg, struct netlink_skb_parms *nsp)
 {
 	struct dm_ulog_request *tfr = (struct dm_ulog_request *)(msg + 1);
 
-	if (!capable(CAP_SYS_ADMIN))
+	if (!cap_raised(nsp->eff_cap, CAP_SYS_ADMIN))
 		return;
 
 	spin_lock(&receiving_list_lock);
@@ -198,7 +197,6 @@ resend:
 
 	memset(tfr, 0, DM_ULOG_PREALLOCED_SIZE - sizeof(struct cn_msg));
 	memcpy(tfr->uuid, uuid, DM_UUID_LEN);
-	tfr->version = DM_ULOG_REQUEST_VERSION;
 	tfr->luid = luid;
 	tfr->seq = dm_ulog_seq++;
 

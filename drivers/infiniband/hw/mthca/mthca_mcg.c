@@ -31,7 +31,7 @@
  */
 
 #include <linux/string.h>
-#include <linux/gfp.h>
+#include <linux/slab.h>
 
 #include "mthca_dev.h"
 #include "mthca_cmd.h"
@@ -68,6 +68,7 @@ static int find_mgm(struct mthca_dev *dev,
 	struct mthca_mgm *mgm = mgm_mailbox->buf;
 	u8 *mgid;
 	int err;
+	u8 status;
 
 	mailbox = mthca_alloc_mailbox(dev, GFP_KERNEL);
 	if (IS_ERR(mailbox))
@@ -76,9 +77,12 @@ static int find_mgm(struct mthca_dev *dev,
 
 	memcpy(mgid, gid, 16);
 
-	err = mthca_MGID_HASH(dev, mailbox, hash);
-	if (err) {
-		mthca_err(dev, "MGID_HASH failed (%d)\n", err);
+	err = mthca_MGID_HASH(dev, mailbox, hash, &status);
+	if (err)
+		goto out;
+	if (status) {
+		mthca_err(dev, "MGID_HASH returned status %02x\n", status);
+		err = -EINVAL;
 		goto out;
 	}
 
@@ -89,9 +93,12 @@ static int find_mgm(struct mthca_dev *dev,
 	*prev  = -1;
 
 	do {
-		err = mthca_READ_MGM(dev, *index, mgm_mailbox);
-		if (err) {
-			mthca_err(dev, "READ_MGM failed (%d)\n", err);
+		err = mthca_READ_MGM(dev, *index, mgm_mailbox, &status);
+		if (err)
+			goto out;
+		if (status) {
+			mthca_err(dev, "READ_MGM returned status %02x\n", status);
+			err = -EINVAL;
 			goto out;
 		}
 
@@ -127,6 +134,7 @@ int mthca_multicast_attach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 	int link = 0;
 	int i;
 	int err;
+	u8 status;
 
 	mailbox = mthca_alloc_mailbox(dev, GFP_KERNEL);
 	if (IS_ERR(mailbox))
@@ -152,9 +160,12 @@ int mthca_multicast_attach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 			goto out;
 		}
 
-		err = mthca_READ_MGM(dev, index, mailbox);
-		if (err) {
-			mthca_err(dev, "READ_MGM failed (%d)\n", err);
+		err = mthca_READ_MGM(dev, index, mailbox, &status);
+		if (err)
+			goto out;
+		if (status) {
+			mthca_err(dev, "READ_MGM returned status %02x\n", status);
+			err = -EINVAL;
 			goto out;
 		}
 		memset(mgm, 0, sizeof *mgm);
@@ -178,9 +189,11 @@ int mthca_multicast_attach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 		goto out;
 	}
 
-	err = mthca_WRITE_MGM(dev, index, mailbox);
-	if (err) {
-		mthca_err(dev, "WRITE_MGM failed %d\n", err);
+	err = mthca_WRITE_MGM(dev, index, mailbox, &status);
+	if (err)
+		goto out;
+	if (status) {
+		mthca_err(dev, "WRITE_MGM returned status %02x\n", status);
 		err = -EINVAL;
 		goto out;
 	}
@@ -188,17 +201,24 @@ int mthca_multicast_attach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 	if (!link)
 		goto out;
 
-	err = mthca_READ_MGM(dev, prev, mailbox);
-	if (err) {
-		mthca_err(dev, "READ_MGM failed %d\n", err);
+	err = mthca_READ_MGM(dev, prev, mailbox, &status);
+	if (err)
+		goto out;
+	if (status) {
+		mthca_err(dev, "READ_MGM returned status %02x\n", status);
+		err = -EINVAL;
 		goto out;
 	}
 
 	mgm->next_gid_index = cpu_to_be32(index << 6);
 
-	err = mthca_WRITE_MGM(dev, prev, mailbox);
+	err = mthca_WRITE_MGM(dev, prev, mailbox, &status);
 	if (err)
-		mthca_err(dev, "WRITE_MGM returned %d\n", err);
+		goto out;
+	if (status) {
+		mthca_err(dev, "WRITE_MGM returned status %02x\n", status);
+		err = -EINVAL;
+	}
 
  out:
 	if (err && link && index != -1) {
@@ -220,6 +240,7 @@ int mthca_multicast_detach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 	int prev, index;
 	int i, loc;
 	int err;
+	u8 status;
 
 	mailbox = mthca_alloc_mailbox(dev, GFP_KERNEL);
 	if (IS_ERR(mailbox))
@@ -254,9 +275,12 @@ int mthca_multicast_detach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 	mgm->qp[loc]   = mgm->qp[i - 1];
 	mgm->qp[i - 1] = 0;
 
-	err = mthca_WRITE_MGM(dev, index, mailbox);
-	if (err) {
-		mthca_err(dev, "WRITE_MGM returned %d\n", err);
+	err = mthca_WRITE_MGM(dev, index, mailbox, &status);
+	if (err)
+		goto out;
+	if (status) {
+		mthca_err(dev, "WRITE_MGM returned status %02x\n", status);
+		err = -EINVAL;
 		goto out;
 	}
 
@@ -268,17 +292,24 @@ int mthca_multicast_detach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 		int amgm_index_to_free = be32_to_cpu(mgm->next_gid_index) >> 6;
 		if (amgm_index_to_free) {
 			err = mthca_READ_MGM(dev, amgm_index_to_free,
-					     mailbox);
-			if (err) {
-				mthca_err(dev, "READ_MGM returned %d\n", err);
+					     mailbox, &status);
+			if (err)
+				goto out;
+			if (status) {
+				mthca_err(dev, "READ_MGM returned status %02x\n",
+					  status);
+				err = -EINVAL;
 				goto out;
 			}
 		} else
 			memset(mgm->gid, 0, 16);
 
-		err = mthca_WRITE_MGM(dev, index, mailbox);
-		if (err) {
-			mthca_err(dev, "WRITE_MGM returned %d\n", err);
+		err = mthca_WRITE_MGM(dev, index, mailbox, &status);
+		if (err)
+			goto out;
+		if (status) {
+			mthca_err(dev, "WRITE_MGM returned status %02x\n", status);
+			err = -EINVAL;
 			goto out;
 		}
 		if (amgm_index_to_free) {
@@ -288,17 +319,23 @@ int mthca_multicast_detach(struct ib_qp *ibqp, union ib_gid *gid, u16 lid)
 	} else {
 		/* Remove entry from AMGM */
 		int curr_next_index = be32_to_cpu(mgm->next_gid_index) >> 6;
-		err = mthca_READ_MGM(dev, prev, mailbox);
-		if (err) {
-			mthca_err(dev, "READ_MGM returned %d\n", err);
+		err = mthca_READ_MGM(dev, prev, mailbox, &status);
+		if (err)
+			goto out;
+		if (status) {
+			mthca_err(dev, "READ_MGM returned status %02x\n", status);
+			err = -EINVAL;
 			goto out;
 		}
 
 		mgm->next_gid_index = cpu_to_be32(curr_next_index << 6);
 
-		err = mthca_WRITE_MGM(dev, prev, mailbox);
-		if (err) {
-			mthca_err(dev, "WRITE_MGM returned %d\n", err);
+		err = mthca_WRITE_MGM(dev, prev, mailbox, &status);
+		if (err)
+			goto out;
+		if (status) {
+			mthca_err(dev, "WRITE_MGM returned status %02x\n", status);
+			err = -EINVAL;
 			goto out;
 		}
 		BUG_ON(index < dev->limits.num_mgms);

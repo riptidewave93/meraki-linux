@@ -43,8 +43,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <linux/slab.h>
-
 #include "ehca_classes.h"
 #include "ehca_tools.h"
 #include "ehca_qes.h"
@@ -57,7 +55,9 @@ static struct kmem_cache *qp_cache;
 /*
  * attributes not supported by query qp
  */
-#define QP_ATTR_QUERY_NOT_SUPPORTED (IB_QP_ACCESS_FLAGS       | \
+#define QP_ATTR_QUERY_NOT_SUPPORTED (IB_QP_MAX_DEST_RD_ATOMIC | \
+				     IB_QP_MAX_QP_RD_ATOMIC   | \
+				     IB_QP_ACCESS_FLAGS       | \
 				     IB_QP_EN_SQD_ASYNC_NOTIFY)
 
 /*
@@ -251,7 +251,7 @@ static inline int ibqptype2servicetype(enum ib_qp_type ibqptype)
 		return ST_UD;
 	case IB_QPT_RAW_IPV6:
 		return -EINVAL;
-	case IB_QPT_RAW_ETHERTYPE:
+	case IB_QPT_RAW_ETY:
 		return -EINVAL;
 	default:
 		ehca_gen_err("Invalid ibqptype=%x", ibqptype);
@@ -976,9 +976,6 @@ struct ib_srq *ehca_create_srq(struct ib_pd *pd,
 					      ib_device);
 	struct hcp_modify_qp_control_block *mqpcb;
 	u64 hret, update_mask;
-
-	if (srq_init_attr->srq_type != IB_SRQT_BASIC)
-		return ERR_PTR(-ENOSYS);
 
 	/* For common attributes, internal_create_qp() takes its info
 	 * out of qp_init_attr, so copy all common attrs there.

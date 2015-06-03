@@ -27,6 +27,7 @@
 
 #include <asm/sections.h>
 #include <asm/prom.h>
+#include <asm/system.h>
 #include <asm/io.h>
 #include <asm/pgtable.h>
 #include <asm/machdep.h>

@@ -26,6 +26,7 @@
 #include <linux/module.h>
 #include <linux/delay.h>
 #include <linux/clk.h>
+#include <linux/io.h>
 #include <linux/irq.h>
 #include <linux/time.h>
 #include <linux/gpio.h>
@@ -33,32 +34,34 @@
 #include <asm/mach/time.h>
 #include <asm/mach/irq.h>
 #include <asm/mach-types.h>
-#include <asm/system_misc.h>
-
-#include <plat/clock.h>
-#include <plat/sram.h>
-#include <plat/dma.h>
-#include <plat/board.h>
 
 #include <mach/irqs.h>
+#include <mach/clock.h>
+#include <mach/sram.h>
+#include <mach/control.h>
+#include <mach/mux.h>
+#include <mach/dma.h>
+#include <mach/board.h>
 
-#include "common.h"
-#include "prm2xxx_3xxx.h"
+#include "prm.h"
 #include "prm-regbits-24xx.h"
-#include "cm2xxx_3xxx.h"
+#include "cm.h"
 #include "cm-regbits-24xx.h"
 #include "sdrc.h"
 #include "pm.h"
-#include "control.h"
-#include "powerdomain.h"
-#include "clockdomain.h"
+
+#include <mach/powerdomain.h>
+#include <mach/clockdomain.h>
 
 static void (*omap2_sram_idle)(void);
 static void (*omap2_sram_suspend)(u32 dllctrl, void __iomem *sdrc_dlla_ctrl,
 				  void __iomem *sdrc_power);
 
-static struct powerdomain *mpu_pwrdm, *core_pwrdm;
-static struct clockdomain *dsp_clkdm, *mpu_clkdm, *wkup_clkdm, *gfx_clkdm;
+static struct powerdomain *mpu_pwrdm;
+static struct powerdomain *core_pwrdm;
+
+static struct clockdomain *dsp_clkdm;
+static struct clockdomain *gfx_clkdm;
 
 static struct clk *osc_ck, *emul_ck;
 
@@ -66,15 +69,22 @@ static int omap2_fclks_active(void)
 {
 	u32 f1, f2;
 
-	f1 = omap2_cm_read_mod_reg(CORE_MOD, CM_FCLKEN1);
-	f2 = omap2_cm_read_mod_reg(CORE_MOD, OMAP24XX_CM_FCLKEN2);
+	f1 = cm_read_mod_reg(CORE_MOD, CM_FCLKEN1);
+	f2 = cm_read_mod_reg(CORE_MOD, OMAP24XX_CM_FCLKEN2);
 
-	return (f1 | f2) ? 1 : 0;
+	/* Ignore UART clocks.  These are handled by UART core (serial.c) */
+	f1 &= ~(OMAP24XX_EN_UART1 | OMAP24XX_EN_UART2);
+	f2 &= ~OMAP24XX_EN_UART3;
+
+	if (f1 | f2)
+		return 1;
+	return 0;
 }
 
-static int omap2_enter_full_retention(void)
+static void omap2_enter_full_retention(void)
 {
 	u32 l;
+	struct timespec ts_preidle, ts_postidle, ts_idle;
 
 	/* There is 1 reference hold for all children of the oscillator
 	 * clock, the following will remove it. If no one else uses the
@@ -85,9 +95,9 @@ static int omap2_enter_full_retention(void)
 
 	/* Clear old wake-up events */
 	/* REVISIT: These write to reserved bits? */
-	omap2_prm_write_mod_reg(0xffffffff, CORE_MOD, PM_WKST1);
-	omap2_prm_write_mod_reg(0xffffffff, CORE_MOD, OMAP24XX_PM_WKST2);
-	omap2_prm_write_mod_reg(0xffffffff, WKUP_MOD, PM_WKST);
+	prm_write_mod_reg(0xffffffff, CORE_MOD, PM_WKST1);
+	prm_write_mod_reg(0xffffffff, CORE_MOD, OMAP24XX_PM_WKST2);
+	prm_write_mod_reg(0xffffffff, WKUP_MOD, PM_WKST);
 
 	/*
 	 * Set MPU powerdomain's next power state to RETENTION;
@@ -100,51 +110,70 @@ static int omap2_enter_full_retention(void)
 	l = omap_ctrl_readl(OMAP2_CONTROL_DEVCONF0) | OMAP24XX_USBSTANDBYCTRL;
 	omap_ctrl_writel(l, OMAP2_CONTROL_DEVCONF0);
 
-	omap2_gpio_prepare_for_idle(0);
+	omap2_gpio_prepare_for_retention();
+
+	if (omap2_pm_debug) {
+		omap2_pm_dump(0, 0, 0);
+		getnstimeofday(&ts_preidle);
+	}
 
 	/* One last check for pending IRQs to avoid extra latency due
 	 * to sleeping unnecessarily. */
 	if (omap_irq_pending())
 		goto no_sleep;
 
+	omap_uart_prepare_idle(0);
+	omap_uart_prepare_idle(1);
+	omap_uart_prepare_idle(2);
+
 	/* Jump to SRAM suspend code */
 	omap2_sram_suspend(sdrc_read_reg(SDRC_DLLA_CTRL),
 			   OMAP_SDRC_REGADDR(SDRC_DLLA_CTRL),
 			   OMAP_SDRC_REGADDR(SDRC_POWER));
 
+	omap_uart_resume_idle(2);
+	omap_uart_resume_idle(1);
+	omap_uart_resume_idle(0);
+
 no_sleep:
-	omap2_gpio_resume_after_idle();
+	if (omap2_pm_debug) {
+		unsigned long long tmp;
+
+		getnstimeofday(&ts_postidle);
+		ts_idle = timespec_sub(ts_postidle, ts_preidle);
+		tmp = timespec_to_ns(&ts_idle) * NSEC_PER_USEC;
+		omap2_pm_dump(0, 1, tmp);
+	}
+	omap2_gpio_resume_after_retention();
 
 	clk_enable(osc_ck);
 
 	/* clear CORE wake-up events */
-	omap2_prm_write_mod_reg(0xffffffff, CORE_MOD, PM_WKST1);
-	omap2_prm_write_mod_reg(0xffffffff, CORE_MOD, OMAP24XX_PM_WKST2);
+	prm_write_mod_reg(0xffffffff, CORE_MOD, PM_WKST1);
+	prm_write_mod_reg(0xffffffff, CORE_MOD, OMAP24XX_PM_WKST2);
 
 	/* wakeup domain events - bit 1: GPT1, bit5 GPIO */
-	omap2_prm_clear_mod_reg_bits(0x4 | 0x1, WKUP_MOD, PM_WKST);
+	prm_clear_mod_reg_bits(0x4 | 0x1, WKUP_MOD, PM_WKST);
 
 	/* MPU domain wake events */
-	l = omap2_prm_read_mod_reg(OCP_MOD, OMAP2_PRCM_IRQSTATUS_MPU_OFFSET);
+	l = prm_read_mod_reg(OCP_MOD, OMAP2_PRCM_IRQSTATUS_MPU_OFFSET);
 	if (l & 0x01)
-		omap2_prm_write_mod_reg(0x01, OCP_MOD,
+		prm_write_mod_reg(0x01, OCP_MOD,
 				  OMAP2_PRCM_IRQSTATUS_MPU_OFFSET);
 	if (l & 0x20)
-		omap2_prm_write_mod_reg(0x20, OCP_MOD,
+		prm_write_mod_reg(0x20, OCP_MOD,
 				  OMAP2_PRCM_IRQSTATUS_MPU_OFFSET);
 
 	/* Mask future PRCM-to-MPU interrupts */
-	omap2_prm_write_mod_reg(0x0, OCP_MOD, OMAP2_PRCM_IRQSTATUS_MPU_OFFSET);
-
-	return 0;
+	prm_write_mod_reg(0x0, OCP_MOD, OMAP2_PRCM_IRQSTATUS_MPU_OFFSET);
 }
 
 static int omap2_i2c_active(void)
 {
 	u32 l;
 
-	l = omap2_cm_read_mod_reg(CORE_MOD, CM_FCLKEN1);
-	return l & (OMAP2420_EN_I2C2_MASK | OMAP2420_EN_I2C1_MASK);
+	l = cm_read_mod_reg(CORE_MOD, CM_FCLKEN1);
+	return l & (OMAP2420_EN_I2C2 | OMAP2420_EN_I2C1);
 }
 
 static int sti_console_enabled;
@@ -154,14 +183,14 @@ static int omap2_allow_mpu_retention(void)
 	u32 l;
 
 	/* Check for MMC, UART2, UART1, McSPI2, McSPI1 and DSS1. */
-	l = omap2_cm_read_mod_reg(CORE_MOD, CM_FCLKEN1);
-	if (l & (OMAP2420_EN_MMC_MASK | OMAP24XX_EN_UART2_MASK |
-		 OMAP24XX_EN_UART1_MASK | OMAP24XX_EN_MCSPI2_MASK |
-		 OMAP24XX_EN_MCSPI1_MASK | OMAP24XX_EN_DSS1_MASK))
+	l = cm_read_mod_reg(CORE_MOD, CM_FCLKEN1);
+	if (l & (OMAP2420_EN_MMC | OMAP24XX_EN_UART2 |
+		 OMAP24XX_EN_UART1 | OMAP24XX_EN_MCSPI2 |
+		 OMAP24XX_EN_MCSPI1 | OMAP24XX_EN_DSS1))
 		return 0;
 	/* Check for UART3. */
-	l = omap2_cm_read_mod_reg(CORE_MOD, OMAP24XX_CM_FCLKEN2);
-	if (l & OMAP24XX_EN_UART3_MASK)
+	l = cm_read_mod_reg(CORE_MOD, OMAP24XX_CM_FCLKEN2);
+	if (l & OMAP24XX_EN_UART3)
 		return 0;
 	if (sti_console_enabled)
 		return 0;
@@ -172,6 +201,7 @@ static int omap2_allow_mpu_retention(void)
 static void omap2_enter_mpu_retention(void)
 {
 	int only_idle = 0;
+	struct timespec ts_preidle, ts_postidle, ts_idle;
 
 	/* Putting MPU into the WFI state while a transfer is active
 	 * seems to cause the I2C block to timeout. Why? Good question. */
@@ -182,23 +212,36 @@ static void omap2_enter_mpu_retention(void)
 	 * it is in retention mode. */
 	if (omap2_allow_mpu_retention()) {
 		/* REVISIT: These write to reserved bits? */
-		omap2_prm_write_mod_reg(0xffffffff, CORE_MOD, PM_WKST1);
-		omap2_prm_write_mod_reg(0xffffffff, CORE_MOD, OMAP24XX_PM_WKST2);
-		omap2_prm_write_mod_reg(0xffffffff, WKUP_MOD, PM_WKST);
+		prm_write_mod_reg(0xffffffff, CORE_MOD, PM_WKST1);
+		prm_write_mod_reg(0xffffffff, CORE_MOD, OMAP24XX_PM_WKST2);
+		prm_write_mod_reg(0xffffffff, WKUP_MOD, PM_WKST);
 
 		/* Try to enter MPU retention */
-		omap2_prm_write_mod_reg((0x01 << OMAP_POWERSTATE_SHIFT) |
-				  OMAP_LOGICRETSTATE_MASK,
-				  MPU_MOD, OMAP2_PM_PWSTCTRL);
+		prm_write_mod_reg((0x01 << OMAP_POWERSTATE_SHIFT) |
+				  OMAP_LOGICRETSTATE,
+				  MPU_MOD, PM_PWSTCTRL);
 	} else {
 		/* Block MPU retention */
 
-		omap2_prm_write_mod_reg(OMAP_LOGICRETSTATE_MASK, MPU_MOD,
-						 OMAP2_PM_PWSTCTRL);
+		prm_write_mod_reg(OMAP_LOGICRETSTATE, MPU_MOD, PM_PWSTCTRL);
 		only_idle = 1;
 	}
 
+	if (omap2_pm_debug) {
+		omap2_pm_dump(only_idle ? 2 : 1, 0, 0);
+		getnstimeofday(&ts_preidle);
+	}
+
 	omap2_sram_idle();
+
+	if (omap2_pm_debug) {
+		unsigned long long tmp;
+
+		getnstimeofday(&ts_postidle);
+		ts_idle = timespec_sub(ts_postidle, ts_preidle);
+		tmp = timespec_to_ns(&ts_idle) * NSEC_PER_USEC;
+		omap2_pm_dump(only_idle ? 2 : 1, 1, tmp);
+	}
 }
 
 static int omap2_can_sleep(void)
@@ -215,6 +258,7 @@ static int omap2_can_sleep(void)
 
 static void omap2_pm_idle(void)
 {
+	local_irq_disable();
 	local_fiq_disable();
 
 	if (!omap2_can_sleep()) {
@@ -231,6 +275,68 @@ static void omap2_pm_idle(void)
 
 out:
 	local_fiq_enable();
+	local_irq_enable();
+}
+
+static int omap2_pm_prepare(void)
+{
+	/* We cannot sleep in idle until we have resumed */
+	disable_hlt();
+	return 0;
+}
+
+static int omap2_pm_suspend(void)
+{
+	u32 wken_wkup, mir1;
+
+	wken_wkup = prm_read_mod_reg(WKUP_MOD, PM_WKEN);
+	prm_write_mod_reg(wken_wkup & ~OMAP24XX_EN_GPT1, WKUP_MOD, PM_WKEN);
+
+	/* Mask GPT1 */
+	mir1 = omap_readl(0x480fe0a4);
+	omap_writel(1 << 5, 0x480fe0ac);
+
+	omap_uart_prepare_suspend();
+	omap2_enter_full_retention();
+
+	omap_writel(mir1, 0x480fe0a4);
+	prm_write_mod_reg(wken_wkup, WKUP_MOD, PM_WKEN);
+
+	return 0;
+}
+
+static int omap2_pm_enter(suspend_state_t state)
+{
+	int ret = 0;
+
+	switch (state) {
+	case PM_SUSPEND_STANDBY:
+	case PM_SUSPEND_MEM:
+		ret = omap2_pm_suspend();
+		break;
+	default:
+		ret = -EINVAL;
+	}
+
+	return ret;
+}
+
+static void omap2_pm_finish(void)
+{
+	enable_hlt();
+}
+
+static struct platform_suspend_ops omap_pm_ops = {
+	.prepare	= omap2_pm_prepare,
+	.enter		= omap2_pm_enter,
+	.finish		= omap2_pm_finish,
+	.valid		= suspend_valid_only_mem,
+};
+
+static int _pm_clkdm_enable_hwsup(struct clockdomain *clkdm, void *unused)
+{
+	omap2_clkdm_allow_idle(clkdm);
+	return 0;
 }
 
 static void __init prcm_setup_regs(void)
@@ -238,12 +344,17 @@ static void __init prcm_setup_regs(void)
 	int i, num_mem_banks;
 	struct powerdomain *pwrdm;
 
-	/*
-	 * Enable autoidle
-	 * XXX This should be handled by hwmod code or PRCM init code
-	 */
-	omap2_prm_write_mod_reg(OMAP24XX_AUTOIDLE_MASK, OCP_MOD,
+	/* Enable autoidle */
+	prm_write_mod_reg(OMAP24XX_AUTOIDLE, OCP_MOD,
 			  OMAP2_PRCM_SYSCONFIG_OFFSET);
+
+	/* Set all domain wakeup dependencies */
+	prm_write_mod_reg(OMAP_EN_WKUP_MASK, MPU_MOD, PM_WKDEP);
+	prm_write_mod_reg(0, OMAP24XX_DSP_MOD, PM_WKDEP);
+	prm_write_mod_reg(0, GFX_MOD, PM_WKDEP);
+	prm_write_mod_reg(0, CORE_MOD, PM_WKDEP);
+	if (cpu_is_omap2430())
+		prm_write_mod_reg(0, OMAP2430_MDM_MOD, PM_WKDEP);
 
 	/*
 	 * Set CORE powerdomain memory banks to retain their contents
@@ -267,38 +378,96 @@ static void __init prcm_setup_regs(void)
 
 	pwrdm = clkdm_get_pwrdm(dsp_clkdm);
 	pwrdm_set_next_pwrst(pwrdm, PWRDM_POWER_OFF);
-	clkdm_sleep(dsp_clkdm);
+	omap2_clkdm_sleep(dsp_clkdm);
 
 	pwrdm = clkdm_get_pwrdm(gfx_clkdm);
 	pwrdm_set_next_pwrst(pwrdm, PWRDM_POWER_OFF);
-	clkdm_sleep(gfx_clkdm);
+	omap2_clkdm_sleep(gfx_clkdm);
 
-	/* Enable hardware-supervised idle for all clkdms */
-	clkdm_for_each(omap_pm_clkdms_setup, NULL);
-	clkdm_add_wkdep(mpu_clkdm, wkup_clkdm);
+	/* Enable clockdomain hardware-supervised control for all clkdms */
+	clkdm_for_each(_pm_clkdm_enable_hwsup, NULL);
 
-#ifdef CONFIG_SUSPEND
-	omap_pm_suspend = omap2_enter_full_retention;
-#endif
+	/* Enable clock autoidle for all domains */
+	cm_write_mod_reg(OMAP24XX_AUTO_CAM |
+			 OMAP24XX_AUTO_MAILBOXES |
+			 OMAP24XX_AUTO_WDT4 |
+			 OMAP2420_AUTO_WDT3 |
+			 OMAP24XX_AUTO_MSPRO |
+			 OMAP2420_AUTO_MMC |
+			 OMAP24XX_AUTO_FAC |
+			 OMAP2420_AUTO_EAC |
+			 OMAP24XX_AUTO_HDQ |
+			 OMAP24XX_AUTO_UART2 |
+			 OMAP24XX_AUTO_UART1 |
+			 OMAP24XX_AUTO_I2C2 |
+			 OMAP24XX_AUTO_I2C1 |
+			 OMAP24XX_AUTO_MCSPI2 |
+			 OMAP24XX_AUTO_MCSPI1 |
+			 OMAP24XX_AUTO_MCBSP2 |
+			 OMAP24XX_AUTO_MCBSP1 |
+			 OMAP24XX_AUTO_GPT12 |
+			 OMAP24XX_AUTO_GPT11 |
+			 OMAP24XX_AUTO_GPT10 |
+			 OMAP24XX_AUTO_GPT9 |
+			 OMAP24XX_AUTO_GPT8 |
+			 OMAP24XX_AUTO_GPT7 |
+			 OMAP24XX_AUTO_GPT6 |
+			 OMAP24XX_AUTO_GPT5 |
+			 OMAP24XX_AUTO_GPT4 |
+			 OMAP24XX_AUTO_GPT3 |
+			 OMAP24XX_AUTO_GPT2 |
+			 OMAP2420_AUTO_VLYNQ |
+			 OMAP24XX_AUTO_DSS,
+			 CORE_MOD, CM_AUTOIDLE1);
+	cm_write_mod_reg(OMAP24XX_AUTO_UART3 |
+			 OMAP24XX_AUTO_SSI |
+			 OMAP24XX_AUTO_USB,
+			 CORE_MOD, CM_AUTOIDLE2);
+	cm_write_mod_reg(OMAP24XX_AUTO_SDRC |
+			 OMAP24XX_AUTO_GPMC |
+			 OMAP24XX_AUTO_SDMA,
+			 CORE_MOD, CM_AUTOIDLE3);
+	cm_write_mod_reg(OMAP24XX_AUTO_PKA |
+			 OMAP24XX_AUTO_AES |
+			 OMAP24XX_AUTO_RNG |
+			 OMAP24XX_AUTO_SHA |
+			 OMAP24XX_AUTO_DES,
+			 CORE_MOD, OMAP24XX_CM_AUTOIDLE4);
+
+	cm_write_mod_reg(OMAP2420_AUTO_DSP_IPI, OMAP24XX_DSP_MOD, CM_AUTOIDLE);
+
+	/* Put DPLL and both APLLs into autoidle mode */
+	cm_write_mod_reg((0x03 << OMAP24XX_AUTO_DPLL_SHIFT) |
+			 (0x03 << OMAP24XX_AUTO_96M_SHIFT) |
+			 (0x03 << OMAP24XX_AUTO_54M_SHIFT),
+			 PLL_MOD, CM_AUTOIDLE);
+
+	cm_write_mod_reg(OMAP24XX_AUTO_OMAPCTRL |
+			 OMAP24XX_AUTO_WDT1 |
+			 OMAP24XX_AUTO_MPU_WDT |
+			 OMAP24XX_AUTO_GPIOS |
+			 OMAP24XX_AUTO_32KSYNC |
+			 OMAP24XX_AUTO_GPT1,
+			 WKUP_MOD, CM_AUTOIDLE);
 
 	/* REVISIT: Configure number of 32 kHz clock cycles for sys_clk
 	 * stabilisation */
-	omap2_prm_write_mod_reg(15 << OMAP_SETUP_TIME_SHIFT, OMAP24XX_GR_MOD,
-				OMAP2_PRCM_CLKSSETUP_OFFSET);
+	prm_write_mod_reg(15 << OMAP_SETUP_TIME_SHIFT, OMAP24XX_GR_MOD,
+			  OMAP2_PRCM_CLKSSETUP_OFFSET);
 
 	/* Configure automatic voltage transition */
-	omap2_prm_write_mod_reg(2 << OMAP_SETUP_TIME_SHIFT, OMAP24XX_GR_MOD,
-				OMAP2_PRCM_VOLTSETUP_OFFSET);
-	omap2_prm_write_mod_reg(OMAP24XX_AUTO_EXTVOLT_MASK |
-				(0x1 << OMAP24XX_SETOFF_LEVEL_SHIFT) |
-				OMAP24XX_MEMRETCTRL_MASK |
-				(0x1 << OMAP24XX_SETRET_LEVEL_SHIFT) |
-				(0x0 << OMAP24XX_VOLT_LEVEL_SHIFT),
-				OMAP24XX_GR_MOD, OMAP2_PRCM_VOLTCTRL_OFFSET);
+	prm_write_mod_reg(2 << OMAP_SETUP_TIME_SHIFT, OMAP24XX_GR_MOD,
+			  OMAP2_PRCM_VOLTSETUP_OFFSET);
+	prm_write_mod_reg(OMAP24XX_AUTO_EXTVOLT |
+			  (0x1 << OMAP24XX_SETOFF_LEVEL_SHIFT) |
+			  OMAP24XX_MEMRETCTRL |
+			  (0x1 << OMAP24XX_SETRET_LEVEL_SHIFT) |
+			  (0x0 << OMAP24XX_VOLT_LEVEL_SHIFT),
+			  OMAP24XX_GR_MOD, OMAP2_PRCM_VOLTCTRL_OFFSET);
 
 	/* Enable wake-up events */
-	omap2_prm_write_mod_reg(OMAP24XX_EN_GPIOS_MASK | OMAP24XX_EN_GPT1_MASK,
-				WKUP_MOD, PM_WKEN);
+	prm_write_mod_reg(OMAP24XX_EN_GPIOS | OMAP24XX_EN_GPT1,
+			  WKUP_MOD, PM_WKEN);
 }
 
 static int __init omap2_pm_init(void)
@@ -309,10 +478,10 @@ static int __init omap2_pm_init(void)
 		return -ENODEV;
 
 	printk(KERN_INFO "Power Management for OMAP2 initializing\n");
-	l = omap2_prm_read_mod_reg(OCP_MOD, OMAP2_PRCM_REVISION_OFFSET);
+	l = prm_read_mod_reg(OCP_MOD, OMAP2_PRCM_REVISION_OFFSET);
 	printk(KERN_INFO "PRCM revision %d.%d\n", (l >> 4) & 0x0f, l & 0x0f);
 
-	/* Look up important powerdomains */
+	/* Look up important powerdomains, clockdomains */
 
 	mpu_pwrdm = pwrdm_lookup("mpu_pwrdm");
 	if (!mpu_pwrdm)
@@ -322,19 +491,9 @@ static int __init omap2_pm_init(void)
 	if (!core_pwrdm)
 		pr_err("PM: core_pwrdm not found\n");
 
-	/* Look up important clockdomains */
-
-	mpu_clkdm = clkdm_lookup("mpu_clkdm");
-	if (!mpu_clkdm)
-		pr_err("PM: mpu_clkdm not found\n");
-
-	wkup_clkdm = clkdm_lookup("wkup_clkdm");
-	if (!wkup_clkdm)
-		pr_err("PM: wkup_clkdm not found\n");
-
 	dsp_clkdm = clkdm_lookup("dsp_clkdm");
 	if (!dsp_clkdm)
-		pr_err("PM: dsp_clkdm not found\n");
+		pr_err("PM: mpu_clkdm not found\n");
 
 	gfx_clkdm = clkdm_lookup("gfx_clkdm");
 	if (!gfx_clkdm)
@@ -381,7 +540,8 @@ static int __init omap2_pm_init(void)
 						    omap24xx_cpu_suspend_sz);
 	}
 
-	arm_pm_idle = omap2_pm_idle;
+	suspend_set_ops(&omap_pm_ops);
+	pm_idle = omap2_pm_idle;
 
 	return 0;
 }

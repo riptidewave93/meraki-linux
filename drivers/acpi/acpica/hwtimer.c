@@ -6,7 +6,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -42,14 +42,12 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-#include <linux/export.h>
 #include <acpi/acpi.h>
 #include "accommon.h"
 
 #define _COMPONENT          ACPI_HARDWARE
 ACPI_MODULE_NAME("hwtimer")
 
-#if (!ACPI_REDUCED_HARDWARE)	/* Entire module */
 /******************************************************************************
  *
  * FUNCTION:    acpi_get_timer_resolution
@@ -142,7 +140,7 @@ acpi_get_timer_duration(u32 start_ticks, u32 end_ticks, u32 * time_elapsed)
 {
 	acpi_status status;
 	u32 delta_ticks;
-	u64 quotient;
+	acpi_integer quotient;
 
 	ACPI_FUNCTION_TRACE(acpi_get_timer_duration);
 
@@ -188,4 +186,3 @@ acpi_get_timer_duration(u32 start_ticks, u32 end_ticks, u32 * time_elapsed)
 }
 
 ACPI_EXPORT_SYMBOL(acpi_get_timer_duration)
-#endif				/* !ACPI_REDUCED_HARDWARE */

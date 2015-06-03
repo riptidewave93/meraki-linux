@@ -17,7 +17,8 @@ struct DWstruct {
 #error I feel sick.
 #endif
 
-typedef union {
+typedef union
+{
 	struct DWstruct s;
 	long long ll;
 } DWunion;

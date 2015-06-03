@@ -332,7 +332,7 @@ int crisv32_arbiter_unwatch(int id)
 	if (id == 0)
 		intr_mask.bp0 = regk_marb_no;
 	else if (id == 1)
-		intr_mask.bp1 = regk_marb_no;
+		intr_mask.bp2 = regk_marb_no;
 	else if (id == 2)
 		intr_mask.bp2 = regk_marb_no;
 	else if (id == 3)
@@ -395,7 +395,7 @@ static irqreturn_t crisv32_arbiter_irq(int irq, void *dev_id)
 	REG_WR(marb_bp, watch->instance, rw_ack, ack);
 	REG_WR(marb, regi_marb, rw_ack_intr, ack_intr);
 
-	printk(KERN_INFO "IRQ occurred at %lX\n", get_irq_regs()->erp);
+	printk(KERN_INFO "IRQ occured at %lX\n", get_irq_regs()->erp);
 
 	if (watch->cb)
 		watch->cb();

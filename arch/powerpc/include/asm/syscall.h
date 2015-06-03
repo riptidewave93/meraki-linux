@@ -15,11 +15,6 @@
 
 #include <linux/sched.h>
 
-/* ftrace syscalls requires exporting the sys_call_table */
-#ifdef CONFIG_FTRACE_SYSCALLS
-extern const unsigned long *sys_call_table;
-#endif /* CONFIG_FTRACE_SYSCALLS */
-
 static inline long syscall_get_nr(struct task_struct *task,
 				  struct pt_regs *regs)
 {
@@ -35,7 +30,7 @@ static inline void syscall_rollback(struct task_struct *task,
 static inline long syscall_get_error(struct task_struct *task,
 				     struct pt_regs *regs)
 {
-	return (regs->ccr & 0x10000000) ? -regs->gpr[3] : 0;
+	return (regs->ccr & 0x1000) ? -regs->gpr[3] : 0;
 }
 
 static inline long syscall_get_return_value(struct task_struct *task,
@@ -49,10 +44,10 @@ static inline void syscall_set_return_value(struct task_struct *task,
 					    int error, long val)
 {
 	if (error) {
-		regs->ccr |= 0x10000000L;
+		regs->ccr |= 0x1000L;
 		regs->gpr[3] = -error;
 	} else {
-		regs->ccr &= ~0x10000000L;
+		regs->ccr &= ~0x1000L;
 		regs->gpr[3] = val;
 	}
 }

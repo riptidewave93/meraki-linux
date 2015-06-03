@@ -389,16 +389,12 @@ static int i2o_exec_lct_notify(struct i2o_controller *c, u32 change_ind)
 	dev = &c->pdev->dev;
 
 	if (i2o_dma_realloc(dev, &c->dlct,
-					le32_to_cpu(sb->expected_lct_size))) {
-		mutex_unlock(&c->lct_lock);
+					le32_to_cpu(sb->expected_lct_size)))
 		return -ENOMEM;
-	}
 
 	msg = i2o_msg_get_wait(c, I2O_TIMEOUT_MESSAGE_GET);
-	if (IS_ERR(msg)) {
-		mutex_unlock(&c->lct_lock);
+	if (IS_ERR(msg))
 		return PTR_ERR(msg);
-	}
 
 	msg->u.head[0] = cpu_to_le32(EIGHT_WORD_MSG_SIZE | SGL_OFFSET_6);
 	msg->u.head[1] = cpu_to_le32(I2O_CMD_LCT_NOTIFY << 24 | HOST_TID << 12 |

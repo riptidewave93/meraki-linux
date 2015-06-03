@@ -39,7 +39,7 @@
 
 /*---------------------  Export Functions  --------------------------*/
 
-bool ROUTEbRelay (PSDevice pDevice, unsigned char *pbySkbData, unsigned int uDataLen, unsigned int uNodeIndex);
+BOOL ROUTEbRelay (PSDevice pDevice, PBYTE pbySkbData, UINT uDataLen, UINT uNodeIndex);
 
 #endif // __WROUTE_H__
 

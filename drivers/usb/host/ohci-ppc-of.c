@@ -18,6 +18,10 @@
 
 #include <asm/prom.h>
 
+#ifdef CONFIG_APM86xxx 
+#include <asm/apm86xxx_soc.h>
+#include <asm/apm86xxx_pm.h>
+#endif
 
 static int __devinit
 ohci_ppc_of_start(struct usb_hcd *hcd)
@@ -79,10 +83,100 @@ static const struct hc_driver ohci_ppc_of_hc_driver = {
 	.start_port_reset =	ohci_start_port_reset,
 };
 
+#if defined(CONFIG_APM86xxx_IOCOHERENT)
+#include <linux/spinlock_types.h>
+static spinlock_t ioc_mem_lock;
+static struct list_head ioc_mem_head;
+static u64 ioc_mem_phyaddr;
+static int ioc_mem_size;		 
+static void *ioc_mem_vaddr_base;
+static void *ioc_mem_vaddr;
+#define IOC_MEM_1ST_CHUNK_SIZE		(64*1024)
+#define IOC_MEM_CHUNK_SIZE		128	/* Must be multiple of 32B */
+#define IOC_MEM_HEADER_SIZE		32	/* Must be multiple of 32B */
 
-static int __devinit ohci_hcd_ppc_of_probe(struct platform_device *op)
+static int ioc_mem_init(void)
 {
-	struct device_node *dn = op->dev.of_node;
+	struct list_head * item;
+	u8 *ptr;
+	u32 i;
+	
+	spin_lock_init(&ioc_mem_lock);
+	INIT_LIST_HEAD(&ioc_mem_head);
+	ioc_mem_vaddr_base = ioremap_nocache(ioc_mem_phyaddr, ioc_mem_size);
+	if (ioc_mem_vaddr_base == NULL) {
+		printk(KERN_ERR "unable to map IO coherent memory\n");
+		return -ENOMEM;
+	}
+	ioc_mem_vaddr = (u8 *) ioc_mem_vaddr_base + IOC_MEM_1ST_CHUNK_SIZE;
+	
+	ptr = ioc_mem_vaddr;
+	for (i = 0; i < ioc_mem_size - IOC_MEM_1ST_CHUNK_SIZE; 
+	     i += IOC_MEM_CHUNK_SIZE) {
+		item = (struct list_head *) ptr;
+		list_add(item, &ioc_mem_head);
+		ptr += IOC_MEM_CHUNK_SIZE;
+	}
+	return 0;
+}
+
+u64 ioc2_mem_paddr(void *addr)
+{
+	return (unsigned long) addr - (unsigned long) ioc_mem_vaddr_base +
+		ioc_mem_phyaddr;
+}
+
+void *ioc2_mem_alloc(int size)
+{
+	unsigned long flags;
+	struct list_head * item;
+	
+	if (size > (IOC_MEM_CHUNK_SIZE - IOC_MEM_HEADER_SIZE)) {
+		printk(KERN_ERR "unable to allocate coherent memory size %d\n",
+			size);
+		return NULL;
+	}	
+	spin_lock_irqsave(&ioc_mem_lock, flags);
+	if (list_empty(&ioc_mem_head)) {
+		spin_unlock_irqrestore(&ioc_mem_lock, flags);
+		return NULL;
+	}	
+	item = ioc_mem_head.next;	
+	list_del(item);			
+	spin_unlock_irqrestore(&ioc_mem_lock, flags);
+	return (u8 *) item + IOC_MEM_HEADER_SIZE; 
+}
+
+void ioc2_mem_free(void *ptr)
+{
+	unsigned long flags;
+	struct list_head * item;
+	
+	spin_lock_irqsave(&ioc_mem_lock, flags);
+	item = (void *) ((unsigned long) ptr - IOC_MEM_HEADER_SIZE);  
+	list_add(item, &ioc_mem_head);	
+	spin_unlock_irqrestore(&ioc_mem_lock, flags);
+}
+
+void *ioc2_mem_fix_size(int idx, int size)
+{
+	if (size > IOC_MEM_1ST_CHUNK_SIZE / 2) {
+		printk(KERN_ERR "unable to allocate coherent memory size %d\n",
+			size);
+		return NULL;
+	}
+	if (idx == 0) 
+		return ioc_mem_vaddr_base;
+	if (idx == 1)
+		return (u8 *) ioc_mem_vaddr_base + IOC_MEM_1ST_CHUNK_SIZE / 2;
+	return NULL;		
+}
+#endif
+
+static int __devinit
+ohci_hcd_ppc_of_probe(struct of_device *op, const struct of_device_id *match)
+{
+	struct device_node *dn = op->node;
 	struct usb_hcd *hcd;
 	struct ohci_hcd	*ohci;
 	struct resource res;
@@ -91,6 +185,38 @@ static int __devinit ohci_hcd_ppc_of_probe(struct platform_device *op)
 	int rv;
 	int is_bigendian;
 	struct device_node *np;
+
+#ifdef CONFIG_APM86xxx
+	u32 *devid = 0;
+#if defined(CONFIG_APM86xxx_IOCOHERENT)
+	u32 *val;
+	u32 val_len;
+#endif
+
+	rv = -ENODEV;
+	devid = (u32 *)of_get_property (dn, "devid", NULL);
+	op->dev.platform_data = (void *)devid;
+
+	if (devid && (*devid == 1 || *devid == 2)) 
+		rv = apm86xxx_usb_clk_enable(*devid);
+
+	if (rv)
+		return rv;
+
+#if defined(CONFIG_APM86xxx_IOCOHERENT)
+	val = (u32 *) of_get_property(dn, "dma-reg", &val_len);
+	if (val == NULL || val_len < 3) {
+		printk(KERN_ERR "No DTS dma-reg for IO coherent mode\n");
+		return -ENODEV;
+	}		
+	ioc_mem_phyaddr = ((u64) val[0] << 32) | val[1];
+	ioc_mem_size = val[2];	
+	ioc_mem_init(); 
+	dev_info(&op->dev, 
+		"coherent memory PADDR 0x%010llX VADDR 0x%p size %d",
+		ioc_mem_phyaddr, ioc_mem_vaddr, ioc_mem_size);
+#endif
+#endif
 
 	if (usb_disabled())
 		return -ENODEV;
@@ -110,24 +236,24 @@ static int __devinit ohci_hcd_ppc_of_probe(struct platform_device *op)
 		return -ENOMEM;
 
 	hcd->rsrc_start = res.start;
-	hcd->rsrc_len = resource_size(&res);
+	hcd->rsrc_len = res.end - res.start + 1;
 
 	if (!request_mem_region(hcd->rsrc_start, hcd->rsrc_len, hcd_name)) {
-		printk(KERN_ERR "%s: request_mem_region failed\n", __FILE__);
+		printk(KERN_ERR __FILE__ ": request_mem_region failed\n");
 		rv = -EBUSY;
 		goto err_rmr;
 	}
 
 	irq = irq_of_parse_and_map(dn, 0);
 	if (irq == NO_IRQ) {
-		printk(KERN_ERR "%s: irq_of_parse_and_map failed\n", __FILE__);
+		printk(KERN_ERR __FILE__ ": irq_of_parse_and_map failed\n");
 		rv = -EBUSY;
 		goto err_irq;
 	}
 
 	hcd->regs = ioremap(hcd->rsrc_start, hcd->rsrc_len);
 	if (!hcd->regs) {
-		printk(KERN_ERR "%s: ioremap failed\n", __FILE__);
+		printk(KERN_ERR __FILE__ ": ioremap failed\n");
 		rv = -ENOMEM;
 		goto err_ioremap;
 	}
@@ -143,7 +269,7 @@ static int __devinit ohci_hcd_ppc_of_probe(struct platform_device *op)
 
 	ohci_hcd_init(ohci);
 
-	rv = usb_add_hcd(hcd, irq, 0);
+	rv = usb_add_hcd(hcd, irq, IRQF_DISABLED);
 	if (rv == 0)
 		return 0;
 
@@ -168,7 +294,7 @@ static int __devinit ohci_hcd_ppc_of_probe(struct platform_device *op)
 			} else
 				release_mem_region(res.start, 0x4);
 		} else
-			pr_debug("%s: cannot get ehci offset from fdt\n", __FILE__);
+		    pr_debug(__FILE__ ": cannot get ehci offset from fdt\n");
 	}
 
 	iounmap(hcd->regs);
@@ -182,7 +308,7 @@ err_rmr:
 	return rv;
 }
 
-static int ohci_hcd_ppc_of_remove(struct platform_device *op)
+static int ohci_hcd_ppc_of_remove(struct of_device *op)
 {
 	struct usb_hcd *hcd = dev_get_drvdata(&op->dev);
 	dev_set_drvdata(&op->dev, NULL);
@@ -200,16 +326,50 @@ static int ohci_hcd_ppc_of_remove(struct platform_device *op)
 	return 0;
 }
 
-static void ohci_hcd_ppc_of_shutdown(struct platform_device *op)
+static int ohci_hcd_ppc_of_shutdown(struct of_device *op)
 {
 	struct usb_hcd *hcd = dev_get_drvdata(&op->dev);
 
         if (hcd->driver->shutdown)
                 hcd->driver->shutdown(hcd);
+
+	return 0;
 }
 
+#ifdef CONFIG_PM
+static int ohci_hcd_ppc_of_suspend(struct of_device *op, pm_message_t state)
+{
+	return 0;
+}
 
-static const struct of_device_id ohci_hcd_ppc_of_match[] = {
+static int ohci_hcd_ppc_of_resume(struct of_device *op)
+{
+	struct usb_hcd  *hcd = dev_get_drvdata(&op->dev);
+	struct ohci_hcd *ohci = hcd_to_ohci(hcd);
+
+#if defined(CONFIG_APM86xxx)
+	u32 devid = 0;
+
+	if (!resumed_from_deepsleep())
+		return 0;
+
+	if (op->dev.platform_data) {
+		devid = *(u32 *)(op->dev.platform_data);
+		apm86xxx_ahbc_usb_enable(devid);
+	}
+#endif
+
+	ohci_writel(ohci, OHCI_USB_SUSPEND, &ohci->regs->control);
+	ohci->hc_control = ohci_readl(ohci, &ohci->regs->control);
+	/* wake on ConnectStatusChange, matching external hubs */
+	ohci_writel (ohci, RH_HS_DRWE, &ohci->regs->roothub.status);
+	ohci_writel (ohci, roothub_a (ohci) | RH_A_NPS, &ohci->regs->roothub.a);
+
+	return 0;
+}
+#endif
+
+static struct of_device_id ohci_hcd_ppc_of_match[] = {
 #ifdef CONFIG_USB_OHCI_HCD_PPC_OF_BE
 	{
 		.name = "usb",
@@ -240,14 +400,19 @@ MODULE_DEVICE_TABLE(of, ohci_hcd_ppc_of_match);
 #endif
 
 
-static struct platform_driver ohci_hcd_ppc_of_driver = {
+static struct of_platform_driver ohci_hcd_ppc_of_driver = {
+	.name		= "ppc-of-ohci",
+	.match_table	= ohci_hcd_ppc_of_match,
 	.probe		= ohci_hcd_ppc_of_probe,
 	.remove		= ohci_hcd_ppc_of_remove,
 	.shutdown 	= ohci_hcd_ppc_of_shutdown,
-	.driver = {
-		.name = "ppc-of-ohci",
-		.owner = THIS_MODULE,
-		.of_match_table = ohci_hcd_ppc_of_match,
+#ifdef CONFIG_PM
+	.suspend	= ohci_hcd_ppc_of_suspend,
+	.resume		= ohci_hcd_ppc_of_resume,
+#endif
+	.driver		= {
+		.name	= "ppc-of-ohci",
+		.owner	= THIS_MODULE,
 	},
 };
 

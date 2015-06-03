@@ -24,6 +24,7 @@ struct sysv_sb_info {
 	char	       s_bytesex;	/* bytesex (le/be/pdp) */
 	char	       s_truncate;	/* if 1: names > SYSV_NAMELEN chars are truncated */
 					/* if 0: they are disallowed (ENAMETOOLONG) */
+	nlink_t        s_link_max;	/* max number of hard links to a file */
 	unsigned int   s_inodes_per_block;	/* number of inodes per block */
 	unsigned int   s_inodes_per_block_1;	/* inodes_per_block - 1 */
 	unsigned int   s_inodes_per_block_bits;	/* log2(inodes_per_block) */
@@ -124,7 +125,7 @@ static inline void dirty_sb(struct super_block *sb)
 /* ialloc.c */
 extern struct sysv_inode *sysv_raw_inode(struct super_block *, unsigned,
 			struct buffer_head **);
-extern struct inode * sysv_new_inode(const struct inode *, umode_t);
+extern struct inode * sysv_new_inode(const struct inode *, mode_t);
 extern void sysv_free_inode(struct inode *);
 extern unsigned long sysv_count_free_inodes(struct super_block *);
 
@@ -135,11 +136,13 @@ extern unsigned long sysv_count_free_blocks(struct super_block *);
 
 /* itree.c */
 extern void sysv_truncate(struct inode *);
-extern int sysv_prepare_chunk(struct page *page, loff_t pos, unsigned len);
+extern int __sysv_write_begin(struct file *file, struct address_space *mapping,
+			loff_t pos, unsigned len, unsigned flags,
+			struct page **pagep, void **fsdata);
 
 /* inode.c */
 extern struct inode *sysv_iget(struct super_block *, unsigned int);
-extern int sysv_write_inode(struct inode *, struct writeback_control *wbc);
+extern int sysv_write_inode(struct inode *, int);
 extern int sysv_sync_inode(struct inode *);
 extern void sysv_set_inode(struct inode *, dev_t);
 extern int sysv_getattr(struct vfsmount *, struct dentry *, struct kstat *);

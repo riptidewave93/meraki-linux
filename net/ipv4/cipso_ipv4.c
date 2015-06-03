@@ -9,7 +9,7 @@
  *
  * The CIPSO draft specification can be found in the kernel's Documentation
  * directory as well as the following URL:
- *   http://tools.ietf.org/id/draft-ietf-cipso-ipsecurity-01.txt
+ *   http://netlabel.sourceforge.net/files/draft-ietf-cipso-ipsecurity-01.txt
  * The FIPS-188 specification can be found at the following URL:
  *   http://www.itl.nist.gov/fipspubs/fip188.htm
  *
@@ -44,13 +44,12 @@
 #include <linux/string.h>
 #include <linux/jhash.h>
 #include <linux/audit.h>
-#include <linux/slab.h>
 #include <net/ip.h>
 #include <net/icmp.h>
 #include <net/tcp.h>
 #include <net/netlabel.h>
 #include <net/cipso_ipv4.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/bug.h>
 #include <asm/unaligned.h>
 
@@ -112,7 +111,7 @@ int cipso_v4_rbm_strictvalid = 1;
 /* The maximum number of category ranges permitted in the ranged category tag
  * (tag #5).  You may note that the IETF draft states that the maximum number
  * of category ranges is 7, but if the low end of the last category range is
- * zero then it is possible to fit 8 category ranges because the zero should
+ * zero then it is possibile to fit 8 category ranges because the zero should
  * be omitted. */
 #define CIPSO_V4_TAG_RNG_CAT_MAX      8
 
@@ -290,6 +289,8 @@ void cipso_v4_cache_invalidate(void)
 		cipso_v4_cache[iter].size = 0;
 		spin_unlock_bh(&cipso_v4_cache[iter].lock);
 	}
+
+	return;
 }
 
 /**
@@ -438,7 +439,7 @@ cache_add_failure:
  *
  * Description:
  * Search the DOI definition list for a DOI definition with a DOI value that
- * matches @doi.  The caller is responsible for calling rcu_read_[un]lock().
+ * matches @doi.  The caller is responsibile for calling rcu_read_[un]lock().
  * Returns a pointer to the DOI definition on success and NULL on failure.
  */
 static struct cipso_v4_doi *cipso_v4_doi_search(u32 doi)
@@ -476,7 +477,7 @@ int cipso_v4_doi_add(struct cipso_v4_doi *doi_def,
 	doi = doi_def->doi;
 	doi_type = doi_def->type;
 
-	if (doi_def->doi == CIPSO_V4_DOI_UNKNOWN)
+	if (doi_def == NULL || doi_def->doi == CIPSO_V4_DOI_UNKNOWN)
 		goto doi_add_return;
 	for (iter = 0; iter < CIPSO_V4_TAG_MAXCNT; iter++) {
 		switch (doi_def->tags[iter]) {
@@ -1293,7 +1294,7 @@ static int cipso_v4_gentag_rbm(const struct cipso_v4_doi *doi_def,
 			return ret_val;
 
 		/* This will send packets using the "optimized" format when
-		 * possible as specified in  section 3.4.2.6 of the
+		 * possibile as specified in  section 3.4.2.6 of the
 		 * CIPSO draft. */
 		if (cipso_v4_rbm_optfmt && ret_val > 0 && ret_val <= 10)
 			tag_len = 14;
@@ -1754,7 +1755,7 @@ validate_return:
 }
 
 /**
- * cipso_v4_error - Send the correct response for a bad packet
+ * cipso_v4_error - Send the correct reponse for a bad packet
  * @skb: the packet
  * @error: the error code
  * @gateway: CIPSO gateway flag
@@ -1859,6 +1860,11 @@ static int cipso_v4_genopt(unsigned char *buf, u32 buf_len,
 	return CIPSO_V4_HDR_LEN + ret_val;
 }
 
+static void opt_kfree_rcu(struct rcu_head *head)
+{
+	kfree(container_of(head, struct ip_options_rcu, rcu));
+}
+
 /**
  * cipso_v4_sock_setattr - Add a CIPSO option to a socket
  * @sk: the socket
@@ -1925,7 +1931,7 @@ int cipso_v4_sock_setattr(struct sock *sk,
 
 	sk_inet = inet_sk(sk);
 
-	old = rcu_dereference_protected(sk_inet->inet_opt, sock_owned_by_user(sk));
+	old = sk_inet->inet_opt;
 	if (sk_inet->is_icsk) {
 		sk_conn = inet_csk(sk);
 		if (old)
@@ -1935,7 +1941,7 @@ int cipso_v4_sock_setattr(struct sock *sk,
 	}
 	rcu_assign_pointer(sk_inet->inet_opt, opt);
 	if (old)
-		kfree_rcu(old, rcu);
+		call_rcu(&old->rcu, opt_kfree_rcu);
 
 	return 0;
 
@@ -2002,7 +2008,7 @@ int cipso_v4_req_setattr(struct request_sock *req,
 	req_inet = inet_rsk(req);
 	opt = xchg(&req_inet->opt, opt);
 	if (opt)
-		kfree_rcu(opt, rcu);
+		call_rcu(&opt->rcu, opt_kfree_rcu);
 
 	return 0;
 
@@ -2022,7 +2028,7 @@ req_setattr_failure:
  * values on failure.
  *
  */
-static int cipso_v4_delopt(struct ip_options_rcu **opt_ptr)
+int cipso_v4_delopt(struct ip_options_rcu **opt_ptr)
 {
 	int hdr_delta = 0;
 	struct ip_options_rcu *opt = *opt_ptr;
@@ -2072,7 +2078,7 @@ static int cipso_v4_delopt(struct ip_options_rcu **opt_ptr)
 		 * remove the entire option struct */
 		*opt_ptr = NULL;
 		hdr_delta = opt->opt.optlen;
-		kfree_rcu(opt, rcu);
+		call_rcu(&opt->rcu, opt_kfree_rcu);
 	}
 
 	return hdr_delta;
@@ -2093,7 +2099,7 @@ void cipso_v4_sock_delattr(struct sock *sk)
 	struct inet_sock *sk_inet;
 
 	sk_inet = inet_sk(sk);
-	opt = rcu_dereference_protected(sk_inet->inet_opt, 1);
+	opt = sk_inet->inet_opt;
 	if (opt == NULL || opt->opt.cipso == 0)
 		return;
 

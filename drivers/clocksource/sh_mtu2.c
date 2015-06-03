@@ -29,9 +29,6 @@
 #include <linux/err.h>
 #include <linux/clockchips.h>
 #include <linux/sh_timer.h>
-#include <linux/slab.h>
-#include <linux/module.h>
-#include <linux/pm_domain.h>
 
 struct sh_mtu2_priv {
 	void __iomem *mapbase;
@@ -121,12 +118,13 @@ static void sh_mtu2_start_stop_ch(struct sh_mtu2_priv *p, int start)
 
 static int sh_mtu2_enable(struct sh_mtu2_priv *p)
 {
+	struct sh_timer_config *cfg = p->pdev->dev.platform_data;
 	int ret;
 
 	/* enable clock */
 	ret = clk_enable(p->clk);
 	if (ret) {
-		dev_err(&p->pdev->dev, "cannot enable clock\n");
+		pr_err("sh_mtu2: cannot enable clock \"%s\"\n", cfg->clk);
 		return ret;
 	}
 
@@ -195,7 +193,8 @@ static void sh_mtu2_clock_event_mode(enum clock_event_mode mode,
 
 	switch (mode) {
 	case CLOCK_EVT_MODE_PERIODIC:
-		dev_info(&p->pdev->dev, "used for periodic clock events\n");
+		pr_info("sh_mtu2: %s used for periodic clock events\n",
+			ced->name);
 		sh_mtu2_enable(p);
 		break;
 	case CLOCK_EVT_MODE_UNUSED:
@@ -222,13 +221,13 @@ static void sh_mtu2_register_clockevent(struct sh_mtu2_priv *p,
 	ced->cpumask = cpumask_of(0);
 	ced->set_mode = sh_mtu2_clock_event_mode;
 
-	dev_info(&p->pdev->dev, "used for clock events\n");
+	pr_info("sh_mtu2: %s used for clock events\n", ced->name);
 	clockevents_register_device(ced);
 
 	ret = setup_irq(p->irqaction.irq, &p->irqaction);
 	if (ret) {
-		dev_err(&p->pdev->dev, "failed to request irq %d\n",
-			p->irqaction.irq);
+		pr_err("sh_mtu2: failed to request irq %d\n",
+		       p->irqaction.irq);
 		return;
 	}
 }
@@ -274,28 +273,26 @@ static int sh_mtu2_setup(struct sh_mtu2_priv *p, struct platform_device *pdev)
 	/* map memory, let mapbase point to our channel */
 	p->mapbase = ioremap_nocache(res->start, resource_size(res));
 	if (p->mapbase == NULL) {
-		dev_err(&p->pdev->dev, "failed to remap I/O memory\n");
+		pr_err("sh_mtu2: failed to remap I/O memory\n");
 		goto err0;
 	}
 
 	/* setup data for setup_irq() (too early for request_irq()) */
-	p->irqaction.name = dev_name(&p->pdev->dev);
+	p->irqaction.name = cfg->name;
 	p->irqaction.handler = sh_mtu2_interrupt;
 	p->irqaction.dev_id = p;
 	p->irqaction.irq = irq;
-	p->irqaction.flags = IRQF_DISABLED | IRQF_TIMER | \
-			     IRQF_IRQPOLL  | IRQF_NOBALANCING;
+	p->irqaction.flags = IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL;
 
 	/* get hold of clock */
-	p->clk = clk_get(&p->pdev->dev, "mtu2_fck");
+	p->clk = clk_get(&p->pdev->dev, cfg->clk);
 	if (IS_ERR(p->clk)) {
-		dev_err(&p->pdev->dev, "cannot get clock\n");
+		pr_err("sh_mtu2: cannot get clock \"%s\"\n", cfg->clk);
 		ret = PTR_ERR(p->clk);
 		goto err1;
 	}
 
-	return sh_mtu2_register(p, (char *)dev_name(&p->pdev->dev),
-				cfg->clockevent_rating);
+	return sh_mtu2_register(p, cfg->name, cfg->clockevent_rating);
  err1:
 	iounmap(p->mapbase);
  err0:
@@ -305,13 +302,11 @@ static int sh_mtu2_setup(struct sh_mtu2_priv *p, struct platform_device *pdev)
 static int __devinit sh_mtu2_probe(struct platform_device *pdev)
 {
 	struct sh_mtu2_priv *p = platform_get_drvdata(pdev);
+	struct sh_timer_config *cfg = pdev->dev.platform_data;
 	int ret;
 
-	if (!is_early_platform_device(pdev))
-		pm_genpd_dev_always_on(&pdev->dev, true);
-
 	if (p) {
-		dev_info(&pdev->dev, "kept as earlytimer\n");
+		pr_info("sh_mtu2: %s kept as earlytimer\n", cfg->name);
 		return 0;
 	}
 

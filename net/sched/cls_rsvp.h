@@ -66,25 +66,28 @@
    powerful classification engine.  */
 
 
-struct rsvp_head {
+struct rsvp_head
+{
 	u32			tmap[256/32];
 	u32			hgenerator;
 	u8			tgenerator;
 	struct rsvp_session	*ht[256];
 };
 
-struct rsvp_session {
+struct rsvp_session
+{
 	struct rsvp_session	*next;
 	__be32			dst[RSVP_DST_LEN];
 	struct tc_rsvp_gpi 	dpi;
 	u8			protocol;
 	u8			tunnelid;
 	/* 16 (src,sport) hash slots, and one wildcard source slot */
-	struct rsvp_filter	*ht[16 + 1];
+	struct rsvp_filter	*ht[16+1];
 };
 
 
-struct rsvp_filter {
+struct rsvp_filter
+{
 	struct rsvp_filter	*next;
 	__be32			src[RSVP_DST_LEN];
 	struct tc_rsvp_gpi	spi;
@@ -97,19 +100,17 @@ struct rsvp_filter {
 	struct rsvp_session	*sess;
 };
 
-static inline unsigned int hash_dst(__be32 *dst, u8 protocol, u8 tunnelid)
+static __inline__ unsigned hash_dst(__be32 *dst, u8 protocol, u8 tunnelid)
 {
-	unsigned int h = (__force __u32)dst[RSVP_DST_LEN - 1];
-
+	unsigned h = (__force __u32)dst[RSVP_DST_LEN-1];
 	h ^= h>>16;
 	h ^= h>>8;
 	return (h ^ protocol ^ tunnelid) & 0xFF;
 }
 
-static inline unsigned int hash_src(__be32 *src)
+static __inline__ unsigned hash_src(__be32 *src)
 {
-	unsigned int h = (__force __u32)src[RSVP_DST_LEN-1];
-
+	unsigned h = (__force __u32)src[RSVP_DST_LEN-1];
 	h ^= h>>16;
 	h ^= h>>8;
 	h ^= h>>4;
@@ -130,29 +131,21 @@ static struct tcf_ext_map rsvp_ext_map = {
 		return r;				\
 }
 
-static int rsvp_classify(struct sk_buff *skb, const struct tcf_proto *tp,
+static int rsvp_classify(struct sk_buff *skb, struct tcf_proto *tp,
 			 struct tcf_result *res)
 {
-	struct rsvp_session **sht = ((struct rsvp_head *)tp->root)->ht;
+	struct rsvp_session **sht = ((struct rsvp_head*)tp->root)->ht;
 	struct rsvp_session *s;
 	struct rsvp_filter *f;
-	unsigned int h1, h2;
+	unsigned h1, h2;
 	__be32 *dst, *src;
 	u8 protocol;
 	u8 tunnelid = 0;
 	u8 *xprt;
 #if RSVP_DST_LEN == 4
-	struct ipv6hdr *nhptr;
-
-	if (!pskb_network_may_pull(skb, sizeof(*nhptr)))
-		return -1;
-	nhptr = ipv6_hdr(skb);
+	struct ipv6hdr *nhptr = ipv6_hdr(skb);
 #else
-	struct iphdr *nhptr;
-
-	if (!pskb_network_may_pull(skb, sizeof(*nhptr)))
-		return -1;
-	nhptr = ip_hdr(skb);
+	struct iphdr *nhptr = ip_hdr(skb);
 #endif
 
 restart:
@@ -161,13 +154,13 @@ restart:
 	src = &nhptr->saddr.s6_addr32[0];
 	dst = &nhptr->daddr.s6_addr32[0];
 	protocol = nhptr->nexthdr;
-	xprt = ((u8 *)nhptr) + sizeof(struct ipv6hdr);
+	xprt = ((u8*)nhptr) + sizeof(struct ipv6hdr);
 #else
 	src = &nhptr->saddr;
 	dst = &nhptr->daddr;
 	protocol = nhptr->protocol;
-	xprt = ((u8 *)nhptr) + (nhptr->ihl<<2);
-	if (ip_is_fragment(nhptr))
+	xprt = ((u8*)nhptr) + (nhptr->ihl<<2);
+	if (nhptr->frag_off & htons(IP_MF|IP_OFFSET))
 		return -1;
 #endif
 
@@ -175,25 +168,23 @@ restart:
 	h2 = hash_src(src);
 
 	for (s = sht[h1]; s; s = s->next) {
-		if (dst[RSVP_DST_LEN-1] == s->dst[RSVP_DST_LEN - 1] &&
+		if (dst[RSVP_DST_LEN-1] == s->dst[RSVP_DST_LEN-1] &&
 		    protocol == s->protocol &&
-		    !(s->dpi.mask &
-		      (*(u32 *)(xprt + s->dpi.offset) ^ s->dpi.key)) &&
+		    !(s->dpi.mask & (*(u32*)(xprt+s->dpi.offset)^s->dpi.key))
 #if RSVP_DST_LEN == 4
-		    dst[0] == s->dst[0] &&
-		    dst[1] == s->dst[1] &&
-		    dst[2] == s->dst[2] &&
+		    && dst[0] == s->dst[0]
+		    && dst[1] == s->dst[1]
+		    && dst[2] == s->dst[2]
 #endif
-		    tunnelid == s->tunnelid) {
+		    && tunnelid == s->tunnelid) {
 
 			for (f = s->ht[h2]; f; f = f->next) {
-				if (src[RSVP_DST_LEN-1] == f->src[RSVP_DST_LEN - 1] &&
-				    !(f->spi.mask & (*(u32 *)(xprt + f->spi.offset) ^ f->spi.key))
+				if (src[RSVP_DST_LEN-1] == f->src[RSVP_DST_LEN-1] &&
+				    !(f->spi.mask & (*(u32*)(xprt+f->spi.offset)^f->spi.key))
 #if RSVP_DST_LEN == 4
-				    &&
-				    src[0] == f->src[0] &&
-				    src[1] == f->src[1] &&
-				    src[2] == f->src[2]
+				    && src[0] == f->src[0]
+				    && src[1] == f->src[1]
+				    && src[2] == f->src[2]
 #endif
 				    ) {
 					*res = f->res;
@@ -204,7 +195,7 @@ matched:
 						return 0;
 
 					tunnelid = f->res.classid;
-					nhptr = (void *)(xprt + f->tunnelhdr - sizeof(*nhptr));
+					nhptr = (void*)(xprt + f->tunnelhdr - sizeof(*nhptr));
 					goto restart;
 				}
 			}
@@ -223,11 +214,11 @@ matched:
 
 static unsigned long rsvp_get(struct tcf_proto *tp, u32 handle)
 {
-	struct rsvp_session **sht = ((struct rsvp_head *)tp->root)->ht;
+	struct rsvp_session **sht = ((struct rsvp_head*)tp->root)->ht;
 	struct rsvp_session *s;
 	struct rsvp_filter *f;
-	unsigned int h1 = handle & 0xFF;
-	unsigned int h2 = (handle >> 8) & 0xFF;
+	unsigned h1 = handle&0xFF;
+	unsigned h2 = (handle>>8)&0xFF;
 
 	if (h2 > 16)
 		return 0;
@@ -257,7 +248,7 @@ static int rsvp_init(struct tcf_proto *tp)
 	return -ENOBUFS;
 }
 
-static void
+static inline void
 rsvp_delete_filter(struct tcf_proto *tp, struct rsvp_filter *f)
 {
 	tcf_unbind_filter(tp, &f->res);
@@ -276,13 +267,13 @@ static void rsvp_destroy(struct tcf_proto *tp)
 
 	sht = data->ht;
 
-	for (h1 = 0; h1 < 256; h1++) {
+	for (h1=0; h1<256; h1++) {
 		struct rsvp_session *s;
 
 		while ((s = sht[h1]) != NULL) {
 			sht[h1] = s->next;
 
-			for (h2 = 0; h2 <= 16; h2++) {
+			for (h2=0; h2<=16; h2++) {
 				struct rsvp_filter *f;
 
 				while ((f = s->ht[h2]) != NULL) {
@@ -298,13 +289,13 @@ static void rsvp_destroy(struct tcf_proto *tp)
 
 static int rsvp_delete(struct tcf_proto *tp, unsigned long arg)
 {
-	struct rsvp_filter **fp, *f = (struct rsvp_filter *)arg;
-	unsigned int h = f->handle;
+	struct rsvp_filter **fp, *f = (struct rsvp_filter*)arg;
+	unsigned h = f->handle;
 	struct rsvp_session **sp;
 	struct rsvp_session *s = f->sess;
 	int i;
 
-	for (fp = &s->ht[(h >> 8) & 0xFF]; *fp; fp = &(*fp)->next) {
+	for (fp = &s->ht[(h>>8)&0xFF]; *fp; fp = &(*fp)->next) {
 		if (*fp == f) {
 			tcf_tree_lock(tp);
 			*fp = f->next;
@@ -313,12 +304,12 @@ static int rsvp_delete(struct tcf_proto *tp, unsigned long arg)
 
 			/* Strip tree */
 
-			for (i = 0; i <= 16; i++)
+			for (i=0; i<=16; i++)
 				if (s->ht[i])
 					return 0;
 
 			/* OK, session has no flows */
-			for (sp = &((struct rsvp_head *)tp->root)->ht[h & 0xFF];
+			for (sp = &((struct rsvp_head*)tp->root)->ht[h&0xFF];
 			     *sp; sp = &(*sp)->next) {
 				if (*sp == s) {
 					tcf_tree_lock(tp);
@@ -336,14 +327,13 @@ static int rsvp_delete(struct tcf_proto *tp, unsigned long arg)
 	return 0;
 }
 
-static unsigned int gen_handle(struct tcf_proto *tp, unsigned salt)
+static unsigned gen_handle(struct tcf_proto *tp, unsigned salt)
 {
 	struct rsvp_head *data = tp->root;
 	int i = 0xFFFF;
 
 	while (i-- > 0) {
 		u32 h;
-
 		if ((data->hgenerator += 0x10000) == 0)
 			data->hgenerator = 0x10000;
 		h = data->hgenerator|salt;
@@ -355,10 +345,10 @@ static unsigned int gen_handle(struct tcf_proto *tp, unsigned salt)
 
 static int tunnel_bts(struct rsvp_head *data)
 {
-	int n = data->tgenerator >> 5;
-	u32 b = 1 << (data->tgenerator & 0x1F);
+	int n = data->tgenerator>>5;
+	u32 b = 1<<(data->tgenerator&0x1F);
 
-	if (data->tmap[n] & b)
+	if (data->tmap[n]&b)
 		return 0;
 	data->tmap[n] |= b;
 	return 1;
@@ -372,10 +362,10 @@ static void tunnel_recycle(struct rsvp_head *data)
 
 	memset(tmap, 0, sizeof(tmap));
 
-	for (h1 = 0; h1 < 256; h1++) {
+	for (h1=0; h1<256; h1++) {
 		struct rsvp_session *s;
 		for (s = sht[h1]; s; s = s->next) {
-			for (h2 = 0; h2 <= 16; h2++) {
+			for (h2=0; h2<=16; h2++) {
 				struct rsvp_filter *f;
 
 				for (f = s->ht[h2]; f; f = f->next) {
@@ -395,8 +385,8 @@ static u32 gen_tunnel(struct rsvp_head *data)
 {
 	int i, k;
 
-	for (k = 0; k < 2; k++) {
-		for (i = 255; i > 0; i--) {
+	for (k=0; k<2; k++) {
+		for (i=255; i>0; i--) {
 			if (++data->tgenerator == 0)
 				data->tgenerator = 1;
 			if (tunnel_bts(data))
@@ -425,10 +415,10 @@ static int rsvp_change(struct tcf_proto *tp, unsigned long base,
 	struct rsvp_filter *f, **fp;
 	struct rsvp_session *s, **sp;
 	struct tc_rsvp_pinfo *pinfo = NULL;
-	struct nlattr *opt = tca[TCA_OPTIONS];
+	struct nlattr *opt = tca[TCA_OPTIONS-1];
 	struct nlattr *tb[TCA_RSVP_MAX + 1];
 	struct tcf_exts e;
-	unsigned int h1, h2;
+	unsigned h1, h2;
 	__be32 *dst;
 	int err;
 
@@ -439,18 +429,17 @@ static int rsvp_change(struct tcf_proto *tp, unsigned long base,
 	if (err < 0)
 		return err;
 
-	err = tcf_exts_validate(tp, tb, tca[TCA_RATE], &e, &rsvp_ext_map);
+	err = tcf_exts_validate(tp, tb, tca[TCA_RATE-1], &e, &rsvp_ext_map);
 	if (err < 0)
 		return err;
 
-	f = (struct rsvp_filter *)*arg;
-	if (f) {
+	if ((f = (struct rsvp_filter*)*arg) != NULL) {
 		/* Node exists: adjust only classid */
 
 		if (f->handle != handle && handle)
 			goto errout2;
-		if (tb[TCA_RSVP_CLASSID]) {
-			f->res.classid = nla_get_u32(tb[TCA_RSVP_CLASSID]);
+		if (tb[TCA_RSVP_CLASSID-1]) {
+			f->res.classid = nla_get_u32(tb[TCA_RSVP_CLASSID-1]);
 			tcf_bind_filter(tp, &f->res, base);
 		}
 
@@ -462,7 +451,7 @@ static int rsvp_change(struct tcf_proto *tp, unsigned long base,
 	err = -EINVAL;
 	if (handle)
 		goto errout2;
-	if (tb[TCA_RSVP_DST] == NULL)
+	if (tb[TCA_RSVP_DST-1] == NULL)
 		goto errout2;
 
 	err = -ENOBUFS;
@@ -471,19 +460,19 @@ static int rsvp_change(struct tcf_proto *tp, unsigned long base,
 		goto errout2;
 
 	h2 = 16;
-	if (tb[TCA_RSVP_SRC]) {
-		memcpy(f->src, nla_data(tb[TCA_RSVP_SRC]), sizeof(f->src));
+	if (tb[TCA_RSVP_SRC-1]) {
+		memcpy(f->src, nla_data(tb[TCA_RSVP_SRC-1]), sizeof(f->src));
 		h2 = hash_src(f->src);
 	}
-	if (tb[TCA_RSVP_PINFO]) {
-		pinfo = nla_data(tb[TCA_RSVP_PINFO]);
+	if (tb[TCA_RSVP_PINFO-1]) {
+		pinfo = nla_data(tb[TCA_RSVP_PINFO-1]);
 		f->spi = pinfo->spi;
 		f->tunnelhdr = pinfo->tunnelhdr;
 	}
-	if (tb[TCA_RSVP_CLASSID])
-		f->res.classid = nla_get_u32(tb[TCA_RSVP_CLASSID]);
+	if (tb[TCA_RSVP_CLASSID-1])
+		f->res.classid = nla_get_u32(tb[TCA_RSVP_CLASSID-1]);
 
-	dst = nla_data(tb[TCA_RSVP_DST]);
+	dst = nla_data(tb[TCA_RSVP_DST-1]);
 	h1 = hash_dst(dst, pinfo ? pinfo->protocol : 0, pinfo ? pinfo->tunnelid : 0);
 
 	err = -ENOMEM;
@@ -501,16 +490,16 @@ static int rsvp_change(struct tcf_proto *tp, unsigned long base,
 			goto errout;
 	}
 
-	for (sp = &data->ht[h1]; (s = *sp) != NULL; sp = &s->next) {
+	for (sp = &data->ht[h1]; (s=*sp) != NULL; sp = &s->next) {
 		if (dst[RSVP_DST_LEN-1] == s->dst[RSVP_DST_LEN-1] &&
 		    pinfo && pinfo->protocol == s->protocol &&
-		    memcmp(&pinfo->dpi, &s->dpi, sizeof(s->dpi)) == 0 &&
+		    memcmp(&pinfo->dpi, &s->dpi, sizeof(s->dpi)) == 0
 #if RSVP_DST_LEN == 4
-		    dst[0] == s->dst[0] &&
-		    dst[1] == s->dst[1] &&
-		    dst[2] == s->dst[2] &&
+		    && dst[0] == s->dst[0]
+		    && dst[1] == s->dst[1]
+		    && dst[2] == s->dst[2]
 #endif
-		    pinfo->tunnelid == s->tunnelid) {
+		    && pinfo->tunnelid == s->tunnelid) {
 
 insert:
 			/* OK, we found appropriate session */
@@ -524,7 +513,7 @@ insert:
 			tcf_exts_change(tp, &f->exts, &e);
 
 			for (fp = &s->ht[h2]; *fp; fp = &(*fp)->next)
-				if (((*fp)->spi.mask & f->spi.mask) != f->spi.mask)
+				if (((*fp)->spi.mask&f->spi.mask) != f->spi.mask)
 					break;
 			f->next = *fp;
 			wmb();
@@ -568,7 +557,7 @@ errout2:
 static void rsvp_walk(struct tcf_proto *tp, struct tcf_walker *arg)
 {
 	struct rsvp_head *head = tp->root;
-	unsigned int h, h1;
+	unsigned h, h1;
 
 	if (arg->stop)
 		return;
@@ -599,7 +588,7 @@ static void rsvp_walk(struct tcf_proto *tp, struct tcf_walker *arg)
 static int rsvp_dump(struct tcf_proto *tp, unsigned long fh,
 		     struct sk_buff *skb, struct tcmsg *t)
 {
-	struct rsvp_filter *f = (struct rsvp_filter *)fh;
+	struct rsvp_filter *f = (struct rsvp_filter*)fh;
 	struct rsvp_session *s;
 	unsigned char *b = skb_tail_pointer(skb);
 	struct nlattr *nest;
@@ -625,7 +614,7 @@ static int rsvp_dump(struct tcf_proto *tp, unsigned long fh,
 	NLA_PUT(skb, TCA_RSVP_PINFO, sizeof(pinfo), &pinfo);
 	if (f->res.classid)
 		NLA_PUT_U32(skb, TCA_RSVP_CLASSID, f->res.classid);
-	if (((f->handle >> 8) & 0xFF) != 16)
+	if (((f->handle>>8)&0xFF) != 16)
 		NLA_PUT(skb, TCA_RSVP_SRC, sizeof(f->src), f->src);
 
 	if (tcf_exts_dump(skb, &f->exts, &rsvp_ext_map) < 0)
@@ -642,7 +631,8 @@ nla_put_failure:
 	return -1;
 }
 
-static struct tcf_proto_ops RSVP_OPS __read_mostly = {
+static struct tcf_proto_ops RSVP_OPS = {
+	.next		=	NULL,
 	.kind		=	RSVP_ID,
 	.classify	=	rsvp_classify,
 	.init		=	rsvp_init,

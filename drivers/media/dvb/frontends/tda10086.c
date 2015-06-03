@@ -267,7 +267,7 @@ static int tda10086_send_burst (struct dvb_frontend* fe, fe_sec_mini_cmd_t minic
 }
 
 static int tda10086_set_inversion(struct tda10086_state *state,
-				  struct dtv_frontend_properties *fe_params)
+				  struct dvb_frontend_parameters *fe_params)
 {
 	u8 invval = 0x80;
 
@@ -292,7 +292,7 @@ static int tda10086_set_inversion(struct tda10086_state *state,
 }
 
 static int tda10086_set_symbol_rate(struct tda10086_state *state,
-				    struct dtv_frontend_properties *fe_params)
+				    struct dvb_frontend_parameters *fe_params)
 {
 	u8 dfn = 0;
 	u8 afs = 0;
@@ -303,7 +303,7 @@ static int tda10086_set_symbol_rate(struct tda10086_state *state,
 	u32 tmp;
 	u32 bdr;
 	u32 bdri;
-	u32 symbol_rate = fe_params->symbol_rate;
+	u32 symbol_rate = fe_params->u.qpsk.symbol_rate;
 
 	dprintk ("%s %i\n", __func__, symbol_rate);
 
@@ -367,13 +367,13 @@ static int tda10086_set_symbol_rate(struct tda10086_state *state,
 }
 
 static int tda10086_set_fec(struct tda10086_state *state,
-			    struct dtv_frontend_properties *fe_params)
+			    struct dvb_frontend_parameters *fe_params)
 {
 	u8 fecval;
 
-	dprintk("%s %i\n", __func__, fe_params->fec_inner);
+	dprintk ("%s %i\n", __func__, fe_params->u.qpsk.fec_inner);
 
-	switch (fe_params->fec_inner) {
+	switch(fe_params->u.qpsk.fec_inner) {
 	case FEC_1_2:
 		fecval = 0x00;
 		break;
@@ -409,9 +409,9 @@ static int tda10086_set_fec(struct tda10086_state *state,
 	return 0;
 }
 
-static int tda10086_set_frontend(struct dvb_frontend *fe)
+static int tda10086_set_frontend(struct dvb_frontend* fe,
+				 struct dvb_frontend_parameters *fe_params)
 {
-	struct dtv_frontend_properties *fe_params = &fe->dtv_property_cache;
 	struct tda10086_state *state = fe->demodulator_priv;
 	int ret;
 	u32 freq = 0;
@@ -425,7 +425,7 @@ static int tda10086_set_frontend(struct dvb_frontend *fe)
 
 	/* set params */
 	if (fe->ops.tuner_ops.set_params) {
-		fe->ops.tuner_ops.set_params(fe);
+		fe->ops.tuner_ops.set_params(fe, fe_params);
 		if (fe->ops.i2c_gate_ctrl)
 			fe->ops.i2c_gate_ctrl(fe, 0);
 
@@ -452,14 +452,13 @@ static int tda10086_set_frontend(struct dvb_frontend *fe)
 	tda10086_write_mask(state, 0x10, 0x40, 0x40);
 	tda10086_write_mask(state, 0x00, 0x01, 0x00);
 
-	state->symbol_rate = fe_params->symbol_rate;
+	state->symbol_rate = fe_params->u.qpsk.symbol_rate;
 	state->frequency = fe_params->frequency;
 	return 0;
 }
 
-static int tda10086_get_frontend(struct dvb_frontend *fe)
+static int tda10086_get_frontend(struct dvb_frontend* fe, struct dvb_frontend_parameters *fe_params)
 {
-	struct dtv_frontend_properties *fe_params = &fe->dtv_property_cache;
 	struct tda10086_state* state = fe->demodulator_priv;
 	u8 val;
 	int tmp;
@@ -468,7 +467,7 @@ static int tda10086_get_frontend(struct dvb_frontend *fe)
 	dprintk ("%s\n", __func__);
 
 	/* check for invalid symbol rate */
-	if (fe_params->symbol_rate < 500000)
+	if (fe_params->u.qpsk.symbol_rate < 500000)
 		return -EINVAL;
 
 	/* calculate the updated frequency (note: we convert from Hz->kHz) */
@@ -517,34 +516,34 @@ static int tda10086_get_frontend(struct dvb_frontend *fe)
 		tmp |= 0xffffff00;
 	tmp = (tmp * 480 * (1<<1)) / 128;
 	tmp = ((state->symbol_rate/1000) * tmp) / (1000000/1000);
-	fe_params->symbol_rate = state->symbol_rate + tmp;
+	fe_params->u.qpsk.symbol_rate = state->symbol_rate + tmp;
 
 	/* the FEC */
 	val = (tda10086_read_byte(state, 0x0d) & 0x70) >> 4;
 	switch(val) {
 	case 0x00:
-		fe_params->fec_inner = FEC_1_2;
+		fe_params->u.qpsk.fec_inner = FEC_1_2;
 		break;
 	case 0x01:
-		fe_params->fec_inner = FEC_2_3;
+		fe_params->u.qpsk.fec_inner = FEC_2_3;
 		break;
 	case 0x02:
-		fe_params->fec_inner = FEC_3_4;
+		fe_params->u.qpsk.fec_inner = FEC_3_4;
 		break;
 	case 0x03:
-		fe_params->fec_inner = FEC_4_5;
+		fe_params->u.qpsk.fec_inner = FEC_4_5;
 		break;
 	case 0x04:
-		fe_params->fec_inner = FEC_5_6;
+		fe_params->u.qpsk.fec_inner = FEC_5_6;
 		break;
 	case 0x05:
-		fe_params->fec_inner = FEC_6_7;
+		fe_params->u.qpsk.fec_inner = FEC_6_7;
 		break;
 	case 0x06:
-		fe_params->fec_inner = FEC_7_8;
+		fe_params->u.qpsk.fec_inner = FEC_7_8;
 		break;
 	case 0x07:
-		fe_params->fec_inner = FEC_8_9;
+		fe_params->u.qpsk.fec_inner = FEC_8_9;
 		break;
 	}
 
@@ -665,31 +664,29 @@ static int tda10086_i2c_gate_ctrl(struct dvb_frontend* fe, int enable)
 
 static int tda10086_get_tune_settings(struct dvb_frontend* fe, struct dvb_frontend_tune_settings* fesettings)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
-
-	if (p->symbol_rate > 20000000) {
+	if (fesettings->parameters.u.qpsk.symbol_rate > 20000000) {
 		fesettings->min_delay_ms = 50;
 		fesettings->step_size = 2000;
 		fesettings->max_drift = 8000;
-	} else if (p->symbol_rate > 12000000) {
+	} else if (fesettings->parameters.u.qpsk.symbol_rate > 12000000) {
 		fesettings->min_delay_ms = 100;
 		fesettings->step_size = 1500;
 		fesettings->max_drift = 9000;
-	} else if (p->symbol_rate > 8000000) {
+	} else if (fesettings->parameters.u.qpsk.symbol_rate > 8000000) {
 		fesettings->min_delay_ms = 100;
 		fesettings->step_size = 1000;
 		fesettings->max_drift = 8000;
-	} else if (p->symbol_rate > 4000000) {
+	} else if (fesettings->parameters.u.qpsk.symbol_rate > 4000000) {
 		fesettings->min_delay_ms = 100;
 		fesettings->step_size = 500;
 		fesettings->max_drift = 7000;
-	} else if (p->symbol_rate > 2000000) {
+	} else if (fesettings->parameters.u.qpsk.symbol_rate > 2000000) {
 		fesettings->min_delay_ms = 200;
-		fesettings->step_size = p->symbol_rate / 8000;
+		fesettings->step_size = (fesettings->parameters.u.qpsk.symbol_rate / 8000);
 		fesettings->max_drift = 14 * fesettings->step_size;
 	} else {
 		fesettings->min_delay_ms = 200;
-		fesettings->step_size =  p->symbol_rate / 8000;
+		fesettings->step_size = (fesettings->parameters.u.qpsk.symbol_rate / 8000);
 		fesettings->max_drift = 18 * fesettings->step_size;
 	}
 
@@ -704,9 +701,10 @@ static void tda10086_release(struct dvb_frontend* fe)
 }
 
 static struct dvb_frontend_ops tda10086_ops = {
-	.delsys = { SYS_DVBS },
+
 	.info = {
 		.name     = "Philips TDA10086 DVB-S",
+		.type     = FE_QPSK,
 		.frequency_min    = 950000,
 		.frequency_max    = 2150000,
 		.frequency_stepsize = 125,     /* kHz for QPSK frontends */

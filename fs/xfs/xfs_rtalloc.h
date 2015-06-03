@@ -47,7 +47,7 @@ struct xfs_trans;
 #define	XFS_SUMOFFSTOBLOCK(mp,s)	\
 	(((s) * (uint)sizeof(xfs_suminfo_t)) >> (mp)->m_sb.sb_blocklog)
 #define	XFS_SUMPTR(mp,bp,so)	\
-	((xfs_suminfo_t *)((bp)->b_addr + \
+	((xfs_suminfo_t *)((char *)XFS_BUF_PTR(bp) + \
 		(((so) * (uint)sizeof(xfs_suminfo_t)) & XFS_BLOCKMASK(mp))))
 
 #define	XFS_BITTOBLOCK(mp,bi)	((bi) >> (mp)->m_blkbit_log)
@@ -147,16 +147,7 @@ xfs_growfs_rt(
 # define xfs_rtfree_extent(t,b,l)                       (ENOSYS)
 # define xfs_rtpick_extent(m,t,l,rb)                    (ENOSYS)
 # define xfs_growfs_rt(mp,in)                           (ENOSYS)
-static inline int		/* error */
-xfs_rtmount_init(
-	xfs_mount_t	*mp)	/* file system mount structure */
-{
-	if (mp->m_sb.sb_rblocks == 0)
-		return 0;
-
-	xfs_warn(mp, "Not built with CONFIG_XFS_RT");
-	return ENOSYS;
-}
+# define xfs_rtmount_init(m)    (((mp)->m_sb.sb_rblocks == 0)? 0 : (ENOSYS))
 # define xfs_rtmount_inodes(m)  (((mp)->m_sb.sb_rblocks == 0)? 0 : (ENOSYS))
 # define xfs_rtunmount_inodes(m)
 #endif	/* CONFIG_XFS_RT */

@@ -16,8 +16,7 @@
  *
  *  You should have received a copy of the GNU General Public License
  *  along with this program; if not, write to the Free Software
- *  Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
- *  MA 02110-1301 USA.
+ *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
  * With some changes from Kyösti Mälkki <kmalkki@cc.hut.fi> and
  * Frodo Looijaard <frodol@dds.nl>, and also from Martin Bailey
@@ -30,6 +29,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/delay.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/errno.h>
 #include <linux/i2c.h>
@@ -176,7 +176,7 @@ static int pcf_init_8584 (struct i2c_algo_pcf_data *adap)
 	 */
 	if (((temp = get_pcf(adap, 1)) & 0x7f) != (0)) {
 		DEB2(printk(KERN_ERR "i2c-algo-pcf.o: PCF detection failed -- can't select S0 (0x%02x).\n", temp));
-		return -ENXIO; /* definitely not PCF8584 */
+		return -ENXIO; /* definetly not PCF8584 */
 	}
 
 	/* load own address in S0, effective address is (own << 1) */

@@ -27,7 +27,7 @@
 #define MAXLEN		8
 
 /* table of devices that work with this driver */
-static const struct usb_device_id id_table[] = {
+static struct usb_device_id id_table[] = {
 	{ USB_DEVICE(VENDOR_ID, PRODUCT_ID) },
 	{ },
 };
@@ -49,7 +49,6 @@ struct usb_sevsegdev {
 	u16 textlength;
 
 	u8 shadow_power; /* for PM */
-	u8 has_interface_pm;
 };
 
 /* sysfs_streq can't replace this completely
@@ -69,15 +68,11 @@ static void update_display_powered(struct usb_sevsegdev *mydev)
 {
 	int rc;
 
-	if (mydev->powered && !mydev->has_interface_pm) {
+	if (!mydev->shadow_power && mydev->powered) {
 		rc = usb_autopm_get_interface(mydev->intf);
 		if (rc < 0)
 			return;
-		mydev->has_interface_pm = 1;
 	}
-
-	if (mydev->shadow_power != 1)
-		return;
 
 	rc = usb_control_msg(mydev->udev,
 			usb_sndctrlpipe(mydev->udev, 0),
@@ -91,10 +86,8 @@ static void update_display_powered(struct usb_sevsegdev *mydev)
 	if (rc < 0)
 		dev_dbg(&mydev->udev->dev, "power retval = %d\n", rc);
 
-	if (!mydev->powered && mydev->has_interface_pm) {
+	if (mydev->shadow_power && !mydev->powered)
 		usb_autopm_put_interface(mydev->intf);
-		mydev->has_interface_pm = 0;
-	}
 }
 
 static void update_display_mode(struct usb_sevsegdev *mydev)
@@ -356,10 +349,6 @@ static int sevseg_probe(struct usb_interface *interface,
 	mydev->intf = interface;
 	usb_set_intfdata(interface, mydev);
 
-	/* PM */
-	mydev->shadow_power = 1; /* currently active */
-	mydev->has_interface_pm = 0; /* have not issued autopm_get */
-
 	/*set defaults */
 	mydev->textmode = 0x02; /* ascii mode */
 	mydev->mode_msb = 0x06; /* 6 characters */
@@ -437,7 +426,23 @@ static struct usb_driver sevseg_driver = {
 	.supports_autosuspend = 1,
 };
 
-module_usb_driver(sevseg_driver);
+static int __init usb_sevseg_init(void)
+{
+	int rc = 0;
+
+	rc = usb_register(&sevseg_driver);
+	if (rc)
+		err("usb_register failed. Error number %d", rc);
+	return rc;
+}
+
+static void __exit usb_sevseg_exit(void)
+{
+	usb_deregister(&sevseg_driver);
+}
+
+module_init(usb_sevseg_init);
+module_exit(usb_sevseg_exit);
 
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);

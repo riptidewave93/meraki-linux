@@ -125,13 +125,6 @@ typedef struct xfs_da_args {
 #define XFS_DA_OP_OKNOENT	0x0008	/* lookup/add op, ENOENT ok, else die */
 #define XFS_DA_OP_CILOOKUP	0x0010	/* lookup to return CI name if found */
 
-#define XFS_DA_OP_FLAGS \
-	{ XFS_DA_OP_JUSTCHECK,	"JUSTCHECK" }, \
-	{ XFS_DA_OP_RENAME,	"RENAME" }, \
-	{ XFS_DA_OP_ADDNAME,	"ADDNAME" }, \
-	{ XFS_DA_OP_OKNOENT,	"OKNOENT" }, \
-	{ XFS_DA_OP_CILOOKUP,	"CILOOKUP" }
-
 /*
  * Structure to describe buffer(s) for a block.
  * This is needed in the directory version 2 format case, when
@@ -145,10 +138,21 @@ typedef struct xfs_dabuf {
 	short		dirty;		/* data needs to be copied back */
 	short		bbcount;	/* how large is data in bbs */
 	void		*data;		/* pointer for buffers' data */
+#ifdef XFS_DABUF_DEBUG
+	inst_t		*ra;		/* return address of caller to make */
+	struct xfs_dabuf *next;		/* next in global chain */
+	struct xfs_dabuf *prev;		/* previous in global chain */
+	struct xfs_buftarg *target;	/* device for buffer */
+	xfs_daddr_t	blkno;		/* daddr first in bps[0] */
+#endif
 	struct xfs_buf	*bps[1];	/* actually nbuf of these */
 } xfs_dabuf_t;
 #define	XFS_DA_BUF_SIZE(n)	\
 	(sizeof(xfs_dabuf_t) + sizeof(struct xfs_buf *) * ((n) - 1))
+
+#ifdef XFS_DABUF_DEBUG
+extern xfs_dabuf_t	*xfs_dabuf_global_list;
+#endif
 
 /*
  * Storage for holding state during Btree searches and split/join ops.
@@ -198,8 +202,7 @@ typedef struct xfs_da_state {
  */
 struct xfs_nameops {
 	xfs_dahash_t	(*hashname)(struct xfs_name *);
-	enum xfs_dacmp	(*compname)(struct xfs_da_args *,
-					const unsigned char *, int);
+	enum xfs_dacmp	(*compname)(struct xfs_da_args *, const char *, int);
 };
 
 
@@ -237,8 +240,6 @@ int	xfs_da_blk_link(xfs_da_state_t *state, xfs_da_state_blk_t *old_blk,
  * Utility routines.
  */
 int	xfs_da_grow_inode(xfs_da_args_t *args, xfs_dablk_t *new_blkno);
-int	xfs_da_grow_inode_int(struct xfs_da_args *args, xfs_fileoff_t *bno,
-			      int count);
 int	xfs_da_get_buf(struct xfs_trans *trans, struct xfs_inode *dp,
 			      xfs_dablk_t bno, xfs_daddr_t mappedbno,
 			      xfs_dabuf_t **bp, int whichfork);
@@ -252,7 +253,7 @@ int	xfs_da_shrink_inode(xfs_da_args_t *args, xfs_dablk_t dead_blkno,
 
 uint xfs_da_hashname(const __uint8_t *name_string, int name_length);
 enum xfs_dacmp xfs_da_compname(struct xfs_da_args *args,
-				const unsigned char *name, int len);
+				const char *name, int len);
 
 
 xfs_da_state_t *xfs_da_state_alloc(void);

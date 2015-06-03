@@ -10,22 +10,25 @@
 #include <linux/capability.h>
 #include <linux/errno.h>
 #include <linux/linkage.h>
+#include <linux/mm.h>
 #include <linux/fs.h>
 #include <linux/smp.h>
+#include <linux/mman.h>
 #include <linux/ptrace.h>
+#include <linux/sched.h>
 #include <linux/string.h>
 #include <linux/syscalls.h>
 #include <linux/file.h>
+#include <linux/slab.h>
 #include <linux/utsname.h>
 #include <linux/unistd.h>
 #include <linux/sem.h>
 #include <linux/msg.h>
 #include <linux/shm.h>
 #include <linux/compiler.h>
+#include <linux/module.h>
 #include <linux/ipc.h>
 #include <linux/uaccess.h>
-#include <linux/slab.h>
-#include <linux/elf.h>
 
 #include <asm/asm.h>
 #include <asm/branch.h>
@@ -37,7 +40,6 @@
 #include <asm/shmparam.h>
 #include <asm/sysmips.h>
 #include <asm/uaccess.h>
-#include <asm/switch_to.h>
 
 /*
  * For historic reasons the pipe(2) syscall on MIPS has an unusual calling
@@ -60,6 +62,72 @@ asmlinkage int sysm_pipe(nabi_no_regargs volatile struct pt_regs regs)
 	res = fd[0];
 out:
 	return res;
+}
+
+unsigned long shm_align_mask = PAGE_SIZE - 1;	/* Sane caches */
+
+EXPORT_SYMBOL(shm_align_mask);
+
+#define COLOUR_ALIGN(addr,pgoff)				\
+	((((addr) + shm_align_mask) & ~shm_align_mask) +	\
+	 (((pgoff) << PAGE_SHIFT) & shm_align_mask))
+
+unsigned long arch_get_unmapped_area(struct file *filp, unsigned long addr,
+	unsigned long len, unsigned long pgoff, unsigned long flags)
+{
+	struct vm_area_struct * vmm;
+	int do_color_align;
+	unsigned long task_size;
+
+	task_size = STACK_TOP;
+
+	if (len > task_size)
+		return -ENOMEM;
+
+	if (flags & MAP_FIXED) {
+		/* Even MAP_FIXED mappings must reside within task_size.  */
+		if (task_size - len < addr)
+			return -EINVAL;
+
+		/*
+		 * We do not accept a shared mapping if it would violate
+		 * cache aliasing constraints.
+		 */
+		if ((flags & MAP_SHARED) &&
+		    ((addr - (pgoff << PAGE_SHIFT)) & shm_align_mask))
+			return -EINVAL;
+		return addr;
+	}
+
+	do_color_align = 0;
+	if (filp || (flags & MAP_SHARED))
+		do_color_align = 1;
+	if (addr) {
+		if (do_color_align)
+			addr = COLOUR_ALIGN(addr, pgoff);
+		else
+			addr = PAGE_ALIGN(addr);
+		vmm = find_vma(current->mm, addr);
+		if (task_size - len >= addr &&
+		    (!vmm || addr + len <= vmm->vm_start))
+			return addr;
+	}
+	addr = TASK_UNMAPPED_BASE;
+	if (do_color_align)
+		addr = COLOUR_ALIGN(addr, pgoff);
+	else
+		addr = PAGE_ALIGN(addr);
+
+	for (vmm = find_vma(current->mm, addr); ; vmm = vmm->vm_next) {
+		/* At this point:  (!vmm || addr < vmm->vm_end). */
+		if (task_size - len < addr)
+			return -ENOMEM;
+		if (!vmm || addr + len <= vmm->vm_start)
+			return addr;
+		addr = vmm->vm_end;
+		if (do_color_align)
+			addr = COLOUR_ALIGN(addr, pgoff);
+	}
 }
 
 SYSCALL_DEFINE6(mips_mmap, unsigned long, addr, unsigned long, len,
@@ -135,17 +203,57 @@ asmlinkage int sys_execve(nabi_no_regargs struct pt_regs regs)
 	int error;
 	char * filename;
 
-	filename = getname((const char __user *) (long)regs.regs[4]);
+	filename = getname((char __user *) (long)regs.regs[4]);
 	error = PTR_ERR(filename);
 	if (IS_ERR(filename))
 		goto out;
-	error = do_execve(filename,
-			  (const char __user *const __user *) (long)regs.regs[5],
-	                  (const char __user *const __user *) (long)regs.regs[6],
-			  &regs);
+	error = do_execve(filename, (char __user *__user *) (long)regs.regs[5],
+	                  (char __user *__user *) (long)regs.regs[6], &regs);
 	putname(filename);
 
 out:
+	return error;
+}
+
+/*
+ * Compacrapability ...
+ */
+SYSCALL_DEFINE1(uname, struct old_utsname __user *, name)
+{
+	if (name && !copy_to_user(name, utsname(), sizeof (*name)))
+		return 0;
+	return -EFAULT;
+}
+
+/*
+ * Compacrapability ...
+ */
+SYSCALL_DEFINE1(olduname, struct oldold_utsname __user *, name)
+{
+	int error;
+
+	if (!name)
+		return -EFAULT;
+	if (!access_ok(VERIFY_WRITE, name, sizeof(struct oldold_utsname)))
+		return -EFAULT;
+
+	error = __copy_to_user(&name->sysname, &utsname()->sysname,
+			       __OLD_UTS_LEN);
+	error -= __put_user(0, name->sysname + __OLD_UTS_LEN);
+	error -= __copy_to_user(&name->nodename, &utsname()->nodename,
+				__OLD_UTS_LEN);
+	error -= __put_user(0, name->nodename + __OLD_UTS_LEN);
+	error -= __copy_to_user(&name->release, &utsname()->release,
+				__OLD_UTS_LEN);
+	error -= __put_user(0, name->release + __OLD_UTS_LEN);
+	error -= __copy_to_user(&name->version, &utsname()->version,
+				__OLD_UTS_LEN);
+	error -= __put_user(0, name->version + __OLD_UTS_LEN);
+	error -= __copy_to_user(&name->machine, &utsname()->machine,
+				__OLD_UTS_LEN);
+	error = __put_user(0, name->machine + __OLD_UTS_LEN);
+	error = error ? -EFAULT : 0;
+
 	return error;
 }
 
@@ -298,6 +406,94 @@ _sys_sysmips(nabi_no_regargs struct pt_regs regs)
 }
 
 /*
+ * sys_ipc() is the de-multiplexer for the SysV IPC calls..
+ *
+ * This is really horribly ugly.
+ */
+SYSCALL_DEFINE6(ipc, unsigned int, call, int, first, int, second,
+	unsigned long, third, void __user *, ptr, long, fifth)
+{
+	int version, ret;
+
+	version = call >> 16; /* hack for backward compatibility */
+	call &= 0xffff;
+
+	switch (call) {
+	case SEMOP:
+		return sys_semtimedop(first, (struct sembuf __user *)ptr,
+		                      second, NULL);
+	case SEMTIMEDOP:
+		return sys_semtimedop(first, (struct sembuf __user *)ptr,
+				      second,
+				      (const struct timespec __user *)fifth);
+	case SEMGET:
+		return sys_semget(first, second, third);
+	case SEMCTL: {
+		union semun fourth;
+		if (!ptr)
+			return -EINVAL;
+		if (get_user(fourth.__pad, (void __user *__user *) ptr))
+			return -EFAULT;
+		return sys_semctl(first, second, third, fourth);
+	}
+
+	case MSGSND:
+		return sys_msgsnd(first, (struct msgbuf __user *) ptr,
+				  second, third);
+	case MSGRCV:
+		switch (version) {
+		case 0: {
+			struct ipc_kludge tmp;
+			if (!ptr)
+				return -EINVAL;
+
+			if (copy_from_user(&tmp,
+					   (struct ipc_kludge __user *) ptr,
+					   sizeof(tmp)))
+				return -EFAULT;
+			return sys_msgrcv(first, tmp.msgp, second,
+					  tmp.msgtyp, third);
+		}
+		default:
+			return sys_msgrcv(first,
+					  (struct msgbuf __user *) ptr,
+					  second, fifth, third);
+		}
+	case MSGGET:
+		return sys_msgget((key_t) first, second);
+	case MSGCTL:
+		return sys_msgctl(first, second,
+				  (struct msqid_ds __user *) ptr);
+
+	case SHMAT:
+		switch (version) {
+		default: {
+			unsigned long raddr;
+			ret = do_shmat(first, (char __user *) ptr, second,
+				       &raddr);
+			if (ret)
+				return ret;
+			return put_user(raddr, (unsigned long __user *) third);
+		}
+		case 1:	/* iBCS2 emulator entry point */
+			if (!segment_eq(get_fs(), get_ds()))
+				return -EINVAL;
+			return do_shmat(first, (char __user *) ptr, second,
+				        (unsigned long *) third);
+		}
+	case SHMDT:
+		return sys_shmdt((char __user *)ptr);
+	case SHMGET:
+		return sys_shmget(first, second, third);
+	case SHMCTL:
+		return sys_shmctl(first, second,
+				  (struct shmid_ds __user *) ptr);
+	default:
+		return -ENOSYS;
+	}
+}
+
+/*
  * No implemented yet ...
  */
 SYSCALL_DEFINE3(cachectl, char *, addr, int, nbytes, int, op)
@@ -318,9 +514,7 @@ asmlinkage void bad_stack(void)
  * Do a system call from kernel instead of calling sys_execve so we
  * end up with proper pt_regs.
  */
-int kernel_execve(const char *filename,
-		  const char *const argv[],
-		  const char *const envp[])
+int kernel_execve(const char *filename, char *const argv[], char *const envp[])
 {
 	register unsigned long __a0 asm("$4") = (unsigned long) filename;
 	register unsigned long __a1 asm("$5") = (unsigned long) argv;
@@ -344,3 +538,15 @@ int kernel_execve(const char *filename,
 
 	return -__v0;
 }
+
+#ifdef CONFIG_ATH_2X8
+asmlinkage void
+do_syscall_trace(struct pt_regs *regs, int entryexit)
+{
+#if 0
+	Have removed ptrace.o from Makefile.
+	Having a dummy place holder, to pacify
+	the compiler
+#endif
+}
+#endif

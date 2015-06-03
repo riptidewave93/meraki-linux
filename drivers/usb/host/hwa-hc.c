@@ -55,7 +55,6 @@
  */
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/workqueue.h>
 #include <linux/wait.h>
@@ -159,7 +158,7 @@ static int hwahc_op_start(struct usb_hcd *usb_hcd)
 		goto error_set_cluster_id;
 
 	usb_hcd->uses_new_polling = 1;
-	set_bit(HCD_FLAG_POLL_RH, &usb_hcd->flags);
+	usb_hcd->poll_rh = 1;
 	usb_hcd->state = HC_STATE_RUNNING;
 	result = 0;
 out:
@@ -481,7 +480,7 @@ static int __hwahc_op_set_ptk(struct wusbhc *wusbhc, u8 port_idx, u32 tkid,
 		encryption_value = 0;
 	}
 
-	/* Set the encryption type for communicating with the device */
+	/* Set the encryption type for commmunicating with the device */
 	result = usb_control_msg(wa->usb_dev, usb_sndctrlpipe(wa->usb_dev, 0),
 			USB_REQ_SET_ENCRYPTION,
 			USB_DIR_OUT | USB_TYPE_CLASS | USB_RECIP_INTERFACE,
@@ -776,6 +775,7 @@ static int hwahc_probe(struct usb_interface *usb_iface,
 		goto error_alloc;
 	}
 	usb_hcd->wireless = 1;
+	usb_hcd->flags |= HCD_FLAG_SAW_IRQ;
 	wusbhc = usb_hcd_to_wusbhc(usb_hcd);
 	hwahc = container_of(wusbhc, struct hwahc, wusbhc);
 	hwahc_init(hwahc);
@@ -836,7 +836,18 @@ static struct usb_driver hwahc_driver = {
 	.id_table =	hwahc_id_table,
 };
 
-module_usb_driver(hwahc_driver);
+static int __init hwahc_driver_init(void)
+{
+	return usb_register(&hwahc_driver);
+}
+module_init(hwahc_driver_init);
+
+static void __exit hwahc_driver_exit(void)
+{
+	usb_deregister(&hwahc_driver);
+}
+module_exit(hwahc_driver_exit);
+
 
 MODULE_AUTHOR("Inaky Perez-Gonzalez <inaky.perez-gonzalez@intel.com>");
 MODULE_DESCRIPTION("Host Wired Adapter USB Host Control Driver");

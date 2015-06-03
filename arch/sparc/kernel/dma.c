@@ -1,4 +1,5 @@
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/dma-mapping.h>
 #include <linux/dma-debug.h>
 

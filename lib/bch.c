@@ -93,6 +93,7 @@
 #define MODULE_LICENSE(license)
 #define MODULE_AUTHOR(author)
 #define MODULE_DESCRIPTION(desc)
+
 #endif
 
 #include <linux/bch.h>

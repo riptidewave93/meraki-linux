@@ -24,7 +24,6 @@
 #include <linux/err.h>
 #include <linux/hwmon.h>
 #include <linux/hwmon-sysfs.h>
-#include <linux/slab.h>
 
 #include <linux/mfd/wm831x/core.h>
 #include <linux/mfd/wm831x/auxadc.h>
@@ -40,7 +39,7 @@ static ssize_t show_name(struct device *dev,
 	return sprintf(buf, "wm831x\n");
 }
 
-static const char * const input_names[] = {
+static const char *input_names[] = {
 	[WM831X_AUX_SYSVDD]    = "SYSVDD",
 	[WM831X_AUX_USB]       = "USB",
 	[WM831X_AUX_BKUP_BATT] = "Backup battery",
@@ -117,10 +116,8 @@ static SENSOR_DEVICE_ATTR(temp1_input, S_IRUGO, show_chip_temp, NULL,
 			  WM831X_AUX_CHIP_TEMP);
 static SENSOR_DEVICE_ATTR(temp1_label, S_IRUGO, show_label, NULL,
 			  WM831X_AUX_CHIP_TEMP);
-/*
- * Report as a voltage since conversion depends on external components
- * and that's what the ABI wants.
- */
+/* Report as a voltage since conversion depends on external components
+ * and that's what the ABI wants. */
 static SENSOR_DEVICE_ATTR(temp2_input, S_IRUGO, show_voltage, NULL,
 			  WM831X_AUX_BATT_TEMP);
 static SENSOR_DEVICE_ATTR(temp2_label, S_IRUGO, show_label, NULL,
@@ -211,7 +208,17 @@ static struct platform_driver wm831x_hwmon_driver = {
 	},
 };
 
-module_platform_driver(wm831x_hwmon_driver);
+static int __init wm831x_hwmon_init(void)
+{
+	return platform_driver_register(&wm831x_hwmon_driver);
+}
+module_init(wm831x_hwmon_init);
+
+static void __exit wm831x_hwmon_exit(void)
+{
+	platform_driver_unregister(&wm831x_hwmon_driver);
+}
+module_exit(wm831x_hwmon_exit);
 
 MODULE_AUTHOR("Mark Brown <broonie@opensource.wolfsonmicro.com>");
 MODULE_DESCRIPTION("WM831x Hardware Monitoring");

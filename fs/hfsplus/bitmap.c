@@ -15,10 +15,8 @@
 
 #define PAGE_CACHE_BITS	(PAGE_CACHE_SIZE * 8)
 
-int hfsplus_block_allocate(struct super_block *sb, u32 size,
-		u32 offset, u32 *max)
+int hfsplus_block_allocate(struct super_block *sb, u32 size, u32 offset, u32 *max)
 {
-	struct hfsplus_sb_info *sbi = HFSPLUS_SB(sb);
 	struct page *page;
 	struct address_space *mapping;
 	__be32 *pptr, *curr, *end;
@@ -31,8 +29,8 @@ int hfsplus_block_allocate(struct super_block *sb, u32 size,
 		return size;
 
 	dprint(DBG_BITMAP, "block_allocate: %u,%u,%u\n", size, offset, len);
-	mutex_lock(&sbi->alloc_mutex);
-	mapping = sbi->alloc_file->i_mapping;
+	mutex_lock(&HFSPLUS_SB(sb).alloc_file->i_mutex);
+	mapping = HFSPLUS_SB(sb).alloc_file->i_mapping;
 	page = read_mapping_page(mapping, offset / PAGE_CACHE_BITS, NULL);
 	if (IS_ERR(page)) {
 		start = size;
@@ -152,17 +150,16 @@ done:
 	set_page_dirty(page);
 	kunmap(page);
 	*max = offset + (curr - pptr) * 32 + i - start;
-	sbi->free_blocks -= *max;
+	HFSPLUS_SB(sb).free_blocks -= *max;
 	sb->s_dirt = 1;
 	dprint(DBG_BITMAP, "-> %u,%u\n", start, *max);
 out:
-	mutex_unlock(&sbi->alloc_mutex);
+	mutex_unlock(&HFSPLUS_SB(sb).alloc_file->i_mutex);
 	return start;
 }
 
 int hfsplus_block_free(struct super_block *sb, u32 offset, u32 count)
 {
-	struct hfsplus_sb_info *sbi = HFSPLUS_SB(sb);
 	struct page *page;
 	struct address_space *mapping;
 	__be32 *pptr, *curr, *end;
@@ -175,11 +172,11 @@ int hfsplus_block_free(struct super_block *sb, u32 offset, u32 count)
 
 	dprint(DBG_BITMAP, "block_free: %u,%u\n", offset, count);
 	/* are all of the bits in range? */
-	if ((offset + count) > sbi->total_blocks)
+	if ((offset + count) > HFSPLUS_SB(sb).total_blocks)
 		return -2;
 
-	mutex_lock(&sbi->alloc_mutex);
-	mapping = sbi->alloc_file->i_mapping;
+	mutex_lock(&HFSPLUS_SB(sb).alloc_file->i_mutex);
+	mapping = HFSPLUS_SB(sb).alloc_file->i_mapping;
 	pnr = offset / PAGE_CACHE_BITS;
 	page = read_mapping_page(mapping, pnr, NULL);
 	pptr = kmap(page);
@@ -227,9 +224,9 @@ done:
 out:
 	set_page_dirty(page);
 	kunmap(page);
-	sbi->free_blocks += len;
+	HFSPLUS_SB(sb).free_blocks += len;
 	sb->s_dirt = 1;
-	mutex_unlock(&sbi->alloc_mutex);
+	mutex_unlock(&HFSPLUS_SB(sb).alloc_file->i_mutex);
 
 	return 0;
 }

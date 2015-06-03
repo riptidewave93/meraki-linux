@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -57,7 +57,6 @@
 #define ACPI_SUCCESS(a)                 (!(a))
 #define ACPI_FAILURE(a)                 (a)
 
-#define ACPI_SKIP(a)                    (a == AE_CTRL_SKIP)
 #define AE_OK                           (acpi_status) 0x0000
 
 /*
@@ -88,11 +87,10 @@
 #define AE_NO_GLOBAL_LOCK               (acpi_status) (0x0017 | AE_CODE_ENVIRONMENTAL)
 #define AE_ABORT_METHOD                 (acpi_status) (0x0018 | AE_CODE_ENVIRONMENTAL)
 #define AE_SAME_HANDLER                 (acpi_status) (0x0019 | AE_CODE_ENVIRONMENTAL)
-#define AE_NO_HANDLER                   (acpi_status) (0x001A | AE_CODE_ENVIRONMENTAL)
+#define AE_WAKE_ONLY_GPE                (acpi_status) (0x001A | AE_CODE_ENVIRONMENTAL)
 #define AE_OWNER_ID_LIMIT               (acpi_status) (0x001B | AE_CODE_ENVIRONMENTAL)
-#define AE_NOT_CONFIGURED               (acpi_status) (0x001C | AE_CODE_ENVIRONMENTAL)
 
-#define AE_CODE_ENV_MAX                 0x001C
+#define AE_CODE_ENV_MAX                 0x001B
 
 /*
  * Programmer exceptions
@@ -214,9 +212,8 @@ char const *acpi_gbl_exception_names_env[] = {
 	"AE_NO_GLOBAL_LOCK",
 	"AE_ABORT_METHOD",
 	"AE_SAME_HANDLER",
-	"AE_NO_HANDLER",
-	"AE_OWNER_ID_LIMIT",
-	"AE_NOT_CONFIGURED"
+	"AE_WAKE_ONLY_GPE",
+	"AE_OWNER_ID_LIMIT"
 };
 
 char const *acpi_gbl_exception_names_pgm[] = {

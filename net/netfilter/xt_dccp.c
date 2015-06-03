@@ -10,7 +10,6 @@
 
 #include <linux/module.h>
 #include <linux/skbuff.h>
-#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <net/ip.h>
 #include <linux/dccp.h>
@@ -96,7 +95,7 @@ match_option(u_int8_t option, const struct sk_buff *skb, unsigned int protoff,
 }
 
 static bool
-dccp_mt(const struct sk_buff *skb, struct xt_action_param *par)
+dccp_mt(const struct sk_buff *skb, const struct xt_match_param *par)
 {
 	const struct xt_dccp_info *info = par->matchinfo;
 	const struct dccp_hdr *dh;
@@ -107,7 +106,7 @@ dccp_mt(const struct sk_buff *skb, struct xt_action_param *par)
 
 	dh = skb_header_pointer(skb, par->thoff, sizeof(_dh), &_dh);
 	if (dh == NULL) {
-		par->hotdrop = true;
+		*par->hotdrop = true;
 		return false;
 	}
 
@@ -120,21 +119,17 @@ dccp_mt(const struct sk_buff *skb, struct xt_action_param *par)
 		&& DCCHECK(match_types(dh, info->typemask),
 			   XT_DCCP_TYPE, info->flags, info->invflags)
 		&& DCCHECK(match_option(info->option, skb, par->thoff, dh,
-					&par->hotdrop),
+					par->hotdrop),
 			   XT_DCCP_OPTION, info->flags, info->invflags);
 }
 
-static int dccp_mt_check(const struct xt_mtchk_param *par)
+static bool dccp_mt_check(const struct xt_mtchk_param *par)
 {
 	const struct xt_dccp_info *info = par->matchinfo;
 
-	if (info->flags & ~XT_DCCP_VALID_FLAGS)
-		return -EINVAL;
-	if (info->invflags & ~XT_DCCP_VALID_FLAGS)
-		return -EINVAL;
-	if (info->invflags & ~info->flags)
-		return -EINVAL;
-	return 0;
+	return !(info->flags & ~XT_DCCP_VALID_FLAGS)
+		&& !(info->invflags & ~XT_DCCP_VALID_FLAGS)
+		&& !(info->invflags & ~info->flags);
 }
 
 static struct xt_match dccp_mt_reg[] __read_mostly = {

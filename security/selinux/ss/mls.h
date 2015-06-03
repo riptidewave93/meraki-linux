@@ -11,7 +11,7 @@
  * Copyright (C) 2004-2006 Trusted Computer Solutions, Inc.
  */
 /*
- * Updated: Hewlett-Packard <paul@paul-moore.com>
+ * Updated: Hewlett-Packard <paul.moore@hp.com>
  *
  *	Added support to import/export the MLS label from NetLabel
  *
@@ -39,8 +39,6 @@ int mls_context_to_sid(struct policydb *p,
 
 int mls_from_string(char *str, struct context *context, gfp_t gfp_mask);
 
-int mls_range_set(struct context *context, struct mls_range *range);
-
 int mls_convert_context(struct policydb *oldp,
 			struct policydb *newp,
 			struct context *context);
@@ -49,8 +47,7 @@ int mls_compute_sid(struct context *scontext,
 		    struct context *tcontext,
 		    u16 tclass,
 		    u32 specified,
-		    struct context *newcontext,
-		    bool sock);
+		    struct context *newcontext);
 
 int mls_setup_user_range(struct context *fromcon, struct user_datum *user,
 			 struct context *usercon);

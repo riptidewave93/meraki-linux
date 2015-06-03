@@ -139,7 +139,7 @@ superio_interrupt(int parent_irq, void *devp)
 	}
 
 	/* Call the appropriate device's interrupt */
-	generic_handle_irq(local_irq);
+	__do_IRQ(local_irq);
 
 	/* set EOI - forces a new interrupt if a lower priority device
 	 * still needs service.
@@ -169,7 +169,7 @@ superio_init(struct pci_dev *pcidev)
 	/* ...then properly fixup the USB to point at suckyio PIC */
 	sio->usb_pdev->irq = superio_fixup_irq(sio->usb_pdev);
 
-	printk(KERN_INFO PFX "Found NS87560 Legacy I/O device at %s (IRQ %i)\n",
+	printk(KERN_INFO PFX "Found NS87560 Legacy I/O device at %s (IRQ %i) \n",
 	       pci_name(pdev), pdev->irq);
 
 	pci_read_config_dword (pdev, SIO_SP1BAR, &sio->sp1_base);
@@ -286,9 +286,8 @@ superio_init(struct pci_dev *pcidev)
 }
 DECLARE_PCI_FIXUP_FINAL(PCI_VENDOR_ID_NS, PCI_DEVICE_ID_NS_87560_LIO, superio_init);
 
-static void superio_mask_irq(struct irq_data *d)
+static void superio_disable_irq(unsigned int irq)
 {
-	unsigned int irq = d->irq;
 	u8 r8;
 
 	if ((irq < 1) || (irq == 2) || (irq > 7)) {
@@ -304,9 +303,8 @@ static void superio_mask_irq(struct irq_data *d)
 	outb (r8,IC_PIC1+1);
 }
 
-static void superio_unmask_irq(struct irq_data *d)
+static void superio_enable_irq(unsigned int irq)
 {
-	unsigned int irq = d->irq;
 	u8 r8;
 
 	if ((irq < 1) || (irq == 2) || (irq > 7)) {
@@ -321,10 +319,20 @@ static void superio_unmask_irq(struct irq_data *d)
 	outb (r8,IC_PIC1+1);
 }
 
+static unsigned int superio_startup_irq(unsigned int irq)
+{
+	superio_enable_irq(irq);
+	return 0;
+}
+
 static struct irq_chip superio_interrupt_type = {
-	.name		=	SUPERIO,
-	.irq_unmask	=	superio_unmask_irq,
-	.irq_mask	=	superio_mask_irq,
+	.typename =	SUPERIO,
+	.startup =	superio_startup_irq,
+	.shutdown =	superio_disable_irq,
+	.enable =	superio_enable_irq,
+	.disable =	superio_disable_irq,
+	.ack =		no_ack_irq,
+	.end =		no_end_irq,
 };
 
 #ifdef DEBUG_SUPERIO_INIT
@@ -355,8 +363,9 @@ int superio_fixup_irq(struct pci_dev *pcidev)
 #endif
 
 	for (i = 0; i < 16; i++) {
-		irq_set_chip_and_handler(i, &superio_interrupt_type,
-					 handle_simple_irq);
+		struct irq_desc *desc = irq_to_desc(i);
+
+		desc->chip = &superio_interrupt_type;
 	}
 
 	/*

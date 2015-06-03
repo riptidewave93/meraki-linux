@@ -1,7 +1,7 @@
 menu "Platform support"
 
-source "arch/powerpc/platforms/powernv/Kconfig"
 source "arch/powerpc/platforms/pseries/Kconfig"
+source "arch/powerpc/platforms/iseries/Kconfig"
 source "arch/powerpc/platforms/chrp/Kconfig"
 source "arch/powerpc/platforms/512x/Kconfig"
 source "arch/powerpc/platforms/52xx/Kconfig"
@@ -20,17 +20,6 @@ source "arch/powerpc/platforms/embedded6xx/Kconfig"
 source "arch/powerpc/platforms/44x/Kconfig"
 source "arch/powerpc/platforms/40x/Kconfig"
 source "arch/powerpc/platforms/amigaone/Kconfig"
-source "arch/powerpc/platforms/wsp/Kconfig"
-
-config KVM_GUEST
-	bool "KVM Guest support"
-	default n
-	---help---
-	  This option enables various optimizations for running under the KVM
-	  hypervisor. Overhead for the kernel when not running inside KVM should
-	  be minimal.
-
-	  In case of doubt, say Y
 
 config PPC_NATIVE
 	bool
@@ -47,7 +36,7 @@ config PPC_OF_BOOT_TRAMPOLINE
 	help
 	  Support from booting from Open Firmware or yaboot using an
 	  Open Firmware client interface. This enables the kernel to
-	  communicate with open firmware to retrieve system information
+	  communicate with open firmware to retrieve system informations
 	  such as the device tree.
 
 	  In case of doubt, say Y
@@ -57,18 +46,15 @@ config UDBG_RTAS_CONSOLE
 	depends on PPC_RTAS
 	default n
 
-config PPC_SMP_MUXED_IPI
-	bool
-	help
-	  Select this opton if your platform supports SMP and your
-	  interrupt controller provides less than 4 interrupts to each
-	  cpu.	This will enable the generic code to multiplex the 4
-	  messages on to one ipi.
-
 config PPC_UDBG_BEAT
 	bool "BEAT based debug console"
 	depends on PPC_CELLEB
 	default n
+
+config XICS
+	depends on PPC_PSERIES
+	bool
+	default y
 
 config IPIC
 	bool
@@ -78,23 +64,15 @@ config MPIC
 	bool
 	default n
 
-config PPC_EPAPR_HV_PIC
-	bool
-	default n
-
 config MPIC_WEIRD
 	bool
 	default n
 
-config MPIC_MSGR
-	bool "MPIC message register support"
-	depends on MPIC
-	default n
-	help
-	  Enables support for the MPIC message registers.  These
-	  registers are used for inter-processor communication.
-
 config PPC_I8259
+	bool
+	default n
+
+config MPIC_64BITS_TIMER
 	bool
 	default n
 
@@ -108,11 +86,6 @@ config PPC_RTAS
 	default n
 
 config RTAS_ERROR_LOGGING
-	bool
-	depends on PPC_RTAS
-	default n
-
-config PPC_RTAS_DAEMON
 	bool
 	depends on PPC_RTAS
 	default n
@@ -132,7 +105,8 @@ config MMIO_NVRAM
 
 config MPIC_U3_HT_IRQS
 	bool
-	default n
+	depends on PPC_MAPLE
+	default y
 
 config MPIC_BROKEN_REGREAD
 	bool
@@ -145,7 +119,7 @@ config MPIC_BROKEN_REGREAD
 	  of the register contents in software.
 
 config IBMVIO
-	depends on PPC_PSERIES
+	depends on PPC_PSERIES || PPC_ISERIES
 	bool
 	default y
 
@@ -163,24 +137,14 @@ config PPC_970_NAP
 	bool
 	default n
 
-config PPC_P7_NAP
-	bool
-	default n
-
 config PPC_INDIRECT_IO
 	bool
 	select GENERIC_IOMAP
+	default n
 
-config PPC_INDIRECT_PIO
+config GENERIC_IOMAP
 	bool
-	select PPC_INDIRECT_IO
-
-config PPC_INDIRECT_MMIO
-	bool
-	select PPC_INDIRECT_IO
-
-config PPC_IO_WORKAROUNDS
-	bool
+	default n
 
 source "drivers/cpufreq/Kconfig"
 
@@ -204,17 +168,6 @@ config CPU_FREQ_PMAC64
 	  This adds support for frequency switching on Apple iMac G5,
 	  and some of the more recent desktop G5 machines as well.
 
-config MPC85xx_CPUFREQ
-	bool "Support for Freescale MPC85xx CPU freq"
-	depends on PPC_85xx && PPC32 && !PPC_E500MC
-	default y
-	select CPU_FREQ_TABLE
-	help
-	  This adds support for dynamic frequency switching on
-	  Freescale MPC85xx by cpufreq interface. MPC8536 and P1022
-	  have a JOG feature, which provides a dynamic mechanism
-	  to lower or raise the CPU core clock at runtime.
-
 config PPC_PASEMI_CPUFREQ
 	bool "Support for PA Semi PWRficient"
 	depends on PPC_PASEMI
@@ -224,11 +177,14 @@ config PPC_PASEMI_CPUFREQ
 	  This adds the support for frequency switching on PA Semi
 	  PWRficient processors.
 
-endmenu
-
-menu "CPUIdle driver"
-
-source "drivers/cpuidle/Kconfig"
+config APM86xxx_CPUFREQ
+	bool "Support for APM86xxx"
+	depends on APM86xxx
+	default y
+	select CPU_FREQ_TABLE
+	help
+	  This adds the support for frequency switching
+	  on APM86xxx processors.
 
 endmenu
 
@@ -292,7 +248,7 @@ config TAU_AVERAGE
 
 config QUICC_ENGINE
 	bool "Freescale QUICC Engine (QE) Support"
-	depends on FSL_SOC && PPC32
+	depends on FSL_SOC
 	select PPC_LIB_RHEAP
 	select CRC32
 	help
@@ -312,7 +268,7 @@ config QE_GPIO
 
 config CPM2
 	bool "Enable support for the CPM2 (Communications Processor Module)"
-	depends on (FSL_SOC_BOOKE && PPC32) || 8260
+	depends on MPC85xx || 8260
 	select CPM
 	select PPC_LIB_RHEAP
 	select PPC_PCI_CHOICE
@@ -347,6 +303,13 @@ config CPM
 	bool
 	select PPC_CLOCK
 
+config IPP
+	bool
+	select PPC_CLOCK
+
+config SLIMPRO_OFFLOAD
+	bool
+
 config OF_RTC
 	bool
 	help
@@ -354,6 +317,15 @@ config OF_RTC
 	  platform devices for direct mapped RTC chips like the DS1742 or DS1743.
 
 source "arch/powerpc/sysdev/bestcomm/Kconfig"
+
+config MPC8xxx_GPIO
+	bool "MPC8xxx GPIO support"
+	depends on PPC_MPC831x || PPC_MPC834x || PPC_MPC837x || PPC_85xx || PPC_86xx
+	select GENERIC_GPIO
+	select ARCH_REQUIRE_GPIOLIB
+	help
+	  Say Y here if you're going to use hardware that connects to the
+	  MPC831x/834x/837x/8572/8610 GPIOs.
 
 config SIMPLE_GPIO
 	bool "Support for simple, memory-mapped GPIO controllers"
@@ -366,9 +338,52 @@ config SIMPLE_GPIO
 	  chip-selects, Ethernet/USB PHY's power and various other small
 	  on-board peripherals.
 
+config APM86xxx_ICC
+	bool "APM Inter-core Communication Protocols"
+	depends on APM86xxx
+	default y if APM86xxx && !SMP
+	help
+	  Say Y here if you want to use APM inter-core communication protocols
+	  (ICC) for APM SoC APM86xxx processors. ICC provides inter-core 
+	  communication between two OS's.
+	   	
+config APM86xxx_ICC_LOCK
+        bool "APM Spinlock support"
+        depends on APM86xxx_ICC
+	default y if APM86xxx && !SMP
+        help
+          Say Y here if you want to use APM spinlock. APM spinlock is requires
+          when two OS's shared a resource. 
+
+config APM86xxx_SHMEM
+	bool "Shared Memory Manager"
+        depends on APM86xxx_ICC
+	default y if APM86xxx && !SMP
+       help
+	  Say Y here if you want to use APM shared memory manager for 
+	  inter-core communication.
+
+config APM86xxx_SHMEM_ICC
+	bool "Shared Memory based Intercore Communication"
+	default y if APM86xxx && !SMP
+        depends on APM86xxx_ICC
+        select APM86xxx_SHMEM
+	select APM_IODMA
+	select DMA_ENGINE
+	help
+	  This option provides inter-core communication using shared memory
+	  for APM APM86xxx processor.
+
+config APM86xxx_GPIO
+	bool "APM Designware GPIO support"
+	select GENERIC_GPIO
+	select ARCH_REQUIRE_GPIOLIB
+	help
+	  This will enable APM APM86xxx Designware GPIO support 
+
 config MCU_MPC8349EMITX
-	bool "MPC8349E-mITX MCU driver"
-	depends on I2C=y && PPC_83xx
+	tristate "MPC8349E-mITX MCU driver"
+	depends on I2C && PPC_83xx
 	select GENERIC_GPIO
 	select ARCH_REQUIRE_GPIOLIB
 	help

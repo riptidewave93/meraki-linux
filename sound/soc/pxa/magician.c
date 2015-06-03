@@ -26,11 +26,13 @@
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 #include <sound/uda1380.h>
 
 #include <mach/magician.h>
 #include <asm/mach-types.h>
 #include "../codecs/uda1380.h"
+#include "pxa2xx-pcm.h"
 #include "pxa2xx-i2s.h"
 #include "pxa-ssp.h"
 
@@ -43,42 +45,36 @@ static int magician_in_sel = MAGICIAN_MIC;
 
 static void magician_ext_control(struct snd_soc_codec *codec)
 {
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
-
 	if (magician_spk_switch)
-		snd_soc_dapm_enable_pin(dapm, "Speaker");
+		snd_soc_dapm_enable_pin(codec, "Speaker");
 	else
-		snd_soc_dapm_disable_pin(dapm, "Speaker");
+		snd_soc_dapm_disable_pin(codec, "Speaker");
 	if (magician_hp_switch)
-		snd_soc_dapm_enable_pin(dapm, "Headphone Jack");
+		snd_soc_dapm_enable_pin(codec, "Headphone Jack");
 	else
-		snd_soc_dapm_disable_pin(dapm, "Headphone Jack");
+		snd_soc_dapm_disable_pin(codec, "Headphone Jack");
 
 	switch (magician_in_sel) {
 	case MAGICIAN_MIC:
-		snd_soc_dapm_disable_pin(dapm, "Headset Mic");
-		snd_soc_dapm_enable_pin(dapm, "Call Mic");
+		snd_soc_dapm_disable_pin(codec, "Headset Mic");
+		snd_soc_dapm_enable_pin(codec, "Call Mic");
 		break;
 	case MAGICIAN_MIC_EXT:
-		snd_soc_dapm_disable_pin(dapm, "Call Mic");
-		snd_soc_dapm_enable_pin(dapm, "Headset Mic");
+		snd_soc_dapm_disable_pin(codec, "Call Mic");
+		snd_soc_dapm_enable_pin(codec, "Headset Mic");
 		break;
 	}
 
-	snd_soc_dapm_sync(dapm);
+	snd_soc_dapm_sync(codec);
 }
 
 static int magician_startup(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
-
-	mutex_lock(&codec->mutex);
+	struct snd_soc_codec *codec = rtd->socdev->card->codec;
 
 	/* check the jack status at stream startup */
 	magician_ext_control(codec);
-
-	mutex_unlock(&codec->mutex);
 
 	return 0;
 }
@@ -90,12 +86,13 @@ static int magician_playback_hw_params(struct snd_pcm_substream *substream,
 				       struct snd_pcm_hw_params *params)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *codec_dai = rtd->codec_dai;
-	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
-	unsigned int acps, acds, width;
+	struct snd_soc_dai *codec_dai = rtd->dai->codec_dai;
+	struct snd_soc_dai *cpu_dai = rtd->dai->cpu_dai;
+	unsigned int acps, acds, width, rate;
 	unsigned int div4 = PXA_SSP_CLK_SCDB_4;
 	int ret = 0;
 
+	rate = params_rate(params);
 	width = snd_pcm_format_physical_width(params_format(params));
 
 	/*
@@ -216,7 +213,7 @@ static int magician_playback_hw_params(struct snd_pcm_substream *substream,
 		return ret;
 
 	/* set SSP audio pll clock */
-	ret = snd_soc_dai_set_pll(cpu_dai, 0, 0, 0, acps);
+	ret = snd_soc_dai_set_pll(cpu_dai, 0, 0, acps);
 	if (ret < 0)
 		return ret;
 
@@ -230,8 +227,8 @@ static int magician_capture_hw_params(struct snd_pcm_substream *substream,
 				      struct snd_pcm_hw_params *params)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *codec_dai = rtd->codec_dai;
-	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
+	struct snd_soc_dai *codec_dai = rtd->dai->codec_dai;
+	struct snd_soc_dai *cpu_dai = rtd->dai->cpu_dai;
 	int ret = 0;
 
 	/* set codec DAI configuration */
@@ -396,33 +393,32 @@ static const struct snd_kcontrol_new uda1380_magician_controls[] = {
 /*
  * Logic for a uda1380 as connected on a HTC Magician
  */
-static int magician_uda1380_init(struct snd_soc_pcm_runtime *rtd)
+static int magician_uda1380_init(struct snd_soc_codec *codec)
 {
-	struct snd_soc_codec *codec = rtd->codec;
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
 	int err;
 
 	/* NC codec pins */
-	snd_soc_dapm_nc_pin(dapm, "VOUTLHP");
-	snd_soc_dapm_nc_pin(dapm, "VOUTRHP");
+	snd_soc_dapm_nc_pin(codec, "VOUTLHP");
+	snd_soc_dapm_nc_pin(codec, "VOUTRHP");
 
 	/* FIXME: is anything connected here? */
-	snd_soc_dapm_nc_pin(dapm, "VINL");
-	snd_soc_dapm_nc_pin(dapm, "VINR");
+	snd_soc_dapm_nc_pin(codec, "VINL");
+	snd_soc_dapm_nc_pin(codec, "VINR");
 
 	/* Add magician specific controls */
-	err = snd_soc_add_codec_controls(codec, uda1380_magician_controls,
+	err = snd_soc_add_controls(codec, uda1380_magician_controls,
 				ARRAY_SIZE(uda1380_magician_controls));
 	if (err < 0)
 		return err;
 
 	/* Add magician specific widgets */
-	snd_soc_dapm_new_controls(dapm, uda1380_dapm_widgets,
+	snd_soc_dapm_new_controls(codec, uda1380_dapm_widgets,
 				  ARRAY_SIZE(uda1380_dapm_widgets));
 
 	/* Set up magician specific audio path interconnects */
-	snd_soc_dapm_add_routes(dapm, audio_map, ARRAY_SIZE(audio_map));
+	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
 
+	snd_soc_dapm_sync(codec);
 	return 0;
 }
 
@@ -431,20 +427,16 @@ static struct snd_soc_dai_link magician_dai[] = {
 {
 	.name = "uda1380",
 	.stream_name = "UDA1380 Playback",
-	.cpu_dai_name = "pxa-ssp-dai.0",
-	.codec_dai_name = "uda1380-hifi-playback",
-	.platform_name = "pxa-pcm-audio",
-	.codec_name = "uda1380-codec.0-0018",
+	.cpu_dai = &pxa_ssp_dai[PXA_DAI_SSP1],
+	.codec_dai = &uda1380_dai[UDA1380_DAI_PLAYBACK],
 	.init = magician_uda1380_init,
 	.ops = &magician_playback_ops,
 },
 {
 	.name = "uda1380",
 	.stream_name = "UDA1380 Capture",
-	.cpu_dai_name = "pxa2xx-i2s",
-	.codec_dai_name = "uda1380-hifi-capture",
-	.platform_name = "pxa-pcm-audio",
-	.codec_name = "uda1380-codec.0-0018",
+	.cpu_dai = &pxa_i2s_dai,
+	.codec_dai = &uda1380_dai[UDA1380_DAI_CAPTURE],
 	.ops = &magician_capture_ops,
 }
 };
@@ -452,10 +444,15 @@ static struct snd_soc_dai_link magician_dai[] = {
 /* magician audio machine driver */
 static struct snd_soc_card snd_soc_card_magician = {
 	.name = "Magician",
-	.owner = THIS_MODULE,
 	.dai_link = magician_dai,
 	.num_links = ARRAY_SIZE(magician_dai),
+	.platform = &pxa2xx_soc_platform,
+};
 
+/* magician audio subsystem */
+static struct snd_soc_device magician_snd_devdata = {
+	.card = &snd_soc_card_magician,
+	.codec_dev = &soc_codec_dev_uda1380,
 };
 
 static struct platform_device *magician_snd_device;
@@ -517,7 +514,8 @@ static int __init magician_init(void)
 		goto err_pdev;
 	}
 
-	platform_set_drvdata(magician_snd_device, &snd_soc_card_magician);
+	platform_set_drvdata(magician_snd_device, &magician_snd_devdata);
+	magician_snd_devdata.dev = &magician_snd_device->dev;
 	ret = platform_device_add(magician_snd_device);
 	if (ret) {
 		platform_device_put(magician_snd_device);

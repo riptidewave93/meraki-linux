@@ -31,8 +31,8 @@
 #include <linux/interrupt.h>
 #include <linux/input.h>
 #include <linux/platform_device.h>
-#include <linux/i2c/twl.h>
-#include <linux/slab.h>
+#include <linux/i2c/twl4030.h>
+
 
 /*
  * The TWL4030 family chips include a keypad controller that supports
@@ -137,7 +137,7 @@ struct twl4030_keypad {
 static int twl4030_kpread(struct twl4030_keypad *kp,
 		u8 *data, u32 reg, u8 num_bytes)
 {
-	int ret = twl_i2c_read(TWL4030_MODULE_KEYPAD, data, reg, num_bytes);
+	int ret = twl4030_i2c_read(TWL4030_MODULE_KEYPAD, data, reg, num_bytes);
 
 	if (ret < 0)
 		dev_warn(kp->dbg_dev,
@@ -149,7 +149,7 @@ static int twl4030_kpread(struct twl4030_keypad *kp,
 
 static int twl4030_kpwrite_u8(struct twl4030_keypad *kp, u8 data, u32 reg)
 {
-	int ret = twl_i2c_write_u8(TWL4030_MODULE_KEYPAD, data, reg);
+	int ret = twl4030_i2c_write_u8(TWL4030_MODULE_KEYPAD, data, reg);
 
 	if (ret < 0)
 		dev_warn(kp->dbg_dev,
@@ -258,6 +258,14 @@ static irqreturn_t do_kp_irq(int irq, void *_kp)
 	u8 reg;
 	int ret;
 
+#ifdef CONFIG_LOCKDEP
+	/* WORKAROUND for lockdep forcing IRQF_DISABLED on us, which
+	 * we don't want and can't tolerate.  Although it might be
+	 * friendlier not to borrow this thread context...
+	 */
+	local_irq_enable();
+#endif
+
 	/* Read & Clear TWL4030 pending interrupt */
 	ret = twl4030_kpread(kp, &reg, KEYP_ISR1, 1);
 
@@ -301,7 +309,7 @@ static int __devinit twl4030_kp_program(struct twl4030_keypad *kp)
 	if (twl4030_kpwrite_u8(kp, i, KEYP_DEB) < 0)
 		return -EIO;
 
-	/* Set timeout period to 200 ms */
+	/* Set timeout period to 100 ms */
 	i = KEYP_PERIOD_US(200000, PTV_PRESCALER);
 	if (twl4030_kpwrite_u8(kp, (i & 0xFF), KEYP_TIMEOUT_L) < 0)
 		return -EIO;
@@ -331,19 +339,17 @@ static int __devinit twl4030_kp_program(struct twl4030_keypad *kp)
 static int __devinit twl4030_kp_probe(struct platform_device *pdev)
 {
 	struct twl4030_keypad_data *pdata = pdev->dev.platform_data;
-	const struct matrix_keymap_data *keymap_data;
+	const struct matrix_keymap_data *keymap_data = pdata->keymap_data;
 	struct twl4030_keypad *kp;
 	struct input_dev *input;
 	u8 reg;
 	int error;
 
-	if (!pdata || !pdata->rows || !pdata->cols || !pdata->keymap_data ||
+	if (!pdata || !pdata->rows || !pdata->cols ||
 	    pdata->rows > TWL4030_MAX_ROWS || pdata->cols > TWL4030_MAX_COLS) {
 		dev_err(&pdev->dev, "Invalid platform_data\n");
 		return -EINVAL;
 	}
-
-	keymap_data = pdata->keymap_data;
 
 	kp = kzalloc(sizeof(*kp), GFP_KERNEL);
 	input = input_allocate_device();
@@ -402,27 +408,27 @@ static int __devinit twl4030_kp_probe(struct platform_device *pdev)
 	 *
 	 * NOTE:  we assume this host is wired to TWL4040 INT1, not INT2 ...
 	 */
-	error = request_threaded_irq(kp->irq, NULL, do_kp_irq,
-			0, pdev->name, kp);
+	error = request_irq(kp->irq, do_kp_irq, 0, pdev->name, kp);
 	if (error) {
 		dev_info(kp->dbg_dev, "request_irq failed for irq no=%d\n",
 			kp->irq);
-		goto err2;
+		goto err3;
 	}
 
 	/* Enable KP and TO interrupts now. */
 	reg = (u8) ~(KEYP_IMR1_KP | KEYP_IMR1_TO);
 	if (twl4030_kpwrite_u8(kp, reg, KEYP_IMR1)) {
 		error = -EIO;
-		goto err3;
+		goto err4;
 	}
 
 	platform_set_drvdata(pdev, kp);
 	return 0;
 
-err3:
+err4:
 	/* mask all events - we don't care about the result */
 	(void) twl4030_kpwrite_u8(kp, 0xff, KEYP_IMR1);
+err3:
 	free_irq(kp->irq, NULL);
 err2:
 	input_unregister_device(input);
@@ -459,9 +465,21 @@ static struct platform_driver twl4030_kp_driver = {
 		.owner	= THIS_MODULE,
 	},
 };
-module_platform_driver(twl4030_kp_driver);
+
+static int __init twl4030_kp_init(void)
+{
+	return platform_driver_register(&twl4030_kp_driver);
+}
+module_init(twl4030_kp_init);
+
+static void __exit twl4030_kp_exit(void)
+{
+	platform_driver_unregister(&twl4030_kp_driver);
+}
+module_exit(twl4030_kp_exit);
 
 MODULE_AUTHOR("Texas Instruments");
 MODULE_DESCRIPTION("TWL4030 Keypad Driver");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:twl4030_keypad");
+

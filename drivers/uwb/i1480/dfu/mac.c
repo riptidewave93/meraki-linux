@@ -28,7 +28,6 @@
  */
 #include <linux/delay.h>
 #include <linux/firmware.h>
-#include <linux/slab.h>
 #include <linux/uwb.h>
 #include "i1480-dfu.h"
 

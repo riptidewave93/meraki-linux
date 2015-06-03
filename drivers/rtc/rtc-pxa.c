@@ -26,7 +26,6 @@
 #include <linux/seq_file.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
-#include <linux/slab.h>
 
 #include <mach/hardware.h>
 
@@ -87,6 +86,7 @@ struct pxa_rtc {
 	int			irq_Alrm;
 	struct rtc_device	*rtc;
 	spinlock_t		lock;		/* Protects this structure */
+	struct rtc_time		rtc_alarm;
 };
 
 static u32 ryxr_calc(struct rtc_time *tm)
@@ -174,14 +174,14 @@ static int pxa_rtc_open(struct device *dev)
 	struct pxa_rtc *pxa_rtc = dev_get_drvdata(dev);
 	int ret;
 
-	ret = request_irq(pxa_rtc->irq_1Hz, pxa_rtc_irq, 0,
+	ret = request_irq(pxa_rtc->irq_1Hz, pxa_rtc_irq, IRQF_DISABLED,
 			  "rtc 1Hz", dev);
 	if (ret < 0) {
 		dev_err(dev, "can't get irq %i, err %d\n", pxa_rtc->irq_1Hz,
 			ret);
 		goto err_irq_1Hz;
 	}
-	ret = request_irq(pxa_rtc->irq_Alrm, pxa_rtc_irq, 0,
+	ret = request_irq(pxa_rtc->irq_Alrm, pxa_rtc_irq, IRQF_DISABLED,
 			  "rtc Alrm", dev);
 	if (ret < 0) {
 		dev_err(dev, "can't get irq %i, err %d\n", pxa_rtc->irq_Alrm,
@@ -209,19 +209,58 @@ static void pxa_rtc_release(struct device *dev)
 	free_irq(pxa_rtc->irq_1Hz, dev);
 }
 
-static int pxa_alarm_irq_enable(struct device *dev, unsigned int enabled)
+static int pxa_periodic_irq_set_freq(struct device *dev, int freq)
+{
+	struct pxa_rtc *pxa_rtc = dev_get_drvdata(dev);
+	int period_ms;
+
+	if (freq < 1 || freq > MAXFREQ_PERIODIC)
+		return -EINVAL;
+
+	period_ms = 1000 / freq;
+	rtc_writel(pxa_rtc, PIAR, period_ms);
+
+	return 0;
+}
+
+static int pxa_periodic_irq_set_state(struct device *dev, int enabled)
 {
 	struct pxa_rtc *pxa_rtc = dev_get_drvdata(dev);
 
-	spin_lock_irq(&pxa_rtc->lock);
-
 	if (enabled)
-		rtsr_set_bits(pxa_rtc, RTSR_RDALE1);
+		rtsr_set_bits(pxa_rtc, RTSR_PIALE | RTSR_PICE);
 	else
+		rtsr_clear_bits(pxa_rtc, RTSR_PIALE | RTSR_PICE);
+
+	return 0;
+}
+
+static int pxa_rtc_ioctl(struct device *dev, unsigned int cmd,
+		unsigned long arg)
+{
+	struct pxa_rtc *pxa_rtc = dev_get_drvdata(dev);
+	int ret = 0;
+
+	spin_lock_irq(&pxa_rtc->lock);
+	switch (cmd) {
+	case RTC_AIE_OFF:
 		rtsr_clear_bits(pxa_rtc, RTSR_RDALE1);
+		break;
+	case RTC_AIE_ON:
+		rtsr_set_bits(pxa_rtc, RTSR_RDALE1);
+		break;
+	case RTC_UIE_OFF:
+		rtsr_clear_bits(pxa_rtc, RTSR_HZE);
+		break;
+	case RTC_UIE_ON:
+		rtsr_set_bits(pxa_rtc, RTSR_HZE);
+		break;
+	default:
+		ret = -ENOIOCTLCMD;
+	}
 
 	spin_unlock_irq(&pxa_rtc->lock);
-	return 0;
+	return ret;
 }
 
 static int pxa_rtc_read_time(struct device *dev, struct rtc_time *tm)
@@ -300,12 +339,14 @@ static int pxa_rtc_proc(struct device *dev, struct seq_file *seq)
 static const struct rtc_class_ops pxa_rtc_ops = {
 	.open = pxa_rtc_open,
 	.release = pxa_rtc_release,
+	.ioctl = pxa_rtc_ioctl,
 	.read_time = pxa_rtc_read_time,
 	.set_time = pxa_rtc_set_time,
 	.read_alarm = pxa_rtc_read_alarm,
 	.set_alarm = pxa_rtc_set_alarm,
-	.alarm_irq_enable = pxa_alarm_irq_enable,
 	.proc = pxa_rtc_proc,
+	.irq_set_state = pxa_periodic_irq_set_state,
+	.irq_set_freq = pxa_periodic_irq_set_freq,
 };
 
 static int __init pxa_rtc_probe(struct platform_device *pdev)
@@ -415,7 +456,7 @@ static int pxa_rtc_resume(struct device *dev)
 	return 0;
 }
 
-static const struct dev_pm_ops pxa_rtc_pm_ops = {
+static struct dev_pm_ops pxa_rtc_pm_ops = {
 	.suspend	= pxa_rtc_suspend,
 	.resume		= pxa_rtc_resume,
 };

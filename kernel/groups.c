@@ -2,7 +2,7 @@
  * Supplementary group IDs
  */
 #include <linux/cred.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/security.h>
 #include <linux/syscalls.h>
@@ -163,6 +163,12 @@ int groups_search(const struct group_info *group_info, gid_t grp)
  */
 int set_groups(struct cred *new, struct group_info *group_info)
 {
+	int retval;
+
+	retval = security_task_setgroups(group_info);
+	if (retval)
+		return retval;
+
 	put_group_info(new->group_info);
 	groups_sort(group_info);
 	get_group_info(group_info);
@@ -233,7 +239,7 @@ SYSCALL_DEFINE2(setgroups, int, gidsetsize, gid_t __user *, grouplist)
 	struct group_info *group_info;
 	int retval;
 
-	if (!nsown_capable(CAP_SETGID))
+	if (!capable(CAP_SETGID))
 		return -EPERM;
 	if ((unsigned)gidsetsize > NGROUPS_MAX)
 		return -EINVAL;

@@ -19,7 +19,6 @@
 #include <linux/bitops.h>
 #include <linux/nodemask.h>
 #include <linux/pfn.h>
-#include <linux/gfp.h>
 #include <asm/types.h>
 #include <asm/processor.h>
 #include <asm/page.h>
@@ -34,6 +33,8 @@ extern char _text, _etext, _edata;
 extern char __init_begin, __init_end;
 
 pgd_t swapper_pg_dir[1024];
+
+DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
 
 /*
  * Cache of MMU context last used.

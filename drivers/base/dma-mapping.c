@@ -8,8 +8,6 @@
  */
 
 #include <linux/dma-mapping.h>
-#include <linux/export.h>
-#include <linux/gfp.h>
 
 /*
  * Managed DMA API

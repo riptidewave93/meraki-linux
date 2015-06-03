@@ -75,6 +75,8 @@ static struct clocksource itimer_clocksource = {
 	.rating		= 300,
 	.read		= itimer_read,
 	.mask		= CLOCKSOURCE_MASK(64),
+	.mult		= 1000,
+	.shift		= 0,
 	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
 };
 
@@ -82,7 +84,7 @@ static void __init setup_itimer(void)
 {
 	int err;
 
-	err = request_irq(TIMER_IRQ, um_timer, 0, "timer", NULL);
+	err = request_irq(TIMER_IRQ, um_timer, IRQF_DISABLED, "timer", NULL);
 	if (err != 0)
 		printk(KERN_ERR "register_timer : request_irq failed - "
 		       "errno = %d\n", -err);
@@ -92,24 +94,24 @@ static void __init setup_itimer(void)
 		clockevent_delta2ns(60 * HZ, &itimer_clockevent);
 	itimer_clockevent.min_delta_ns =
 		clockevent_delta2ns(1, &itimer_clockevent);
-	err = clocksource_register_hz(&itimer_clocksource, USEC_PER_SEC);
+	err = clocksource_register(&itimer_clocksource);
 	if (err) {
-		printk(KERN_ERR "clocksource_register_hz returned %d\n", err);
+		printk(KERN_ERR "clocksource_register returned %d\n", err);
 		return;
 	}
 	clockevents_register_device(&itimer_clockevent);
 }
 
-void read_persistent_clock(struct timespec *ts)
-{
-	long long nsecs = os_nsecs();
-
-	set_normalized_timespec(ts, nsecs / NSEC_PER_SEC,
-				nsecs % NSEC_PER_SEC);
-}
-
 void __init time_init(void)
 {
+	long long nsecs;
+
 	timer_init();
+
+	nsecs = os_nsecs();
+	set_normalized_timespec(&wall_to_monotonic, -nsecs / NSEC_PER_SEC,
+				-nsecs % NSEC_PER_SEC);
+	set_normalized_timespec(&xtime, nsecs / NSEC_PER_SEC,
+				nsecs % NSEC_PER_SEC);
 	late_time_init = setup_itimer;
 }

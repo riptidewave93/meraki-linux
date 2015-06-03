@@ -32,10 +32,8 @@
 #include <linux/io.h>
 #include <linux/mtd/nand.h>
 #include <linux/mtd/partitions.h>
-#include <linux/slab.h>
 
 #include <mach/nand.h>
-#include <mach/aemif.h>
 
 /*
  * This is a device driver for the NAND flash controller found on the
@@ -57,6 +55,7 @@ struct davinci_nand_info {
 
 	struct device		*dev;
 	struct clk		*clk;
+	bool			partitioned;
 
 	bool			is_readmode;
 
@@ -71,8 +70,6 @@ struct davinci_nand_info {
 	uint32_t		mask_cle;
 
 	uint32_t		core_chipsel;
-
-	struct davinci_aemif_timing	*timing;
 };
 
 static DEFINE_SPINLOCK(davinci_nand_lock);
@@ -479,6 +476,36 @@ static int nand_davinci_dev_ready(struct mtd_info *mtd)
 	return davinci_nand_readl(info, NANDFSR_OFFSET) & BIT(0);
 }
 
+static void __init nand_dm6446evm_flash_init(struct davinci_nand_info *info)
+{
+	uint32_t regval, a1cr;
+
+	/*
+	 * NAND FLASH timings @ PLL1 == 459 MHz
+	 *  - AEMIF.CLK freq   = PLL1/6 = 459/6 = 76.5 MHz
+	 *  - AEMIF.CLK period = 1/76.5 MHz = 13.1 ns
+	 */
+	regval = 0
+		| (0 << 31)           /* selectStrobe */
+		| (0 << 30)           /* extWait (never with NAND) */
+		| (1 << 26)           /* writeSetup      10 ns */
+		| (3 << 20)           /* writeStrobe     40 ns */
+		| (1 << 17)           /* writeHold       10 ns */
+		| (0 << 13)           /* readSetup       10 ns */
+		| (3 << 7)            /* readStrobe      60 ns */
+		| (0 << 4)            /* readHold        10 ns */
+		| (3 << 2)            /* turnAround      ?? ns */
+		| (0 << 0)            /* asyncSize       8-bit bus */
+		;
+	a1cr = davinci_nand_readl(info, A1CR_OFFSET);
+	if (a1cr != regval) {
+		dev_dbg(info->dev, "Warning: NAND config: Set A1CR " \
+		       "reg to 0x%08x, was 0x%08x, should be done by " \
+		       "bootloader.\n", regval, a1cr);
+		davinci_nand_writel(info, A1CR_OFFSET, regval);
+	}
+}
+
 /*----------------------------------------------------------------------*/
 
 /* An ECC layout for using 4-bit ECC with small-page flash, storing
@@ -529,6 +556,8 @@ static int __init nand_davinci_probe(struct platform_device *pdev)
 	int				ret;
 	uint32_t			val;
 	nand_ecc_modes_t		ecc_mode;
+	struct mtd_partition		*mtd_parts = NULL;
+	int				mtd_parts_nb = 0;
 
 	/* insist on board-specific configuration */
 	if (!pdata)
@@ -578,13 +607,10 @@ static int __init nand_davinci_probe(struct platform_device *pdev)
 	info->chip.chip_delay	= 0;
 	info->chip.select_chip	= nand_davinci_select_chip;
 
-	/* options such as NAND_BBT_USE_FLASH */
-	info->chip.bbt_options	= pdata->bbt_options;
-	/* options such as 16-bit widths */
+	/* options such as NAND_USE_FLASH_BBT or 16-bit widths */
 	info->chip.options	= pdata->options;
 	info->chip.bbt_td	= pdata->bbt_td;
 	info->chip.bbt_md	= pdata->bbt_md;
-	info->timing		= pdata->timing;
 
 	info->ioaddr		= (uint32_t __force) vaddr;
 
@@ -641,7 +667,6 @@ static int __init nand_davinci_probe(struct platform_device *pdev)
 			info->chip.ecc.bytes = 3;
 		}
 		info->chip.ecc.size = 512;
-		info->chip.ecc.strength = pdata->ecc_bits;
 		break;
 	default:
 		ret = -EINVAL;
@@ -663,27 +688,15 @@ static int __init nand_davinci_probe(struct platform_device *pdev)
 		goto err_clk_enable;
 	}
 
-	/*
-	 * Setup Async configuration register in case we did not boot from
-	 * NAND and so bootloader did not bother to set it up.
+	/* EMIF timings should normally be set by the boot loader,
+	 * especially after boot-from-NAND.  The *only* reason to
+	 * have this special casing for the DM6446 EVM is to work
+	 * with boot-from-NOR ... with CS0 manually re-jumpered
+	 * (after startup) so it addresses the NAND flash, not NOR.
+	 * Even for dev boards, that's unusually rude...
 	 */
-	val = davinci_nand_readl(info, A1CR_OFFSET + info->core_chipsel * 4);
-
-	/* Extended Wait is not valid and Select Strobe mode is not used */
-	val &= ~(ACR_ASIZE_MASK | ACR_EW_MASK | ACR_SS_MASK);
-	if (info->chip.options & NAND_BUSWIDTH_16)
-		val |= 0x1;
-
-	davinci_nand_writel(info, A1CR_OFFSET + info->core_chipsel * 4, val);
-
-	ret = 0;
-	if (info->timing)
-		ret = davinci_aemif_setup_timing(info->timing, info->base,
-							info->core_chipsel);
-	if (ret < 0) {
-		dev_dbg(&pdev->dev, "NAND timing values setup fail\n");
-		goto err_timing;
-	}
+	if (machine_is_davinci_evm())
+		nand_dm6446evm_flash_init(info);
 
 	spin_lock_irq(&davinci_nand_lock);
 
@@ -753,8 +766,33 @@ syndrome_done:
 	if (ret < 0)
 		goto err_scan;
 
-	ret = mtd_device_parse_register(&info->mtd, NULL, NULL, pdata->parts,
-					pdata->nr_parts);
+	if (mtd_has_cmdlinepart()) {
+		static const char *probes[] __initconst = {
+			"cmdlinepart", NULL
+		};
+
+		mtd_parts_nb = parse_mtd_partitions(&info->mtd, probes,
+						    &mtd_parts, 0);
+	}
+
+	if (mtd_parts_nb <= 0) {
+		mtd_parts = pdata->parts;
+		mtd_parts_nb = pdata->nr_parts;
+	}
+
+	/* Register any partitions */
+	if (mtd_parts_nb > 0) {
+		ret = mtd_device_register(&info->mtd, mtd_parts,
+					  mtd_parts_nb);
+		if (ret == 0)
+			info->partitioned = true;
+	}
+
+	/* If there's no partition info, just package the whole chip
+	 * as a single MTD device.
+	 */
+	if (!info->partitioned)
+		ret = mtd_device_register(&info->mtd, NULL, 0) ? -ENODEV : 0;
 
 	if (ret < 0)
 		goto err_scan;
@@ -766,7 +804,6 @@ syndrome_done:
 	return 0;
 
 err_scan:
-err_timing:
 	clk_disable(info->clk);
 
 err_clk_enable:
@@ -793,6 +830,9 @@ err_nomem:
 static int __exit nand_davinci_remove(struct platform_device *pdev)
 {
 	struct davinci_nand_info *info = platform_get_drvdata(pdev);
+	int status;
+
+	status = mtd_device_unregister(&info->mtd);
 
 	spin_lock_irq(&davinci_nand_lock);
 	if (info->chip.ecc.mode == NAND_ECC_HW_SYNDROME)

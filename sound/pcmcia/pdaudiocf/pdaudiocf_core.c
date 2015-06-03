@@ -19,7 +19,6 @@
  */
 
 #include <linux/delay.h>
-#include <linux/slab.h>
 #include <sound/core.h>
 #include <sound/info.h>
 #include "pdaudiocf.h"

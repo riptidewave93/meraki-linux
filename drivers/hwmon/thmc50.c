@@ -1,24 +1,24 @@
 /*
- * thmc50.c - Part of lm_sensors, Linux kernel modules for hardware
- *	      monitoring
- * Copyright (C) 2007 Krzysztof Helt <krzysztof.h1@wp.pl>
- * Based on 2.4 driver by Frodo Looijaard <frodol@dds.nl> and
- * Philip Edelbrock <phil@netroedge.com>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
- */
+    thmc50.c - Part of lm_sensors, Linux kernel modules for hardware
+             monitoring
+    Copyright (C) 2007 Krzysztof Helt <krzysztof.h1@wp.pl>
+    Based on 2.4 driver by Frodo Looijaard <frodol@dds.nl> and
+    Philip Edelbrock <phil@netroedge.com>
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+*/
 
 #include <linux/module.h>
 #include <linux/init.h>
@@ -35,12 +35,8 @@ MODULE_LICENSE("GPL");
 static const unsigned short normal_i2c[] = { 0x2c, 0x2d, 0x2e, I2C_CLIENT_END };
 
 /* Insmod parameters */
-enum chips { thmc50, adm1022 };
-
-static unsigned short adm1022_temp3[16];
-static unsigned int adm1022_temp3_num;
-module_param_array(adm1022_temp3, ushort, &adm1022_temp3_num, 0);
-MODULE_PARM_DESC(adm1022_temp3, "List of adapter,address pairs "
+I2C_CLIENT_INSMOD_2(thmc50, adm1022);
+I2C_CLIENT_MODULE_PARM(adm1022_temp3, "List of adapter,address pairs "
 			"to enable 3rd temperature (ADM1022 only)");
 
 /* Many THMC50 constants specified below */
@@ -84,7 +80,7 @@ struct thmc50_data {
 	u8 alarms;
 };
 
-static int thmc50_detect(struct i2c_client *client,
+static int thmc50_detect(struct i2c_client *client, int kind,
 			 struct i2c_board_info *info);
 static int thmc50_probe(struct i2c_client *client,
 			const struct i2c_device_id *id);
@@ -108,7 +104,7 @@ static struct i2c_driver thmc50_driver = {
 	.remove = thmc50_remove,
 	.id_table = thmc50_id,
 	.detect = thmc50_detect,
-	.address_list = normal_i2c,
+	.address_data = &addr_data,
 };
 
 static ssize_t show_analog_out(struct device *dev,
@@ -124,13 +120,8 @@ static ssize_t set_analog_out(struct device *dev,
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct thmc50_data *data = i2c_get_clientdata(client);
+	int tmp = simple_strtoul(buf, NULL, 10);
 	int config;
-	unsigned long tmp;
-	int err;
-
-	err = kstrtoul(buf, 10, &tmp);
-	if (err)
-		return err;
 
 	mutex_lock(&data->update_lock);
 	data->analog_out = SENSORS_LIMIT(tmp, 0, 255);
@@ -178,12 +169,7 @@ static ssize_t set_temp_min(struct device *dev, struct device_attribute *attr,
 	int nr = to_sensor_dev_attr(attr)->index;
 	struct i2c_client *client = to_i2c_client(dev);
 	struct thmc50_data *data = i2c_get_clientdata(client);
-	long val;
-	int err;
-
-	err = kstrtol(buf, 10, &val);
-	if (err)
-		return err;
+	int val = simple_strtol(buf, NULL, 10);
 
 	mutex_lock(&data->update_lock);
 	data->temp_min[nr] = SENSORS_LIMIT(val / 1000, -128, 127);
@@ -207,12 +193,7 @@ static ssize_t set_temp_max(struct device *dev, struct device_attribute *attr,
 	int nr = to_sensor_dev_attr(attr)->index;
 	struct i2c_client *client = to_i2c_client(dev);
 	struct thmc50_data *data = i2c_get_clientdata(client);
-	long val;
-	int err;
-
-	err = kstrtol(buf, 10, &val);
-	if (err)
-		return err;
+	int val = simple_strtol(buf, NULL, 10);
 
 	mutex_lock(&data->update_lock);
 	data->temp_max[nr] = SENSORS_LIMIT(val / 1000, -128, 127);
@@ -301,13 +282,14 @@ static const struct attribute_group temp3_group = {
 };
 
 /* Return 0 if detection is successful, -ENODEV otherwise */
-static int thmc50_detect(struct i2c_client *client,
+static int thmc50_detect(struct i2c_client *client, int kind,
 			 struct i2c_board_info *info)
 {
 	unsigned company;
 	unsigned revision;
 	unsigned config;
 	struct i2c_adapter *adapter = client->adapter;
+	int err = 0;
 	const char *type_name;
 
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA)) {
@@ -319,13 +301,31 @@ static int thmc50_detect(struct i2c_client *client,
 	pr_debug("thmc50: Probing for THMC50 at 0x%2X on bus %d\n",
 		 client->addr, i2c_adapter_id(client->adapter));
 
+	/* Now, we do the remaining detection. */
 	company = i2c_smbus_read_byte_data(client, THMC50_REG_COMPANY_ID);
 	revision = i2c_smbus_read_byte_data(client, THMC50_REG_DIE_CODE);
 	config = i2c_smbus_read_byte_data(client, THMC50_REG_CONF);
-	if (revision < 0xc0 || (config & 0x10))
-		return -ENODEV;
 
-	if (company == 0x41) {
+	if (kind == 0)
+		kind = thmc50;
+	else if (kind < 0) {
+		err = -ENODEV;
+		if (revision >= 0xc0 && ((config & 0x10) == 0)) {
+			if (company == 0x49) {
+				kind = thmc50;
+				err = 0;
+			} else if (company == 0x41) {
+				kind = adm1022;
+				err = 0;
+			}
+		}
+	}
+	if (err == -ENODEV) {
+		pr_debug("thmc50: Detection of THMC50/ADM1022 failed\n");
+		return err;
+	}
+
+	if (kind == adm1022) {
 		int id = i2c_adapter_id(client->adapter);
 		int i;
 
@@ -340,13 +340,9 @@ static int thmc50_detect(struct i2c_client *client,
 							  config);
 				break;
 			}
-	} else if (company == 0x49) {
-		type_name = "thmc50";
 	} else {
-		pr_debug("thmc50: Detection of THMC50/ADM1022 failed\n");
-		return -ENODEV;
+		type_name = "thmc50";
 	}
-
 	pr_debug("thmc50: Detected %s (version %x, revision %x)\n",
 		 type_name, (revision >> 4) - 0xc, revision & 0xf);
 
@@ -375,16 +371,14 @@ static int thmc50_probe(struct i2c_client *client,
 	thmc50_init_client(client);
 
 	/* Register sysfs hooks */
-	err = sysfs_create_group(&client->dev.kobj, &thmc50_group);
-	if (err)
+	if ((err = sysfs_create_group(&client->dev.kobj, &thmc50_group)))
 		goto exit_free;
 
 	/* Register ADM1022 sysfs hooks */
-	if (data->has_temp3) {
-		err = sysfs_create_group(&client->dev.kobj, &temp3_group);
-		if (err)
+	if (data->has_temp3)
+		if ((err = sysfs_create_group(&client->dev.kobj,
+					      &temp3_group)))
 			goto exit_remove_sysfs_thmc50;
-	}
 
 	/* Register a new directory entry with module sensors */
 	data->hwmon_dev = hwmon_device_register(&client->dev);
@@ -482,7 +476,18 @@ static struct thmc50_data *thmc50_update_device(struct device *dev)
 	return data;
 }
 
-module_i2c_driver(thmc50_driver);
+static int __init sm_thmc50_init(void)
+{
+	return i2c_add_driver(&thmc50_driver);
+}
+
+static void __exit sm_thmc50_exit(void)
+{
+	i2c_del_driver(&thmc50_driver);
+}
 
 MODULE_AUTHOR("Krzysztof Helt <krzysztof.h1@wp.pl>");
 MODULE_DESCRIPTION("THMC50 driver");
+
+module_init(sm_thmc50_init);
+module_exit(sm_thmc50_exit);

@@ -17,16 +17,16 @@
 #include <linux/mtd/partitions.h>
 #include <linux/sm501.h>
 #include <linux/smsc911x.h>
-#include <linux/i2c/pxa-i2c.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <mach/csb726.h>
-#include <mach/pxa27x.h>
+#include <mach/mfp-pxa27x.h>
+#include <plat/i2c.h>
 #include <mach/mmc.h>
 #include <mach/ohci.h>
+#include <mach/pxa2xx-regs.h>
 #include <mach/audio.h>
-#include <mach/smemc.h>
 
 #include "generic.h"
 #include "devices.h"
@@ -125,9 +125,18 @@ static unsigned long csb726_pin_config[] = {
 	GPIO118_I2C_SDA,
 };
 
+static struct pxamci_platform_data csb726_mci_data;
+
+static int csb726_mci_init(struct device *dev,
+		irq_handler_t detect, void *data)
+{
+	csb726_mci_data.detect_delay = msecs_to_jiffies(500);
+	return 0;
+}
+
 static struct pxamci_platform_data csb726_mci = {
-	.detect_delay_ms	= 500,
 	.ocr_mask		= MMC_VDD_32_33|MMC_VDD_33_34,
+	.init			= csb726_mci_init,
 	/* FIXME setpower */
 	.gpio_card_detect	= CSB726_GPIO_MMC_DETECT,
 	.gpio_card_ro		= CSB726_GPIO_MMC_RO,
@@ -255,13 +264,10 @@ static struct platform_device *devices[] __initdata = {
 static void __init csb726_init(void)
 {
 	pxa2xx_mfp_config(ARRAY_AND_SIZE(csb726_pin_config));
-/*	__raw_writel(0x7ffc3ffc, MSC1); *//* LAN9215/EXP_CS */
-/*	__raw_writel(0x06697ff4, MSC2); *//* none/SM501 */
-	__raw_writel((__raw_readl(MSC2) & ~0xffff) | 0x7ff4, MSC2); /* SM501 */
+/*	MSC1 = 0x7ffc3ffc; *//* LAN9215/EXP_CS */
+/*	MSC2 = 0x06697ff4; *//* none/SM501 */
+	MSC2 = (MSC2 & ~0xffff) | 0x7ff4; /* SM501 */
 
-	pxa_set_ffuart_info(NULL);
-	pxa_set_btuart_info(NULL);
-	pxa_set_stuart_info(NULL);
 	pxa_set_i2c_info(NULL);
 	pxa27x_set_i2c_power_info(NULL);
 	pxa_set_mci_info(&csb726_mci);
@@ -272,12 +278,11 @@ static void __init csb726_init(void)
 }
 
 MACHINE_START(CSB726, "Cogent CSB726")
-	.atag_offset	= 0x100,
-	.map_io         = pxa27x_map_io,
-	.nr_irqs	= PXA_NR_IRQS,
+	.phys_io	= 0x40000000,
+	.boot_params	= 0xa0000100,
+	.io_pg_offst	= (io_p2v(0x40000000) >> 18) & 0xfffc,
+	.map_io         = pxa_map_io,
 	.init_irq       = pxa27x_init_irq,
-	.handle_irq       = pxa27x_handle_irq,
 	.init_machine   = csb726_init,
 	.timer          = &pxa_timer,
-	.restart	= pxa_restart,
 MACHINE_END

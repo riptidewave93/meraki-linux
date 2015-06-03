@@ -1,4 +1,4 @@
-/* Authentication token and access key management internal defs
+/* internal.h: authentication token and access key management internal defs
  *
  * Copyright (C) 2003-5, 2007 Red Hat, Inc. All Rights Reserved.
  * Written by David Howells (dhowells@redhat.com)
@@ -14,6 +14,11 @@
 
 #include <linux/sched.h>
 #include <linux/key-type.h>
+
+static inline __attribute__((format(printf, 1, 2)))
+void no_printk(const char *fmt, ...)
+{
+}
 
 #ifdef __KDEBUG
 #define kenter(FMT, ...) \
@@ -31,18 +36,14 @@
 	no_printk(KERN_DEBUG FMT"\n", ##__VA_ARGS__)
 #endif
 
-extern struct key_type key_type_dead;
 extern struct key_type key_type_user;
-extern struct key_type key_type_logon;
 
 /*****************************************************************************/
 /*
- * Keep track of keys for a user.
- *
- * This needs to be separate to user_struct to avoid a refcount-loop
- * (user_struct pins some keyrings which pin this struct).
- *
- * We also keep track of keys under request from userspace for this UID here.
+ * keep track of keys for a user
+ * - this needs to be separate to user_struct to avoid a refcount-loop
+ *   (user_struct pins some keyrings which pin this struct)
+ * - this also keeps track of keys under request from userspace for this UID
  */
 struct key_user {
 	struct rb_node		node;
@@ -66,7 +67,7 @@ extern struct key_user *key_user_lookup(uid_t uid,
 extern void key_user_put(struct key_user *user);
 
 /*
- * Key quota limits.
+ * key quota limits
  * - root has its own separate limits to everyone else
  */
 extern unsigned key_quota_root_maxkeys;
@@ -77,7 +78,6 @@ extern unsigned key_quota_maxbytes;
 #define KEYQUOTA_LINK_BYTES	4		/* a link in a keyring is worth 4 bytes */
 
 
-extern struct kmem_cache *key_jar;
 extern struct rb_root key_serial_tree;
 extern spinlock_t key_serial_lock;
 extern struct mutex key_construction_mutex;
@@ -87,16 +87,7 @@ extern wait_queue_head_t request_key_conswq;
 extern struct key_type *key_type_lookup(const char *type);
 extern void key_type_put(struct key_type *ktype);
 
-extern int __key_link_begin(struct key *keyring,
-			    const struct key_type *type,
-			    const char *description,
-			    unsigned long *_prealloc);
-extern int __key_link_check_live_key(struct key *keyring, struct key *key);
-extern void __key_link(struct key *keyring, struct key *key,
-		       unsigned long *_prealloc);
-extern void __key_link_end(struct key *keyring,
-			   struct key_type *type,
-			   unsigned long prealloc);
+extern int __key_link(struct key *keyring, struct key *key);
 
 extern key_ref_t __keyring_search_one(key_ref_t keyring_ref,
 				      const struct key_type *type,
@@ -112,14 +103,8 @@ extern key_ref_t keyring_search_aux(key_ref_t keyring_ref,
 				    const struct cred *cred,
 				    struct key_type *type,
 				    const void *description,
-				    key_match_func_t match,
-				    bool no_state_check);
+				    key_match_func_t match);
 
-extern key_ref_t search_my_process_keyrings(struct key_type *type,
-					    const void *description,
-					    key_match_func_t match,
-					    bool no_state_check,
-					    const struct cred *cred);
 extern key_ref_t search_process_keyrings(struct key_type *type,
 					 const void *description,
 					 key_match_func_t match,
@@ -130,7 +115,6 @@ extern struct key *find_keyring_by_name(const char *name, bool skip_perm_check);
 extern int install_user_keyrings(void);
 extern int install_thread_keyring_to_cred(struct cred *);
 extern int install_process_keyring_to_cred(struct cred *);
-extern int install_session_keyring_to_cred(struct cred *, struct key *);
 
 extern struct key *request_key_and_link(struct key_type *type,
 					const char *description,
@@ -140,7 +124,6 @@ extern struct key *request_key_and_link(struct key_type *type,
 					struct key *dest_keyring,
 					unsigned long flags);
 
-extern int lookup_user_key_possessed(const struct key *key, const void *target);
 extern key_ref_t lookup_user_key(key_serial_t id, unsigned long flags,
 				 key_perm_t perm);
 #define KEY_LOOKUP_CREATE	0x01
@@ -149,19 +132,17 @@ extern key_ref_t lookup_user_key(key_serial_t id, unsigned long flags,
 
 extern long join_session_keyring(const char *name);
 
-extern struct work_struct key_gc_work;
 extern unsigned key_gc_delay;
 extern void keyring_gc(struct key *keyring, time_t limit);
 extern void key_schedule_gc(time_t expiry_at);
-extern void key_gc_keytype(struct key_type *ktype);
 
+/*
+ * check to see whether permission is granted to use a key in the desired way
+ */
 extern int key_task_permission(const key_ref_t key_ref,
 			       const struct cred *cred,
 			       key_perm_t perm);
 
-/*
- * Check to see whether permission is granted to use a key in the desired way.
- */
 static inline int key_permission(const key_ref_t key_ref, key_perm_t perm)
 {
 	return key_task_permission(key_ref, current_cred(), perm);
@@ -177,7 +158,7 @@ static inline int key_permission(const key_ref_t key_ref, key_perm_t perm)
 #define	KEY_ALL		0x3f	/* all the above permissions */
 
 /*
- * Authorisation record for request_key().
+ * request_key authorisation
  */
 struct request_key_auth {
 	struct key		*target_key;
@@ -197,7 +178,7 @@ extern struct key *request_key_auth_new(struct key *target,
 extern struct key *key_get_instantiation_authkey(key_serial_t target_id);
 
 /*
- * keyctl() functions
+ * keyctl functions
  */
 extern long keyctl_get_keyring_ID(key_serial_t, int);
 extern long keyctl_join_session_keyring(const char __user *);
@@ -221,17 +202,9 @@ extern long keyctl_assume_authority(key_serial_t);
 extern long keyctl_get_security(key_serial_t keyid, char __user *buffer,
 				size_t buflen);
 extern long keyctl_session_to_parent(void);
-extern long keyctl_reject_key(key_serial_t, unsigned, unsigned, key_serial_t);
-extern long keyctl_instantiate_key_iov(key_serial_t,
-				       const struct iovec __user *,
-				       unsigned, key_serial_t);
-
-extern long keyctl_instantiate_key_common(key_serial_t,
-					  const struct iovec __user *,
-					  unsigned, size_t, key_serial_t);
 
 /*
- * Debugging key validation
+ * debugging key validation
  */
 #ifdef KEY_DEBUGGING
 extern void __key_check(const struct key *);

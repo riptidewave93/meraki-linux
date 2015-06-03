@@ -24,13 +24,12 @@
 
 #include <linux/proc_fs.h>
 #include <linux/fb.h>
-#include <linux/spinlock.h>
 
-#include "via_aux.h"
 #include "ioctl.h"
 #include "share.h"
 #include "chip.h"
 #include "hw.h"
+#include "via_i2c.h"
 
 #define VERSION_MAJOR       2
 #define VERSION_KERNEL      6	/* For kernel 2.6 */
@@ -38,29 +37,21 @@
 #define VERSION_OS          0	/* 0: for 32 bits OS, 1: for 64 bits OS */
 #define VERSION_MINOR       4
 
-#define VIAFB_NUM_I2C		5
-
 struct viafb_shared {
-	u32 iga1_devices;
-	u32 iga2_devices;
-
 	struct proc_dir_entry *proc_entry;	/*viafb proc entry */
-	struct proc_dir_entry *iga1_proc_entry;
-	struct proc_dir_entry *iga2_proc_entry;
-	struct viafb_dev *vdev;			/* Global dev info */
 
-	/* I2C busses that may have auxiliary devices */
-	struct via_aux_bus *i2c_26;
-	struct via_aux_bus *i2c_31;
-	struct via_aux_bus *i2c_2C;
+	/* I2C stuff */
+	struct via_i2c_stuff i2c_stuff;
 
 	/* All the information will be needed to set engine */
 	struct tmds_setting_information tmds_setting_info;
+	struct crt_setting_information crt_setting_info;
 	struct lvds_setting_information lvds_setting_info;
 	struct lvds_setting_information lvds_setting_info2;
 	struct chip_information chip_info;
 
 	/* hardware acceleration stuff */
+	void __iomem *engine_mmio;
 	u32 cursor_vram_addr;
 	u32 vq_vram_addr;	/* virtual queue address in video ram */
 	int (*hw_bitblt)(void __iomem *engine, u8 op, u32 width, u32 height,
@@ -84,27 +75,34 @@ struct viafb_par {
 	/* All the information will be needed to set engine */
 	/* depreciated, use the ones in shared directly */
 	struct tmds_setting_information *tmds_setting_info;
+	struct crt_setting_information *crt_setting_info;
 	struct lvds_setting_information *lvds_setting_info;
 	struct lvds_setting_information *lvds_setting_info2;
 	struct chip_information *chip_info;
 };
 
+extern unsigned int viafb_second_virtual_yres;
+extern unsigned int viafb_second_virtual_xres;
+extern unsigned int viafb_second_offset;
+extern int viafb_second_size;
 extern int viafb_SAMM_ON;
 extern int viafb_dual_fb;
 extern int viafb_LCD2_ON;
 extern int viafb_LCD_ON;
 extern int viafb_DVI_ON;
 extern int viafb_hotplug;
+extern int viafb_memsize;
 
+extern int strict_strtoul(const char *cp, unsigned int base,
+	unsigned long *res);
+
+void viafb_fill_var_timing_info(struct fb_var_screeninfo *var, int refresh,
+			  int mode_index);
+int viafb_get_mode_index(int hres, int vres);
 u8 viafb_gpio_i2c_read_lvds(struct lvds_setting_information
 	*plvds_setting_info, struct lvds_chip_information
 	*plvds_chip_info, u8 index);
 void viafb_gpio_i2c_write_mask_lvds(struct lvds_setting_information
 			      *plvds_setting_info, struct lvds_chip_information
 			      *plvds_chip_info, struct IODATA io_data);
-int via_fb_pci_probe(struct viafb_dev *vdev);
-void via_fb_pci_remove(struct pci_dev *pdev);
-/* Temporary */
-int viafb_init(void);
-void viafb_exit(void);
 #endif /* __VIAFBDEV_H__ */

@@ -409,7 +409,7 @@ static int carm_init_one (struct pci_dev *pdev, const struct pci_device_id *ent)
 static void carm_remove_one (struct pci_dev *pdev);
 static int carm_bdev_getgeo(struct block_device *bdev, struct hd_geometry *geo);
 
-static const struct pci_device_id carm_pci_tbl[] = {
+static struct pci_device_id carm_pci_tbl[] = {
 	{ PCI_VENDOR_ID_PROMISE, 0x8000, PCI_ANY_ID, PCI_ANY_ID, 0, 0, },
 	{ PCI_VENDOR_ID_PROMISE, 0x8002, PCI_ANY_ID, PCI_ANY_ID, 0, 0, },
 	{ }	/* terminate list */
@@ -619,10 +619,8 @@ static int carm_array_info (struct carm_host *host, unsigned int array_idx)
 	       host->state == HST_DEV_SCAN);
 	spin_unlock_irq(&host->lock);
 
-	DPRINTK("blk_execute_rq_nowait, tag == %u\n", idx);
-	crq->rq->cmd_type = REQ_TYPE_SPECIAL;
-	crq->rq->special = crq;
-	blk_execute_rq_nowait(host->oob_q, NULL, crq->rq, true, NULL);
+	DPRINTK("blk_insert_request, tag == %u\n", idx);
+	blk_insert_request(host->oob_q, crq->rq, 1, crq);
 
 	return 0;
 
@@ -660,10 +658,8 @@ static int carm_send_special (struct carm_host *host, carm_sspc_t func)
 	BUG_ON(rc < 0);
 	crq->msg_bucket = (u32) rc;
 
-	DPRINTK("blk_execute_rq_nowait, tag == %u\n", idx);
-	crq->rq->cmd_type = REQ_TYPE_SPECIAL;
-	crq->rq->special = crq;
-	blk_execute_rq_nowait(host->oob_q, NULL, crq->rq, true, NULL);
+	DPRINTK("blk_insert_request, tag == %u\n", idx);
+	blk_insert_request(host->oob_q, crq->rq, 1, crq);
 
 	return 0;
 }
@@ -1522,7 +1518,8 @@ static int carm_init_disks(struct carm_host *host)
 			break;
 		}
 		disk->queue = q;
-		blk_queue_max_segments(q, CARM_MAX_REQ_SG);
+		blk_queue_max_hw_segments(q, CARM_MAX_REQ_SG);
+		blk_queue_max_phys_segments(q, CARM_MAX_REQ_SG);
 		blk_queue_segment_boundary(q, CARM_SG_BOUNDARY);
 
 		q->queuedata = port;

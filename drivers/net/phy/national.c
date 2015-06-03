@@ -25,9 +25,8 @@
 /* DP83865 phy identifier values */
 #define DP83865_PHY_ID	0x20005c7a
 
-#define DP83865_INT_STATUS	0x14
-#define DP83865_INT_MASK	0x15
-#define DP83865_INT_CLEAR	0x17
+#define DP83865_INT_MASK_REG 0x15
+#define DP83865_INT_MASK_STATUS 0x14
 
 #define DP83865_INT_REMOTE_FAULT 0x0008
 #define DP83865_INT_ANE_COMPLETED 0x0010
@@ -69,25 +68,21 @@ static int ns_config_intr(struct phy_device *phydev)
 	int err;
 
 	if (phydev->interrupts == PHY_INTERRUPT_ENABLED)
-		err = phy_write(phydev, DP83865_INT_MASK,
+		err = phy_write(phydev, DP83865_INT_MASK_REG,
 				DP83865_INT_MASK_DEFAULT);
 	else
-		err = phy_write(phydev, DP83865_INT_MASK, 0);
+		err = phy_write(phydev, DP83865_INT_MASK_REG, 0);
 
 	return err;
 }
 
 static int ns_ack_interrupt(struct phy_device *phydev)
 {
-	int ret = phy_read(phydev, DP83865_INT_STATUS);
+	int ret = phy_read(phydev, DP83865_INT_MASK_STATUS);
 	if (ret < 0)
 		return ret;
 
-	/* Clear the interrupt status bit by writing a “1”
-	 * to the corresponding bit in INT_CLEAR (2:0 are reserved) */
-	ret = phy_write(phydev, DP83865_INT_CLEAR, ret & ~0x7);
-
-	return ret;
+	return 0;
 }
 
 static void ns_giga_speed_fallback(struct phy_device *phydev, int mode)
@@ -102,6 +97,7 @@ static void ns_giga_speed_fallback(struct phy_device *phydev, int mode)
 	phy_write(phydev, NS_EXP_MEM_DATA, 0x0008);
 	phy_write(phydev, MII_BMCR, (bmcr & ~BMCR_PDOWN));
 	phy_write(phydev, LED_CTRL_REG, mode);
+	return;
 }
 
 static void ns_10_base_t_hdx_loopack(struct phy_device *phydev, int disable)
@@ -114,6 +110,8 @@ static void ns_10_base_t_hdx_loopack(struct phy_device *phydev, int disable)
 
 	printk(KERN_DEBUG "DP83865 PHY: 10BASE-T HDX loopback %s\n",
 	       (ns_exp_read(phydev, 0x1c0) & 0x0001) ? "off" : "on");
+
+	return;
 }
 
 static int ns_config_init(struct phy_device *phydev)
@@ -155,10 +153,3 @@ MODULE_LICENSE("GPL");
 
 module_init(ns_init);
 module_exit(ns_exit);
-
-static struct mdio_device_id __maybe_unused ns_tbl[] = {
-	{ DP83865_PHY_ID, 0xfffffff0 },
-	{ }
-};
-
-MODULE_DEVICE_TABLE(mdio, ns_tbl);

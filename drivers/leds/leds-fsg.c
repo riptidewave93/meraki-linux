@@ -19,16 +19,8 @@
 #include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/leds.h>
-#include <linux/module.h>
 #include <mach/hardware.h>
 #include <asm/io.h>
-
-#define FSG_LED_WLAN_BIT	0
-#define FSG_LED_WAN_BIT		1
-#define FSG_LED_SATA_BIT	2
-#define FSG_LED_USB_BIT		4
-#define FSG_LED_RING_BIT	5
-#define FSG_LED_SYNC_BIT	7
 
 static short __iomem *latch_address;
 static unsigned short latch_value;
@@ -224,7 +216,20 @@ static struct platform_driver fsg_led_driver = {
 	},
 };
 
-module_platform_driver(fsg_led_driver);
+
+static int __init fsg_led_init(void)
+{
+	return platform_driver_register(&fsg_led_driver);
+}
+
+static void __exit fsg_led_exit(void)
+{
+	platform_driver_unregister(&fsg_led_driver);
+}
+
+
+module_init(fsg_led_init);
+module_exit(fsg_led_exit);
 
 MODULE_AUTHOR("Rod Whitby <rod@whitby.id.au>");
 MODULE_DESCRIPTION("Freecom FSG-3 LED driver");

@@ -21,6 +21,7 @@
 #include <linux/smp.h>
 #include <linux/rtc.h>
 #include <asm/clock.h>
+#include <asm/hwblk.h>
 #include <asm/rtc.h>
 
 /* Dummy RTC ops */
@@ -38,12 +39,12 @@ static int null_rtc_set_time(const time_t secs)
 void (*rtc_sh_get_time)(struct timespec *) = null_rtc_get_time;
 int (*rtc_sh_set_time)(const time_t) = null_rtc_set_time;
 
+#ifdef CONFIG_GENERIC_CMOS_UPDATE
 void read_persistent_clock(struct timespec *ts)
 {
 	rtc_sh_get_time(ts);
 }
 
-#ifdef CONFIG_GENERIC_CMOS_UPDATE
 int update_persistent_clock(struct timespec now)
 {
 	return rtc_sh_set_time(now.tv_sec);
@@ -109,7 +110,12 @@ void __init time_init(void)
 	if (board_time_init)
 		board_time_init();
 
+	hwblk_init();
 	clk_init();
+
+	rtc_sh_get_time(&xtime);
+	set_normalized_timespec(&wall_to_monotonic,
+				-xtime.tv_sec, -xtime.tv_nsec);
 
 	late_time_init = sh_late_time_init;
 }

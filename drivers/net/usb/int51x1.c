@@ -29,7 +29,6 @@
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
-#include <linux/slab.h>
 #include <linux/mii.h>
 #include <linux/usb.h>
 #include <linux/usb/usbnet.h>
@@ -52,7 +51,7 @@ static int int51x1_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 	int len;
 
 	if (!(pskb_may_pull(skb, INT51X1_HEADER_SIZE))) {
-		netdev_err(dev->net, "unexpected tiny rx frame\n");
+		deverr(dev, "unexpected tiny rx frame");
 		return 0;
 	}
 
@@ -139,25 +138,25 @@ static void int51x1_set_multicast(struct net_device *netdev)
 	if (netdev->flags & IFF_PROMISC) {
 		/* do not expect to see traffic of other PLCs */
 		filter |= PACKET_TYPE_PROMISCUOUS;
-		netdev_info(dev->net, "promiscuous mode enabled\n");
-	} else if (!netdev_mc_empty(netdev) ||
+		devinfo(dev, "promiscuous mode enabled");
+	} else if (netdev->mc_count ||
 		  (netdev->flags & IFF_ALLMULTI)) {
 		filter |= PACKET_TYPE_ALL_MULTICAST;
-		netdev_dbg(dev->net, "receive all multicast enabled\n");
+		devdbg(dev, "receive all multicast enabled");
 	} else {
 		/* ~PROMISCUOUS, ~MULTICAST */
-		netdev_dbg(dev->net, "receive own packets only\n");
+		devdbg(dev, "receive own packets only");
 	}
 
 	urb = usb_alloc_urb(0, GFP_ATOMIC);
 	if (!urb) {
-		netdev_warn(dev->net, "Error allocating URB\n");
+		devwarn(dev, "Error allocating URB");
 		return;
 	}
 
 	req = kmalloc(sizeof(*req), GFP_ATOMIC);
 	if (!req) {
-		netdev_warn(dev->net, "Error allocating control msg\n");
+		devwarn(dev, "Error allocating control msg");
 		goto out;
 	}
 
@@ -174,8 +173,7 @@ static void int51x1_set_multicast(struct net_device *netdev)
 
 	status = usb_submit_urb(urb, GFP_ATOMIC);
 	if (status < 0) {
-		netdev_warn(dev->net, "Error submitting control msg, sts=%d\n",
-			    status);
+		devwarn(dev, "Error submitting control msg, sts=%d", status);
 		goto out1;
 	}
 	return;
@@ -193,7 +191,7 @@ static const struct net_device_ops int51x1_netdev_ops = {
 	.ndo_change_mtu		= usbnet_change_mtu,
 	.ndo_set_mac_address	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
-	.ndo_set_rx_mode	= int51x1_set_multicast,
+	.ndo_set_multicast_list	= int51x1_set_multicast,
 };
 
 static int int51x1_bind(struct usbnet *dev, struct usb_interface *intf)
@@ -238,7 +236,17 @@ static struct usb_driver int51x1_driver = {
 	.resume     = usbnet_resume,
 };
 
-module_usb_driver(int51x1_driver);
+static int __init int51x1_init(void)
+{
+	return usb_register(&int51x1_driver);
+}
+module_init(int51x1_init);
+
+static void __exit int51x1_exit(void)
+{
+	usb_deregister(&int51x1_driver);
+}
+module_exit(int51x1_exit);
 
 MODULE_AUTHOR("Peter Holik");
 MODULE_DESCRIPTION("Intellon usb powerline adapter");

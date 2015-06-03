@@ -17,11 +17,11 @@
 
 #include <linux/crypto.h>
 #include <linux/err.h>
+#include <linux/gfp.h>
 #include <linux/list.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/percpu.h>
-#include <linux/slab.h>
 #include <linux/smp.h>
 #include <linux/vmalloc.h>
 #include <net/ip.h>
@@ -30,12 +30,12 @@
 
 struct ipcomp_tfms {
 	struct list_head list;
-	struct crypto_comp * __percpu *tfms;
+	struct crypto_comp **tfms;
 	int users;
 };
 
 static DEFINE_MUTEX(ipcomp_resource_mutex);
-static void * __percpu *ipcomp_scratches;
+static void **ipcomp_scratches;
 static int ipcomp_scratch_users;
 static LIST_HEAD(ipcomp_tfms_list);
 
@@ -70,29 +70,26 @@ static int ipcomp_decompress(struct xfrm_state *x, struct sk_buff *skb)
 
 	while ((scratch += len, dlen -= len) > 0) {
 		skb_frag_t *frag;
-		struct page *page;
 
 		err = -EMSGSIZE;
 		if (WARN_ON(skb_shinfo(skb)->nr_frags >= MAX_SKB_FRAGS))
 			goto out;
 
 		frag = skb_shinfo(skb)->frags + skb_shinfo(skb)->nr_frags;
-		page = alloc_page(GFP_ATOMIC);
+		frag->page = alloc_page(GFP_ATOMIC);
 
 		err = -ENOMEM;
-		if (!page)
+		if (!frag->page)
 			goto out;
-
-		__skb_frag_set_page(frag, page);
 
 		len = PAGE_SIZE;
 		if (dlen < len)
 			len = dlen;
 
-		frag->page_offset = 0;
-		skb_frag_size_set(frag, len);
-		memcpy(skb_frag_address(frag), scratch, len);
+		memcpy(page_address(frag->page), scratch, len);
 
+		frag->page_offset = 0;
+		frag->size = len;
 		skb->truesize += len;
 		skb->data_len += len;
 		skb->len += len;
@@ -203,7 +200,7 @@ EXPORT_SYMBOL_GPL(ipcomp_output);
 static void ipcomp_free_scratches(void)
 {
 	int i;
-	void * __percpu *scratches;
+	void **scratches;
 
 	if (--ipcomp_scratch_users)
 		return;
@@ -218,10 +215,10 @@ static void ipcomp_free_scratches(void)
 	free_percpu(scratches);
 }
 
-static void * __percpu *ipcomp_alloc_scratches(void)
+static void **ipcomp_alloc_scratches(void)
 {
 	int i;
-	void * __percpu *scratches;
+	void **scratches;
 
 	if (ipcomp_scratch_users++)
 		return ipcomp_scratches;
@@ -242,7 +239,7 @@ static void * __percpu *ipcomp_alloc_scratches(void)
 	return scratches;
 }
 
-static void ipcomp_free_tfms(struct crypto_comp * __percpu *tfms)
+static void ipcomp_free_tfms(struct crypto_comp **tfms)
 {
 	struct ipcomp_tfms *pos;
 	int cpu;
@@ -270,10 +267,10 @@ static void ipcomp_free_tfms(struct crypto_comp * __percpu *tfms)
 	free_percpu(tfms);
 }
 
-static struct crypto_comp * __percpu *ipcomp_alloc_tfms(const char *alg_name)
+static struct crypto_comp **ipcomp_alloc_tfms(const char *alg_name)
 {
 	struct ipcomp_tfms *pos;
-	struct crypto_comp * __percpu *tfms;
+	struct crypto_comp **tfms;
 	int cpu;
 
 	/* This can be any valid CPU ID so we don't need locking. */

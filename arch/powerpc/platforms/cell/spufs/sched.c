@@ -22,11 +22,11 @@
 
 #undef DEBUG
 
+#include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/sched.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
-#include <linux/slab.h>
 #include <linux/completion.h>
 #include <linux/vmalloc.h>
 #include <linux/smp.h>
@@ -140,7 +140,7 @@ void __spu_update_sched_info(struct spu_context *ctx)
 	 * runqueue. The context will be rescheduled on the proper node
 	 * if it is timesliced or preempted.
 	 */
-	cpumask_copy(&ctx->cpus_allowed, tsk_cpus_allowed(current));
+	ctx->cpus_allowed = current->cpus_allowed;
 
 	/* Save the current cpu id for spu interrupt routing. */
 	ctx->last_ran = raw_smp_processor_id();
@@ -845,7 +845,7 @@ static struct spu_context *grab_runnable_context(int prio, int node)
 		struct list_head *rq = &spu_prio->runq[best];
 
 		list_for_each_entry(ctx, rq, rq) {
-			/* XXX(hch): check for affinity here as well */
+			/* XXX(hch): check for affinity here aswell */
 			if (__node_allowed(ctx, node)) {
 				__spu_del_from_rq(ctx);
 				goto found;

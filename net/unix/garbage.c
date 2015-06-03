@@ -74,6 +74,7 @@
 #include <linux/un.h>
 #include <linux/net.h>
 #include <linux/fs.h>
+#include <linux/slab.h>
 #include <linux/skbuff.h>
 #include <linux/netdevice.h>
 #include <linux/file.h>
@@ -104,7 +105,7 @@ struct sock *unix_get_socket(struct file *filp)
 	/*
 	 *	Socket ?
 	 */
-	if (S_ISSOCK(inode->i_mode) && !(filp->f_mode & FMODE_PATH)) {
+	if (S_ISSOCK(inode->i_mode)) {
 		struct socket *sock = SOCKET_I(inode);
 		struct sock *s = sock->sk;
 
@@ -153,6 +154,15 @@ void unix_notinflight(struct file *fp)
 	}
 }
 
+static inline struct sk_buff *sock_queue_head(struct sock *sk)
+{
+	return (struct sk_buff *)&sk->sk_receive_queue;
+}
+
+#define receive_queue_for_each_skb(sk, next, skb) \
+	for (skb = sock_queue_head(sk)->next, next = skb->next; \
+	     skb != sock_queue_head(sk); skb = next, next = skb->next)
+
 static void scan_inflight(struct sock *x, void (*func)(struct unix_sock *),
 			  struct sk_buff_head *hitlist)
 {
@@ -160,7 +170,7 @@ static void scan_inflight(struct sock *x, void (*func)(struct unix_sock *),
 	struct sk_buff *next;
 
 	spin_lock(&x->sk_receive_queue.lock);
-	skb_queue_walk_safe(&x->sk_receive_queue, skb, next) {
+	receive_queue_for_each_skb(x, next, skb) {
 		/*
 		 *	Do we have file descriptors ?
 		 */
@@ -216,7 +226,7 @@ static void scan_children(struct sock *x, void (*func)(struct unix_sock *),
 		 * and perform a scan on them as well.
 		 */
 		spin_lock(&x->sk_receive_queue.lock);
-		skb_queue_walk_safe(&x->sk_receive_queue, skb, next) {
+		receive_queue_for_each_skb(x, next, skb) {
 			u = unix_sk(skb->sk);
 
 			/*

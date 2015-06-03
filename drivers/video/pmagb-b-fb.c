@@ -29,6 +29,7 @@
 #include <linux/types.h>
 
 #include <asm/io.h>
+#include <asm/system.h>
 
 #include <video/pmagb-b-fb.h>
 
@@ -44,7 +45,7 @@ struct pmagbbfb_par {
 };
 
 
-static struct fb_var_screeninfo pmagbbfb_defined __devinitdata = {
+static struct fb_var_screeninfo pmagbbfb_defined __initdata = {
 	.bits_per_pixel	= 8,
 	.red.length	= 8,
 	.green.length	= 8,
@@ -57,7 +58,7 @@ static struct fb_var_screeninfo pmagbbfb_defined __devinitdata = {
 	.vmode		= FB_VMODE_NONINTERLACED,
 };
 
-static struct fb_fix_screeninfo pmagbbfb_fix __devinitdata = {
+static struct fb_fix_screeninfo pmagbbfb_fix __initdata = {
 	.id		= "PMAGB-BA",
 	.smem_len	= (2048 * 1024),
 	.type		= FB_TYPE_PACKED_PIXELS,
@@ -101,8 +102,7 @@ static int pmagbbfb_setcolreg(unsigned int regno, unsigned int red,
 {
 	struct pmagbbfb_par *par = info->par;
 
-	if (regno >= info->cmap.len)
-		return 1;
+	BUG_ON(regno >= info->cmap.len);
 
 	red   >>= 8;	/* The cmap fields are 16 bits    */
 	green >>= 8;	/* wide, but the hardware colormap */
@@ -147,7 +147,7 @@ static void __init pmagbbfb_erase_cursor(struct fb_info *info)
 /*
  * Set up screen parameters.
  */
-static void __devinit pmagbbfb_screen_setup(struct fb_info *info)
+static void __init pmagbbfb_screen_setup(struct fb_info *info)
 {
 	struct pmagbbfb_par *par = info->par;
 
@@ -179,9 +179,9 @@ static void __devinit pmagbbfb_screen_setup(struct fb_info *info)
 /*
  * Determine oscillator configuration.
  */
-static void __devinit pmagbbfb_osc_setup(struct fb_info *info)
+static void __init pmagbbfb_osc_setup(struct fb_info *info)
 {
-	static unsigned int pmagbbfb_freqs[] __devinitdata = {
+	static unsigned int pmagbbfb_freqs[] __initdata = {
 		130808, 119843, 104000, 92980, 74370, 72800,
 		69197, 66000, 65000, 50350, 36000, 32000, 25175
 	};
@@ -246,7 +246,7 @@ static void __devinit pmagbbfb_osc_setup(struct fb_info *info)
 };
 
 
-static int __devinit pmagbbfb_probe(struct device *dev)
+static int __init pmagbbfb_probe(struct device *dev)
 {
 	struct tc_dev *tdev = to_tc_dev(dev);
 	resource_size_t start, len;

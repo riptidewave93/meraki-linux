@@ -105,7 +105,6 @@ typedef struct vrc4171_socket {
 	char name[24];
 	int csc_irq;
 	int io_irq;
-	spinlock_t lock;
 } vrc4171_socket_t;
 
 static vrc4171_socket_t vrc4171_sockets[CARD_MAX_SLOTS];
@@ -246,7 +245,6 @@ static int pccard_init(struct pcmcia_socket *sock)
 	socket = &vrc4171_sockets[slot];
 	socket->csc_irq = search_nonuse_irq();
 	socket->io_irq = search_nonuse_irq();
-	spin_lock_init(&socket->lock);
 
 	return 0;
 }
@@ -329,7 +327,7 @@ static int pccard_set_socket(struct pcmcia_socket *sock, socket_state_t *state)
 	slot = sock->sock;
 	socket = &vrc4171_sockets[slot];
 
-	spin_lock_irq(&socket->lock);
+	spin_lock_irq(&sock->lock);
 
 	voltage = set_Vcc_value(state->Vcc);
 	exca_write_byte(slot, CARD_VOLTAGE_SELECT, voltage);
@@ -372,7 +370,7 @@ static int pccard_set_socket(struct pcmcia_socket *sock, socket_state_t *state)
 		cscint |= I365_CSC_DETECT;
         exca_write_byte(slot, I365_CSCINT, cscint);
 
-	spin_unlock_irq(&socket->lock);
+	spin_unlock_irq(&sock->lock);
 
 	return 0;
 }
@@ -706,11 +704,24 @@ static int __devinit vrc4171_card_setup(char *options)
 
 __setup("vrc4171_card=", vrc4171_card_setup);
 
+static int vrc4171_card_suspend(struct platform_device *dev,
+				     pm_message_t state)
+{
+	return pcmcia_socket_dev_suspend(&dev->dev);
+}
+
+static int vrc4171_card_resume(struct platform_device *dev)
+{
+	return pcmcia_socket_dev_resume(&dev->dev);
+}
+
 static struct platform_driver vrc4171_card_driver = {
 	.driver = {
 		.name		= vrc4171_card_name,
 		.owner		= THIS_MODULE,
 	},
+	.suspend	= vrc4171_card_suspend,
+	.resume		= vrc4171_card_resume,
 };
 
 static int __devinit vrc4171_card_init(void)

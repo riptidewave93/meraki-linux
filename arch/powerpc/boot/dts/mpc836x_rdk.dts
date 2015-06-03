@@ -71,13 +71,6 @@
 			reg = <0x200 0x100>;
 		};
 
-		pmc: power@b00 {
-			compatible = "fsl,mpc8360-pmc", "fsl,mpc8349-pmc";
-			reg = <0xb00 0x100 0xa00 0x100>;
-			interrupts = <80 0x8>;
-			interrupt-parent = <&ipic>;
-		};
-
 		i2c@3000 {
 			#address-cells = <1>;
 			#size-cells = <0>;
@@ -102,7 +95,7 @@
 
 		serial0: serial@4500 {
 			device_type = "serial";
-			compatible = "fsl,ns16550", "ns16550";
+			compatible = "ns16550";
 			reg = <0x4500 0x100>;
 			interrupts = <9 8>;
 			interrupt-parent = <&ipic>;
@@ -112,7 +105,7 @@
 
 		serial1: serial@4600 {
 			device_type = "serial";
-			compatible = "fsl,ns16550", "ns16550";
+			compatible = "ns16550";
 			reg = <0x4600 0x100>;
 			interrupts = <10 8>;
 			interrupt-parent = <&ipic>;
@@ -168,7 +161,6 @@
 			fsl,channel-fifo-len = <24>;
 			fsl,exec-units-mask = <0x7e>;
 			fsl,descriptor-types-mask = <0x01010ebf>;
-			sleep = <&pmc 0x03000000>;
 		};
 
 		ipic: interrupt-controller@700 {
@@ -463,7 +455,6 @@
 				 0xa800 0 0 2 &ipic 20 8
 				 0xa800 0 0 3 &ipic 21 8
 				 0xa800 0 0 4 &ipic 18 8>;
-		sleep = <&pmc 0x00010000>;
 		/* filled by u-boot */
 		bus-range = <0 0>;
 		clock-frequency = <0>;

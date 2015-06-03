@@ -45,7 +45,6 @@
 #include <linux/sched.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
-#include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <linux/uwb.h>
 #include <linux/uwb/whci.h>
@@ -222,7 +221,7 @@ int whcrc_setup_rc_umc(struct whcrc *whcrc)
 	struct umc_dev *umc_dev = whcrc->umc_dev;
 
 	whcrc->area = umc_dev->resource.start;
-	whcrc->rc_len = resource_size(&umc_dev->resource);
+	whcrc->rc_len = umc_dev->resource.end - umc_dev->resource.start + 1;
 	result = -EBUSY;
 	if (request_mem_region(whcrc->area, whcrc->rc_len, KBUILD_MODNAME) == NULL) {
 		dev_err(dev, "can't request URC region (%zu bytes @ 0x%lx): %d\n",
@@ -449,7 +448,7 @@ static int whcrc_post_reset(struct umc_dev *umc)
 }
 
 /* PCI device ID's that we handle [so it gets loaded] */
-static struct pci_device_id __used whcrc_id_table[] = {
+static struct pci_device_id whcrc_id_table[] = {
 	{ PCI_DEVICE_CLASS(PCI_CLASS_WIRELESS_WHCI, ~0) },
 	{ /* empty last entry */ }
 };

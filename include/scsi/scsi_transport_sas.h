@@ -75,8 +75,7 @@ struct sas_phy {
 	/* for the list of phys belonging to a port */
 	struct list_head	port_siblings;
 
-	/* available to the lldd */
-	void			*hostdata;
+	struct work_struct      reset_work;
 };
 
 #define dev_to_phy(d) \
@@ -108,8 +107,6 @@ struct sas_end_device {
 	struct sas_rphy		rphy;
 	/* flags */
 	unsigned		ready_led_meaning:1;
-	unsigned		tlr_supported:1;
-	unsigned		tlr_enabled:1;
 	/* parameters */
 	u16			I_T_nexus_loss_timeout;
 	u16			initiator_response_timeout;
@@ -170,8 +167,6 @@ struct sas_function_template {
 	int (*get_bay_identifier)(struct sas_rphy *);
 	int (*phy_reset)(struct sas_phy *, int);
 	int (*phy_enable)(struct sas_phy *, int);
-	int (*phy_setup)(struct sas_phy *);
-	void (*phy_release)(struct sas_phy *);
 	int (*set_phy_speed)(struct sas_phy *, struct sas_phy_linkrates *);
 	int (*smp_handler)(struct Scsi_Host *, struct sas_rphy *, struct request *);
 };
@@ -186,18 +181,12 @@ extern int sas_phy_add(struct sas_phy *);
 extern void sas_phy_delete(struct sas_phy *);
 extern int scsi_is_sas_phy(const struct device *);
 
-unsigned int sas_tlr_supported(struct scsi_device *);
-unsigned int sas_is_tlr_enabled(struct scsi_device *);
-void sas_disable_tlr(struct scsi_device *);
-void sas_enable_tlr(struct scsi_device *);
-
 extern struct sas_rphy *sas_end_device_alloc(struct sas_port *);
 extern struct sas_rphy *sas_expander_alloc(struct sas_port *, enum sas_device_type);
 void sas_rphy_free(struct sas_rphy *);
 extern int sas_rphy_add(struct sas_rphy *);
 extern void sas_rphy_remove(struct sas_rphy *);
 extern void sas_rphy_delete(struct sas_rphy *);
-extern void sas_rphy_unlink(struct sas_rphy *);
 extern int scsi_is_sas_rphy(const struct device *);
 
 struct sas_port *sas_port_alloc(struct device *, int);
@@ -209,12 +198,6 @@ void sas_port_add_phy(struct sas_port *, struct sas_phy *);
 void sas_port_delete_phy(struct sas_port *, struct sas_phy *);
 void sas_port_mark_backlink(struct sas_port *);
 int scsi_is_sas_port(const struct device *);
-struct sas_phy *sas_port_get_phy(struct sas_port *port);
-static inline void sas_port_put_phy(struct sas_phy *phy)
-{
-	if (phy)
-		put_device(&phy->dev);
-}
 
 extern struct scsi_transport_template *
 sas_attach_transport(struct sas_function_template *);

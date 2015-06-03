@@ -8,17 +8,15 @@
  *		 Heiko Carstens <heiko.carstens@de.ibm.com>,
  */
 
+#include <linux/semaphore.h>
 #include <linux/mutex.h>
 #include <linux/kthread.h>
 #include <linux/init.h>
-#include <linux/wait.h>
 #include <asm/crw.h>
-#include <asm/ctl_reg.h>
 
+static struct semaphore crw_semaphore;
 static DEFINE_MUTEX(crw_handler_mutex);
 static crw_handler_t crw_handlers[NR_RSCS];
-static atomic_t crw_nr_req = ATOMIC_INIT(0);
-static DECLARE_WAIT_QUEUE_HEAD(crw_handler_wait_q);
 
 /**
  * crw_register_handler() - register a channel report word handler
@@ -61,14 +59,12 @@ void crw_unregister_handler(int rsc)
 static int crw_collect_info(void *unused)
 {
 	struct crw crw[2];
-	int ccode, signal;
+	int ccode;
 	unsigned int chain;
+	int ignore;
 
 repeat:
-	signal = wait_event_interruptible(crw_handler_wait_q,
-					  atomic_read(&crw_nr_req) > 0);
-	if (unlikely(signal))
-		atomic_inc(&crw_nr_req);
+	ignore = down_interruptible(&crw_semaphore);
 	chain = 0;
 	while (1) {
 		crw_handler_t handler;
@@ -126,23 +122,25 @@ repeat:
 		/* chain is always 0 or 1 here. */
 		chain = crw[chain].chn ? chain + 1 : 0;
 	}
-	if (atomic_dec_and_test(&crw_nr_req))
-		wake_up(&crw_handler_wait_q);
 	goto repeat;
 	return 0;
 }
 
 void crw_handle_channel_report(void)
 {
-	atomic_inc(&crw_nr_req);
-	wake_up(&crw_handler_wait_q);
+	up(&crw_semaphore);
 }
 
-void crw_wait_for_channel_report(void)
+/*
+ * Separate initcall needed for semaphore initialization since
+ * crw_handle_channel_report might be called before crw_machine_check_init.
+ */
+static int __init crw_init_semaphore(void)
 {
-	crw_handle_channel_report();
-	wait_event(crw_handler_wait_q, atomic_read(&crw_nr_req) == 0);
+	init_MUTEX_LOCKED(&crw_semaphore);
+	return 0;
 }
+pure_initcall(crw_init_semaphore);
 
 /*
  * Machine checks for the channel subsystem must be enabled

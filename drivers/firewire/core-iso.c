@@ -26,10 +26,8 @@
 #include <linux/firewire-constants.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
-#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/vmalloc.h>
-#include <linux/export.h>
 
 #include <asm/byteorder.h>
 
@@ -119,23 +117,6 @@ void fw_iso_buffer_destroy(struct fw_iso_buffer *buffer,
 }
 EXPORT_SYMBOL(fw_iso_buffer_destroy);
 
-/* Convert DMA address to offset into virtually contiguous buffer. */
-size_t fw_iso_buffer_lookup(struct fw_iso_buffer *buffer, dma_addr_t completed)
-{
-	int i;
-	dma_addr_t address;
-	ssize_t offset;
-
-	for (i = 0; i < buffer->page_count; i++) {
-		address = page_private(buffer->pages[i]);
-		offset = (ssize_t)completed - (ssize_t)address;
-		if (offset > 0 && offset <= PAGE_SIZE)
-			return (i << PAGE_SHIFT) + offset;
-	}
-
-	return 0;
-}
-
 struct fw_iso_context *fw_iso_context_create(struct fw_card *card,
 		int type, int channel, int speed, size_t header_size,
 		fw_iso_callback_t callback, void *callback_data)
@@ -152,7 +133,7 @@ struct fw_iso_context *fw_iso_context_create(struct fw_card *card,
 	ctx->channel = channel;
 	ctx->speed = speed;
 	ctx->header_size = header_size;
-	ctx->callback.sc = callback;
+	ctx->callback = callback;
 	ctx->callback_data = callback_data;
 
 	return ctx;
@@ -161,7 +142,9 @@ EXPORT_SYMBOL(fw_iso_context_create);
 
 void fw_iso_context_destroy(struct fw_iso_context *ctx)
 {
-	ctx->card->driver->free_iso_context(ctx);
+	struct fw_card *card = ctx->card;
+
+	card->driver->free_iso_context(ctx);
 }
 EXPORT_SYMBOL(fw_iso_context_destroy);
 
@@ -172,31 +155,16 @@ int fw_iso_context_start(struct fw_iso_context *ctx,
 }
 EXPORT_SYMBOL(fw_iso_context_start);
 
-int fw_iso_context_set_channels(struct fw_iso_context *ctx, u64 *channels)
-{
-	return ctx->card->driver->set_iso_channels(ctx, channels);
-}
-
 int fw_iso_context_queue(struct fw_iso_context *ctx,
 			 struct fw_iso_packet *packet,
 			 struct fw_iso_buffer *buffer,
 			 unsigned long payload)
 {
-	return ctx->card->driver->queue_iso(ctx, packet, buffer, payload);
+	struct fw_card *card = ctx->card;
+
+	return card->driver->queue_iso(ctx, packet, buffer, payload);
 }
 EXPORT_SYMBOL(fw_iso_context_queue);
-
-void fw_iso_context_queue_flush(struct fw_iso_context *ctx)
-{
-	ctx->card->driver->flush_queue_iso(ctx);
-}
-EXPORT_SYMBOL(fw_iso_context_queue_flush);
-
-int fw_iso_context_flush_completions(struct fw_iso_context *ctx)
-{
-	return ctx->card->driver->flush_iso_completions(ctx);
-}
-EXPORT_SYMBOL(fw_iso_context_flush_completions);
 
 int fw_iso_context_stop(struct fw_iso_context *ctx)
 {
@@ -209,10 +177,9 @@ EXPORT_SYMBOL(fw_iso_context_stop);
  */
 
 static int manage_bandwidth(struct fw_card *card, int irm_id, int generation,
-			    int bandwidth, bool allocate)
+			    int bandwidth, bool allocate, __be32 data[2])
 {
 	int try, new, old = allocate ? BANDWIDTH_AVAILABLE_INITIAL : 0;
-	__be32 data[2];
 
 	/*
 	 * On a 1394a IRM with low contention, try < 1 is enough.
@@ -222,7 +189,7 @@ static int manage_bandwidth(struct fw_card *card, int irm_id, int generation,
 	for (try = 0; try < 5; try++) {
 		new = allocate ? old - bandwidth : old + bandwidth;
 		if (new < 0 || new > BANDWIDTH_AVAILABLE_INITIAL)
-			return -EBUSY;
+			break;
 
 		data[0] = cpu_to_be32(old);
 		data[1] = cpu_to_be32(new);
@@ -247,59 +214,52 @@ static int manage_bandwidth(struct fw_card *card, int irm_id, int generation,
 }
 
 static int manage_channel(struct fw_card *card, int irm_id, int generation,
-		u32 channels_mask, u64 offset, bool allocate)
+		u32 channels_mask, u64 offset, bool allocate, __be32 data[2])
 {
-	__be32 bit, all, old;
-	__be32 data[2];
-	int channel, ret = -EIO, retry = 5;
+	__be32 c, all, old;
+	int i, retry = 5;
 
 	old = all = allocate ? cpu_to_be32(~0) : 0;
 
-	for (channel = 0; channel < 32; channel++) {
-		if (!(channels_mask & 1 << channel))
+	for (i = 0; i < 32; i++) {
+		if (!(channels_mask & 1 << i))
 			continue;
 
-		ret = -EBUSY;
-
-		bit = cpu_to_be32(1 << (31 - channel));
-		if ((old & bit) != (all & bit))
+		c = cpu_to_be32(1 << (31 - i));
+		if ((old & c) != (all & c))
 			continue;
 
 		data[0] = old;
-		data[1] = old ^ bit;
+		data[1] = old ^ c;
 		switch (fw_run_transaction(card, TCODE_LOCK_COMPARE_SWAP,
 					   irm_id, generation, SCODE_100,
 					   offset, data, 8)) {
 		case RCODE_GENERATION:
 			/* A generation change frees all channels. */
-			return allocate ? -EAGAIN : channel;
+			return allocate ? -EAGAIN : i;
 
 		case RCODE_COMPLETE:
 			if (data[0] == old)
-				return channel;
+				return i;
 
 			old = data[0];
 
 			/* Is the IRM 1394a-2000 compliant? */
-			if ((data[0] & bit) == (data[1] & bit))
+			if ((data[0] & c) == (data[1] & c))
 				continue;
 
 			/* 1394-1995 IRM, fall through to retry. */
 		default:
-			if (retry) {
-				retry--;
-				channel--;
-			} else {
-				ret = -EIO;
-			}
+			if (retry--)
+				i--;
 		}
 	}
 
-	return ret;
+	return -EIO;
 }
 
 static void deallocate_channel(struct fw_card *card, int irm_id,
-			       int generation, int channel)
+			       int generation, int channel, __be32 buffer[2])
 {
 	u32 mask;
 	u64 offset;
@@ -308,11 +268,11 @@ static void deallocate_channel(struct fw_card *card, int irm_id,
 	offset = channel < 32 ? CSR_REGISTER_BASE + CSR_CHANNELS_AVAILABLE_HI :
 				CSR_REGISTER_BASE + CSR_CHANNELS_AVAILABLE_LO;
 
-	manage_channel(card, irm_id, generation, mask, offset, false);
+	manage_channel(card, irm_id, generation, mask, offset, false, buffer);
 }
 
 /**
- * fw_iso_resource_manage() - Allocate or deallocate a channel and/or bandwidth
+ * fw_iso_resource_manage - Allocate or deallocate a channel and/or bandwidth
  *
  * In parameters: card, generation, channels_mask, bandwidth, allocate
  * Out parameters: channel, bandwidth
@@ -337,7 +297,7 @@ static void deallocate_channel(struct fw_card *card, int irm_id,
  */
 void fw_iso_resource_manage(struct fw_card *card, int generation,
 			    u64 channels_mask, int *channel, int *bandwidth,
-			    bool allocate)
+			    bool allocate, __be32 buffer[2])
 {
 	u32 channels_hi = channels_mask;	/* channels 31...0 */
 	u32 channels_lo = channels_mask >> 32;	/* channels 63...32 */
@@ -350,11 +310,11 @@ void fw_iso_resource_manage(struct fw_card *card, int generation,
 	if (channels_hi)
 		c = manage_channel(card, irm_id, generation, channels_hi,
 				CSR_REGISTER_BASE + CSR_CHANNELS_AVAILABLE_HI,
-				allocate);
+				allocate, buffer);
 	if (channels_lo && c < 0) {
 		c = manage_channel(card, irm_id, generation, channels_lo,
 				CSR_REGISTER_BASE + CSR_CHANNELS_AVAILABLE_LO,
-				allocate);
+				allocate, buffer);
 		if (c >= 0)
 			c += 32;
 	}
@@ -366,14 +326,13 @@ void fw_iso_resource_manage(struct fw_card *card, int generation,
 	if (*bandwidth == 0)
 		return;
 
-	ret = manage_bandwidth(card, irm_id, generation, *bandwidth, allocate);
+	ret = manage_bandwidth(card, irm_id, generation, *bandwidth,
+			       allocate, buffer);
 	if (ret < 0)
 		*bandwidth = 0;
 
-	if (allocate && ret < 0) {
-		if (c >= 0)
-			deallocate_channel(card, irm_id, generation, c);
+	if (allocate && ret < 0 && c >= 0) {
+		deallocate_channel(card, irm_id, generation, c, buffer);
 		*channel = ret;
 	}
 }
-EXPORT_SYMBOL(fw_iso_resource_manage);

@@ -39,12 +39,12 @@ version. Alternative binary firmware images can be found somewhere on the
 ForeThought CD-ROM supplied with your adapter by FORE Systems.
 
 You can also get the latest firmware images from FORE Systems at
-http://en.wikipedia.org/wiki/FORE_Systems. Register TACTics Online and go to
+http://www.fore.com. Register TACTics Online and go to
 the 'software updates' pages. The firmware binaries are part of
 the various ForeThought software distributions.
 
 Notice that different versions of the PCA-200E firmware exist, depending
-on the endianness of the host architecture. The driver is shipped with
+on the endianess of the host architecture. The driver is shipped with
 both little and big endian PCA firmware images.
 
 Name and location of the new firmware images can be set at kernel

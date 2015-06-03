@@ -1,5 +1,5 @@
 /*
- * udbg for NS16550 compatible serial ports
+ * udbg for NS16550 compatable serial ports
  *
  * Copyright (C) 2001-2005 PPC 64 Team, IBM Corp
  *
@@ -11,7 +11,6 @@
 #include <linux/types.h>
 #include <asm/udbg.h>
 #include <asm/io.h>
-#include <asm/reg_a2.h>
 
 extern u8 real_readb(volatile u8 __iomem  *addr);
 extern void real_writeb(u8 data, volatile u8 __iomem *addr);
@@ -20,13 +19,53 @@ extern void real_205_writeb(u8 data, volatile u8 __iomem *addr);
 
 struct NS16550 {
 	/* this struct must be packed */
+#if defined(CONFIG_APM86xxx)
+	unsigned char rbr0;  /* 0 */
+	unsigned char rbr1;  /* 0 */
+	unsigned char rbr2;  /* 0 */
+#endif
 	unsigned char rbr;  /* 0 */
+#if defined(CONFIG_APM86xxx)
+	unsigned char ier0;  /* 1 */
+	unsigned char ier1;  /* 1 */
+	unsigned char ier2;  /* 1 */
+#endif
 	unsigned char ier;  /* 1 */
+#if defined(CONFIG_APM86xxx)
+	unsigned char fcr0;  /* 2 */
+	unsigned char fcr1;  /* 2 */
+	unsigned char fcr2;  /* 2 */
+#endif
 	unsigned char fcr;  /* 2 */
+#if defined(CONFIG_APM86xxx)
+	unsigned char lcr0;  /* 3 */
+	unsigned char lcr1;  /* 3 */
+	unsigned char lcr2;  /* 3 */
+#endif
 	unsigned char lcr;  /* 3 */
+#if defined(CONFIG_APM86xxx)
+	unsigned char mcr0;  /* 4 */
+	unsigned char mcr1;  /* 4 */
+	unsigned char mcr2;  /* 4 */
+#endif
 	unsigned char mcr;  /* 4 */
+#if defined(CONFIG_APM86xxx)
+	unsigned char lsr0;  /* 5 */
+	unsigned char lsr1;  /* 5 */
+	unsigned char lsr2;  /* 5 */
+#endif
 	unsigned char lsr;  /* 5 */
+#if defined(CONFIG_APM86xxx)
+	unsigned char msr0;  /* 6 */
+	unsigned char msr1;  /* 6 */
+	unsigned char msr2;  /* 6 */
+#endif
 	unsigned char msr;  /* 6 */
+#if defined(CONFIG_APM86xxx)
+	unsigned char scr0;  /* 7 */
+	unsigned char scr1;  /* 7 */
+	unsigned char scr2;  /* 7 */
+#endif
 	unsigned char scr;  /* 7 */
 };
 
@@ -100,6 +139,9 @@ void udbg_init_uart(void __iomem *comport, unsigned int speed,
 
 	base_bauds = clock / 16;
 	dll = base_bauds / speed;
+#ifdef CONFIG_PALLADIUM
+	dll = 1;
+#endif
 
 	if (comport) {
 		udbg_comport = (struct NS16550 __iomem *)comport;
@@ -299,53 +341,3 @@ void __init udbg_init_40x_realmode(void)
 	udbg_getc_poll = NULL;
 }
 #endif /* CONFIG_PPC_EARLY_DEBUG_40x */
-
-#ifdef CONFIG_PPC_EARLY_DEBUG_WSP
-static void udbg_wsp_flush(void)
-{
-	if (udbg_comport) {
-		while ((readb(&udbg_comport->lsr) & LSR_THRE) == 0)
-			/* wait for idle */;
-	}
-}
-
-static void udbg_wsp_putc(char c)
-{
-	if (udbg_comport) {
-		if (c == '\n')
-			udbg_wsp_putc('\r');
-		udbg_wsp_flush();
-		writeb(c, &udbg_comport->thr); eieio();
-	}
-}
-
-static int udbg_wsp_getc(void)
-{
-	if (udbg_comport) {
-		while ((readb(&udbg_comport->lsr) & LSR_DR) == 0)
-			; /* wait for char */
-		return readb(&udbg_comport->rbr);
-	}
-	return -1;
-}
-
-static int udbg_wsp_getc_poll(void)
-{
-	if (udbg_comport)
-		if (readb(&udbg_comport->lsr) & LSR_DR)
-			return readb(&udbg_comport->rbr);
-	return -1;
-}
-
-void __init udbg_init_wsp(void)
-{
-	udbg_comport = (struct NS16550 __iomem *)WSP_UART_VIRT;
-
-	udbg_init_uart(udbg_comport, 57600, 50000000);
-
-	udbg_putc = udbg_wsp_putc;
-	udbg_flush = udbg_wsp_flush;
-	udbg_getc = udbg_wsp_getc;
-	udbg_getc_poll = udbg_wsp_getc_poll;
-}
-#endif /* CONFIG_PPC_EARLY_DEBUG_WSP */

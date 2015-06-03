@@ -17,7 +17,9 @@
 #include <linux/serial.h>
 #include <linux/tty.h>
 #include <linux/serial_8250.h>
+#include <linux/slab.h>
 #include <linux/i2c-gpio.h>
+
 #include <asm/types.h>
 #include <asm/setup.h>
 #include <asm/memory.h>
@@ -26,9 +28,6 @@
 #include <asm/irq.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/flash.h>
-
-#define AVILA_SDA_PIN	7
-#define AVILA_SCL_PIN	6
 
 static struct flash_platform_data avila_flash_data = {
 	.map_name	= "cfi_probe",
@@ -164,16 +163,13 @@ static void __init avila_init(void)
 
 MACHINE_START(AVILA, "Gateworks Avila Network Platform")
 	/* Maintainer: Deepak Saxena <dsaxena@plexity.net> */
+	.phys_io	= IXP4XX_PERIPHERAL_BASE_PHYS,
+	.io_pg_offst	= ((IXP4XX_PERIPHERAL_BASE_VIRT) >> 18) & 0xfffc,
 	.map_io		= ixp4xx_map_io,
-	.init_early	= ixp4xx_init_early,
 	.init_irq	= ixp4xx_init_irq,
 	.timer		= &ixp4xx_timer,
-	.atag_offset	= 0x100,
+	.boot_params	= 0x0100,
 	.init_machine	= avila_init,
-#if defined(CONFIG_PCI)
-	.dma_zone_size	= SZ_64M,
-#endif
-	.restart	= ixp4xx_restart,
 MACHINE_END
 
  /*
@@ -184,16 +180,13 @@ MACHINE_END
 #ifdef CONFIG_MACH_LOFT
 MACHINE_START(LOFT, "Giant Shoulder Inc Loft board")
 	/* Maintainer: Tom Billman <kernel@giantshoulderinc.com> */
+	.phys_io	= IXP4XX_PERIPHERAL_BASE_PHYS,
+	.io_pg_offst	= ((IXP4XX_PERIPHERAL_BASE_VIRT) >> 18) & 0xfffc,
 	.map_io		= ixp4xx_map_io,
-	.init_early	= ixp4xx_init_early,
 	.init_irq	= ixp4xx_init_irq,
 	.timer		= &ixp4xx_timer,
-	.atag_offset	= 0x100,
+	.boot_params	= 0x0100,
 	.init_machine	= avila_init,
-#if defined(CONFIG_PCI)
-	.dma_zone_size	= SZ_64M,
-#endif
-	.restart	= ixp4xx_restart,
 MACHINE_END
 #endif
 

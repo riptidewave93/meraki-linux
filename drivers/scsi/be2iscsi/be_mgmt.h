@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2005 - 2011 Emulex
+ * Copyright (C) 2005 - 2009 ServerEngines
  * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -7,14 +7,15 @@
  * as published by the Free Software Foundation.  The full GNU General
  * Public License is included in this distribution in the file called COPYING.
  *
- * Written by: Jayamohan Kallickal (jayamohan.kallickal@emulex.com)
+ * Written by: Jayamohan Kallickal (jayamohank@serverengines.com)
  *
  * Contact Information:
- * linux-drivers@emulex.com
+ * linux-drivers@serverengines.com
  *
- * Emulex
- * 3333 Susan Street
- * Costa Mesa, CA 92626
+ * ServerEngines
+ * 209 N. Fair Oaks Ave
+ * Sunnyvale, CA 94085
+ *
  */
 
 #ifndef _BEISCSI_MGMT_
@@ -85,19 +86,15 @@ struct mcc_wrb {
 	struct mcc_wrb_payload payload;
 };
 
-int mgmt_epfw_cleanup(struct beiscsi_hba *phba, unsigned short chute);
-int mgmt_open_connection(struct beiscsi_hba *phba,
-			 struct sockaddr *dst_addr,
-			 struct beiscsi_endpoint *beiscsi_ep,
-			 struct be_dma_mem *nonemb_cmd);
+unsigned char mgmt_epfw_cleanup(struct beiscsi_hba *phba, unsigned short chute);
+int mgmt_open_connection(struct beiscsi_hba *phba, struct sockaddr *dst_addr,
+			 struct beiscsi_endpoint *beiscsi_ep);
 
-unsigned int mgmt_upload_connection(struct beiscsi_hba *phba,
+unsigned char mgmt_upload_connection(struct beiscsi_hba *phba,
 				     unsigned short cid,
 				     unsigned int upload_flag);
-unsigned int mgmt_invalidate_icds(struct beiscsi_hba *phba,
-				struct invalidate_command_table *inv_tbl,
-				unsigned int num_invalidate, unsigned int cid,
-				struct be_dma_mem *nonemb_cmd);
+unsigned char mgmt_invalidate_icds(struct beiscsi_hba *phba,
+				   unsigned int icd, unsigned int cid);
 
 struct iscsi_invalidate_connection_params_in {
 	struct be_cmd_req_hdr hdr;
@@ -117,6 +114,11 @@ struct iscsi_invalidate_connection_params_out {
 union iscsi_invalidate_connection_params {
 	struct iscsi_invalidate_connection_params_in request;
 	struct iscsi_invalidate_connection_params_out response;
+} __packed;
+
+struct invalidate_command_table {
+	unsigned short icd;
+	unsigned short cid;
 } __packed;
 
 struct invalidate_commands_params_in {
@@ -173,9 +175,7 @@ struct mgmt_hba_attributes {
 	u8 phy_port;
 	u32 firmware_post_status;
 	u32 hba_mtu[8];
-	u8 iscsi_features;
-	u8 future_u8[3];
-	u32 future_u32[3];
+	u32 future_u32[4];
 } __packed;
 
 struct mgmt_controller_attributes {
@@ -229,7 +229,6 @@ struct beiscsi_endpoint {
 	struct beiscsi_hba *phba;
 	struct beiscsi_sess *sess;
 	struct beiscsi_conn *conn;
-	struct iscsi_endpoint *openiscsi_ep;
 	unsigned short ip_type;
 	char dst6_addr[ISCSI_ADDRESS_BUF_LEN];
 	unsigned long dst_addr;
@@ -239,13 +238,12 @@ struct beiscsi_endpoint {
 	u16 cid_vld;
 };
 
-int mgmt_get_fw_config(struct be_ctrl_info *ctrl,
+unsigned char mgmt_get_fw_config(struct be_ctrl_info *ctrl,
 				 struct beiscsi_hba *phba);
 
-unsigned int mgmt_invalidate_connection(struct beiscsi_hba *phba,
+unsigned char mgmt_invalidate_connection(struct beiscsi_hba *phba,
 					 struct beiscsi_endpoint *beiscsi_ep,
 					 unsigned short cid,
 					 unsigned short issue_reset,
 					 unsigned short savecfg_flag);
-
 #endif

@@ -38,7 +38,7 @@ static int marvell_pata_active(struct pci_dev *pdev)
 
 	/* We don't yet know how to do this for other devices */
 	if (pdev->device != 0x6145)
-		return 1;
+		return 1;	
 
 	barp = pci_iomap(pdev, 5, 0x10);
 	if (barp == NULL)
@@ -58,7 +58,7 @@ static int marvell_pata_active(struct pci_dev *pdev)
 }
 
 /**
- *	marvell_pre_reset	-	probe begin
+ *	marvell_pre_reset	-	check for 40/80 pin
  *	@link: link
  *	@deadline: deadline jiffies for the operation
  *
@@ -147,13 +147,13 @@ static int marvell_init_one (struct pci_dev *pdev, const struct pci_device_id *i
 	if (pdev->device == 0x6101)
 		ppi[1] = &ata_dummy_port_info;
 
-#if defined(CONFIG_SATA_AHCI) || defined(CONFIG_SATA_AHCI_MODULE)
+#if defined(CONFIG_AHCI) || defined(CONFIG_AHCI_MODULE)
 	if (!marvell_pata_active(pdev)) {
 		printk(KERN_INFO DRV_NAME ": PATA port not active, deferring to AHCI driver.\n");
 		return -ENODEV;
 	}
 #endif
-	return ata_pci_bmdma_init_one(pdev, ppi, &marvell_sht, NULL, 0);
+	return ata_pci_sff_init_one(pdev, ppi, &marvell_sht, NULL);
 }
 
 static const struct pci_device_id marvell_pci_tbl[] = {
@@ -161,9 +161,6 @@ static const struct pci_device_id marvell_pci_tbl[] = {
 	{ PCI_DEVICE(0x11AB, 0x6121), },
 	{ PCI_DEVICE(0x11AB, 0x6123), },
 	{ PCI_DEVICE(0x11AB, 0x6145), },
-	{ PCI_DEVICE(0x1B4B, 0x91A0), },
-	{ PCI_DEVICE(0x1B4B, 0x91A4), },
-
 	{ }	/* terminate list */
 };
 

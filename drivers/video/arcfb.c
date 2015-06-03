@@ -2,6 +2,7 @@
  * linux/drivers/video/arcfb.c -- FB driver for Arc monochrome LCD board
  *
  * Copyright (C) 2005, Jaya Kumar <jayalk@intworks.biz>
+ * http://www.intworks.biz/arclcd
  *
  * This file is subject to the terms and conditions of the GNU General Public
  * License. See the file COPYING in the main directory of this archive for
@@ -38,6 +39,7 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -79,7 +81,7 @@ struct arcfb_par {
 	spinlock_t lock;
 };
 
-static struct fb_fix_screeninfo arcfb_fix __devinitdata = {
+static struct fb_fix_screeninfo arcfb_fix __initdata = {
 	.id =		"arcfb",
 	.type =		FB_TYPE_PACKED_PIXELS,
 	.visual =	FB_VISUAL_MONO01,
@@ -89,7 +91,7 @@ static struct fb_fix_screeninfo arcfb_fix __devinitdata = {
 	.accel =	FB_ACCEL_NONE,
 };
 
-static struct fb_var_screeninfo arcfb_var __devinitdata = {
+static struct fb_var_screeninfo arcfb_var __initdata = {
 	.xres		= 128,
 	.yres		= 64,
 	.xres_virtual	= 128,
@@ -502,7 +504,7 @@ static struct fb_ops arcfb_ops = {
 	.fb_ioctl 	= arcfb_ioctl,
 };
 
-static int __devinit arcfb_probe(struct platform_device *dev)
+static int __init arcfb_probe(struct platform_device *dev)
 {
 	struct fb_info *info;
 	int retval = -ENOMEM;
@@ -515,9 +517,10 @@ static int __devinit arcfb_probe(struct platform_device *dev)
 
 	/* We need a flat backing store for the Arc's
 	   less-flat actual paged framebuffer */
-	videomemory = vzalloc(videomemorysize);
-	if (!videomemory)
+	if (!(videomemory = vmalloc(videomemorysize)))
 		return retval;
+
+	memset(videomemory, 0, videomemorysize);
 
 	info = framebuffer_alloc(sizeof(struct arcfb_par), &dev->dev);
 	if (!info)
@@ -586,7 +589,7 @@ err:
 	return retval;
 }
 
-static int __devexit arcfb_remove(struct platform_device *dev)
+static int arcfb_remove(struct platform_device *dev)
 {
 	struct fb_info *info = platform_get_drvdata(dev);
 
@@ -600,7 +603,7 @@ static int __devexit arcfb_remove(struct platform_device *dev)
 
 static struct platform_driver arcfb_driver = {
 	.probe	= arcfb_probe,
-	.remove = __devexit_p(arcfb_remove),
+	.remove = arcfb_remove,
 	.driver	= {
 		.name	= "arcfb",
 	},

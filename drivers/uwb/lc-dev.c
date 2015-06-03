@@ -23,13 +23,10 @@
  * FIXME: docs
  */
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/device.h>
-#include <linux/export.h>
 #include <linux/err.h>
 #include <linux/kdev_t.h>
 #include <linux/random.h>
-#include <linux/stat.h>
 #include "uwb-internal.h"
 
 /* We initialize addresses to 0xff (invalid, as it is bcast) */
@@ -441,19 +438,16 @@ void uwbd_dev_onair(struct uwb_rc *rc, struct uwb_beca_e *bce)
 	uwb_dev->mac_addr = *bce->mac_addr;
 	uwb_dev->dev_addr = bce->dev_addr;
 	dev_set_name(&uwb_dev->dev, macbuf);
-
-	/* plug the beacon cache */
-	bce->uwb_dev = uwb_dev;
-	uwb_dev->bce = bce;
-	uwb_bce_get(bce);		/* released in uwb_dev_sys_release() */
-
 	result = uwb_dev_add(uwb_dev, &rc->uwb_dev.dev, rc);
 	if (result < 0) {
 		dev_err(dev, "new device %s: cannot instantiate device\n",
 			macbuf);
 		goto error_dev_add;
 	}
-
+	/* plug the beacon cache */
+	bce->uwb_dev = uwb_dev;
+	uwb_dev->bce = bce;
+	uwb_bce_get(bce);		/* released in uwb_dev_sys_release() */
 	dev_info(dev, "uwb device (mac %s dev %s) connected to %s %s\n",
 		 macbuf, devbuf, rc->uwb_dev.dev.parent->bus->name,
 		 dev_name(rc->uwb_dev.dev.parent));
@@ -461,8 +455,6 @@ void uwbd_dev_onair(struct uwb_rc *rc, struct uwb_beca_e *bce)
 	return;
 
 error_dev_add:
-	bce->uwb_dev = NULL;
-	uwb_bce_put(bce);
 	kfree(uwb_dev);
 	return;
 }

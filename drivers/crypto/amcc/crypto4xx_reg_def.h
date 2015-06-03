@@ -54,6 +54,10 @@
 #define CRYPTO4XX_SEQ_RD			0x00000408
 #define CRYPTO4XX_SEQ_MASK_RD			0x0000040C
 
+#define CRYPTO4XX_SPI				0x000106B0
+#define CRYPTO4XX_SEQ_NUM0			0x000106B4
+#define CRYPTO4XX_SEQ_NUM1			0x000106B8
+
 #define CRYPTO4XX_SA_CMD_0			0x00010600
 #define CRYPTO4XX_SA_CMD_1			0x00010604
 
@@ -112,8 +116,9 @@
 #define CRYPTO4XX_PRNG_LFSR_L			0x00070030
 #define CRYPTO4XX_PRNG_LFSR_H			0x00070034
 
+
 /**
- * Initialize CRYPTO ENGINE registers, and memory bases.
+ * Initilize CRYPTO ENGINE registers, and memory bases.
  */
 #define PPC4XX_PDR_POLL				0x3ff
 #define PPC4XX_OUTPUT_THRESHOLD			2
@@ -121,18 +126,21 @@
 #define PPC4XX_PD_SIZE				6
 #define PPC4XX_CTX_DONE_INT			0x2000
 #define PPC4XX_PD_DONE_INT			0x8000
+#define PPC4XX_TMO_ERR_INT   			0x40000
 #define PPC4XX_BYTE_ORDER			0x22222
 #define PPC4XX_INTERRUPT_CLR			0x3ffff
+#define PPC4XX_INTERRUPT_CLR_REVB		0x7ffff
 #define PPC4XX_PRNG_CTRL_AUTO_EN		0x3
 #define PPC4XX_DC_3DES_EN			1
-#define PPC4XX_INT_DESCR_CNT			4
+#define PPC4XX_INT_DESCR_CNT			7
 #define PPC4XX_INT_TIMEOUT_CNT			0
+#define PPC4XX_INT_TIMEOUT_CNT_REVB		0x3FF
 #define PPC4XX_INT_CFG				1
 /**
  * all follow define are ad hoc
  */
-#define PPC4XX_RING_RETRY			100
-#define PPC4XX_RING_POLL			100
+#define PPC4XX_RING_RETRY			1
+#define PPC4XX_RING_POLL			1
 #define PPC4XX_SDR_SIZE				PPC4XX_NUM_SD
 #define PPC4XX_GDR_SIZE				PPC4XX_NUM_GD
 

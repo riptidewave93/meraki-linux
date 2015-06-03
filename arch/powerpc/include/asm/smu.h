@@ -457,8 +457,8 @@ extern void smu_poll(void);
  */
 extern int smu_init(void);
 extern int smu_present(void);
-struct platform_device;
-extern struct platform_device *smu_get_ofdev(void);
+struct of_device;
+extern struct of_device *smu_get_ofdev(void);
 
 
 /*
@@ -547,7 +547,7 @@ struct smu_sdbp_header {
  * (currently, afaik, this concerns only the FVT partition
  * (0x12)
  */
-#define SMU_U16_MIX(x)	le16_to_cpu(x)
+#define SMU_U16_MIX(x)	le16_to_cpu(x);
 #define SMU_U32_MIX(x)  ((((x) & 0xff00ff00u) >> 8)|(((x) & 0x00ff00ffu) << 8))
 
 

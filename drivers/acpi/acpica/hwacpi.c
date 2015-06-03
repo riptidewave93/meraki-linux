@@ -6,7 +6,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -48,7 +48,6 @@
 #define _COMPONENT          ACPI_HARDWARE
 ACPI_MODULE_NAME("hwacpi")
 
-#if (!ACPI_REDUCED_HARDWARE)	/* Entire module */
 /******************************************************************************
  *
  * FUNCTION:    acpi_hw_set_mode
@@ -64,6 +63,7 @@ acpi_status acpi_hw_set_mode(u32 mode)
 {
 
 	acpi_status status;
+	u32 retry;
 
 	ACPI_FUNCTION_TRACE(hw_set_mode);
 
@@ -125,7 +125,24 @@ acpi_status acpi_hw_set_mode(u32 mode)
 		return_ACPI_STATUS(status);
 	}
 
-	return_ACPI_STATUS(AE_OK);
+	/*
+	 * Some hardware takes a LONG time to switch modes. Give them 3 sec to
+	 * do so, but allow faster systems to proceed more quickly.
+	 */
+	retry = 3000;
+	while (retry) {
+		if (acpi_hw_get_mode() == mode) {
+			ACPI_DEBUG_PRINT((ACPI_DB_INFO,
+					  "Mode %X successfully enabled\n",
+					  mode));
+			return_ACPI_STATUS(AE_OK);
+		}
+		acpi_os_stall(1000);
+		retry--;
+	}
+
+	ACPI_ERROR((AE_INFO, "Hardware did not change modes"));
+	return_ACPI_STATUS(AE_NO_HARDWARE_RESPONSE);
 }
 
 /*******************************************************************************
@@ -167,5 +184,3 @@ u32 acpi_hw_get_mode(void)
 		return_UINT32(ACPI_SYS_MODE_LEGACY);
 	}
 }
-
-#endif				/* !ACPI_REDUCED_HARDWARE */

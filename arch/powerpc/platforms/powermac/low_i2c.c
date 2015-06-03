@@ -33,7 +33,7 @@
 #include <linux/types.h>
 #include <linux/sched.h>
 #include <linux/init.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/adb.h>
 #include <linux/pmu.h>
 #include <linux/delay.h>
@@ -42,8 +42,6 @@
 #include <linux/interrupt.h>
 #include <linux/timer.h>
 #include <linux/mutex.h>
-#include <linux/i2c.h>
-#include <linux/slab.h>
 #include <asm/keylargo.h>
 #include <asm/uninorth.h>
 #include <asm/io.h>
@@ -82,7 +80,7 @@ struct pmac_i2c_bus
 	struct device_node	*busnode;
 	int			type;
 	int			flags;
-	struct i2c_adapter	adapter;
+	struct i2c_adapter	*adapter;
 	void			*hostdata;
 	int			channel;	/* some hosts have multiple */
 	int			mode;		/* current mode */
@@ -366,20 +364,11 @@ static void kw_i2c_timeout(unsigned long data)
 	unsigned long flags;
 
 	spin_lock_irqsave(&host->lock, flags);
-
-	/*
-	 * If the timer is pending, that means we raced with the
-	 * irq, in which case we just return
-	 */
-	if (timer_pending(&host->timeout_timer))
-		goto skip;
-
 	kw_i2c_handle_interrupt(host, kw_read_reg(reg_isr));
 	if (host->state != state_idle) {
 		host->timeout_timer.expires = jiffies + KW_POLL_TIMEOUT;
 		add_timer(&host->timeout_timer);
 	}
- skip:
 	spin_unlock_irqrestore(&host->lock, flags);
 }
 
@@ -551,12 +540,11 @@ static struct pmac_i2c_host_kw *__init kw_i2c_host_init(struct device_node *np)
 	/* Make sure IRQ is disabled */
 	kw_write_reg(reg_ier, 0);
 
-	/* Request chip interrupt. We set IRQF_NO_SUSPEND because we don't
+	/* Request chip interrupt. We set IRQF_TIMER because we don't
 	 * want that interrupt disabled between the 2 passes of driver
 	 * suspend or we'll have issues running the pfuncs
 	 */
-	if (request_irq(host->irq, kw_i2c_irq, IRQF_NO_SUSPEND,
-			"keywest i2c", host))
+	if (request_irq(host->irq, kw_i2c_irq, IRQF_TIMER, "keywest i2c", host))
 		host->irq = NO_IRQ;
 
 	printk(KERN_INFO "KeyWest i2c @0x%08x irq %d %s\n",
@@ -602,7 +590,7 @@ static void __init kw_i2c_probe(void)
 	/* Probe keywest-i2c busses */
 	for_each_compatible_node(np, "i2c","keywest-i2c") {
 		struct pmac_i2c_host_kw *host;
-		int multibus;
+		int multibus, chans, i;
 
 		/* Found one, init a host structure */
 		host = kw_i2c_host_init(np);
@@ -624,8 +612,6 @@ static void __init kw_i2c_probe(void)
 		 * parent type
 		 */
 		if (multibus) {
-			int chans, i;
-
 			parent = of_get_parent(np);
 			if (parent == NULL)
 				continue;
@@ -913,7 +899,7 @@ static void __init smu_i2c_probe(void)
 	printk(KERN_INFO "SMU i2c %s\n", controller->full_name);
 
 	/* Look for childs, note that they might not be of the right
-	 * type as older device trees mix i2c busses and other things
+	 * type as older device trees mix i2c busses and other thigns
 	 * at the same level
 	 */
 	for (busnode = NULL;
@@ -1028,9 +1014,25 @@ int pmac_i2c_get_channel(struct pmac_i2c_bus *bus)
 EXPORT_SYMBOL_GPL(pmac_i2c_get_channel);
 
 
+void pmac_i2c_attach_adapter(struct pmac_i2c_bus *bus,
+			     struct i2c_adapter *adapter)
+{
+	WARN_ON(bus->adapter != NULL);
+	bus->adapter = adapter;
+}
+EXPORT_SYMBOL_GPL(pmac_i2c_attach_adapter);
+
+void pmac_i2c_detach_adapter(struct pmac_i2c_bus *bus,
+			     struct i2c_adapter *adapter)
+{
+	WARN_ON(bus->adapter != adapter);
+	bus->adapter = NULL;
+}
+EXPORT_SYMBOL_GPL(pmac_i2c_detach_adapter);
+
 struct i2c_adapter *pmac_i2c_get_adapter(struct pmac_i2c_bus *bus)
 {
-	return &bus->adapter;
+	return bus->adapter;
 }
 EXPORT_SYMBOL_GPL(pmac_i2c_get_adapter);
 
@@ -1039,7 +1041,7 @@ struct pmac_i2c_bus *pmac_i2c_adapter_to_bus(struct i2c_adapter *adapter)
 	struct pmac_i2c_bus *bus;
 
 	list_for_each_entry(bus, &pmac_i2c_busses, link)
-		if (&bus->adapter == adapter)
+		if (bus->adapter == adapter)
 			return bus;
 	return NULL;
 }
@@ -1051,7 +1053,7 @@ int pmac_i2c_match_adapter(struct device_node *dev, struct i2c_adapter *adapter)
 
 	if (bus == NULL)
 		return 0;
-	return (&bus->adapter == adapter);
+	return (bus->adapter == adapter);
 }
 EXPORT_SYMBOL_GPL(pmac_i2c_match_adapter);
 
@@ -1270,7 +1272,8 @@ static void pmac_i2c_do_end(struct pmf_function *func, void *instdata)
 	if (inst == NULL)
 		return;
 	pmac_i2c_close(inst->bus);
-	kfree(inst);
+	if (inst)
+		kfree(inst);
 }
 
 static int pmac_i2c_do_read(PMF_STD_ARGS, u32 len)

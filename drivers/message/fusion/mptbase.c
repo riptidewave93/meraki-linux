@@ -50,7 +50,6 @@
 #include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/init.h>
-#include <linux/seq_file.h>
 #include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/pci.h>
@@ -63,8 +62,6 @@
 #ifdef CONFIG_MTRR
 #include <asm/mtrr.h>
 #endif
-#include <linux/kthread.h>
-#include <scsi/scsi_host.h>
 
 #include "mptbase.h"
 #include "lsi/mpi_log_fc.h"
@@ -85,18 +82,19 @@ MODULE_VERSION(my_VERSION);
 
 static int mpt_msi_enable_spi;
 module_param(mpt_msi_enable_spi, int, 0);
-MODULE_PARM_DESC(mpt_msi_enable_spi,
-		 " Enable MSI Support for SPI controllers (default=0)");
+MODULE_PARM_DESC(mpt_msi_enable_spi, " Enable MSI Support for SPI \
+		controllers (default=0)");
 
 static int mpt_msi_enable_fc;
 module_param(mpt_msi_enable_fc, int, 0);
-MODULE_PARM_DESC(mpt_msi_enable_fc,
-		 " Enable MSI Support for FC controllers (default=0)");
+MODULE_PARM_DESC(mpt_msi_enable_fc, " Enable MSI Support for FC \
+		controllers (default=0)");
 
 static int mpt_msi_enable_sas;
 module_param(mpt_msi_enable_sas, int, 0);
-MODULE_PARM_DESC(mpt_msi_enable_sas,
-		 " Enable MSI Support for SAS controllers (default=0)");
+MODULE_PARM_DESC(mpt_msi_enable_sas, " Enable MSI Support for SAS \
+		controllers (default=0)");
+
 
 static int mpt_channel_mapping;
 module_param(mpt_channel_mapping, int, 0);
@@ -106,17 +104,17 @@ static int mpt_debug_level;
 static int mpt_set_debug_level(const char *val, struct kernel_param *kp);
 module_param_call(mpt_debug_level, mpt_set_debug_level, param_get_int,
 		  &mpt_debug_level, 0600);
-MODULE_PARM_DESC(mpt_debug_level,
-		 " debug level - refer to mptdebug.h - (default=0)");
+MODULE_PARM_DESC(mpt_debug_level, " debug level - refer to mptdebug.h \
+	- (default=0)");
 
 int mpt_fwfault_debug;
 EXPORT_SYMBOL(mpt_fwfault_debug);
-module_param(mpt_fwfault_debug, int, 0600);
-MODULE_PARM_DESC(mpt_fwfault_debug,
-		 "Enable detection of Firmware fault and halt Firmware on fault - (default=0)");
+module_param_call(mpt_fwfault_debug, param_set_int, param_get_int,
+	  &mpt_fwfault_debug, 0600);
+MODULE_PARM_DESC(mpt_fwfault_debug, "Enable detection of Firmware fault"
+	" and halt Firmware on fault - (default=0)");
 
-static char	MptCallbacksName[MPT_MAX_PROTOCOL_DRIVERS]
-				[MPT_MAX_CALLBACKNAME_LEN+1];
+
 
 #ifdef MFCNT
 static int mfcounter = 0;
@@ -127,6 +125,8 @@ static int mfcounter = 0;
 /*
  *  Public data...
  */
+
+static struct proc_dir_entry *mpt_proc_root_dir;
 
 #define WHOINIT_UNKNOWN		0xAA
 
@@ -146,9 +146,6 @@ static MPT_EVHANDLER		 MptEvHandlers[MPT_MAX_PROTOCOL_DRIVERS];
 static MPT_RESETHANDLER		 MptResetHandlers[MPT_MAX_PROTOCOL_DRIVERS];
 static struct mpt_pci_driver 	*MptDeviceDriverHandlers[MPT_MAX_PROTOCOL_DRIVERS];
 
-#ifdef CONFIG_PROC_FS
-static struct proc_dir_entry 	*mpt_proc_root_dir;
-#endif
 
 /*
  *  Driver Callback Index's
@@ -201,9 +198,12 @@ static int	mpt_host_page_access_control(MPT_ADAPTER *ioc, u8 access_control_valu
 static int	mpt_host_page_alloc(MPT_ADAPTER *ioc, pIOCInit_t ioc_init);
 
 #ifdef CONFIG_PROC_FS
-static const struct file_operations mpt_summary_proc_fops;
-static const struct file_operations mpt_version_proc_fops;
-static const struct file_operations mpt_iocinfo_proc_fops;
+static int	procmpt_summary_read(char *buf, char **start, off_t offset,
+				int request, int *eof, void *data);
+static int	procmpt_version_read(char *buf, char **start, off_t offset,
+				int request, int *eof, void *data);
+static int	procmpt_iocinfo_read(char *buf, char **start, off_t offset,
+				int request, int *eof, void *data);
 #endif
 static void	mpt_get_fw_exp_ver(char *buf, MPT_ADAPTER *ioc);
 
@@ -212,7 +212,7 @@ static int	ProcessEventNotification(MPT_ADAPTER *ioc,
 static void	mpt_iocstatus_info(MPT_ADAPTER *ioc, u32 ioc_status, MPT_FRAME_HDR *mf);
 static void	mpt_fc_log_info(MPT_ADAPTER *ioc, u32 log_info);
 static void	mpt_spi_log_info(MPT_ADAPTER *ioc, u32 log_info);
-static void	mpt_sas_log_info(MPT_ADAPTER *ioc, u32 log_info , u8 cb_idx);
+static void	mpt_sas_log_info(MPT_ADAPTER *ioc, u32 log_info);
 static int	mpt_read_ioc_pg_3(MPT_ADAPTER *ioc);
 static void	mpt_inactive_raid_list_free(MPT_ADAPTER *ioc);
 
@@ -326,32 +326,6 @@ mpt_is_discovery_complete(MPT_ADAPTER *ioc)
 	return rc;
 }
 
-
-/**
- *  mpt_remove_dead_ioc_func - kthread context to remove dead ioc
- * @arg: input argument, used to derive ioc
- *
- * Return 0 if controller is removed from pci subsystem.
- * Return -1 for other case.
- */
-static int mpt_remove_dead_ioc_func(void *arg)
-{
-	MPT_ADAPTER *ioc = (MPT_ADAPTER *)arg;
-	struct pci_dev *pdev;
-
-	if ((ioc == NULL))
-		return -1;
-
-	pdev = ioc->pcidev;
-	if ((pdev == NULL))
-		return -1;
-
-	pci_stop_and_remove_bus_device(pdev);
-	return 0;
-}
-
-
-
 /**
  *	mpt_fault_reset_work - work performed on workq after ioc fault
  *	@work: input argument, used to derive ioc
@@ -365,45 +339,12 @@ mpt_fault_reset_work(struct work_struct *work)
 	u32		 ioc_raw_state;
 	int		 rc;
 	unsigned long	 flags;
-	MPT_SCSI_HOST	*hd;
-	struct task_struct *p;
 
 	if (ioc->ioc_reset_in_progress || !ioc->active)
 		goto out;
 
-
 	ioc_raw_state = mpt_GetIocState(ioc, 0);
-	if ((ioc_raw_state & MPI_IOC_STATE_MASK) == MPI_IOC_STATE_MASK) {
-		printk(MYIOC_s_INFO_FMT "%s: IOC is non-operational !!!!\n",
-		    ioc->name, __func__);
-
-		/*
-		 * Call mptscsih_flush_pending_cmds callback so that we
-		 * flush all pending commands back to OS.
-		 * This call is required to aovid deadlock at block layer.
-		 * Dead IOC will fail to do diag reset,and this call is safe
-		 * since dead ioc will never return any command back from HW.
-		 */
-		hd = shost_priv(ioc->sh);
-		ioc->schedule_dead_ioc_flush_running_cmds(hd);
-
-		/*Remove the Dead Host */
-		p = kthread_run(mpt_remove_dead_ioc_func, ioc,
-				"mpt_dead_ioc_%d", ioc->id);
-		if (IS_ERR(p))	{
-			printk(MYIOC_s_ERR_FMT
-				"%s: Running mpt_dead_ioc thread failed !\n",
-				ioc->name, __func__);
-		} else {
-			printk(MYIOC_s_WARN_FMT
-				"%s: Running mpt_dead_ioc thread success !\n",
-				ioc->name, __func__);
-		}
-		return; /* don't rearm timer */
-	}
-
-	if ((ioc_raw_state & MPI_IOC_STATE_MASK)
-			== MPI_IOC_STATE_FAULT) {
+	if ((ioc_raw_state & MPI_IOC_STATE_MASK) == MPI_IOC_STATE_FAULT) {
 		printk(MYIOC_s_WARN_FMT "IOC is in FAULT state (%04xh)!!!\n",
 		       ioc->name, ioc_raw_state & MPI_DOORBELL_DATA_MASK);
 		printk(MYIOC_s_WARN_FMT "Issuing HardReset from %s!!\n",
@@ -548,7 +489,7 @@ mpt_reply(MPT_ADAPTER *ioc, u32 pa)
 		else if (ioc->bus_type == SPI)
 			mpt_spi_log_info(ioc, log_info);
 		else if (ioc->bus_type == SAS)
-			mpt_sas_log_info(ioc, log_info, cb_idx);
+			mpt_sas_log_info(ioc, log_info);
 	}
 
 	if (ioc_stat & MPI_IOCSTATUS_MASK)
@@ -686,7 +627,6 @@ mptbase_reply(MPT_ADAPTER *ioc, MPT_FRAME_HDR *req, MPT_FRAME_HDR *reply)
  *	mpt_register - Register protocol-specific main callback handler.
  *	@cbfunc: callback function pointer
  *	@dclass: Protocol driver's class (%MPT_DRIVER_CLASS enum value)
- *	@func_name: call function's name
  *
  *	This routine is called by a protocol-specific driver (SCSI host,
  *	LAN, SCSI target) to register its reply callback routine.  Each
@@ -703,7 +643,7 @@ mptbase_reply(MPT_ADAPTER *ioc, MPT_FRAME_HDR *req, MPT_FRAME_HDR *reply)
  *	considered an error by the caller.
  */
 u8
-mpt_register(MPT_CALLBACK cbfunc, MPT_DRIVER_CLASS dclass, char *func_name)
+mpt_register(MPT_CALLBACK cbfunc, MPT_DRIVER_CLASS dclass)
 {
 	u8 cb_idx;
 	last_drv_idx = MPT_MAX_PROTOCOL_DRIVERS;
@@ -718,8 +658,6 @@ mpt_register(MPT_CALLBACK cbfunc, MPT_DRIVER_CLASS dclass, char *func_name)
 			MptDriverClass[cb_idx] = dclass;
 			MptEvHandlers[cb_idx] = NULL;
 			last_drv_idx = cb_idx;
-			strlcpy(MptCallbacksName[cb_idx], func_name,
-				MPT_MAX_CALLBACKNAME_LEN+1);
 			break;
 		}
 	}
@@ -1650,9 +1588,9 @@ mpt_mapresources(MPT_ADAPTER *ioc)
 	u8		__iomem *mem;
 	int		 ii;
 	resource_size_t	 mem_phys;
-	unsigned long	 port;
-	u32		 msize;
-	u32		 psize;
+	resource_size_t	 port;
+	resource_size_t	 msize;
+	resource_size_t	 psize;
 	u8		 revision;
 	int		 r = -ENODEV;
 	struct pci_dev *pdev;
@@ -1693,7 +1631,6 @@ mpt_mapresources(MPT_ADAPTER *ioc)
 		} else {
 			printk(MYIOC_s_WARN_FMT "no suitable DMA mask for %s\n",
 			    ioc->name, pci_name(pdev));
-			pci_release_selected_regions(pdev, ioc->bars);
 			return r;
 		}
 	} else {
@@ -1707,7 +1644,6 @@ mpt_mapresources(MPT_ADAPTER *ioc)
 		} else {
 			printk(MYIOC_s_WARN_FMT "no suitable DMA mask for %s\n",
 			    ioc->name, pci_name(pdev));
-			pci_release_selected_regions(pdev, ioc->bars);
 			return r;
 		}
 	}
@@ -1738,12 +1674,11 @@ mpt_mapresources(MPT_ADAPTER *ioc)
 	if (mem == NULL) {
 		printk(MYIOC_s_ERR_FMT ": ERROR - Unable to map adapter"
 			" memory!\n", ioc->name);
-		pci_release_selected_regions(pdev, ioc->bars);
 		return -EINVAL;
 	}
 	ioc->memmap = mem;
 	dinitprintk(ioc, printk(MYIOC_s_INFO_FMT "mem = %p, mem_phys = %llx\n",
-	    ioc->name, mem, (unsigned long long)mem_phys));
+	    ioc->name, mem, (u64)mem_phys));
 
 	ioc->mem_phys = mem_phys;
 	ioc->chip = (SYSIF_REGS __iomem *)mem;
@@ -1783,7 +1718,7 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
 	u8		 pcixcmd;
 	static int	 mpt_ids = 0;
 #ifdef CONFIG_PROC_FS
-	struct proc_dir_entry *dent;
+	struct proc_dir_entry *dent, *ent;
 #endif
 
 	ioc = kzalloc(sizeof(MPT_ADAPTER), GFP_ATOMIC);
@@ -1834,6 +1769,7 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
 	ioc->req_sz = MPT_DEFAULT_FRAME_SIZE;		/* avoid div by zero! */
 	ioc->reply_sz = MPT_REPLY_FRAME_SIZE;
 
+	ioc->pcidev = pdev;
 
 	spin_lock_init(&ioc->taskmgmt_lock);
 	mutex_init(&ioc->internal_cmds.mutex);
@@ -1857,7 +1793,7 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
 	ioc->sh = NULL;
 	ioc->cached_fw = NULL;
 
-	/* Initialize SCSI Config Data structure
+	/* Initilize SCSI Config Data structure
 	 */
 	memset(&ioc->spi_data, 0, sizeof(SpiCfgData));
 
@@ -1976,9 +1912,6 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
 		ioc->msi_enable = 0;
 		break;
 	}
-
-	ioc->fw_events_off = 1;
-
 	if (ioc->errata_flag_1064)
 		pci_disable_io_access(pdev);
 
@@ -2038,8 +1971,16 @@ mpt_attach(struct pci_dev *pdev, const struct pci_device_id *id)
 	 */
 	dent = proc_mkdir(ioc->name, mpt_proc_root_dir);
 	if (dent) {
-		proc_create_data("info", S_IRUGO, dent, &mpt_iocinfo_proc_fops, ioc);
-		proc_create_data("summary", S_IRUGO, dent, &mpt_summary_proc_fops, ioc);
+		ent = create_proc_entry("info", S_IFREG|S_IRUGO, dent);
+		if (ent) {
+			ent->read_proc = procmpt_iocinfo_read;
+			ent->data = ioc;
+		}
+		ent = create_proc_entry("summary", S_IFREG|S_IRUGO, dent);
+		if (ent) {
+			ent->read_proc = procmpt_summary_read;
+			ent->data = ioc;
+		}
 	}
 #endif
 
@@ -2109,6 +2050,7 @@ mpt_detach(struct pci_dev *pdev)
 
 	mpt_adapter_dispose(ioc);
 
+	pci_set_drvdata(pdev, NULL);
 }
 
 /**************************************************************************
@@ -2528,7 +2470,7 @@ mpt_do_ioc_recovery(MPT_ADAPTER *ioc, u32 reason, int sleepFlag)
 	if ((ret == 0) && (reason == MPT_HOSTEVENT_IOC_BRINGUP)) {
 
 		/*
-		 * Initialize link list for inactive raid volumes.
+		 * Initalize link list for inactive raid volumes.
 		 */
 		mutex_init(&ioc->raid_data.inactive_list_mutex);
 		INIT_LIST_HEAD(&ioc->raid_data.inactive_list);
@@ -3495,7 +3437,7 @@ SendPortEnable(MPT_ADAPTER *ioc, int portnum, int sleepFlag)
  *	If memory has already been allocated, the same (cached) value
  *	is returned.
  *
- *	Return 0 if successful, or non-zero for failure
+ *	Return 0 if successfull, or non-zero for failure
  **/
 int
 mpt_alloc_fw_memory(MPT_ADAPTER *ioc, int size)
@@ -5119,10 +5061,9 @@ mptbase_sas_persist_operation(MPT_ADAPTER *ioc, u8 persist_opcode)
 		if (ioc->mptbase_cmds.status & MPT_MGMT_STATUS_DID_IOCRESET)
 			goto out;
 		if (!timeleft) {
-			printk(MYIOC_s_WARN_FMT
-			       "Issuing Reset from %s!!, doorbell=0x%08x\n",
-			       ioc->name, __func__, mpt_GetIocState(ioc, 0));
-			mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP);
+			printk(KERN_DEBUG "%s: Issuing Reset from %s!!\n",
+			    ioc->name, __func__);
+			mpt_HardResetHandler(ioc, CAN_SLEEP);
 			mpt_free_msg_frame(ioc, mf);
 		}
 		goto out;
@@ -6005,10 +5946,8 @@ mpt_findImVolumes(MPT_ADAPTER *ioc)
 		goto out;
 
 	mem = kmalloc(iocpage2sz, GFP_KERNEL);
-	if (!mem) {
-		rc = -ENOMEM;
+	if (!mem)
 		goto out;
-	}
 
 	memcpy(mem, (u8 *)pIoc2, iocpage2sz);
 	ioc->raid_data.pIocPg2 = (IOCPage2_t *) mem;
@@ -6475,19 +6414,8 @@ mpt_config(MPT_ADAPTER *ioc, CONFIGPARMS *pCfg)
 			pReq->Action, ioc->mptbase_cmds.status, timeleft));
 		if (ioc->mptbase_cmds.status & MPT_MGMT_STATUS_DID_IOCRESET)
 			goto out;
-		if (!timeleft) {
-			spin_lock_irqsave(&ioc->taskmgmt_lock, flags);
-			if (ioc->ioc_reset_in_progress) {
-				spin_unlock_irqrestore(&ioc->taskmgmt_lock,
-					flags);
-				printk(MYIOC_s_INFO_FMT "%s: host reset in"
-					" progress mpt_config timed out.!!\n",
-					__func__, ioc->name);
-				return -EFAULT;
-			}
-			spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
+		if (!timeleft)
 			issue_hard_reset = 1;
-		}
 		goto out;
 	}
 
@@ -6525,18 +6453,12 @@ out:
 	mutex_unlock(&ioc->mptbase_cmds.mutex);
 	if (issue_hard_reset) {
 		issue_hard_reset = 0;
-		printk(MYIOC_s_WARN_FMT
-		       "Issuing Reset from %s!!, doorbell=0x%08x\n",
-		       ioc->name, __func__, mpt_GetIocState(ioc, 0));
-		if (retry_count == 0) {
-			if (mpt_Soft_Hard_ResetHandler(ioc, CAN_SLEEP) != 0)
-				retry_count++;
-		} else
-			mpt_HardResetHandler(ioc, CAN_SLEEP);
-
+		printk(MYIOC_s_WARN_FMT "Issuing Reset from %s!!\n",
+		    ioc->name, __func__);
+		mpt_HardResetHandler(ioc, CAN_SLEEP);
 		mpt_free_msg_frame(ioc, mf);
 		/* attempt one retry for a timed out command */
-		if (retry_count < 2) {
+		if (!retry_count) {
 			printk(MYIOC_s_INFO_FMT
 			    "Attempting Retry Config request"
 			    " type 0x%x, page 0x%x,"
@@ -6609,12 +6531,20 @@ mpt_ioc_reset(MPT_ADAPTER *ioc, int reset_phase)
 static int
 procmpt_create(void)
 {
+	struct proc_dir_entry	*ent;
+
 	mpt_proc_root_dir = proc_mkdir(MPT_PROCFS_MPTBASEDIR, NULL);
 	if (mpt_proc_root_dir == NULL)
 		return -ENOTDIR;
 
-	proc_create("summary", S_IRUGO, mpt_proc_root_dir, &mpt_summary_proc_fops);
-	proc_create("version", S_IRUGO, mpt_proc_root_dir, &mpt_version_proc_fops);
+	ent = create_proc_entry("summary", S_IFREG|S_IRUGO, mpt_proc_root_dir);
+	if (ent)
+		ent->read_proc = procmpt_summary_read;
+
+	ent = create_proc_entry("version", S_IFREG|S_IRUGO, mpt_proc_root_dir);
+	if (ent)
+		ent->read_proc = procmpt_version_read;
+
 	return 0;
 }
 
@@ -6633,47 +6563,71 @@ procmpt_destroy(void)
 }
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
-/*
+/**
+ *	procmpt_summary_read - Handle read request of a summary file
+ *	@buf: Pointer to area to write information
+ *	@start: Pointer to start pointer
+ *	@offset: Offset to start writing
+ *	@request: Amount of read data requested
+ *	@eof: Pointer to EOF integer
+ *	@data: Pointer
+ *
  *	Handles read request from /proc/mpt/summary or /proc/mpt/iocN/summary.
+ *	Returns number of characters written to process performing the read.
  */
-static void seq_mpt_print_ioc_summary(MPT_ADAPTER *ioc, struct seq_file *m, int showlan);
-
-static int mpt_summary_proc_show(struct seq_file *m, void *v)
+static int
+procmpt_summary_read(char *buf, char **start, off_t offset, int request, int *eof, void *data)
 {
-	MPT_ADAPTER *ioc = m->private;
+	MPT_ADAPTER *ioc;
+	char *out = buf;
+	int len;
 
-	if (ioc) {
-		seq_mpt_print_ioc_summary(ioc, m, 1);
+	if (data) {
+		int more = 0;
+
+		ioc = data;
+		mpt_print_ioc_summary(ioc, out, &more, 0, 1);
+
+		out += more;
 	} else {
 		list_for_each_entry(ioc, &ioc_list, list) {
-			seq_mpt_print_ioc_summary(ioc, m, 1);
+			int	more = 0;
+
+			mpt_print_ioc_summary(ioc, out, &more, 0, 1);
+
+			out += more;
+			if ((out-buf) >= request)
+				break;
 		}
 	}
 
-	return 0;
+	len = out - buf;
+
+	MPT_PROC_READ_RETURN(buf,start,offset,request,eof,len);
 }
 
-static int mpt_summary_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, mpt_summary_proc_show, PDE(inode)->data);
-}
-
-static const struct file_operations mpt_summary_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= mpt_summary_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
-static int mpt_version_proc_show(struct seq_file *m, void *v)
+/*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+/**
+ *	procmpt_version_read - Handle read request from /proc/mpt/version.
+ *	@buf: Pointer to area to write information
+ *	@start: Pointer to start pointer
+ *	@offset: Offset to start writing
+ *	@request: Amount of read data requested
+ *	@eof: Pointer to EOF integer
+ *	@data: Pointer
+ *
+ *	Returns number of characters written to process performing the read.
+ */
+static int
+procmpt_version_read(char *buf, char **start, off_t offset, int request, int *eof, void *data)
 {
 	u8	 cb_idx;
 	int	 scsi, fc, sas, lan, ctl, targ, dmp;
 	char	*drvname;
+	int	 len;
 
-	seq_printf(m, "%s-%s\n", "mptlinux", MPT_LINUX_VERSION_COMMON);
-	seq_printf(m, "  Fusion MPT base driver\n");
+	len = sprintf(buf, "%s-%s\n", "mptlinux", MPT_LINUX_VERSION_COMMON);
+	len += sprintf(buf+len, "  Fusion MPT base driver\n");
 
 	scsi = fc = sas = lan = ctl = targ = dmp = 0;
 	for (cb_idx = MPT_MAX_PROTOCOL_DRIVERS-1; cb_idx; cb_idx--) {
@@ -6701,97 +6655,98 @@ static int mpt_version_proc_show(struct seq_file *m, void *v)
 			}
 
 			if (drvname)
-				seq_printf(m, "  Fusion MPT %s driver\n", drvname);
+				len += sprintf(buf+len, "  Fusion MPT %s driver\n", drvname);
 		}
 	}
 
-	return 0;
+	MPT_PROC_READ_RETURN(buf,start,offset,request,eof,len);
 }
 
-static int mpt_version_proc_open(struct inode *inode, struct file *file)
+/*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
+/**
+ *	procmpt_iocinfo_read - Handle read request from /proc/mpt/iocN/info.
+ *	@buf: Pointer to area to write information
+ *	@start: Pointer to start pointer
+ *	@offset: Offset to start writing
+ *	@request: Amount of read data requested
+ *	@eof: Pointer to EOF integer
+ *	@data: Pointer
+ *
+ *	Returns number of characters written to process performing the read.
+ */
+static int
+procmpt_iocinfo_read(char *buf, char **start, off_t offset, int request, int *eof, void *data)
 {
-	return single_open(file, mpt_version_proc_show, NULL);
-}
-
-static const struct file_operations mpt_version_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= mpt_version_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
-static int mpt_iocinfo_proc_show(struct seq_file *m, void *v)
-{
-	MPT_ADAPTER	*ioc = m->private;
+	MPT_ADAPTER	*ioc = data;
+	int		 len;
 	char		 expVer[32];
 	int		 sz;
 	int		 p;
 
 	mpt_get_fw_exp_ver(expVer, ioc);
 
-	seq_printf(m, "%s:", ioc->name);
+	len = sprintf(buf, "%s:", ioc->name);
 	if (ioc->facts.Flags & MPI_IOCFACTS_FLAGS_FW_DOWNLOAD_BOOT)
-		seq_printf(m, "  (f/w download boot flag set)");
+		len += sprintf(buf+len, "  (f/w download boot flag set)");
 //	if (ioc->facts.IOCExceptions & MPI_IOCFACTS_EXCEPT_CONFIG_CHECKSUM_FAIL)
-//		seq_printf(m, "  CONFIG_CHECKSUM_FAIL!");
+//		len += sprintf(buf+len, "  CONFIG_CHECKSUM_FAIL!");
 
-	seq_printf(m, "\n  ProductID = 0x%04x (%s)\n",
+	len += sprintf(buf+len, "\n  ProductID = 0x%04x (%s)\n",
 			ioc->facts.ProductID,
 			ioc->prod_name);
-	seq_printf(m, "  FWVersion = 0x%08x%s", ioc->facts.FWVersion.Word, expVer);
+	len += sprintf(buf+len, "  FWVersion = 0x%08x%s", ioc->facts.FWVersion.Word, expVer);
 	if (ioc->facts.FWImageSize)
-		seq_printf(m, " (fw_size=%d)", ioc->facts.FWImageSize);
-	seq_printf(m, "\n  MsgVersion = 0x%04x\n", ioc->facts.MsgVersion);
-	seq_printf(m, "  FirstWhoInit = 0x%02x\n", ioc->FirstWhoInit);
-	seq_printf(m, "  EventState = 0x%02x\n", ioc->facts.EventState);
+		len += sprintf(buf+len, " (fw_size=%d)", ioc->facts.FWImageSize);
+	len += sprintf(buf+len, "\n  MsgVersion = 0x%04x\n", ioc->facts.MsgVersion);
+	len += sprintf(buf+len, "  FirstWhoInit = 0x%02x\n", ioc->FirstWhoInit);
+	len += sprintf(buf+len, "  EventState = 0x%02x\n", ioc->facts.EventState);
 
-	seq_printf(m, "  CurrentHostMfaHighAddr = 0x%08x\n",
+	len += sprintf(buf+len, "  CurrentHostMfaHighAddr = 0x%08x\n",
 			ioc->facts.CurrentHostMfaHighAddr);
-	seq_printf(m, "  CurrentSenseBufferHighAddr = 0x%08x\n",
+	len += sprintf(buf+len, "  CurrentSenseBufferHighAddr = 0x%08x\n",
 			ioc->facts.CurrentSenseBufferHighAddr);
 
-	seq_printf(m, "  MaxChainDepth = 0x%02x frames\n", ioc->facts.MaxChainDepth);
-	seq_printf(m, "  MinBlockSize = 0x%02x bytes\n", 4*ioc->facts.BlockSize);
+	len += sprintf(buf+len, "  MaxChainDepth = 0x%02x frames\n", ioc->facts.MaxChainDepth);
+	len += sprintf(buf+len, "  MinBlockSize = 0x%02x bytes\n", 4*ioc->facts.BlockSize);
 
-	seq_printf(m, "  RequestFrames @ 0x%p (Dma @ 0x%p)\n",
+	len += sprintf(buf+len, "  RequestFrames @ 0x%p (Dma @ 0x%p)\n",
 					(void *)ioc->req_frames, (void *)(ulong)ioc->req_frames_dma);
 	/*
 	 *  Rounding UP to nearest 4-kB boundary here...
 	 */
 	sz = (ioc->req_sz * ioc->req_depth) + 128;
 	sz = ((sz + 0x1000UL - 1UL) / 0x1000) * 0x1000;
-	seq_printf(m, "    {CurReqSz=%d} x {CurReqDepth=%d} = %d bytes ^= 0x%x\n",
+	len += sprintf(buf+len, "    {CurReqSz=%d} x {CurReqDepth=%d} = %d bytes ^= 0x%x\n",
 					ioc->req_sz, ioc->req_depth, ioc->req_sz*ioc->req_depth, sz);
-	seq_printf(m, "    {MaxReqSz=%d}   {MaxReqDepth=%d}\n",
+	len += sprintf(buf+len, "    {MaxReqSz=%d}   {MaxReqDepth=%d}\n",
 					4*ioc->facts.RequestFrameSize,
 					ioc->facts.GlobalCredits);
 
-	seq_printf(m, "  Frames   @ 0x%p (Dma @ 0x%p)\n",
+	len += sprintf(buf+len, "  Frames   @ 0x%p (Dma @ 0x%p)\n",
 					(void *)ioc->alloc, (void *)(ulong)ioc->alloc_dma);
 	sz = (ioc->reply_sz * ioc->reply_depth) + 128;
-	seq_printf(m, "    {CurRepSz=%d} x {CurRepDepth=%d} = %d bytes ^= 0x%x\n",
+	len += sprintf(buf+len, "    {CurRepSz=%d} x {CurRepDepth=%d} = %d bytes ^= 0x%x\n",
 					ioc->reply_sz, ioc->reply_depth, ioc->reply_sz*ioc->reply_depth, sz);
-	seq_printf(m, "    {MaxRepSz=%d}   {MaxRepDepth=%d}\n",
+	len += sprintf(buf+len, "    {MaxRepSz=%d}   {MaxRepDepth=%d}\n",
 					ioc->facts.CurReplyFrameSize,
 					ioc->facts.ReplyQueueDepth);
 
-	seq_printf(m, "  MaxDevices = %d\n",
+	len += sprintf(buf+len, "  MaxDevices = %d\n",
 			(ioc->facts.MaxDevices==0) ? 255 : ioc->facts.MaxDevices);
-	seq_printf(m, "  MaxBuses = %d\n", ioc->facts.MaxBuses);
+	len += sprintf(buf+len, "  MaxBuses = %d\n", ioc->facts.MaxBuses);
 
 	/* per-port info */
 	for (p=0; p < ioc->facts.NumberOfPorts; p++) {
-		seq_printf(m, "  PortNumber = %d (of %d)\n",
+		len += sprintf(buf+len, "  PortNumber = %d (of %d)\n",
 				p+1,
 				ioc->facts.NumberOfPorts);
 		if (ioc->bus_type == FC) {
 			if (ioc->pfacts[p].ProtocolFlags & MPI_PORTFACTS_PROTOCOL_LAN) {
 				u8 *a = (u8*)&ioc->lan_cnfg_page1.HardwareAddressLow;
-				seq_printf(m, "    LanAddr = %02X:%02X:%02X:%02X:%02X:%02X\n",
+				len += sprintf(buf+len, "    LanAddr = %02X:%02X:%02X:%02X:%02X:%02X\n",
 						a[5], a[4], a[3], a[2], a[1], a[0]);
 			}
-			seq_printf(m, "    WWN = %08X%08X:%08X%08X\n",
+			len += sprintf(buf+len, "    WWN = %08X%08X:%08X%08X\n",
 					ioc->fc_port_page0[p].WWNN.High,
 					ioc->fc_port_page0[p].WWNN.Low,
 					ioc->fc_port_page0[p].WWPN.High,
@@ -6799,21 +6754,9 @@ static int mpt_iocinfo_proc_show(struct seq_file *m, void *v)
 		}
 	}
 
-	return 0;
+	MPT_PROC_READ_RETURN(buf,start,offset,request,eof,len);
 }
 
-static int mpt_iocinfo_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, mpt_iocinfo_proc_show, PDE(inode)->data);
-}
-
-static const struct file_operations mpt_iocinfo_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= mpt_iocinfo_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
 #endif		/* CONFIG_PROC_FS } */
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
@@ -6879,39 +6822,6 @@ mpt_print_ioc_summary(MPT_ADAPTER *ioc, char *buffer, int *size, int len, int sh
 
 	*size = y;
 }
-
-static void seq_mpt_print_ioc_summary(MPT_ADAPTER *ioc, struct seq_file *m, int showlan)
-{
-	char expVer[32];
-
-	mpt_get_fw_exp_ver(expVer, ioc);
-
-	/*
-	 *  Shorter summary of attached ioc's...
-	 */
-	seq_printf(m, "%s: %s, %s%08xh%s, Ports=%d, MaxQ=%d",
-			ioc->name,
-			ioc->prod_name,
-			MPT_FW_REV_MAGIC_ID_STRING,	/* "FwRev=" or somesuch */
-			ioc->facts.FWVersion.Word,
-			expVer,
-			ioc->facts.NumberOfPorts,
-			ioc->req_depth);
-
-	if (showlan && (ioc->pfacts[0].ProtocolFlags & MPI_PORTFACTS_PROTOCOL_LAN)) {
-		u8 *a = (u8*)&ioc->lan_cnfg_page1.HardwareAddressLow;
-		seq_printf(m, ", LanAddr=%02X:%02X:%02X:%02X:%02X:%02X",
-			a[5], a[4], a[3], a[2], a[1], a[0]);
-	}
-
-	seq_printf(m, ", IRQ=%d", ioc->pci_irq);
-
-	if (!ioc->active)
-		seq_printf(m, " (disabled)");
-
-	seq_putc(m, '\n');
-}
-
 /**
  *	mpt_set_taskmgmt_in_progress_flag - set flags associated with task management
  *	@ioc: Pointer to MPT_ADAPTER structure
@@ -6993,171 +6903,6 @@ mpt_halt_firmware(MPT_ADAPTER *ioc)
 }
 EXPORT_SYMBOL(mpt_halt_firmware);
 
-/**
- *	mpt_SoftResetHandler - Issues a less expensive reset
- *	@ioc: Pointer to MPT_ADAPTER structure
- *	@sleepFlag: Indicates if sleep or schedule must be called.
- *
- *	Returns 0 for SUCCESS or -1 if FAILED.
- *
- *	Message Unit Reset - instructs the IOC to reset the Reply Post and
- *	Free FIFO's. All the Message Frames on Reply Free FIFO are discarded.
- *	All posted buffers are freed, and event notification is turned off.
- *	IOC doesn't reply to any outstanding request. This will transfer IOC
- *	to READY state.
- **/
-int
-mpt_SoftResetHandler(MPT_ADAPTER *ioc, int sleepFlag)
-{
-	int		 rc;
-	int		 ii;
-	u8		 cb_idx;
-	unsigned long	 flags;
-	u32		 ioc_state;
-	unsigned long	 time_count;
-
-	dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT "SoftResetHandler Entered!\n",
-		ioc->name));
-
-	ioc_state = mpt_GetIocState(ioc, 0) & MPI_IOC_STATE_MASK;
-
-	if (mpt_fwfault_debug)
-		mpt_halt_firmware(ioc);
-
-	if (ioc_state == MPI_IOC_STATE_FAULT ||
-	    ioc_state == MPI_IOC_STATE_RESET) {
-		dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT
-		    "skipping, either in FAULT or RESET state!\n", ioc->name));
-		return -1;
-	}
-
-	if (ioc->bus_type == FC) {
-		dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT
-		    "skipping, because the bus type is FC!\n", ioc->name));
-		return -1;
-	}
-
-	spin_lock_irqsave(&ioc->taskmgmt_lock, flags);
-	if (ioc->ioc_reset_in_progress) {
-		spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
-		return -1;
-	}
-	ioc->ioc_reset_in_progress = 1;
-	spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
-
-	rc = -1;
-
-	for (cb_idx = MPT_MAX_PROTOCOL_DRIVERS-1; cb_idx; cb_idx--) {
-		if (MptResetHandlers[cb_idx])
-			mpt_signal_reset(cb_idx, ioc, MPT_IOC_SETUP_RESET);
-	}
-
-	spin_lock_irqsave(&ioc->taskmgmt_lock, flags);
-	if (ioc->taskmgmt_in_progress) {
-		ioc->ioc_reset_in_progress = 0;
-		spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
-		return -1;
-	}
-	spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
-	/* Disable reply interrupts (also blocks FreeQ) */
-	CHIPREG_WRITE32(&ioc->chip->IntMask, 0xFFFFFFFF);
-	ioc->active = 0;
-	time_count = jiffies;
-
-	rc = SendIocReset(ioc, MPI_FUNCTION_IOC_MESSAGE_UNIT_RESET, sleepFlag);
-
-	for (cb_idx = MPT_MAX_PROTOCOL_DRIVERS-1; cb_idx; cb_idx--) {
-		if (MptResetHandlers[cb_idx])
-			mpt_signal_reset(cb_idx, ioc, MPT_IOC_PRE_RESET);
-	}
-
-	if (rc)
-		goto out;
-
-	ioc_state = mpt_GetIocState(ioc, 0) & MPI_IOC_STATE_MASK;
-	if (ioc_state != MPI_IOC_STATE_READY)
-		goto out;
-
-	for (ii = 0; ii < 5; ii++) {
-		/* Get IOC facts! Allow 5 retries */
-		rc = GetIocFacts(ioc, sleepFlag,
-			MPT_HOSTEVENT_IOC_RECOVER);
-		if (rc == 0)
-			break;
-		if (sleepFlag == CAN_SLEEP)
-			msleep(100);
-		else
-			mdelay(100);
-	}
-	if (ii == 5)
-		goto out;
-
-	rc = PrimeIocFifos(ioc);
-	if (rc != 0)
-		goto out;
-
-	rc = SendIocInit(ioc, sleepFlag);
-	if (rc != 0)
-		goto out;
-
-	rc = SendEventNotification(ioc, 1, sleepFlag);
-	if (rc != 0)
-		goto out;
-
-	if (ioc->hard_resets < -1)
-		ioc->hard_resets++;
-
-	/*
-	 * At this point, we know soft reset succeeded.
-	 */
-
-	ioc->active = 1;
-	CHIPREG_WRITE32(&ioc->chip->IntMask, MPI_HIM_DIM);
-
- out:
-	spin_lock_irqsave(&ioc->taskmgmt_lock, flags);
-	ioc->ioc_reset_in_progress = 0;
-	ioc->taskmgmt_quiesce_io = 0;
-	ioc->taskmgmt_in_progress = 0;
-	spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
-
-	if (ioc->active) {	/* otherwise, hard reset coming */
-		for (cb_idx = MPT_MAX_PROTOCOL_DRIVERS-1; cb_idx; cb_idx--) {
-			if (MptResetHandlers[cb_idx])
-				mpt_signal_reset(cb_idx, ioc,
-					MPT_IOC_POST_RESET);
-		}
-	}
-
-	dtmprintk(ioc, printk(MYIOC_s_DEBUG_FMT
-		"SoftResetHandler: completed (%d seconds): %s\n",
-		ioc->name, jiffies_to_msecs(jiffies - time_count)/1000,
-		((rc == 0) ? "SUCCESS" : "FAILED")));
-
-	return rc;
-}
-
-/**
- *	mpt_Soft_Hard_ResetHandler - Try less expensive reset
- *	@ioc: Pointer to MPT_ADAPTER structure
- *	@sleepFlag: Indicates if sleep or schedule must be called.
- *
- *	Returns 0 for SUCCESS or -1 if FAILED.
- *	Try for softreset first, only if it fails go for expensive
- *	HardReset.
- **/
-int
-mpt_Soft_Hard_ResetHandler(MPT_ADAPTER *ioc, int sleepFlag) {
-	int ret = -1;
-
-	ret = mpt_SoftResetHandler(ioc, sleepFlag);
-	if (ret == 0)
-		return ret;
-	ret = mpt_HardResetHandler(ioc, sleepFlag);
-	return ret;
-}
-EXPORT_SYMBOL(mpt_Soft_Hard_ResetHandler);
-
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
 /*
  *	Reset Handling
@@ -7201,18 +6946,7 @@ mpt_HardResetHandler(MPT_ADAPTER *ioc, int sleepFlag)
 	spin_lock_irqsave(&ioc->taskmgmt_lock, flags);
 	if (ioc->ioc_reset_in_progress) {
 		spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
-		ioc->wait_on_reset_completion = 1;
-		do {
-			ssleep(1);
-		} while (ioc->ioc_reset_in_progress == 1);
-		ioc->wait_on_reset_completion = 0;
-		return ioc->reset_status;
-	}
-	if (ioc->wait_on_reset_completion) {
-		spin_unlock_irqrestore(&ioc->taskmgmt_lock, flags);
-		rc = 0;
-		time_count = jiffies;
-		goto exit;
+		return 0;
 	}
 	ioc->ioc_reset_in_progress = 1;
 	if (ioc->alt_ioc)
@@ -7238,8 +6972,7 @@ mpt_HardResetHandler(MPT_ADAPTER *ioc, int sleepFlag)
 	rc = mpt_do_ioc_recovery(ioc, MPT_HOSTEVENT_IOC_RECOVER, sleepFlag);
 	if (rc != 0) {
 		printk(KERN_WARNING MYNAM
-		       ": WARNING - (%d) Cannot recover %s, doorbell=0x%08x\n",
-		       rc, ioc->name, mpt_GetIocState(ioc, 0));
+		    ": WARNING - (%d) Cannot recover %s\n", rc, ioc->name);
 	} else {
 		if (ioc->hard_resets < -1)
 			ioc->hard_resets++;
@@ -7249,7 +6982,6 @@ mpt_HardResetHandler(MPT_ADAPTER *ioc, int sleepFlag)
 	ioc->ioc_reset_in_progress = 0;
 	ioc->taskmgmt_quiesce_io = 0;
 	ioc->taskmgmt_in_progress = 0;
-	ioc->reset_status = rc;
 	if (ioc->alt_ioc) {
 		ioc->alt_ioc->ioc_reset_in_progress = 0;
 		ioc->alt_ioc->taskmgmt_quiesce_io = 0;
@@ -7265,7 +6997,7 @@ mpt_HardResetHandler(MPT_ADAPTER *ioc, int sleepFlag)
 					ioc->alt_ioc, MPT_IOC_POST_RESET);
 		}
 	}
-exit:
+
 	dtmprintk(ioc,
 	    printk(MYIOC_s_DEBUG_FMT
 		"HardResetHandler: completed (%d seconds): %s\n", ioc->name,
@@ -7501,12 +7233,7 @@ mpt_display_event_info(MPT_ADAPTER *ioc, EventNotificationReply_t *pEventReply)
 		case MPI_EVENT_SAS_PLS_LR_RATE_3_0:
 			snprintf(evStr, EVENT_DESCR_STR_SZ,
 			   "SAS PHY Link Status: Phy=%d:"
-			   " Rate 3.0 Gbps", PhyNumber);
-			break;
-		case MPI_EVENT_SAS_PLS_LR_RATE_6_0:
-			snprintf(evStr, EVENT_DESCR_STR_SZ,
-			   "SAS PHY Link Status: Phy=%d:"
-			   " Rate 6.0 Gbps", PhyNumber);
+			   " Rate 3.0 Gpbs",PhyNumber);
 			break;
 		default:
 			snprintf(evStr, EVENT_DESCR_STR_SZ,
@@ -7988,7 +7715,7 @@ mpt_spi_log_info(MPT_ADAPTER *ioc, u32 log_info)
 		    "Owner", 					/* 15h */
 		"Open Transmit DMA Abort",			/* 16h */
 		"IO Device Missing Delay Retry",		/* 17h */
-		"IO Cancelled Due to Receive Error",		/* 18h */
+		"IO Cancelled Due to Recieve Error",		/* 18h */
 		NULL,						/* 19h */
 		NULL,						/* 1Ah */
 		NULL,						/* 1Bh */
@@ -8065,7 +7792,7 @@ mpt_spi_log_info(MPT_ADAPTER *ioc, u32 log_info)
 		NULL,						/* 2Eh */
 		NULL,						/* 2Fh */
 		"Compatibility Error: IR Disabled",		/* 30h */
-		"Compatibility Error: Inquiry Command Failed",	/* 31h */
+		"Compatibility Error: Inquiry Comand Failed",	/* 31h */
 		"Compatibility Error: Device not Direct Access "
 		    "Device ",					/* 32h */
 		"Compatibility Error: Removable Device Found",	/* 33h */
@@ -8094,12 +7821,11 @@ mpt_spi_log_info(MPT_ADAPTER *ioc, u32 log_info)
  *	mpt_sas_log_info - Log information returned from SAS IOC.
  *	@ioc: Pointer to MPT_ADAPTER structure
  *	@log_info: U32 LogInfo reply word from the IOC
- *	@cb_idx: callback function's handle
  *
  *	Refer to lsi/mpi_log_sas.h.
  **/
 static void
-mpt_sas_log_info(MPT_ADAPTER *ioc, u32 log_info, u8 cb_idx)
+mpt_sas_log_info(MPT_ADAPTER *ioc, u32 log_info)
 {
 union loginfo_type {
 	u32	loginfo;
@@ -8141,7 +7867,7 @@ union loginfo_type {
 			code_desc = ir_code_str[sas_loginfo.dw.code];
 			if (sas_loginfo.dw.subcode >=
 			    ARRAY_SIZE(raid_sub_code_str))
-				break;
+			break;
 			if (sas_loginfo.dw.code == 0)
 				sub_code_desc =
 				    raid_sub_code_str[sas_loginfo.dw.subcode];
@@ -8153,22 +7879,21 @@ union loginfo_type {
 	if (sub_code_desc != NULL)
 		printk(MYIOC_s_INFO_FMT
 			"LogInfo(0x%08x): Originator={%s}, Code={%s},"
-			" SubCode={%s} cb_idx %s\n",
+			" SubCode={%s}\n",
 			ioc->name, log_info, originator_desc, code_desc,
-			sub_code_desc, MptCallbacksName[cb_idx]);
+			sub_code_desc);
 	else if (code_desc != NULL)
 		printk(MYIOC_s_INFO_FMT
 			"LogInfo(0x%08x): Originator={%s}, Code={%s},"
-			" SubCode(0x%04x) cb_idx %s\n",
+			" SubCode(0x%04x)\n",
 			ioc->name, log_info, originator_desc, code_desc,
-			sas_loginfo.dw.subcode, MptCallbacksName[cb_idx]);
+			sas_loginfo.dw.subcode);
 	else
 		printk(MYIOC_s_INFO_FMT
 			"LogInfo(0x%08x): Originator={%s}, Code=(0x%02x),"
-			" SubCode(0x%04x) cb_idx %s\n",
+			" SubCode(0x%04x)\n",
 			ioc->name, log_info, originator_desc,
-			sas_loginfo.dw.code, sas_loginfo.dw.subcode,
-			MptCallbacksName[cb_idx]);
+			sas_loginfo.dw.code, sas_loginfo.dw.subcode);
 }
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
@@ -8533,8 +8258,7 @@ fusion_init(void)
 	/*  Register ourselves (mptbase) in order to facilitate
 	 *  EventNotification handling.
 	 */
-	mpt_base_index = mpt_register(mptbase_reply, MPTBASE_DRIVER,
-	    "mptbase_reply");
+	mpt_base_index = mpt_register(mptbase_reply, MPTBASE_DRIVER);
 
 	/* Register for hard reset handling callbacks.
 	 */

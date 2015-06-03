@@ -22,18 +22,22 @@
    Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
 */
 
+
+
 #ifndef PWC_DEC1_H
 #define PWC_DEC1_H
 
-#include <linux/mutex.h>
-
-struct pwc_device;
+#include "pwc.h"
 
 struct pwc_dec1_private
 {
 	int version;
+
 };
 
-void pwc_dec1_init(struct pwc_device *pdev, const unsigned char *cmd);
+int  pwc_dec1_alloc(struct pwc_device *pwc);
+void pwc_dec1_init(int type, int release, void *buffer, void *private_data);
+void pwc_dec1_exit(void);
 
 #endif
+

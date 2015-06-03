@@ -6,11 +6,11 @@
  *  May be freely distributed as part of Linux.
  */
 
-#include <generated/compile.h>
+#include <linux/compile.h>
 #include <linux/module.h>
 #include <linux/uts.h>
 #include <linux/utsname.h>
-#include <generated/utsrelease.h>
+#include <linux/utsrelease.h>
 #include <linux/version.h>
 
 #ifndef CONFIG_KALLSYMS
@@ -33,7 +33,6 @@ struct uts_namespace init_uts_ns = {
 		.machine	= UTS_MACHINE,
 		.domainname	= UTS_DOMAINNAME,
 	},
-	.user_ns = &init_user_ns,
 };
 EXPORT_SYMBOL_GPL(init_uts_ns);
 

@@ -10,6 +10,7 @@
 #include <linux/sched.h>
 #include <asm/openprom.h>
 #include <asm/oplib.h>
+#include <asm/system.h>
 #include <linux/string.h>
 
 /* Non blocking get character from console input device, returns -1

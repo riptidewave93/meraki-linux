@@ -29,6 +29,7 @@
 
 
 #include <linux/module.h>
+#include <linux/version.h>
 #include <linux/init.h>
 #include <linux/usb.h>
 #include <linux/vmalloc.h>
@@ -41,7 +42,8 @@
 
 
 /* Version Information */
-#define DRIVER_VERSION "0.7.4"
+#define DRIVER_VERSION "v0.73"
+#define ZR364XX_VERSION_CODE KERNEL_VERSION(0, 7, 3)
 #define DRIVER_AUTHOR "Antoine Jacquet, http://royale.zerezo.com/"
 #define DRIVER_DESC "Zoran 364xx"
 
@@ -76,7 +78,6 @@
 #define METHOD0 0
 #define METHOD1 1
 #define METHOD2 2
-#define METHOD3 3
 
 
 /* Module parameters */
@@ -113,8 +114,7 @@ static struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x06d6, 0x003b), .driver_info = METHOD0 },
 	{USB_DEVICE(0x0a17, 0x004e), .driver_info = METHOD2 },
 	{USB_DEVICE(0x041e, 0x405d), .driver_info = METHOD2 },
-	{USB_DEVICE(0x08ca, 0x2102), .driver_info = METHOD3 },
-	{USB_DEVICE(0x06d6, 0x003d), .driver_info = METHOD0 },
+	{USB_DEVICE(0x08ca, 0x2102), .driver_info = METHOD2 },
 	{}			/* Terminating entry */
 };
 
@@ -301,7 +301,7 @@ static message m2[] = {
 };
 
 /* init table */
-static message *init[4] = { m0, m1, m2, m2 };
+static message *init[3] = { m0, m1, m2 };
 
 
 /* JPEG static data in header (Huffman table, etc) */
@@ -374,8 +374,8 @@ static int buffer_setup(struct videobuf_queue *vq, unsigned int *count,
 	if (*count == 0)
 		*count = ZR364XX_DEF_BUFS;
 
-	if (*size * *count > ZR364XX_DEF_BUFS * 1024 * 1024)
-		*count = (ZR364XX_DEF_BUFS * 1024 * 1024) / *size;
+	while (*size * (*count) > ZR364XX_DEF_BUFS * 1024 * 1024)
+		(*count)--;
 
 	return 0;
 }
@@ -570,7 +570,7 @@ static int zr364xx_got_frame(struct zr364xx_camera *cam, int jpgsize)
 	DBG("wakeup [buf/i] [%p/%d]\n", buf, buf->vb.i);
 unlock:
 	spin_unlock_irqrestore(&cam->slock, flags);
-	return rc;
+	return 0;
 }
 
 /* this function moves the usb stream read pipe data
@@ -742,6 +742,7 @@ static int zr364xx_vidioc_querycap(struct file *file, void *priv,
 	strlcpy(cap->card, cam->udev->product, sizeof(cap->card));
 	strlcpy(cap->bus_info, dev_name(&cam->udev->dev),
 		sizeof(cap->bus_info));
+	cap->version = ZR364XX_VERSION_CODE;
 	cap->capabilities = V4L2_CAP_VIDEO_CAPTURE |
 			    V4L2_CAP_READWRITE |
 			    V4L2_CAP_STREAMING;
@@ -965,22 +966,6 @@ static int zr364xx_vidioc_s_fmt_vid_cap(struct file *file, void *priv,
 	m0d1[0] = mode;
 	m1[2].value = 0xf000 + mode;
 	m2[1].value = 0xf000 + mode;
-
-	/* special case for METHOD3, the modes are different */
-	if (cam->method == METHOD3) {
-		switch (mode) {
-		case 1:
-			m2[1].value = 0xf000 + 4;
-			break;
-		case 2:
-			m2[1].value = 0xf000 + 0;
-			break;
-		default:
-			m2[1].value = 0xf000 + 1;
-			break;
-		}
-	}
-
 	header2[437] = cam->height / 256;
 	header2[438] = cam->height % 256;
 	header2[439] = cam->width / 256;
@@ -1301,7 +1286,7 @@ static int zr364xx_open(struct file *file)
 				    NULL, &cam->slock,
 				    cam->type,
 				    V4L2_FIELD_NONE,
-				    sizeof(struct zr364xx_buffer), cam, NULL);
+				    sizeof(struct zr364xx_buffer), cam);
 
 	/* Added some delay here, since opening/closing the camera quickly,
 	 * like Ekiga does during its startup, can crash the webcam
@@ -1469,6 +1454,7 @@ static struct video_device zr364xx_template = {
 	.fops = &zr364xx_fops,
 	.ioctl_ops = &zr364xx_ioctl_ops,
 	.release = video_device_release,
+	.minor = -1,
 };
 
 
@@ -1596,22 +1582,6 @@ static int zr364xx_probe(struct usb_interface *intf,
 	m0d1[0] = mode;
 	m1[2].value = 0xf000 + mode;
 	m2[1].value = 0xf000 + mode;
-
-	/* special case for METHOD3, the modes are different */
-	if (cam->method == METHOD3) {
-		switch (mode) {
-		case 1:
-			m2[1].value = 0xf000 + 4;
-			break;
-		case 2:
-			m2[1].value = 0xf000 + 0;
-			break;
-		default:
-			m2[1].value = 0xf000 + 1;
-			break;
-		}
-	}
-
 	header2[437] = cam->height / 256;
 	header2[438] = cam->height % 256;
 	header2[439] = cam->width / 256;
@@ -1638,9 +1608,6 @@ static int zr364xx_probe(struct usb_interface *intf,
 
 	if (!cam->read_endpoint) {
 		dev_err(&intf->dev, "Could not find bulk-in endpoint\n");
-		video_device_release(cam->vdev);
-		kfree(cam);
-		cam = NULL;
 		return -ENOMEM;
 	}
 
@@ -1667,8 +1634,8 @@ static int zr364xx_probe(struct usb_interface *intf,
 
 	spin_lock_init(&cam->slock);
 
-	dev_info(&udev->dev, DRIVER_DESC " controlling device %s\n",
-		 video_device_node_name(cam->vdev));
+	dev_info(&udev->dev, DRIVER_DESC " controlling video device %d\n",
+		 cam->vdev->num);
 	return 0;
 }
 
@@ -1695,9 +1662,29 @@ static struct usb_driver zr364xx_driver = {
 	.id_table = device_table
 };
 
-module_usb_driver(zr364xx_driver);
+
+static int __init zr364xx_init(void)
+{
+	int retval;
+	retval = usb_register(&zr364xx_driver);
+	if (retval)
+		printk(KERN_ERR KBUILD_MODNAME ": usb_register failed!\n");
+	else
+		printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_DESC "\n");
+	return retval;
+}
+
+
+static void __exit zr364xx_exit(void)
+{
+	printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_DESC " module unloaded\n");
+	usb_deregister(&zr364xx_driver);
+}
+
+
+module_init(zr364xx_init);
+module_exit(zr364xx_exit);
 
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
-MODULE_VERSION(DRIVER_VERSION);

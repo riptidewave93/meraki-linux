@@ -109,14 +109,13 @@ static DEFINE_SPINLOCK(ali14xx_lock);
  * This function computes timing parameters
  * and sets controller registers accordingly.
  */
-static void ali14xx_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void ali14xx_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
 	int driveNum;
 	int time1, time2;
 	u8 param1, param2, param3, param4;
 	unsigned long flags;
 	int bus_speed = ide_vlb_clk ? ide_vlb_clk : 50;
-	const u8 pio = drive->pio_mode - XFER_PIO_0;
 	struct ide_timing *t = ide_timing_find_mode(XFER_PIO_0 + pio);
 
 	/* calculate timing, according to PIO mode */
@@ -221,7 +220,7 @@ static int __init ali14xx_probe(void)
 	return ide_legacy_device_add(&ali14xx_port_info, 0);
 }
 
-static bool probe_ali14xx;
+static int probe_ali14xx;
 
 module_param_named(probe, probe_ali14xx, bool, 0);
 MODULE_PARM_DESC(probe, "probe for ALI M14xx chipsets");

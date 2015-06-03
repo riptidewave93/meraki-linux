@@ -77,6 +77,7 @@ struct atmel_runtime_data {
 	size_t period_size;
 
 	dma_addr_t period_ptr;		/* physical address of next period */
+	int periods;			/* period index of period_ptr */
 
 	/* PDC register save */
 	u32 pdc_xpr_save;
@@ -179,7 +180,7 @@ static int atmel_pcm_hw_params(struct snd_pcm_substream *substream,
 	snd_pcm_set_runtime_buffer(substream, &substream->dma_buffer);
 	runtime->dma_bytes = params_buffer_bytes(params);
 
-	prtd->params = snd_soc_dai_get_dma_data(rtd->cpu_dai, substream);
+	prtd->params = rtd->dai->cpu_dai->dma_data;
 	prtd->params->dma_intr_handler = atmel_pcm_dma_irq;
 
 	prtd->dma_buffer = runtime->dma_addr;
@@ -362,28 +363,27 @@ static struct snd_pcm_ops atmel_pcm_ops = {
 /*--------------------------------------------------------------------------*\
  * ASoC platform driver
 \*--------------------------------------------------------------------------*/
-static u64 atmel_pcm_dmamask = DMA_BIT_MASK(32);
+static u64 atmel_pcm_dmamask = 0xffffffff;
 
-static int atmel_pcm_new(struct snd_soc_pcm_runtime *rtd)
+static int atmel_pcm_new(struct snd_card *card,
+	struct snd_soc_dai *dai, struct snd_pcm *pcm)
 {
-	struct snd_card *card = rtd->card->snd_card;
-	struct snd_pcm *pcm = rtd->pcm;
 	int ret = 0;
 
 	if (!card->dev->dma_mask)
 		card->dev->dma_mask = &atmel_pcm_dmamask;
 	if (!card->dev->coherent_dma_mask)
-		card->dev->coherent_dma_mask = DMA_BIT_MASK(32);
+		card->dev->coherent_dma_mask = 0xffffffff;
 
-	if (pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream) {
+	if (dai->playback.channels_min) {
 		ret = atmel_pcm_preallocate_dma_buffer(pcm,
 			SNDRV_PCM_STREAM_PLAYBACK);
 		if (ret)
 			goto out;
 	}
 
-	if (pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream) {
-		pr_debug("atmel-pcm:"
+	if (dai->capture.channels_min) {
+		pr_debug("at32-pcm:"
 				"Allocating PCM capture DMA buffer\n");
 		ret = atmel_pcm_preallocate_dma_buffer(pcm,
 			SNDRV_PCM_STREAM_CAPTURE);
@@ -465,36 +465,27 @@ static int atmel_pcm_resume(struct snd_soc_dai *dai)
 #define atmel_pcm_resume	NULL
 #endif
 
-static struct snd_soc_platform_driver atmel_soc_platform = {
-	.ops		= &atmel_pcm_ops,
+struct snd_soc_platform atmel_soc_platform = {
+	.name		= "atmel-audio",
+	.pcm_ops 	= &atmel_pcm_ops,
 	.pcm_new	= atmel_pcm_new,
 	.pcm_free	= atmel_pcm_free_dma_buffers,
 	.suspend	= atmel_pcm_suspend,
 	.resume		= atmel_pcm_resume,
 };
+EXPORT_SYMBOL_GPL(atmel_soc_platform);
 
-static int __devinit atmel_soc_platform_probe(struct platform_device *pdev)
+static int __init atmel_pcm_modinit(void)
 {
-	return snd_soc_register_platform(&pdev->dev, &atmel_soc_platform);
+	return snd_soc_register_platform(&atmel_soc_platform);
 }
+module_init(atmel_pcm_modinit);
 
-static int __devexit atmel_soc_platform_remove(struct platform_device *pdev)
+static void __exit atmel_pcm_modexit(void)
 {
-	snd_soc_unregister_platform(&pdev->dev);
-	return 0;
+	snd_soc_unregister_platform(&atmel_soc_platform);
 }
-
-static struct platform_driver atmel_pcm_driver = {
-	.driver = {
-			.name = "atmel-pcm-audio",
-			.owner = THIS_MODULE,
-	},
-
-	.probe = atmel_soc_platform_probe,
-	.remove = __devexit_p(atmel_soc_platform_remove),
-};
-
-module_platform_driver(atmel_pcm_driver);
+module_exit(atmel_pcm_modexit);
 
 MODULE_AUTHOR("Sedji Gaouaou <sedji.gaouaou@atmel.com>");
 MODULE_DESCRIPTION("Atmel PCM module");

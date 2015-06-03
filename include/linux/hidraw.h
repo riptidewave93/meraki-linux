@@ -35,9 +35,6 @@ struct hidraw_devinfo {
 #define HIDIOCGRAWINFO		_IOR('H', 0x03, struct hidraw_devinfo)
 #define HIDIOCGRAWNAME(len)     _IOC(_IOC_READ, 'H', 0x04, len)
 #define HIDIOCGRAWPHYS(len)     _IOC(_IOC_READ, 'H', 0x05, len)
-/* The first byte of SFEATURE and GFEATURE is the report number */
-#define HIDIOCSFEATURE(len)    _IOC(_IOC_WRITE|_IOC_READ, 'H', 0x06, len)
-#define HIDIOCGFEATURE(len)    _IOC(_IOC_WRITE|_IOC_READ, 'H', 0x07, len)
 
 #define HIDRAW_FIRST_MINOR 0
 #define HIDRAW_MAX_DEVICES 64
@@ -76,13 +73,13 @@ struct hidraw_list {
 #ifdef CONFIG_HIDRAW
 int hidraw_init(void);
 void hidraw_exit(void);
-int hidraw_report_event(struct hid_device *, u8 *, int);
+void hidraw_report_event(struct hid_device *, u8 *, int);
 int hidraw_connect(struct hid_device *);
 void hidraw_disconnect(struct hid_device *);
 #else
 static inline int hidraw_init(void) { return 0; }
 static inline void hidraw_exit(void) { }
-static inline int hidraw_report_event(struct hid_device *hid, u8 *data, int len) { return 0; }
+static inline void hidraw_report_event(struct hid_device *hid, u8 *data, int len) { }
 static inline int hidraw_connect(struct hid_device *hid) { return -1; }
 static inline void hidraw_disconnect(struct hid_device *hid) { }
 #endif

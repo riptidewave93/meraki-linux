@@ -58,9 +58,10 @@ static struct node *read_fstree(const char *dirname)
 					"WARNING: Cannot open %s: %s\n",
 					tmpnam, strerror(errno));
 			} else {
-				prop = build_property(xstrdup(de->d_name),
+				prop = build_property(strdup(de->d_name),
 						      data_copy_file(pfile,
-								     st.st_size));
+								     st.st_size),
+						      NULL);
 				add_property(tree, prop);
 				fclose(pfile);
 			}
@@ -68,14 +69,14 @@ static struct node *read_fstree(const char *dirname)
 			struct node *newchild;
 
 			newchild = read_fstree(tmpnam);
-			newchild = name_node(newchild, xstrdup(de->d_name));
+			newchild = name_node(newchild, strdup(de->d_name),
+					     NULL);
 			add_child(tree, newchild);
 		}
 
 		free(tmpnam);
 	}
 
-	closedir(d);
 	return tree;
 }
 
@@ -84,8 +85,8 @@ struct boot_info *dt_from_fs(const char *dirname)
 	struct node *tree;
 
 	tree = read_fstree(dirname);
-	tree = name_node(tree, "");
+	tree = name_node(tree, "", NULL);
 
-	return build_boot_info(NULL, tree, guess_boot_cpuid(tree));
+	return build_boot_info(NULL, tree, 0);
 }
 

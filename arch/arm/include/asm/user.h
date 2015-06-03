@@ -71,7 +71,7 @@ struct user{
 				/* the registers. */
   unsigned long magic;		/* To uniquely identify a core file */
   char u_comm[32];		/* User command that was responsible */
-  int u_debugreg[8];		/* No longer used */
+  int u_debugreg[8];
   struct user_fp u_fp;		/* FP state */
   struct user_fp_struct * u_fp0;/* Used by gdb to help find the values for */
   				/* the FP registers. */
@@ -83,21 +83,11 @@ struct user{
 
 /*
  * User specific VFP registers. If only VFPv2 is present, registers 16 to 31
- * are ignored by the ptrace system call and the signal handler.
+ * are ignored by the ptrace system call.
  */
 struct user_vfp {
 	unsigned long long fpregs[32];
 	unsigned long fpscr;
-};
-
-/*
- * VFP exception registers exposed to user space during signal delivery.
- * Fields not relavant to the current VFP architecture are ignored.
- */
-struct user_vfp_exc {
-	unsigned long	fpexc;
-	unsigned long	fpinst;
-	unsigned long	fpinst2;
 };
 
 #endif /* _ARM_USER_H */

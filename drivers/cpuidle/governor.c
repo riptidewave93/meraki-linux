@@ -21,7 +21,7 @@ struct cpuidle_governor *cpuidle_curr_governor;
  * __cpuidle_find_governor - finds a governor of the specified name
  * @str: the name
  *
- * Must be called with cpuidle_lock acquired.
+ * Must be called with cpuidle_lock aquired.
  */
 static struct cpuidle_governor * __cpuidle_find_governor(const char *str)
 {
@@ -39,7 +39,7 @@ static struct cpuidle_governor * __cpuidle_find_governor(const char *str)
  * @gov: the new target governor
  *
  * NOTE: "gov" can be NULL to specify disabled
- * Must be called with cpuidle_lock acquired.
+ * Must be called with cpuidle_lock aquired.
  */
 int cpuidle_switch_governor(struct cpuidle_governor *gov)
 {
@@ -80,9 +80,6 @@ int cpuidle_register_governor(struct cpuidle_governor *gov)
 
 	if (!gov || !gov->select)
 		return -EINVAL;
-
-	if (cpuidle_disabled())
-		return -ENODEV;
 
 	mutex_lock(&cpuidle_lock);
 	if (__cpuidle_find_governor(gov->name) == NULL) {

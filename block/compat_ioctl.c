@@ -6,8 +6,8 @@
 #include <linux/elevator.h>
 #include <linux/fd.h>
 #include <linux/hdreg.h>
-#include <linux/slab.h>
 #include <linux/syscalls.h>
+#include <linux/smp_lock.h>
 #include <linux/types.h>
 #include <linux/uaccess.h>
 
@@ -208,6 +208,19 @@ static int compat_blkpg_ioctl(struct block_device *bdev, fmode_t mode,
 #define BLKBSZSET_32		_IOW(0x12, 113, int)
 #define BLKGETSIZE64_32		_IOR(0x12, 114, int)
 
+struct compat_floppy_struct {
+	compat_uint_t	size;
+	compat_uint_t	sect;
+	compat_uint_t	head;
+	compat_uint_t	track;
+	compat_uint_t	stretch;
+	unsigned char	gap;
+	unsigned char	rate;
+	unsigned char	spec1;
+	unsigned char	fmt_gap;
+	const compat_caddr_t name;
+};
+
 struct compat_floppy_drive_params {
 	char		cmos;
 	compat_ulong_t	max_dtr;
@@ -275,6 +288,7 @@ struct compat_floppy_write_errors {
 
 #define FDSETPRM32 _IOW(2, 0x42, struct compat_floppy_struct)
 #define FDDEFPRM32 _IOW(2, 0x43, struct compat_floppy_struct)
+#define FDGETPRM32 _IOR(2, 0x04, struct compat_floppy_struct)
 #define FDSETDRVPRM32 _IOW(2, 0x90, struct compat_floppy_drive_params)
 #define FDGETDRVPRM32 _IOR(2, 0x11, struct compat_floppy_drive_params)
 #define FDGETDRVSTAT32 _IOR(2, 0x12, struct compat_floppy_drive_struct)
@@ -520,6 +534,56 @@ out:
 	return err;
 }
 
+struct compat_blk_user_trace_setup {
+	char name[32];
+	u16 act_mask;
+	u32 buf_size;
+	u32 buf_nr;
+	compat_u64 start_lba;
+	compat_u64 end_lba;
+	u32 pid;
+};
+#define BLKTRACESETUP32 _IOWR(0x12, 115, struct compat_blk_user_trace_setup)
+
+static int compat_blk_trace_setup(struct block_device *bdev, char __user *arg)
+{
+	struct blk_user_trace_setup buts;
+	struct compat_blk_user_trace_setup cbuts;
+	struct request_queue *q;
+	char b[BDEVNAME_SIZE];
+	int ret;
+
+	q = bdev_get_queue(bdev);
+	if (!q)
+		return -ENXIO;
+
+	if (copy_from_user(&cbuts, arg, sizeof(cbuts)))
+		return -EFAULT;
+
+	bdevname(bdev, b);
+
+	buts = (struct blk_user_trace_setup) {
+		.act_mask = cbuts.act_mask,
+		.buf_size = cbuts.buf_size,
+		.buf_nr = cbuts.buf_nr,
+		.start_lba = cbuts.start_lba,
+		.end_lba = cbuts.end_lba,
+		.pid = cbuts.pid,
+	};
+	memcpy(&buts.name, &cbuts.name, 32);
+
+	mutex_lock(&bdev->bd_mutex);
+	ret = do_blk_trace_setup(q, b, bdev->bd_dev, bdev, &buts);
+	mutex_unlock(&bdev->bd_mutex);
+	if (ret)
+		return ret;
+
+	if (copy_to_user(arg, &buts.name, 32))
+		return -EFAULT;
+
+	return 0;
+}
+
 static int compat_blkdev_driver_ioctl(struct block_device *bdev, fmode_t mode,
 			unsigned cmd, unsigned long arg)
 {
@@ -683,12 +747,9 @@ long compat_blkdev_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 		return compat_put_uint(arg, bdev_io_opt(bdev));
 	case BLKALIGNOFF:
 		return compat_put_int(arg, bdev_alignment_offset(bdev));
-	case BLKDISCARDZEROES:
-		return compat_put_uint(arg, bdev_discard_zeroes_data(bdev));
 	case BLKFLSBUF:
 	case BLKROSET:
 	case BLKDISCARD:
-	case BLKSECDISCARD:
 	/*
 	 * the ones below are implemented in blkdev_locked_ioctl,
 	 * but we call blkdev_ioctl, which gets the lock for us
@@ -719,9 +780,6 @@ long compat_blkdev_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 	case BLKSECTGET:
 		return compat_put_ushort(arg,
 					 queue_max_sectors(bdev_get_queue(bdev)));
-	case BLKROTATIONAL:
-		return compat_put_ushort(arg,
-					 !blk_queue_nonrot(bdev_get_queue(bdev)));
 	case BLKRASET: /* compatible, but no compat_ptr (!) */
 	case BLKFRASET:
 		if (!capable(CAP_SYS_ADMIN))
@@ -732,19 +790,25 @@ long compat_blkdev_ioctl(struct file *file, unsigned cmd, unsigned long arg)
 		bdi->ra_pages = (arg * 512) / PAGE_CACHE_SIZE;
 		return 0;
 	case BLKGETSIZE:
-		size = i_size_read(bdev->bd_inode);
+		size = bdev->bd_inode->i_size;
 		if ((size >> 9) > ~0UL)
 			return -EFBIG;
 		return compat_put_ulong(arg, size >> 9);
 
 	case BLKGETSIZE64_32:
-		return compat_put_u64(arg, i_size_read(bdev->bd_inode));
+		return compat_put_u64(arg, bdev->bd_inode->i_size);
 
 	case BLKTRACESETUP32:
+		lock_kernel();
+		ret = compat_blk_trace_setup(bdev, compat_ptr(arg));
+		unlock_kernel();
+		return ret;
 	case BLKTRACESTART: /* compatible */
 	case BLKTRACESTOP:  /* compatible */
 	case BLKTRACETEARDOWN: /* compatible */
+		lock_kernel();
 		ret = blk_trace_ioctl(bdev, cmd, compat_ptr(arg));
+		unlock_kernel();
 		return ret;
 	default:
 		if (disk->fops->compat_ioctl)

@@ -16,7 +16,6 @@
  *	current measurement list and IMA statistics
  */
 #include <linux/fcntl.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/seq_file.h>
 #include <linux/rculist.h>
@@ -45,8 +44,7 @@ static ssize_t ima_show_htable_violations(struct file *filp,
 }
 
 static const struct file_operations ima_htable_violations_ops = {
-	.read = ima_show_htable_violations,
-	.llseek = generic_file_llseek,
+	.read = ima_show_htable_violations
 };
 
 static ssize_t ima_show_measurements_count(struct file *filp,
@@ -58,8 +56,7 @@ static ssize_t ima_show_measurements_count(struct file *filp,
 }
 
 static const struct file_operations ima_measurements_count_ops = {
-	.read = ima_show_measurements_count,
-	.llseek = generic_file_llseek,
+	.read = ima_show_measurements_count
 };
 
 /* returns pointer to hlist_node */
@@ -246,34 +243,32 @@ static const struct file_operations ima_ascii_measurements_ops = {
 static ssize_t ima_write_policy(struct file *file, const char __user *buf,
 				size_t datalen, loff_t *ppos)
 {
-	char *data = NULL;
-	ssize_t result;
+	char *data;
+	int rc;
 
 	if (datalen >= PAGE_SIZE)
-		datalen = PAGE_SIZE - 1;
-
-	/* No partial writes. */
-	result = -EINVAL;
-	if (*ppos != 0)
-		goto out;
-
-	result = -ENOMEM;
+		return -ENOMEM;
+	if (*ppos != 0) {
+		/* No partial writes. */
+		return -EINVAL;
+	}
 	data = kmalloc(datalen + 1, GFP_KERNEL);
 	if (!data)
-		goto out;
+		return -ENOMEM;
 
+	if (copy_from_user(data, buf, datalen)) {
+		kfree(data);
+		return -EFAULT;
+	}
 	*(data + datalen) = '\0';
-
-	result = -EFAULT;
-	if (copy_from_user(data, buf, datalen))
-		goto out;
-
-	result = ima_parse_add_rule(data);
-out:
-	if (result < 0)
+	rc = ima_parse_add_rule(data);
+	if (rc < 0) {
+		datalen = -EINVAL;
 		valid_policy = 0;
+	}
+
 	kfree(data);
-	return result;
+	return datalen;
 }
 
 static struct dentry *ima_dir;
@@ -287,7 +282,7 @@ static atomic_t policy_opencount = ATOMIC_INIT(1);
 /*
  * ima_open_policy: sequentialize access to the policy file
  */
-static int ima_open_policy(struct inode * inode, struct file * filp)
+int ima_open_policy(struct inode * inode, struct file * filp)
 {
 	/* No point in being allowed to open it if you aren't going to write */
 	if (!(filp->f_flags & O_WRONLY))
@@ -321,8 +316,7 @@ static int ima_release_policy(struct inode *inode, struct file *file)
 static const struct file_operations ima_measure_policy_ops = {
 	.open = ima_open_policy,
 	.write = ima_write_policy,
-	.release = ima_release_policy,
-	.llseek = generic_file_llseek,
+	.release = ima_release_policy
 };
 
 int __init ima_fs_init(void)

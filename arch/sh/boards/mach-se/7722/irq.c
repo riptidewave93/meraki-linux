@@ -16,38 +16,40 @@
 #include <asm/io.h>
 #include <mach-se/mach/se7722.h>
 
-unsigned int se7722_fpga_irq[SE7722_FPGA_IRQ_NR] = { 0, };
-
-static void disable_se7722_irq(struct irq_data *data)
+static void disable_se7722_irq(unsigned int irq)
 {
-	unsigned int bit = (unsigned int)irq_data_get_irq_chip_data(data);
-	__raw_writew(__raw_readw(IRQ01_MASK) | 1 << bit, IRQ01_MASK);
+	unsigned int bit = irq - SE7722_FPGA_IRQ_BASE;
+	ctrl_outw(ctrl_inw(IRQ01_MASK) | 1 << bit, IRQ01_MASK);
 }
 
-static void enable_se7722_irq(struct irq_data *data)
+static void enable_se7722_irq(unsigned int irq)
 {
-	unsigned int bit = (unsigned int)irq_data_get_irq_chip_data(data);
-	__raw_writew(__raw_readw(IRQ01_MASK) & ~(1 << bit), IRQ01_MASK);
+	unsigned int bit = irq - SE7722_FPGA_IRQ_BASE;
+	ctrl_outw(ctrl_inw(IRQ01_MASK) & ~(1 << bit), IRQ01_MASK);
 }
 
 static struct irq_chip se7722_irq_chip __read_mostly = {
-	.name		= "SE7722-FPGA",
-	.irq_mask	= disable_se7722_irq,
-	.irq_unmask	= enable_se7722_irq,
+	.name           = "SE7722-FPGA",
+	.mask           = disable_se7722_irq,
+	.unmask         = enable_se7722_irq,
+	.mask_ack       = disable_se7722_irq,
 };
 
 static void se7722_irq_demux(unsigned int irq, struct irq_desc *desc)
 {
-	unsigned short intv = __raw_readw(IRQ01_STS);
-	unsigned int ext_irq = 0;
+	unsigned short intv = ctrl_inw(IRQ01_STS);
+	struct irq_desc *ext_desc;
+	unsigned int ext_irq = SE7722_FPGA_IRQ_BASE;
 
 	intv &= (1 << SE7722_FPGA_IRQ_NR) - 1;
 
-	for (; intv; intv >>= 1, ext_irq++) {
-		if (!(intv & 1))
-			continue;
-
-		generic_handle_irq(se7722_fpga_irq[ext_irq]);
+	while (intv) {
+		if (intv & 1) {
+			ext_desc = irq_desc + ext_irq;
+			handle_level_irq(ext_irq, ext_desc);
+		}
+		intv >>= 1;
+		ext_irq++;
 	}
 }
 
@@ -56,28 +58,19 @@ static void se7722_irq_demux(unsigned int irq, struct irq_desc *desc)
  */
 void __init init_se7722_IRQ(void)
 {
-	int i, irq;
+	int i;
 
-	__raw_writew(0, IRQ01_MASK);       /* disable all irqs */
-	__raw_writew(0x2000, 0xb03fffec);  /* mrshpc irq enable */
+	ctrl_outw(0, IRQ01_MASK);       /* disable all irqs */
+	ctrl_outw(0x2000, 0xb03fffec);  /* mrshpc irq enable */
 
-	for (i = 0; i < SE7722_FPGA_IRQ_NR; i++) {
-		irq = create_irq();
-		if (irq < 0)
-			return;
-		se7722_fpga_irq[i] = irq;
-
-		irq_set_chip_and_handler_name(se7722_fpga_irq[i],
+	for (i = 0; i < SE7722_FPGA_IRQ_NR; i++)
+		set_irq_chip_and_handler_name(SE7722_FPGA_IRQ_BASE + i,
 					      &se7722_irq_chip,
-					      handle_level_irq,
-					      "level");
+					      handle_level_irq, "level");
 
-		irq_set_chip_data(se7722_fpga_irq[i], (void *)i);
-	}
+	set_irq_chained_handler(IRQ0_IRQ, se7722_irq_demux);
+	set_irq_type(IRQ0_IRQ, IRQ_TYPE_LEVEL_LOW);
 
-	irq_set_chained_handler(IRQ0_IRQ, se7722_irq_demux);
-	irq_set_irq_type(IRQ0_IRQ, IRQ_TYPE_LEVEL_LOW);
-
-	irq_set_chained_handler(IRQ1_IRQ, se7722_irq_demux);
-	irq_set_irq_type(IRQ1_IRQ, IRQ_TYPE_LEVEL_LOW);
+	set_irq_chained_handler(IRQ1_IRQ, se7722_irq_demux);
+	set_irq_type(IRQ1_IRQ, IRQ_TYPE_LEVEL_LOW);
 }

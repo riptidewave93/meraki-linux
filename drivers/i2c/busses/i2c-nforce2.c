@@ -56,8 +56,7 @@
 #include <linux/delay.h>
 #include <linux/dmi.h>
 #include <linux/acpi.h>
-#include <linux/slab.h>
-#include <linux/io.h>
+#include <asm/io.h>
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR ("Hans-Frieder Vogt <hfvogt@gmx.net>");
@@ -309,7 +308,7 @@ static struct i2c_algorithm smbus_algorithm = {
 };
 
 
-static DEFINE_PCI_DEVICE_TABLE(nforce2_ids) = {
+static struct pci_device_id nforce2_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_NVIDIA, PCI_DEVICE_ID_NVIDIA_NFORCE2_SMBUS) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_NVIDIA, PCI_DEVICE_ID_NVIDIA_NFORCE2S_SMBUS) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_NVIDIA, PCI_DEVICE_ID_NVIDIA_NFORCE3_SMBUS) },
@@ -404,9 +403,10 @@ static int __devinit nforce2_probe(struct pci_dev *dev, const struct pci_device_
 
 	/* SMBus adapter 1 */
 	res1 = nforce2_probe_smb(dev, 4, NFORCE_PCI_SMB1, &smbuses[0], "SMB1");
-	if (res1 < 0)
+	if (res1 < 0) {
+		dev_err(&dev->dev, "Error probing SMB1.\n");
 		smbuses[0].base = 0;	/* to have a check value */
-
+	}
 	/* SMBus adapter 2 */
 	if (dmi_check_system(nforce2_dmi_blacklist2)) {
 		dev_err(&dev->dev, "Disabling SMB2 for safety reasons.\n");
@@ -415,10 +415,11 @@ static int __devinit nforce2_probe(struct pci_dev *dev, const struct pci_device_
 	} else {
 		res2 = nforce2_probe_smb(dev, 5, NFORCE_PCI_SMB2, &smbuses[1],
 					 "SMB2");
-		if (res2 < 0)
+		if (res2 < 0) {
+			dev_err(&dev->dev, "Error probing SMB2.\n");
 			smbuses[1].base = 0;	/* to have a check value */
+		}
 	}
-
 	if ((res1 < 0) && (res2 < 0)) {
 		/* we did not find even one of the SMBuses, so we give up */
 		kfree(smbuses);
@@ -432,7 +433,7 @@ static int __devinit nforce2_probe(struct pci_dev *dev, const struct pci_device_
 
 static void __devexit nforce2_remove(struct pci_dev *dev)
 {
-	struct nforce2_smbus *smbuses = pci_get_drvdata(dev);
+	struct nforce2_smbus *smbuses = (void*) pci_get_drvdata(dev);
 
 	nforce2_set_reference(NULL);
 	if (smbuses[0].base) {

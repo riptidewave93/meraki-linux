@@ -10,7 +10,6 @@
  *  (C) 1991  Linus Torvalds - minix filesystem
  */
 #include <linux/sched.h>
-#include <linux/gfp.h>
 #include "affs.h"
 
 extern const struct inode_operations affs_symlink_inode_operations;
@@ -54,7 +53,7 @@ struct inode *affs_iget(struct super_block *sb, unsigned long ino)
 	prot = be32_to_cpu(tail->protect);
 
 	inode->i_size = 0;
-	set_nlink(inode, 1);
+	inode->i_nlink = 1;
 	inode->i_mode = 0;
 	AFFS_I(inode)->i_extcnt = 1;
 	AFFS_I(inode)->i_ext_last = ~1;
@@ -137,7 +136,7 @@ struct inode *affs_iget(struct super_block *sb, unsigned long ino)
 					       sbi->s_hashsize + 1;
 		}
 		if (tail->link_chain)
-			set_nlink(inode, 2);
+			inode->i_nlink = 2;
 		inode->i_mapping->a_ops = (sbi->s_flags & SF_OFS) ? &affs_aops_ofs : &affs_aops;
 		inode->i_op = &affs_file_inode_operations;
 		inode->i_fop = &affs_file_operations;
@@ -167,7 +166,7 @@ bad_inode:
 }
 
 int
-affs_write_inode(struct inode *inode, struct writeback_control *wbc)
+affs_write_inode(struct inode *inode, int unused)
 {
 	struct super_block	*sb = inode->i_sb;
 	struct buffer_head	*bh;
@@ -235,36 +234,31 @@ affs_notify_change(struct dentry *dentry, struct iattr *attr)
 		goto out;
 	}
 
-	if ((attr->ia_valid & ATTR_SIZE) &&
-	    attr->ia_size != i_size_read(inode)) {
-		error = vmtruncate(inode, attr->ia_size);
-		if (error)
-			return error;
-	}
-
-	setattr_copy(inode, attr);
-	mark_inode_dirty(inode);
-
-	if (attr->ia_valid & ATTR_MODE)
+	error = inode_setattr(inode, attr);
+	if (!error && (attr->ia_valid & ATTR_MODE))
 		mode_to_prot(inode);
 out:
 	return error;
 }
 
 void
-affs_evict_inode(struct inode *inode)
+affs_delete_inode(struct inode *inode)
+{
+	pr_debug("AFFS: delete_inode(ino=%lu, nlink=%u)\n", inode->i_ino, inode->i_nlink);
+	truncate_inode_pages(&inode->i_data, 0);
+	inode->i_size = 0;
+	affs_truncate(inode);
+	clear_inode(inode);
+	affs_free_block(inode->i_sb, inode->i_ino);
+}
+
+void
+affs_clear_inode(struct inode *inode)
 {
 	unsigned long cache_page;
-	pr_debug("AFFS: evict_inode(ino=%lu, nlink=%u)\n", inode->i_ino, inode->i_nlink);
-	truncate_inode_pages(&inode->i_data, 0);
 
-	if (!inode->i_nlink) {
-		inode->i_size = 0;
-		affs_truncate(inode);
-	}
+	pr_debug("AFFS: clear_inode(ino=%lu, nlink=%u)\n", inode->i_ino, inode->i_nlink);
 
-	invalidate_inode_buffers(inode);
-	end_writeback(inode);
 	affs_free_prealloc(inode);
 	cache_page = (unsigned long)AFFS_I(inode)->i_lc;
 	if (cache_page) {
@@ -276,9 +270,6 @@ affs_evict_inode(struct inode *inode)
 	affs_brelse(AFFS_I(inode)->i_ext_bh);
 	AFFS_I(inode)->i_ext_last = ~1;
 	AFFS_I(inode)->i_ext_bh = NULL;
-
-	if (!inode->i_nlink)
-		affs_free_block(inode->i_sb, inode->i_ino);
 }
 
 struct inode *
@@ -304,7 +295,7 @@ affs_new_inode(struct inode *dir)
 	inode->i_uid     = current_fsuid();
 	inode->i_gid     = current_fsgid();
 	inode->i_ino     = block;
-	set_nlink(inode, 1);
+	inode->i_nlink   = 1;
 	inode->i_mtime   = inode->i_atime = inode->i_ctime = CURRENT_TIME_SEC;
 	atomic_set(&AFFS_I(inode)->i_opencnt, 0);
 	AFFS_I(inode)->i_blkcnt = 0;
@@ -387,8 +378,8 @@ affs_add_entry(struct inode *dir, struct inode *inode, struct dentry *dentry, s3
 		AFFS_TAIL(sb, inode_bh)->link_chain = cpu_to_be32(block);
 		affs_adjust_checksum(inode_bh, block - be32_to_cpu(chain));
 		mark_buffer_dirty_inode(inode_bh, inode);
-		set_nlink(inode, 2);
-		ihold(inode);
+		inode->i_nlink = 2;
+		atomic_inc(&inode->i_count);
 	}
 	affs_fix_checksum(sb, bh);
 	mark_buffer_dirty_inode(bh, inode);

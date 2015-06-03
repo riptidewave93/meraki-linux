@@ -19,13 +19,12 @@
 #include <linux/delay.h>
 #include <linux/io.h>
 #include <linux/nubus.h>
-#include <linux/slab.h>
 
 #include <asm/irq.h>
 #include <asm/dma.h>
+
 #include <asm/macints.h>
 #include <asm/macintosh.h>
-#include <asm/mac_via.h>
 
 #include <scsi/scsi_host.h>
 
@@ -54,6 +53,7 @@ struct mac_esp_priv {
 	void __iomem *pdma_io;
 	int error;
 };
+static struct platform_device *internal_pdev, *external_pdev;
 static struct esp *esp_chips[2];
 
 #define MAC_ESP_GET_PRIV(esp) ((struct mac_esp_priv *) \
@@ -150,7 +150,7 @@ static inline int mac_esp_wait_for_dreq(struct esp *esp)
 
 	do {
 		if (mep->pdma_regs == NULL) {
-			if (via2_scsi_drq_pending())
+			if (mac_irq_pending(IRQ_MAC_SCSIDRQ))
 				return 0;
 		} else {
 			if (nubus_readl(mep->pdma_regs) & 0x200)
@@ -231,6 +231,9 @@ static void mac_esp_send_pdma_cmd(struct esp *esp, u32 addr, u32 esp_count,
 				  u32 dma_count, int write, u8 cmd)
 {
 	struct mac_esp_priv *mep = MAC_ESP_GET_PRIV(esp);
+	unsigned long flags;
+
+	local_irq_save(flags);
 
 	mep->error = 0;
 
@@ -268,33 +271,32 @@ static void mac_esp_send_pdma_cmd(struct esp *esp, u32 addr, u32 esp_count,
 			esp_count = n;
 		}
 	} while (esp_count);
+
+	local_irq_restore(flags);
 }
 
 /*
  * Programmed IO routines follow.
  */
 
-static inline unsigned int mac_esp_wait_for_fifo(struct esp *esp)
+static inline int mac_esp_wait_for_fifo(struct esp *esp)
 {
 	int i = 500000;
 
 	do {
-		unsigned int fbytes = esp_read8(ESP_FFLAGS) & ESP_FF_FBYTES;
-
-		if (fbytes)
-			return fbytes;
+		if (esp_read8(ESP_FFLAGS) & ESP_FF_FBYTES)
+			return 0;
 
 		udelay(2);
 	} while (--i);
 
 	printk(KERN_ERR PFX "FIFO is empty (sreg %02x)\n",
 	       esp_read8(ESP_STATUS));
-	return 0;
+	return 1;
 }
 
 static inline int mac_esp_wait_for_intr(struct esp *esp)
 {
-	struct mac_esp_priv *mep = MAC_ESP_GET_PRIV(esp);
 	int i = 500000;
 
 	do {
@@ -306,7 +308,6 @@ static inline int mac_esp_wait_for_intr(struct esp *esp)
 	} while (--i);
 
 	printk(KERN_ERR PFX "IRQ timeout (sreg %02x)\n", esp->sreg);
-	mep->error = 1;
 	return 1;
 }
 
@@ -346,8 +347,11 @@ static inline int mac_esp_wait_for_intr(struct esp *esp)
 static void mac_esp_send_pio_cmd(struct esp *esp, u32 addr, u32 esp_count,
 				 u32 dma_count, int write, u8 cmd)
 {
+	unsigned long flags;
 	struct mac_esp_priv *mep = MAC_ESP_GET_PRIV(esp);
 	u8 *fifo = esp->regs + ESP_FDATA * 16;
+
+	local_irq_save(flags);
 
 	cmd &= ~ESP_CMD_DMA;
 	mep->error = 0;
@@ -355,35 +359,11 @@ static void mac_esp_send_pio_cmd(struct esp *esp, u32 addr, u32 esp_count,
 	if (write) {
 		scsi_esp_cmd(esp, cmd);
 
-		while (1) {
-			unsigned int n;
-
-			n = mac_esp_wait_for_fifo(esp);
-			if (!n)
-				break;
-
-			if (n > esp_count)
-				n = esp_count;
-			esp_count -= n;
-
-			MAC_ESP_PIO_LOOP("%2@,%0@+", n);
-
-			if (!esp_count)
-				break;
-
-			if (mac_esp_wait_for_intr(esp))
-				break;
-
-			if (((esp->sreg & ESP_STAT_PMASK) != ESP_DIP) &&
-			    ((esp->sreg & ESP_STAT_PMASK) != ESP_MIP))
-				break;
-
-			esp->ireg = esp_read8(ESP_INTRPT);
-			if ((esp->ireg & (ESP_INTR_DC | ESP_INTR_BSERV)) !=
-			    ESP_INTR_BSERV)
-				break;
-
-			scsi_esp_cmd(esp, ESP_CMD_TI);
+		if (!mac_esp_wait_for_intr(esp)) {
+			if (mac_esp_wait_for_fifo(esp))
+				esp_count = 0;
+		} else {
+			esp_count = 0;
 		}
 	} else {
 		scsi_esp_cmd(esp, ESP_CMD_FLUSH);
@@ -394,24 +374,47 @@ static void mac_esp_send_pio_cmd(struct esp *esp, u32 addr, u32 esp_count,
 			MAC_ESP_PIO_LOOP("%0@+,%2@", esp_count);
 
 		scsi_esp_cmd(esp, cmd);
+	}
 
-		while (esp_count) {
-			unsigned int n;
+	while (esp_count) {
+		unsigned int n;
 
-			if (mac_esp_wait_for_intr(esp))
+		if (mac_esp_wait_for_intr(esp)) {
+			mep->error = 1;
+			break;
+		}
+
+		if (esp->sreg & ESP_STAT_SPAM) {
+			printk(KERN_ERR PFX "gross error\n");
+			mep->error = 1;
+			break;
+		}
+
+		n = esp_read8(ESP_FFLAGS) & ESP_FF_FBYTES;
+
+		if (write) {
+			if (n > esp_count)
+				n = esp_count;
+			esp_count -= n;
+
+			MAC_ESP_PIO_LOOP("%2@,%0@+", n);
+
+			if ((esp->sreg & ESP_STAT_PMASK) == ESP_STATP)
 				break;
 
-			if (((esp->sreg & ESP_STAT_PMASK) != ESP_DOP) &&
-			    ((esp->sreg & ESP_STAT_PMASK) != ESP_MOP))
-				break;
+			if (esp_count) {
+				esp->ireg = esp_read8(ESP_INTRPT);
+				if (esp->ireg & ESP_INTR_DC)
+					break;
 
+				scsi_esp_cmd(esp, ESP_CMD_TI);
+			}
+		} else {
 			esp->ireg = esp_read8(ESP_INTRPT);
-			if ((esp->ireg & (ESP_INTR_DC | ESP_INTR_BSERV)) !=
-			    ESP_INTR_BSERV)
+			if (esp->ireg & ESP_INTR_DC)
 				break;
 
-			n = MAC_ESP_FIFO_SIZE -
-			    (esp_read8(ESP_FFLAGS) & ESP_FF_FBYTES);
+			n = MAC_ESP_FIFO_SIZE - n;
 			if (n > esp_count)
 				n = esp_count;
 
@@ -425,6 +428,8 @@ static void mac_esp_send_pio_cmd(struct esp *esp, u32 addr, u32 esp_count,
 			scsi_esp_cmd(esp, ESP_CMD_TI);
 		}
 	}
+
+	local_irq_restore(flags);
 }
 
 static int mac_esp_irq_pending(struct esp *esp)
@@ -487,12 +492,29 @@ static int __devinit esp_mac_probe(struct platform_device *dev)
 	struct Scsi_Host *host;
 	struct esp *esp;
 	int err;
+	int chips_present;
 	struct mac_esp_priv *mep;
 
 	if (!MACH_IS_MAC)
 		return -ENODEV;
 
-	if (dev->id > 1)
+	switch (macintosh_config->scsi_type) {
+	case MAC_SCSI_QUADRA:
+	case MAC_SCSI_QUADRA3:
+		chips_present = 1;
+		break;
+	case MAC_SCSI_QUADRA2:
+		if ((macintosh_config->ident == MAC_MODEL_Q900) ||
+		    (macintosh_config->ident == MAC_MODEL_Q950))
+			chips_present = 2;
+		else
+			chips_present = 1;
+		break;
+	default:
+		chips_present = 0;
+	}
+
+	if (dev->id + 1 > chips_present)
 		return -ENODEV;
 
 	host = scsi_host_alloc(tpnt, sizeof(struct esp));
@@ -565,7 +587,8 @@ static int __devinit esp_mac_probe(struct platform_device *dev)
 	esp_chips[dev->id] = esp;
 	mb();
 	if (esp_chips[!dev->id] == NULL) {
-		err = request_irq(host->irq, mac_scsi_esp_intr, 0, "ESP", NULL);
+		err = request_irq(host->irq, mac_scsi_esp_intr, 0,
+		                  "Mac ESP", NULL);
 		if (err < 0) {
 			esp_chips[dev->id] = NULL;
 			goto fail_free_priv;
@@ -616,26 +639,55 @@ static struct platform_driver esp_mac_driver = {
 	.probe    = esp_mac_probe,
 	.remove   = __devexit_p(esp_mac_remove),
 	.driver   = {
-		.name	= DRV_MODULE_NAME,
-		.owner	= THIS_MODULE,
+		.name     = DRV_MODULE_NAME,
 	},
 };
 
 static int __init mac_esp_init(void)
 {
-	return platform_driver_register(&esp_mac_driver);
+	int err;
+
+	err = platform_driver_register(&esp_mac_driver);
+	if (err)
+		return err;
+
+	internal_pdev = platform_device_alloc(DRV_MODULE_NAME, 0);
+	if (internal_pdev && platform_device_add(internal_pdev)) {
+		platform_device_put(internal_pdev);
+		internal_pdev = NULL;
+	}
+	external_pdev = platform_device_alloc(DRV_MODULE_NAME, 1);
+	if (external_pdev && platform_device_add(external_pdev)) {
+		platform_device_put(external_pdev);
+		external_pdev = NULL;
+	}
+
+	if (internal_pdev || external_pdev) {
+		return 0;
+	} else {
+		platform_driver_unregister(&esp_mac_driver);
+		return -ENOMEM;
+	}
 }
 
 static void __exit mac_esp_exit(void)
 {
 	platform_driver_unregister(&esp_mac_driver);
+
+	if (internal_pdev) {
+		platform_device_unregister(internal_pdev);
+		internal_pdev = NULL;
+	}
+	if (external_pdev) {
+		platform_device_unregister(external_pdev);
+		external_pdev = NULL;
+	}
 }
 
 MODULE_DESCRIPTION("Mac ESP SCSI driver");
 MODULE_AUTHOR("Finn Thain <fthain@telegraphics.com.au>");
 MODULE_LICENSE("GPL v2");
 MODULE_VERSION(DRV_VERSION);
-MODULE_ALIAS("platform:" DRV_MODULE_NAME);
 
 module_init(mac_esp_init);
 module_exit(mac_esp_exit);

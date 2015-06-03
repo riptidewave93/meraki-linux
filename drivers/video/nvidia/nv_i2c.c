@@ -13,7 +13,6 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/delay.h>
-#include <linux/gfp.h>
 #include <linux/pci.h>
 #include <linux/fb.h>
 

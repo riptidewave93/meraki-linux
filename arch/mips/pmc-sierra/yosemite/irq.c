@@ -37,6 +37,7 @@
 #include <linux/ioport.h>
 #include <linux/irq.h>
 #include <linux/timex.h>
+#include <linux/slab.h>
 #include <linux/random.h>
 #include <linux/bitops.h>
 #include <asm/bootinfo.h>
@@ -44,6 +45,7 @@
 #include <asm/irq.h>
 #include <asm/irq_cpu.h>
 #include <asm/mipsregs.h>
+#include <asm/system.h>
 #include <asm/titan_dep.h>
 
 /* Hypertransport specific */
@@ -149,4 +151,8 @@ void __init arch_init_irq(void)
 	mips_cpu_irq_init();
 	rm7k_cpu_irq_init();
 	rm9k_cpu_irq_init();
+
+#ifdef CONFIG_GDB_CONSOLE
+	register_gdb_console();
+#endif
 }

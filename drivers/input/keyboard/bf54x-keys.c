@@ -34,7 +34,6 @@
 #include <linux/fs.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
-#include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/pm.h>
 #include <linux/sysctl.h>
@@ -163,7 +162,7 @@ static irqreturn_t bfin_kpad_isr(int irq, void *dev_id)
 	input_sync(input);
 
 	if (bfin_kpad_get_keypressed(bf54x_kpad)) {
-		disable_irq_nosync(bf54x_kpad->irq);
+		disable_irq(bf54x_kpad->irq);
 		bf54x_kpad->lastkey = key;
 		mod_timer(&bf54x_kpad->timer,
 			  jiffies + bf54x_kpad->keyup_test_jiffies);
@@ -384,7 +383,7 @@ static int bfin_kpad_resume(struct platform_device *pdev)
 # define bfin_kpad_resume  NULL
 #endif
 
-static struct platform_driver bfin_kpad_device_driver = {
+struct platform_driver bfin_kpad_device_driver = {
 	.driver		= {
 		.name	= DRV_NAME,
 		.owner	= THIS_MODULE,
@@ -394,7 +393,19 @@ static struct platform_driver bfin_kpad_device_driver = {
 	.suspend	= bfin_kpad_suspend,
 	.resume		= bfin_kpad_resume,
 };
-module_platform_driver(bfin_kpad_device_driver);
+
+static int __init bfin_kpad_init(void)
+{
+	return platform_driver_register(&bfin_kpad_device_driver);
+}
+
+static void __exit bfin_kpad_exit(void)
+{
+	platform_driver_unregister(&bfin_kpad_device_driver);
+}
+
+module_init(bfin_kpad_init);
+module_exit(bfin_kpad_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Michael Hennerich <hennerich@blackfin.uclinux.org>");

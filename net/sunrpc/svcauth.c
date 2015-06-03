@@ -46,8 +46,8 @@ svc_authenticate(struct svc_rqst *rqstp, __be32 *authp)
 	dprintk("svc: svc_authenticate (%d)\n", flavor);
 
 	spin_lock(&authtab_lock);
-	if (flavor >= RPC_AUTH_MAXFLAVOR || !(aops = authtab[flavor]) ||
-	    !try_module_get(aops->owner)) {
+	if (flavor >= RPC_AUTH_MAXFLAVOR || !(aops = authtab[flavor])
+			|| !try_module_get(aops->owner)) {
 		spin_unlock(&authtab_lock);
 		*authp = rpc_autherr_badcred;
 		return SVC_DENIED;
@@ -118,6 +118,7 @@ EXPORT_SYMBOL_GPL(svc_auth_unregister);
 
 #define	DN_HASHBITS	6
 #define	DN_HASHMAX	(1<<DN_HASHBITS)
+#define	DN_HASHMASK	(DN_HASHMAX-1)
 
 static struct hlist_head	auth_domain_table[DN_HASHMAX];
 static spinlock_t	auth_domain_lock =

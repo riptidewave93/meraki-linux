@@ -1,3 +1,4 @@
+/* vi: set sw = 4 ts = 4: */
 /*	Small bzip2 deflate implementation, by Rob Landley (rob@landley.net).
 
 	Based on bzip2 decompression code by Julian R Seward (jseward@acm.org),
@@ -105,8 +106,6 @@ struct bunzip_data {
 	unsigned char selectors[32768];		/* nSelectors = 15 bits */
 	struct group_data groups[MAX_GROUPS];	/* Huffman coding tables */
 	int io_error;			/* non-zero if we have IO error */
-	int byteCount[256];
-	unsigned char symToByte[256], mtfSymbol[256];
 };
 
 
@@ -158,16 +157,14 @@ static int INIT get_next_block(struct bunzip_data *bd)
 	int *base = NULL;
 	int *limit = NULL;
 	int dbufCount, nextSym, dbufSize, groupCount, selector,
-		i, j, k, t, runPos, symCount, symTotal, nSelectors, *byteCount;
-	unsigned char uc, *symToByte, *mtfSymbol, *selectors;
+		i, j, k, t, runPos, symCount, symTotal, nSelectors,
+		byteCount[256];
+	unsigned char uc, symToByte[256], mtfSymbol[256], *selectors;
 	unsigned int *dbuf, origPtr;
 
 	dbuf = bd->dbuf;
 	dbufSize = bd->dbufSize;
 	selectors = bd->selectors;
-	byteCount = bd->byteCount;
-	symToByte = bd->symToByte;
-	mtfSymbol = bd->mtfSymbol;
 
 	/* Read in header signature and CRC, then validate signature.
 	   (last block signature means CRC is for whole file, return now) */
@@ -301,7 +298,7 @@ static int INIT get_next_block(struct bunzip_data *bd)
 		   again when using them (during symbol decoding).*/
 		base = hufGroup->base-1;
 		limit = hufGroup->limit-1;
-		/* Calculate permute[].  Concurrently, initialize
+		/* Calculate permute[].  Concurently, initialize
 		 * temp[] and limit[]. */
 		pp = 0;
 		for (i = minLen; i <= maxLen; i++) {
@@ -690,7 +687,7 @@ STATIC int INIT bunzip2(unsigned char *buf, int len,
 		outbuf = malloc(BZIP2_IOBUF_SIZE);
 
 	if (!outbuf) {
-		error("Could not allocate output buffer");
+		error("Could not allocate output bufer");
 		return RETVAL_OUT_OF_MEMORY;
 	}
 	if (buf)
@@ -698,7 +695,7 @@ STATIC int INIT bunzip2(unsigned char *buf, int len,
 	else
 		inbuf = malloc(BZIP2_IOBUF_SIZE);
 	if (!inbuf) {
-		error("Could not allocate input buffer");
+		error("Could not allocate input bufer");
 		i = RETVAL_OUT_OF_MEMORY;
 		goto exit_0;
 	}

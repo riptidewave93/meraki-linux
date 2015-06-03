@@ -11,12 +11,6 @@
 #define IO_APIC_DEFAULT_PHYS_BASE	0xfec00000
 #define	APIC_DEFAULT_PHYS_BASE		0xfee00000
 
-/*
- * This is the IO-APIC register space as specified
- * by Intel docs:
- */
-#define IO_APIC_SLOT_SIZE		1024
-
 #define	APIC_ID		0x20
 
 #define	APIC_LVR	0x30
@@ -100,9 +94,7 @@
 #define		APIC_TIMER_BASE_CLKIN		0x0
 #define		APIC_TIMER_BASE_TMBASE		0x1
 #define		APIC_TIMER_BASE_DIV		0x2
-#define		APIC_LVT_TIMER_ONESHOT		(0 << 17)
 #define		APIC_LVT_TIMER_PERIODIC		(1 << 17)
-#define		APIC_LVT_TIMER_TSCDEADLINE	(2 << 17)
 #define		APIC_LVT_MASKED			(1 << 16)
 #define		APIC_LVT_LEVEL_TRIGGER		(1 << 15)
 #define		APIC_LVT_REMOTE_IRR		(1 << 14)
@@ -134,7 +126,6 @@
 #define APIC_EILVTn(n)	(0x500 + 0x10 * n)
 #define		APIC_EILVT_NR_AMD_K8	1	/* # of extended interrupts */
 #define		APIC_EILVT_NR_AMD_10H	4
-#define		APIC_EILVT_NR_MAX	APIC_EILVT_NR_AMD_10H
 #define		APIC_EILVT_LVTOFF(x)	(((x) >> 4) & 0xF)
 #define		APIC_EILVT_MSG_FIX	0x0
 #define		APIC_EILVT_MSG_SMI	0x2
@@ -144,12 +135,10 @@
 
 #define APIC_BASE (fix_to_virt(FIX_APIC_BASE))
 #define APIC_BASE_MSR	0x800
-#define XAPIC_ENABLE	(1UL << 11)
 #define X2APIC_ENABLE	(1UL << 10)
 
 #ifdef CONFIG_X86_32
 # define MAX_IO_APICS 64
-# define MAX_LOCAL_APIC 256
 #else
 # define MAX_IO_APICS 128
 # define MAX_LOCAL_APIC 32768
@@ -430,16 +419,4 @@ struct local_apic {
 #else
  #define BAD_APICID 0xFFFFu
 #endif
-
-enum ioapic_irq_destination_types {
-	dest_Fixed		= 0,
-	dest_LowestPrio		= 1,
-	dest_SMI		= 2,
-	dest__reserved_1	= 3,
-	dest_NMI		= 4,
-	dest_INIT		= 5,
-	dest__reserved_2	= 6,
-	dest_ExtINT		= 7
-};
-
 #endif /* _ASM_X86_APICDEF_H */

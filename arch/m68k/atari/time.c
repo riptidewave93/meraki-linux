@@ -17,7 +17,6 @@
 #include <linux/rtc.h>
 #include <linux/bcd.h>
 #include <linux/delay.h>
-#include <linux/export.h>
 
 #include <asm/atariints.h>
 

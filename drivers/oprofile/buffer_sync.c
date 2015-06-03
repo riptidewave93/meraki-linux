@@ -30,7 +30,6 @@
 #include <linux/fs.h>
 #include <linux/oprofile.h>
 #include <linux/sched.h>
-#include <linux/gfp.h>
 
 #include "oprofile_stats.h"
 #include "event_buffer.h"
@@ -194,7 +193,7 @@ void sync_stop(void)
 	task_handoff_unregister(&task_free_nb);
 	barrier();			/* do all of the above first */
 
-	flush_cpu_work();
+	flush_scheduled_work();
 
 	free_all_tasks();
 	free_cpumask_var(marked_cpus);

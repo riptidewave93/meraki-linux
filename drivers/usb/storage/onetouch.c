@@ -69,7 +69,7 @@ struct usb_onetouch {
 { USB_DEVICE_VER(id_vendor, id_product, bcdDeviceMin, bcdDeviceMax), \
   .driver_info = (flags)|(USB_US_TYPE_STOR<<24) }
 
-static struct usb_device_id onetouch_usb_ids[] = {
+struct usb_device_id onetouch_usb_ids[] = {
 #	include "unusual_onetouch.h"
 	{ }		/* Terminating entry */
 };
@@ -201,8 +201,8 @@ static int onetouch_connect_input(struct us_data *ss)
 	if (!onetouch || !input_dev)
 		goto fail1;
 
-	onetouch->data = usb_alloc_coherent(udev, ONETOUCH_PKT_LEN,
-					    GFP_KERNEL, &onetouch->data_dma);
+	onetouch->data = usb_buffer_alloc(udev, ONETOUCH_PKT_LEN,
+					  GFP_ATOMIC, &onetouch->data_dma);
 	if (!onetouch->data)
 		goto fail1;
 
@@ -264,8 +264,8 @@ static int onetouch_connect_input(struct us_data *ss)
 	return 0;
 
  fail3:	usb_free_urb(onetouch->irq);
- fail2:	usb_free_coherent(udev, ONETOUCH_PKT_LEN,
-			  onetouch->data, onetouch->data_dma);
+ fail2:	usb_buffer_free(udev, ONETOUCH_PKT_LEN,
+			onetouch->data, onetouch->data_dma);
  fail1:	kfree(onetouch);
 	input_free_device(input_dev);
 	return error;
@@ -279,8 +279,8 @@ static void onetouch_release_input(void *onetouch_)
 		usb_kill_urb(onetouch->irq);
 		input_unregister_device(onetouch->dev);
 		usb_free_urb(onetouch->irq);
-		usb_free_coherent(onetouch->udev, ONETOUCH_PKT_LEN,
-				  onetouch->data, onetouch->data_dma);
+		usb_buffer_free(onetouch->udev, ONETOUCH_PKT_LEN,
+				onetouch->data, onetouch->data_dma);
 	}
 }
 
@@ -312,7 +312,17 @@ static struct usb_driver onetouch_driver = {
 	.post_reset =	usb_stor_post_reset,
 	.id_table =	onetouch_usb_ids,
 	.soft_unbind =	1,
-	.no_dynamic_id = 1,
 };
 
-module_usb_driver(onetouch_driver);
+static int __init onetouch_init(void)
+{
+	return usb_register(&onetouch_driver);
+}
+
+static void __exit onetouch_exit(void)
+{
+	usb_deregister(&onetouch_driver);
+}
+
+module_init(onetouch_init);
+module_exit(onetouch_exit);

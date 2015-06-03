@@ -19,7 +19,8 @@
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#define SAA7134_VERSION "0, 2, 17"
+#include <linux/version.h>
+#define SAA7134_VERSION_CODE KERNEL_VERSION(0,2,15)
 
 #include <linux/pci.h>
 #include <linux/i2c.h>
@@ -36,7 +37,7 @@
 #include <media/v4l2-ioctl.h>
 #include <media/v4l2-device.h>
 #include <media/tuner.h>
-#include <media/rc-core.h>
+#include <media/ir-common.h>
 #include <media/ir-kbd-i2c.h>
 #include <media/videobuf-dma-sg.h>
 #include <sound/core.h>
@@ -116,26 +117,6 @@ struct saa7134_format {
 	unsigned int   yuv:1;
 	unsigned int   planar:1;
 	unsigned int   uvswap:1;
-};
-
-struct saa7134_card_ir {
-	struct rc_dev		*dev;
-
-	char                    name[32];
-	char                    phys[32];
-	unsigned                users;
-
-	u32			polling;
-	u32			last_gpio;
-	u32			mask_keycode, mask_keydown, mask_keyup;
-
-	bool                    running;
-	bool			active;
-
-	struct timer_list       timer;
-
-	/* IR core raw decoding */
-	u32                     raw_decode;
 };
 
 /* ----------------------------------------------------------- */
@@ -301,7 +282,7 @@ struct saa7134_card_ir {
 #define SAA7134_BOARD_HAUPPAUGE_HVR1120   156
 #define SAA7134_BOARD_AVERMEDIA_STUDIO_507UA 157
 #define SAA7134_BOARD_AVERMEDIA_CARDBUS_501 158
-#define SAA7134_BOARD_BEHOLD_505RDS_MK5     159
+#define SAA7134_BOARD_BEHOLD_505RDS         159
 #define SAA7134_BOARD_BEHOLD_507RDS_MK3     160
 #define SAA7134_BOARD_BEHOLD_507RDS_MK5     161
 #define SAA7134_BOARD_BEHOLD_607FM_MK5      162
@@ -317,21 +298,6 @@ struct saa7134_card_ir {
 #define SAA7134_BOARD_ROVERMEDIA_LINK_PRO_FM 172
 #define SAA7134_BOARD_ZOLID_HYBRID_PCI		173
 #define SAA7134_BOARD_ASUS_EUROPA_HYBRID	174
-#define SAA7134_BOARD_LEADTEK_WINFAST_DTV1000S 175
-#define SAA7134_BOARD_BEHOLD_505RDS_MK3     176
-#define SAA7134_BOARD_HAWELL_HW_404M7		177
-#define SAA7134_BOARD_BEHOLD_H7             178
-#define SAA7134_BOARD_BEHOLD_A7             179
-#define SAA7134_BOARD_AVERMEDIA_M733A       180
-#define SAA7134_BOARD_TECHNOTREND_BUDGET_T3000 181
-#define SAA7134_BOARD_KWORLD_PCI_SBTVD_FULLSEG 182
-#define SAA7134_BOARD_VIDEOMATE_M1F         183
-#define SAA7134_BOARD_ENCORE_ENLTV_FM3      184
-#define SAA7134_BOARD_MAGICPRO_PROHDTV_PRO2 185
-#define SAA7134_BOARD_BEHOLD_501            186
-#define SAA7134_BOARD_BEHOLD_503FM          187
-#define SAA7134_BOARD_SENSORAY811_911       188
-#define SAA7134_BOARD_KWORLD_PC150U         189
 
 #define SAA7134_MAXBOARDS 32
 #define SAA7134_INPUT_MAX 8
@@ -556,7 +522,7 @@ struct saa7134_dev {
 
 	/* infrared remote */
 	int                        has_remote;
-	struct saa7134_card_ir     *remote;
+	struct card_ir		   *remote;
 
 	/* pci i/o */
 	char                       name[32];
@@ -627,6 +593,7 @@ struct saa7134_dev {
 	unsigned int               insuspend;
 
 	/* I2C keyboard data */
+	struct i2c_board_info      info;
 	struct IR_i2c_init_data    init_data;
 
 	/* SAA7134_MPEG_* */
@@ -819,7 +786,6 @@ void saa7134_tvaudio_init(struct saa7134_dev *dev);
 int saa7134_tvaudio_init2(struct saa7134_dev *dev);
 int saa7134_tvaudio_fini(struct saa7134_dev *dev);
 int saa7134_tvaudio_do_scan(struct saa7134_dev *dev);
-int saa7134_tvaudio_close(struct saa7134_dev *dev);
 
 int saa_dsp_writel(struct saa7134_dev *dev, int reg, u32 value);
 
@@ -838,18 +804,16 @@ void saa7134_irq_oss_done(struct saa7134_dev *dev, unsigned long status);
 /* ----------------------------------------------------------- */
 /* saa7134-input.c                                             */
 
-#if defined(CONFIG_VIDEO_SAA7134_RC)
 int  saa7134_input_init1(struct saa7134_dev *dev);
 void saa7134_input_fini(struct saa7134_dev *dev);
 void saa7134_input_irq(struct saa7134_dev *dev);
 void saa7134_probe_i2c_ir(struct saa7134_dev *dev);
-int saa7134_ir_start(struct saa7134_dev *dev);
+void saa7134_ir_start(struct saa7134_dev *dev, struct card_ir *ir);
 void saa7134_ir_stop(struct saa7134_dev *dev);
-#else
-#define saa7134_input_init1(dev)	((void)0)
-#define saa7134_input_fini(dev)		((void)0)
-#define saa7134_input_irq(dev)		((void)0)
-#define saa7134_probe_i2c_ir(dev)	((void)0)
-#define saa7134_ir_start(dev)		((void)0)
-#define saa7134_ir_stop(dev)		((void)0)
-#endif
+
+
+/*
+ * Local variables:
+ * c-basic-offset: 8
+ * End:
+ */

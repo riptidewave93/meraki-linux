@@ -20,7 +20,6 @@
 
 #include "emu10k1_synth_local.h"
 #include <linux/init.h>
-#include <linux/module.h>
 
 MODULE_AUTHOR("Takashi Iwai");
 MODULE_DESCRIPTION("Routines for control of EMU10K1 WaveTable synth");

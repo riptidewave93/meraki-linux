@@ -45,12 +45,8 @@
 #else
 #define FRAME_SIZE	64
 #endif
-#define FRAME_ALIGN	64
 
-/* Add FRAME_SIZE to the size x and align it to y. All definitions
- * that use align_frame will include space for a frame.
- */
-#define align_frame(x,y) (((x)+FRAME_SIZE+(y)-1) - (((x)+(y)-1)%(y)))
+#define align(x,y) (((x)+FRAME_SIZE+(y)-1) - (((x)+(y)-1)%(y)))
 
 int main(void)
 {
@@ -150,8 +146,7 @@ int main(void)
 	DEFINE(TASK_PT_IOR, offsetof(struct task_struct, thread.regs.ior));
 	BLANK();
 	DEFINE(TASK_SZ, sizeof(struct task_struct));
-	/* TASK_SZ_ALGN includes space for a stack frame. */
-	DEFINE(TASK_SZ_ALGN, align_frame(sizeof(struct task_struct), FRAME_ALIGN));
+	DEFINE(TASK_SZ_ALGN, align(sizeof(struct task_struct), 64));
 	BLANK();
 	DEFINE(PT_PSW, offsetof(struct pt_regs, gr[ 0]));
 	DEFINE(PT_GR1, offsetof(struct pt_regs, gr[ 1]));
@@ -238,8 +233,7 @@ int main(void)
 	DEFINE(PT_ISR, offsetof(struct pt_regs, isr));
 	DEFINE(PT_IOR, offsetof(struct pt_regs, ior));
 	DEFINE(PT_SIZE, sizeof(struct pt_regs));
-	/* PT_SZ_ALGN includes space for a stack frame. */
-	DEFINE(PT_SZ_ALGN, align_frame(sizeof(struct pt_regs), FRAME_ALIGN));
+	DEFINE(PT_SZ_ALGN, align(sizeof(struct pt_regs), 64));
 	BLANK();
 	DEFINE(TI_TASK, offsetof(struct thread_info, task));
 	DEFINE(TI_EXEC_DOMAIN, offsetof(struct thread_info, exec_domain));
@@ -248,8 +242,10 @@ int main(void)
 	DEFINE(TI_SEGMENT, offsetof(struct thread_info, addr_limit));
 	DEFINE(TI_PRE_COUNT, offsetof(struct thread_info, preempt_count));
 	DEFINE(THREAD_SZ, sizeof(struct thread_info));
-	/* THREAD_SZ_ALGN includes space for a stack frame. */
-	DEFINE(THREAD_SZ_ALGN, align_frame(sizeof(struct thread_info), FRAME_ALIGN));
+	DEFINE(THREAD_SZ_ALGN, align(sizeof(struct thread_info), 64));
+	BLANK();
+	DEFINE(IRQSTAT_SIRQ_PEND, offsetof(irq_cpustat_t, __softirq_pending));
+	DEFINE(IRQSTAT_SZ, sizeof(irq_cpustat_t));
 	BLANK();
 	DEFINE(ICACHE_BASE, offsetof(struct pdc_cache_info, ic_base));
 	DEFINE(ICACHE_STRIDE, offsetof(struct pdc_cache_info, ic_stride));

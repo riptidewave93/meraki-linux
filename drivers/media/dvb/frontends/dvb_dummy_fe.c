@@ -68,18 +68,15 @@ static int dvb_dummy_fe_read_ucblocks(struct dvb_frontend* fe, u32* ucblocks)
 	return 0;
 }
 
-/*
- * Only needed if it actually reads something from the hardware
- */
-static int dvb_dummy_fe_get_frontend(struct dvb_frontend *fe)
+static int dvb_dummy_fe_get_frontend(struct dvb_frontend* fe, struct dvb_frontend_parameters *p)
 {
 	return 0;
 }
 
-static int dvb_dummy_fe_set_frontend(struct dvb_frontend *fe)
+static int dvb_dummy_fe_set_frontend(struct dvb_frontend* fe, struct dvb_frontend_parameters *p)
 {
 	if (fe->ops.tuner_ops.set_params) {
-		fe->ops.tuner_ops.set_params(fe);
+		fe->ops.tuner_ops.set_params(fe, p);
 		if (fe->ops.i2c_gate_ctrl)
 			fe->ops.i2c_gate_ctrl(fe, 0);
 	}
@@ -174,9 +171,10 @@ error:
 }
 
 static struct dvb_frontend_ops dvb_dummy_fe_ofdm_ops = {
-	.delsys = { SYS_DVBT },
+
 	.info = {
 		.name			= "Dummy DVB-T",
+		.type			= FE_OFDM,
 		.frequency_min		= 0,
 		.frequency_max		= 863250000,
 		.frequency_stepsize	= 62500,
@@ -205,9 +203,10 @@ static struct dvb_frontend_ops dvb_dummy_fe_ofdm_ops = {
 };
 
 static struct dvb_frontend_ops dvb_dummy_fe_qam_ops = {
-	.delsys = { SYS_DVBC_ANNEX_A },
+
 	.info = {
 		.name			= "Dummy DVB-C",
+		.type			= FE_QAM,
 		.frequency_stepsize	= 62500,
 		.frequency_min		= 51000000,
 		.frequency_max		= 858000000,
@@ -234,9 +233,10 @@ static struct dvb_frontend_ops dvb_dummy_fe_qam_ops = {
 };
 
 static struct dvb_frontend_ops dvb_dummy_fe_qpsk_ops = {
-	.delsys = { SYS_DVBS },
+
 	.info = {
 		.name			= "Dummy DVB-S",
+		.type			= FE_QPSK,
 		.frequency_min		= 950000,
 		.frequency_max		= 2150000,
 		.frequency_stepsize	= 250,           /* kHz for QPSK frontends */

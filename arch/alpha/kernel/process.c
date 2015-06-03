@@ -17,6 +17,7 @@
 #include <linux/stddef.h>
 #include <linux/unistd.h>
 #include <linux/ptrace.h>
+#include <linux/slab.h>
 #include <linux/user.h>
 #include <linux/time.h>
 #include <linux/major.h>
@@ -27,11 +28,10 @@
 #include <linux/reboot.h>
 #include <linux/tty.h>
 #include <linux/console.h>
-#include <linux/slab.h>
-#include <linux/rcupdate.h>
 
 #include <asm/reg.h>
 #include <asm/uaccess.h>
+#include <asm/system.h>
 #include <asm/io.h>
 #include <asm/pgtable.h>
 #include <asm/hwrpb.h>
@@ -55,11 +55,8 @@ cpu_idle(void)
 		/* FIXME -- EV6 and LCA45 know how to power down
 		   the CPU.  */
 
-		rcu_idle_enter();
 		while (!need_resched())
 			cpu_relax();
-
-		rcu_idle_exit();
 		schedule();
 	}
 }
@@ -124,7 +121,7 @@ common_shutdown_1(void *generic_ptr)
 	/* Wait for the secondaries to halt. */
 	set_cpu_present(boot_cpuid, false);
 	set_cpu_possible(boot_cpuid, false);
-	while (cpumask_weight(cpu_present_mask))
+	while (cpus_weight(cpu_present_map))
 		barrier();
 #endif
 
@@ -203,6 +200,7 @@ show_regs(struct pt_regs *regs)
 void
 start_thread(struct pt_regs * regs, unsigned long pc, unsigned long sp)
 {
+	set_fs(USER_DS);
 	regs->pc = pc;
 	regs->ps = 8;
 	wrusp(sp);
@@ -358,7 +356,7 @@ dump_elf_thread(elf_greg_t *dest, struct pt_regs *pt, struct thread_info *ti)
 	dest[27] = pt->r27;
 	dest[28] = pt->r28;
 	dest[29] = pt->gp;
-	dest[30] = ti == current_thread_info() ? rdusp() : ti->pcb.usp;
+	dest[30] = rdusp();
 	dest[31] = pt->pc;
 
 	/* Once upon a time this was the PS value.  Which is stupid
@@ -389,9 +387,8 @@ EXPORT_SYMBOL(dump_elf_task_fp);
  * sys_execve() executes a new program.
  */
 asmlinkage int
-do_sys_execve(const char __user *ufilename,
-	      const char __user *const __user *argv,
-	      const char __user *const __user *envp, struct pt_regs *regs)
+do_sys_execve(char __user *ufilename, char __user * __user *argv,
+	      char __user * __user *envp, struct pt_regs *regs)
 {
 	int error;
 	char *filename;

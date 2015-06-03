@@ -28,10 +28,8 @@
  */
 
 #include <linux/input.h>
-#include <linux/slab.h>
 #include <linux/usb.h>
 #include <linux/hid.h>
-#include <linux/module.h>
 #include "hid-ids.h"
 
 #ifdef CONFIG_GREENASIA_FF
@@ -88,7 +86,7 @@ static int gaff_init(struct hid_device *hid)
 	int error;
 
 	if (list_empty(report_list)) {
-		hid_err(hid, "no output reports found\n");
+		dev_err(&hid->dev, "no output reports found\n");
 		return -ENODEV;
 	}
 
@@ -96,12 +94,12 @@ static int gaff_init(struct hid_device *hid)
 
 	report = list_entry(report_ptr, struct hid_report, list);
 	if (report->maxfield < 1) {
-		hid_err(hid, "no fields in the report\n");
+		dev_err(&hid->dev, "no fields in the report\n");
 		return -ENODEV;
 	}
 
 	if (report->field[0]->report_count < 6) {
-		hid_err(hid, "not enough values in the field\n");
+		dev_err(&hid->dev, "not enough values in the field\n");
 		return -ENODEV;
 	}
 
@@ -129,7 +127,8 @@ static int gaff_init(struct hid_device *hid)
 
 	usbhid_submit_report(hid, gaff->report, USB_DIR_OUT);
 
-	hid_info(hid, "Force Feedback for GreenAsia 0x12 devices by Lukasz Lubojanski <lukasz@lubojanski.info>\n");
+	dev_info(&hid->dev, "Force Feedback for GreenAsia 0x12"
+	       " devices by Lukasz Lubojanski <lukasz@lubojanski.info>\n");
 
 	return 0;
 }
@@ -148,13 +147,13 @@ static int ga_probe(struct hid_device *hdev, const struct hid_device_id *id)
 
 	ret = hid_parse(hdev);
 	if (ret) {
-		hid_err(hdev, "parse failed\n");
+		dev_err(&hdev->dev, "parse failed\n");
 		goto err;
 	}
 
 	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT & ~HID_CONNECT_FF);
 	if (ret) {
-		hid_err(hdev, "hw start failed\n");
+		dev_err(&hdev->dev, "hw start failed\n");
 		goto err;
 	}
 

@@ -27,9 +27,8 @@
  *   flushed even if it is not full yet.
  *
  */
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/socket.h>
 #include <linux/skbuff.h>
@@ -43,6 +42,9 @@
 #include <net/netfilter/nf_log.h>
 #include <net/sock.h>
 #include "../br_private.h"
+
+#define PRINTR(format, args...) do { if (net_ratelimit()) \
+				printk(format , ## args); } while (0)
 
 static unsigned int nlbufsiz = NLMSG_GOODSIZE;
 module_param(nlbufsiz, uint, 0600);
@@ -102,15 +104,17 @@ static struct sk_buff *ulog_alloc_skb(unsigned int size)
 	unsigned int n;
 
 	n = max(size, nlbufsiz);
-	skb = alloc_skb(n, GFP_ATOMIC | __GFP_NOWARN);
+	skb = alloc_skb(n, GFP_ATOMIC);
 	if (!skb) {
+		PRINTR(KERN_ERR "ebt_ulog: can't alloc whole buffer "
+		       "of size %ub!\n", n);
 		if (n > size) {
 			/* try to allocate only as much as we need for
 			 * current packet */
 			skb = alloc_skb(size, GFP_ATOMIC);
 			if (!skb)
-				pr_debug("cannot even allocate buffer of size %ub\n",
-					 size);
+				PRINTR(KERN_ERR "ebt_ulog: can't even allocate "
+				       "buffer of size %ub\n", size);
 		}
 	}
 
@@ -137,7 +141,8 @@ static void ebt_ulog_packet(unsigned int hooknr, const struct sk_buff *skb,
 
 	size = NLMSG_SPACE(sizeof(*pm) + copy_len);
 	if (size > nlbufsiz) {
-		pr_debug("Size %Zd needed, but nlbufsiz=%d\n", size, nlbufsiz);
+		PRINTR("ebt_ulog: Size %Zd needed, but nlbufsiz=%d\n",
+		       size, nlbufsiz);
 		return;
 	}
 
@@ -176,9 +181,8 @@ static void ebt_ulog_packet(unsigned int hooknr, const struct sk_buff *skb,
 	if (in) {
 		strcpy(pm->physindev, in->name);
 		/* If in isn't a bridge, then physindev==indev */
-		if (br_port_exists(in))
-			/* rcu_read_lock()ed by nf_hook_slow */
-			strcpy(pm->indev, br_port_get_rcu(in)->br->dev->name);
+		if (in->br_port)
+			strcpy(pm->indev, in->br_port->br->dev->name);
 		else
 			strcpy(pm->indev, in->name);
 	} else
@@ -187,8 +191,7 @@ static void ebt_ulog_packet(unsigned int hooknr, const struct sk_buff *skb,
 	if (out) {
 		/* If out exists, then out is a bridge port */
 		strcpy(pm->physoutdev, out->name);
-		/* rcu_read_lock()ed by nf_hook_slow */
-		strcpy(pm->outdev, br_port_get_rcu(out)->br->dev->name);
+		strcpy(pm->outdev, out->br_port->br->dev->name);
 	} else
 		pm->outdev[0] = pm->physoutdev[0] = '\0';
 
@@ -213,8 +216,9 @@ unlock:
 	return;
 
 nlmsg_failure:
-	pr_debug("error during NLMSG_PUT. This should "
-		 "not happen, please report to author.\n");
+	printk(KERN_CRIT "ebt_ulog: error during NLMSG_PUT. This should "
+	       "not happen, please report to author.\n");
+	goto unlock;
 alloc_failure:
 	goto unlock;
 }
@@ -243,26 +247,26 @@ static void ebt_log_packet(u_int8_t pf, unsigned int hooknum,
 }
 
 static unsigned int
-ebt_ulog_tg(struct sk_buff *skb, const struct xt_action_param *par)
+ebt_ulog_tg(struct sk_buff *skb, const struct xt_target_param *par)
 {
 	ebt_ulog_packet(par->hooknum, skb, par->in, par->out,
 	                par->targinfo, NULL);
 	return EBT_CONTINUE;
 }
 
-static int ebt_ulog_tg_check(const struct xt_tgchk_param *par)
+static bool ebt_ulog_tg_check(const struct xt_tgchk_param *par)
 {
 	struct ebt_ulog_info *uloginfo = par->targinfo;
 
 	if (uloginfo->nlgroup > 31)
-		return -EINVAL;
+		return false;
 
 	uloginfo->prefix[EBT_ULOG_PREFIX_LEN - 1] = '\0';
 
 	if (uloginfo->qthreshold > EBT_ULOG_MAX_QLEN)
 		uloginfo->qthreshold = EBT_ULOG_MAX_QLEN;
 
-	return 0;
+	return true;
 }
 
 static struct xt_target ebt_ulog_tg_reg __read_mostly = {
@@ -271,7 +275,7 @@ static struct xt_target ebt_ulog_tg_reg __read_mostly = {
 	.family		= NFPROTO_BRIDGE,
 	.target		= ebt_ulog_tg,
 	.checkentry	= ebt_ulog_tg_check,
-	.targetsize	= sizeof(struct ebt_ulog_info),
+	.targetsize	= XT_ALIGN(sizeof(struct ebt_ulog_info)),
 	.me		= THIS_MODULE,
 };
 
@@ -287,8 +291,8 @@ static int __init ebt_ulog_init(void)
 	int i;
 
 	if (nlbufsiz >= 128*1024) {
-		pr_warning("Netlink buffer has to be <= 128kB,"
-			   " please try a smaller nlbufsiz parameter.\n");
+		printk(KERN_NOTICE "ebt_ulog: Netlink buffer has to be <= 128kB,"
+		       " please try a smaller nlbufsiz parameter.\n");
 		return -EINVAL;
 	}
 
@@ -301,10 +305,13 @@ static int __init ebt_ulog_init(void)
 	ebtulognl = netlink_kernel_create(&init_net, NETLINK_NFLOG,
 					  EBT_ULOG_MAXNLGROUPS, NULL, NULL,
 					  THIS_MODULE);
-	if (!ebtulognl)
+	if (!ebtulognl) {
+		printk(KERN_WARNING KBUILD_MODNAME ": out of memory trying to "
+		       "call netlink_kernel_create\n");
 		ret = -ENOMEM;
-	else if ((ret = xt_register_target(&ebt_ulog_tg_reg)) != 0)
+	} else if ((ret = xt_register_target(&ebt_ulog_tg_reg)) != 0) {
 		netlink_kernel_release(ebtulognl);
+	}
 
 	if (ret == 0)
 		nf_log_register(NFPROTO_BRIDGE, &ebt_ulog_logger);

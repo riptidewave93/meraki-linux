@@ -44,18 +44,21 @@ ENTRY(cpu_arm946_switch_mm)
  * cpu_arm946_proc_fin()
  */
 ENTRY(cpu_arm946_proc_fin)
+	stmfd	sp!, {lr}
+	mov	ip, #PSR_F_BIT | PSR_I_BIT | SVC_MODE
+	msr	cpsr_c, ip
+	bl	arm946_flush_kern_cache_all
 	mrc	p15, 0, r0, c1, c0, 0		@ ctrl register
 	bic	r0, r0, #0x00001000		@ i-cache
 	bic	r0, r0, #0x00000004		@ d-cache
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
-	mov	pc, lr
+	ldmfd	sp!, {pc}
 
 /*
  * cpu_arm946_reset(loc)
  * Params  : r0 = address to jump to
  * Notes   : This sets up everything for a reset
  */
-	.pushsection	.idmap.text, "ax"
 ENTRY(cpu_arm946_reset)
 	mov	ip, #0
 	mcr	p15, 0, ip, c7, c5, 0		@ flush I cache
@@ -66,8 +69,6 @@ ENTRY(cpu_arm946_reset)
 	bic	ip, ip, #0x00001000		@ i-cache
 	mcr	p15, 0, ip, c1, c0, 0		@ ctrl register
 	mov	pc, r0
-ENDPROC(cpu_arm946_reset)
-	.popsection
 
 /*
  * cpu_arm946_do_idle()
@@ -76,17 +77,6 @@ ENDPROC(cpu_arm946_reset)
 ENTRY(cpu_arm946_do_idle)
 	mcr	p15, 0, r0, c7, c0, 4		@ Wait for interrupt
 	mov	pc, lr
-
-/*
- *	flush_icache_all()
- *
- *	Unconditionally clean and invalidate the entire icache.
- */
-ENTRY(arm946_flush_icache_all)
-	mov	r0, #0
-	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
-	mov	pc, lr
-ENDPROC(arm946_flush_icache_all)
 
 /*
  *	flush_user_cache_all()
@@ -193,17 +183,16 @@ ENTRY(arm946_coherent_user_range)
 	mov	pc, lr
 
 /*
- *	flush_kern_dcache_area(void *addr, size_t size)
+ *	flush_kern_dcache_page(void *page)
  *
  *	Ensure no D cache aliasing occurs, either with itself or
  *	the I cache
  *
- *	- addr	- kernel address
- *	- size	- region size
+ *	- addr	- page aligned address
  * (same as arm926)
  */
-ENTRY(arm946_flush_kern_dcache_area)
-	add	r1, r0, r1
+ENTRY(arm946_flush_kern_dcache_page)
+	add	r1, r0, #PAGE_SZ
 1:	mcr	p15, 0, r0, c7, c14, 1		@ clean+invalidate D entry
 	add	r0, r0, #CACHE_DLINESIZE
 	cmp	r0, r1
@@ -225,7 +214,7 @@ ENTRY(arm946_flush_kern_dcache_area)
  *	- end	- virtual end address
  * (same as arm926)
  */
-arm946_dma_inv_range:
+ENTRY(arm946_dma_inv_range)
 #ifndef CONFIG_CPU_DCACHE_WRITETHROUGH
 	tst	r0, #CACHE_DLINESIZE - 1
 	mcrne	p15, 0, r0, c7, c10, 1		@ clean D entry
@@ -250,7 +239,7 @@ arm946_dma_inv_range:
  *
  * (same as arm926)
  */
-arm946_dma_clean_range:
+ENTRY(arm946_dma_clean_range)
 #ifndef CONFIG_CPU_DCACHE_WRITETHROUGH
 	bic	r0, r0, #CACHE_DLINESIZE - 1
 1:	mcr	p15, 0, r0, c7, c10, 1		@ clean D entry
@@ -285,35 +274,17 @@ ENTRY(arm946_dma_flush_range)
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 	mov	pc, lr
 
-/*
- *	dma_map_area(start, size, dir)
- *	- start	- kernel virtual start address
- *	- size	- size of region
- *	- dir	- DMA direction
- */
-ENTRY(arm946_dma_map_area)
-	add	r1, r1, r0
-	cmp	r2, #DMA_TO_DEVICE
-	beq	arm946_dma_clean_range
-	bcs	arm946_dma_inv_range
-	b	arm946_dma_flush_range
-ENDPROC(arm946_dma_map_area)
+ENTRY(arm946_cache_fns)
+	.long	arm946_flush_kern_cache_all
+	.long	arm946_flush_user_cache_all
+	.long	arm946_flush_user_cache_range
+	.long	arm946_coherent_kern_range
+	.long	arm946_coherent_user_range
+	.long	arm946_flush_kern_dcache_page
+	.long	arm946_dma_inv_range
+	.long	arm946_dma_clean_range
+	.long	arm946_dma_flush_range
 
-/*
- *	dma_unmap_area(start, size, dir)
- *	- start	- kernel virtual start address
- *	- size	- size of region
- *	- dir	- DMA direction
- */
-ENTRY(arm946_dma_unmap_area)
-	mov	pc, lr
-ENDPROC(arm946_dma_unmap_area)
-
-	.globl	arm946_flush_kern_cache_louis
-	.equ	arm946_flush_kern_cache_louis, arm946_flush_kern_cache_all
-
-	@ define struct cpu_cache_fns (see <asm/cacheflush.h> and proc-macros.S)
-	define_cache_functions arm946
 
 ENTRY(cpu_arm946_dcache_clean_area)
 #ifndef CONFIG_CPU_DCACHE_WRITETHROUGH
@@ -325,7 +296,7 @@ ENTRY(cpu_arm946_dcache_clean_area)
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 	mov	pc, lr
 
-	__CPUINIT
+	__INIT
 
 	.type	__arm946_setup, #function
 __arm946_setup:
@@ -399,14 +370,40 @@ __arm946_setup:
 
 	__INITDATA
 
-	@ define struct processor (see <asm/proc-fns.h> and proc-macros.S)
-	define_processor_functions arm946, dabort=nommu_early_abort, pabort=legacy_pabort, nommu=1
+/*
+ * Purpose : Function pointers used to access above functions - all calls
+ *	     come through these
+ */
+	.type	arm946_processor_functions, #object
+ENTRY(arm946_processor_functions)
+	.word	nommu_early_abort
+	.word	legacy_pabort
+	.word	cpu_arm946_proc_init
+	.word	cpu_arm946_proc_fin
+	.word	cpu_arm946_reset
+	.word   cpu_arm946_do_idle
+
+	.word	cpu_arm946_dcache_clean_area
+	.word	cpu_arm946_switch_mm
+	.word	0		@ cpu_*_set_pte
+	.size	arm946_processor_functions, . - arm946_processor_functions
 
 	.section ".rodata"
 
-	string	cpu_arch_name, "armv5te"
-	string	cpu_elf_name, "v5t"
-	string	cpu_arm946_name, "ARM946E-S"
+	.type	cpu_arch_name, #object
+cpu_arch_name:
+	.asciz	"armv5te"
+	.size	cpu_arch_name, . - cpu_arch_name
+
+	.type	cpu_elf_name, #object
+cpu_elf_name:
+	.asciz	"v5t"
+	.size	cpu_elf_name, . - cpu_elf_name
+
+	.type	cpu_arm946_name, #object
+cpu_arm946_name:
+	.ascii	"ARM946E-S"
+	.size	cpu_arm946_name, . - cpu_arm946_name
 
 	.align
 
@@ -416,7 +413,6 @@ __arm946_proc_info:
 	.long	0x41009460
 	.long	0xff00fff0
 	.long	0
-	.long	0
 	b	__arm946_setup
 	.long	cpu_arch_name
 	.long	cpu_elf_name
@@ -425,6 +421,6 @@ __arm946_proc_info:
 	.long	arm946_processor_functions
 	.long	0
 	.long	0
-	.long	arm946_cache_fns
+	.long	arm940_cache_fns
 	.size	__arm946_proc_info, . - __arm946_proc_info
 

@@ -50,7 +50,8 @@ struct capi_ctr {
 	u16  (*send_message)(struct capi_ctr *, struct sk_buff *skb);
 	
 	char *(*procinfo)(struct capi_ctr *);
-	const struct file_operations *proc_fops;
+	int (*ctr_read_proc)(char *page, char **start, off_t off,
+			     int count, int *eof, struct capi_ctr *card);
 
 	/* filled in before calling ready callback */
 	u8 manu[CAPI_MANUFACTURER_LEN];		/* CAPI_GET_MANUFACTURER */
@@ -66,10 +67,9 @@ struct capi_ctr {
 	unsigned long nsentdatapkt;
 
 	int cnr;				/* controller number */
-	unsigned short state;			/* controller state */
-	int blocked;				/* output blocked */
+	volatile unsigned short cardstate;	/* controller state */
+	volatile int blocked;			/* output blocked */
 	int traceflag;				/* capi trace */
-	wait_queue_head_t state_wait_queue;
 
 	struct proc_dir_entry *procent;
         char procfn[128];

@@ -6,26 +6,23 @@
 
 targets		:= vmlinux vmlinux.bin vmlinux.bin.gz \
 		   vmlinux.bin.bz2 vmlinux.bin.lzma \
-		   vmlinux.bin.xz vmlinux.bin.lzo \
 		   head_$(BITS).o misc.o piggy.o
 
 OBJECTS = $(obj)/head_$(BITS).o $(obj)/misc.o $(obj)/cache.o
 
-GCOV_PROFILE := n
+ifdef CONFIG_SH_STANDARD_BIOS
+OBJECTS += $(obj)/../../kernel/sh_bios.o
+endif
 
 #
 # IMAGE_OFFSET is the load offset of the compression loader
 #
-ifeq ($(CONFIG_32BIT),y)
-IMAGE_OFFSET	:= $(shell /bin/bash -c 'printf "0x%08x" \
-		     $$[$(CONFIG_MEMORY_START)  + \
-			$(CONFIG_BOOT_LINK_OFFSET)]')
-else
 IMAGE_OFFSET	:= $(shell /bin/bash -c 'printf "0x%08x" \
 		     $$[$(CONFIG_PAGE_OFFSET)  + \
 			$(KERNEL_MEMORY) + \
 			$(CONFIG_BOOT_LINK_OFFSET)]')
-endif
+
+LIBGCC	:= $(shell $(CC) $(KBUILD_CFLAGS) -print-libgcc-file-name)
 
 ifeq ($(CONFIG_MCOUNT),y)
 ORIG_CFLAGS := $(KBUILD_CFLAGS)
@@ -35,25 +32,7 @@ endif
 LDFLAGS_vmlinux := --oformat $(ld-bfd) -Ttext $(IMAGE_OFFSET) -e startup \
 		   -T $(obj)/../../kernel/vmlinux.lds
 
-#
-# Pull in the necessary libgcc bits from the in-kernel implementation.
-#
-lib1funcs-$(CONFIG_SUPERH32)	:= ashiftrt.S ashldi3.c ashrsi3.S ashlsi3.S \
-				   lshrsi3.S
-lib1funcs-obj			:= \
-	$(addsuffix .o, $(basename $(addprefix $(obj)/, $(lib1funcs-y))))
-
-lib1funcs-dir		:= $(srctree)/arch/$(SRCARCH)/lib
-ifeq ($(BITS),64)
-	lib1funcs-dir 	:= $(addsuffix $(BITS), $(lib1funcs-dir))
-endif
-
-KBUILD_CFLAGS += -I$(lib1funcs-dir)
-
-$(addprefix $(obj)/,$(lib1funcs-y)): $(obj)/%: $(lib1funcs-dir)/% FORCE
-	$(call cmd,shipped)
-
-$(obj)/vmlinux: $(OBJECTS) $(obj)/piggy.o $(lib1funcs-obj) FORCE
+$(obj)/vmlinux: $(OBJECTS) $(obj)/piggy.o $(LIBGCC) FORCE
 	$(call if_changed,ld)
 	@:
 
@@ -68,10 +47,6 @@ $(obj)/vmlinux.bin.bz2: $(vmlinux.bin.all-y) FORCE
 	$(call if_changed,bzip2)
 $(obj)/vmlinux.bin.lzma: $(vmlinux.bin.all-y) FORCE
 	$(call if_changed,lzma)
-$(obj)/vmlinux.bin.xz: $(vmlinux.bin.all-y) FORCE
-	$(call if_changed,xzkern)
-$(obj)/vmlinux.bin.lzo: $(vmlinux.bin.all-y) FORCE
-	$(call if_changed,lzo)
 
 OBJCOPYFLAGS += -R .empty_zero_page
 

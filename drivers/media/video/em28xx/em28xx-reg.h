@@ -12,11 +12,6 @@
 #define EM_GPO_2   (1 << 2)
 #define EM_GPO_3   (1 << 3)
 
-/* em28xx endpoints */
-#define EM28XX_EP_ANALOG	0x82
-#define EM28XX_EP_AUDIO		0x83
-#define EM28XX_EP_DIGITAL	0x84
-
 /* em2800 registers */
 #define EM2800_R08_AUDIOSRC 0x08
 
@@ -178,8 +173,8 @@
 /* em2874 IR config register (0x50) */
 #define EM2874_IR_NEC           0x00
 #define EM2874_IR_RC5           0x04
-#define EM2874_IR_RC6_MODE_0    0x08
-#define EM2874_IR_RC6_MODE_6A   0x0b
+#define EM2874_IR_RC5_MODE_0    0x08
+#define EM2874_IR_RC5_MODE_6A   0x0b
 
 /* em2874 Transport Stream Enable Register (0x5f) */
 #define EM2874_TS1_CAPTURE_ENABLE (1 << 0)
@@ -197,7 +192,6 @@
 
 /* FIXME: Need to be populated with the other chip ID's */
 enum em28xx_chip_id {
-	CHIP_ID_EM2800 = 7,
 	CHIP_ID_EM2710 = 17,
 	CHIP_ID_EM2820 = 18,	/* Also used by some em2710 */
 	CHIP_ID_EM2840 = 20,
@@ -206,8 +200,6 @@ enum em28xx_chip_id {
 	CHIP_ID_EM2870 = 35,
 	CHIP_ID_EM2883 = 36,
 	CHIP_ID_EM2874 = 65,
-	CHIP_ID_EM2884 = 68,
-	CHIP_ID_EM28174 = 113,
 };
 
 /*

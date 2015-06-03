@@ -4,7 +4,7 @@
  *  Derived from ivtv-cards.c
  *
  *  Copyright (C) 2007  Hans Verkuil <hverkuil@xs4all.nl>
- *  Copyright (C) 2008  Andy Walls <awalls@md.metrocast.net>
+ *  Copyright (C) 2008  Andy Walls <awalls@radix.net>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -34,16 +34,13 @@
 #define CX18_HW_Z8F0811_IR_HAUP	(CX18_HW_Z8F0811_IR_RX_HAUP | \
 				 CX18_HW_Z8F0811_IR_TX_HAUP)
 
-#define CX18_HW_IR_ANY (CX18_HW_Z8F0811_IR_RX_HAUP | \
-			CX18_HW_Z8F0811_IR_TX_HAUP)
-
 /* video inputs */
 #define	CX18_CARD_INPUT_VID_TUNER	1
 #define	CX18_CARD_INPUT_SVIDEO1 	2
 #define	CX18_CARD_INPUT_SVIDEO2 	3
 #define	CX18_CARD_INPUT_COMPOSITE1 	4
 #define	CX18_CARD_INPUT_COMPOSITE2 	5
-#define	CX18_CARD_INPUT_COMPONENT1 	6
+#define	CX18_CARD_INPUT_COMPOSITE3 	6
 
 /* audio inputs */
 #define	CX18_CARD_INPUT_AUD_TUNER	1
@@ -62,7 +59,7 @@
 struct cx18_card_video_input {
 	u8  video_type; 	/* video input type */
 	u8  audio_index;	/* index in cx18_card_audio_input array */
-	u32 video_input;	/* hardware video input */
+	u16 video_input;	/* hardware video input */
 };
 
 struct cx18_card_audio_input {
@@ -109,7 +106,7 @@ struct cx18_card_tuner {
 
 struct cx18_card_tuner_i2c {
 	unsigned short radio[2];/* radio tuner i2c address to probe */
-	unsigned short demod[3];/* demodulator i2c address to probe */
+	unsigned short demod[2];/* demodulator i2c address to probe */
 	unsigned short tv[4];	/* tv tuner i2c addresses to probe */
 };
 

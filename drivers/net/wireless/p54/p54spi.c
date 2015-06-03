@@ -29,18 +29,15 @@
 #include <linux/spi/spi.h>
 #include <linux/etherdevice.h>
 #include <linux/gpio.h>
-#include <linux/slab.h>
 
 #include "p54spi.h"
+#include "p54spi_eeprom.h"
 #include "p54.h"
 
 #include "lmac.h"
 
-#ifdef CONFIG_P54_SPI_DEFAULT_EEPROM
-#include "p54spi_eeprom.h"
-#endif /* CONFIG_P54_SPI_DEFAULT_EEPROM */
-
 MODULE_FIRMWARE("3826.arm");
+MODULE_ALIAS("stlc45xx");
 
 /*
  * gpios should be handled in board files and provided via platform data,
@@ -197,13 +194,9 @@ static int p54spi_request_eeprom(struct ieee80211_hw *dev)
 
 	ret = request_firmware(&eeprom, "3826.eeprom", &priv->spi->dev);
 	if (ret < 0) {
-#ifdef CONFIG_P54_SPI_DEFAULT_EEPROM
 		dev_info(&priv->spi->dev, "loading default eeprom...\n");
 		ret = p54_parse_eeprom(dev, (void *) p54spi_eeprom,
 				       sizeof(p54spi_eeprom));
-#else
-		dev_err(&priv->spi->dev, "Failed to request user eeprom\n");
-#endif /* CONFIG_P54_SPI_DEFAULT_EEPROM */
 	} else {
 		dev_info(&priv->spi->dev, "loading user eeprom...\n");
 		ret = p54_parse_eeprom(dev, (void *) eeprom->data,
@@ -286,7 +279,7 @@ static void p54spi_power_on(struct p54s_priv *priv)
 	enable_irq(gpio_to_irq(p54spi_gpio_irq));
 
 	/*
-	 * need to wait a while before device can be accessed, the length
+	 * need to wait a while before device can be accessed, the lenght
 	 * is just a guess
 	 */
 	msleep(10);
@@ -581,7 +574,11 @@ static void p54spi_op_stop(struct ieee80211_hw *dev)
 	struct p54s_priv *priv = dev->priv;
 	unsigned long flags;
 
-	mutex_lock(&priv->mutex);
+	if (mutex_lock_interruptible(&priv->mutex)) {
+		/* FIXME: how to handle this error? */
+		return;
+	}
+
 	WARN_ON(priv->fw_state != FW_STATE_READY);
 
 	p54spi_power_off(priv);
@@ -618,19 +615,19 @@ static int __devinit p54spi_probe(struct spi_device *spi)
 	ret = spi_setup(spi);
 	if (ret < 0) {
 		dev_err(&priv->spi->dev, "spi_setup failed");
-		goto err_free;
+		goto err_free_common;
 	}
 
 	ret = gpio_request(p54spi_gpio_power, "p54spi power");
 	if (ret < 0) {
 		dev_err(&priv->spi->dev, "power GPIO request failed: %d", ret);
-		goto err_free;
+		goto err_free_common;
 	}
 
 	ret = gpio_request(p54spi_gpio_irq, "p54spi irq");
 	if (ret < 0) {
 		dev_err(&priv->spi->dev, "irq GPIO request failed: %d", ret);
-		goto err_free_gpio_power;
+		goto err_free_common;
 	}
 
 	gpio_direction_output(p54spi_gpio_power, 0);
@@ -641,10 +638,11 @@ static int __devinit p54spi_probe(struct spi_device *spi)
 			  priv->spi);
 	if (ret < 0) {
 		dev_err(&priv->spi->dev, "request_irq() failed");
-		goto err_free_gpio_irq;
+		goto err_free_common;
 	}
 
-	irq_set_irq_type(gpio_to_irq(p54spi_gpio_irq), IRQ_TYPE_EDGE_RISING);
+	set_irq_type(gpio_to_irq(p54spi_gpio_irq),
+		     IRQ_TYPE_EDGE_RISING);
 
 	disable_irq(gpio_to_irq(p54spi_gpio_irq));
 
@@ -673,12 +671,6 @@ static int __devinit p54spi_probe(struct spi_device *spi)
 	return 0;
 
 err_free_common:
-	free_irq(gpio_to_irq(p54spi_gpio_irq), spi);
-err_free_gpio_irq:
-	gpio_free(p54spi_gpio_irq);
-err_free_gpio_power:
-	gpio_free(p54spi_gpio_power);
-err_free:
 	p54_free_common(priv->hw);
 	return ret;
 }
@@ -705,7 +697,10 @@ static int __devexit p54spi_remove(struct spi_device *spi)
 
 static struct spi_driver p54spi_driver = {
 	.driver = {
-		.name		= "p54spi",
+		/* use cx3110x name because board-n800.c uses that for the
+		 * SPI port */
+		.name		= "cx3110x",
+		.bus		= &spi_bus_type,
 		.owner		= THIS_MODULE,
 	},
 
@@ -738,5 +733,3 @@ module_exit(p54spi_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Christian Lamparter <chunkeey@web.de>");
 MODULE_ALIAS("spi:cx3110x");
-MODULE_ALIAS("spi:p54spi");
-MODULE_ALIAS("spi:stlc45xx");

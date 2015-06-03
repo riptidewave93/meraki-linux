@@ -27,9 +27,9 @@
 #include <linux/moduleparam.h>
 #include <linux/pci.h>
 #include <linux/pci_hotplug.h>
+#include <linux/slab.h>
 #include <linux/smp.h>
 #include <linux/init.h>
-#include <linux/vmalloc.h>
 #include <asm/eeh.h>       /* for eeh_add_device() */
 #include <asm/rtas.h>		/* rtas_call */
 #include <asm/pci-bridge.h>	/* for pci_controller */
@@ -37,7 +37,7 @@
 				/* and pci_do_scan_bus */
 #include "rpaphp.h"
 
-bool rpaphp_debug;
+int rpaphp_debug;
 LIST_HEAD(rpaphp_slot_head);
 
 #define DRIVER_VERSION	"0.1"
@@ -130,9 +130,10 @@ static int get_adapter_status(struct hotplug_slot *hotplug_slot, u8 * value)
 	return 0;
 }
 
-static enum pci_bus_speed get_max_bus_speed(struct slot *slot)
+static int get_max_bus_speed(struct hotplug_slot *hotplug_slot, enum pci_bus_speed *value)
 {
-	enum pci_bus_speed speed;
+	struct slot *slot = (struct slot *)hotplug_slot->private;
+
 	switch (slot->type) {
 	case 1:
 	case 2:
@@ -140,30 +141,30 @@ static enum pci_bus_speed get_max_bus_speed(struct slot *slot)
 	case 4:
 	case 5:
 	case 6:
-		speed = PCI_SPEED_33MHz;	/* speed for case 1-6 */
+		*value = PCI_SPEED_33MHz;	/* speed for case 1-6 */
 		break;
 	case 7:
 	case 8:
-		speed = PCI_SPEED_66MHz;
+		*value = PCI_SPEED_66MHz;
 		break;
 	case 11:
 	case 14:
-		speed = PCI_SPEED_66MHz_PCIX;
+		*value = PCI_SPEED_66MHz_PCIX;
 		break;
 	case 12:
 	case 15:
-		speed = PCI_SPEED_100MHz_PCIX;
+		*value = PCI_SPEED_100MHz_PCIX;
 		break;
 	case 13:
 	case 16:
-		speed = PCI_SPEED_133MHz_PCIX;
+		*value = PCI_SPEED_133MHz_PCIX;
 		break;
 	default:
-		speed = PCI_SPEED_UNKNOWN;
+		*value = PCI_SPEED_UNKNOWN;
 		break;
-	}
 
-	return speed;
+	}
+	return 0;
 }
 
 static int get_children_props(struct device_node *dn, const int **drc_indexes,
@@ -290,7 +291,7 @@ static int is_php_dn(struct device_node *dn, const int **indexes,
  * @dn: device node of slot
  *
  * This subroutine will register a hotplugable slot with the
- * PCI hotplug infrastructure. This routine is typically called
+ * PCI hotplug infrastructure. This routine is typicaly called
  * during boot time, if the hotplug slots are present at boot time,
  * or is called later, by the dlpar add code, if the slot is
  * being dynamically added during runtime.
@@ -407,8 +408,6 @@ static int enable_slot(struct hotplug_slot *hotplug_slot)
 		slot->state = NOT_VALID;
 		return -EINVAL;
 	}
-
-	slot->bus->max_bus_speed = get_max_bus_speed(slot);
 	return 0;
 }
 
@@ -419,8 +418,6 @@ static int disable_slot(struct hotplug_slot *hotplug_slot)
 		return -EINVAL;
 
 	pcibios_remove_pci_devices(slot->bus);
-	vm_unmap_aliases();
-
 	slot->state = NOT_CONFIGURED;
 	return 0;
 }
@@ -432,6 +429,7 @@ struct hotplug_slot_ops rpaphp_hotplug_slot_ops = {
 	.get_power_status = get_power_status,
 	.get_attention_status = get_attention_status,
 	.get_adapter_status = get_adapter_status,
+	.get_max_bus_speed = get_max_bus_speed,
 };
 
 module_init(rpaphp_init);

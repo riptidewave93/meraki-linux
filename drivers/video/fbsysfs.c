@@ -16,7 +16,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/fb.h>
 #include <linux/console.h>
 #include <linux/module.h>
@@ -33,7 +32,7 @@
  * for driver private data (info->par). info->par (if any) will be
  * aligned to sizeof(long).
  *
- * Returns the new structure, or NULL if an error occurred.
+ * Returns the new structure, or NULL if an error occured.
  *
  */
 struct fb_info *framebuffer_alloc(size_t size, struct device *dev)
@@ -80,7 +79,6 @@ EXPORT_SYMBOL(framebuffer_alloc);
  */
 void framebuffer_release(struct fb_info *info)
 {
-	kfree(info->apertures);
 	kfree(info);
 }
 EXPORT_SYMBOL(framebuffer_release);
@@ -90,11 +88,11 @@ static int activate(struct fb_info *fb_info, struct fb_var_screeninfo *var)
 	int err;
 
 	var->activate |= FB_ACTIVATE_FORCE;
-	console_lock();
+	acquire_console_sem();
 	fb_info->flags |= FBINFO_MISC_USEREVENT;
 	err = fb_set_var(fb_info, var);
 	fb_info->flags &= ~FBINFO_MISC_USEREVENT;
-	console_unlock();
+	release_console_sem();
 	if (err)
 		return err;
 	return 0;
@@ -175,9 +173,7 @@ static ssize_t store_modes(struct device *device,
 	if (i * sizeof(struct fb_videomode) != count)
 		return -EINVAL;
 
-	if (!lock_fb_info(fb_info))
-		return -ENODEV;
-	console_lock();
+	acquire_console_sem();
 	list_splice(&fb_info->modelist, &old_list);
 	fb_videomode_to_modelist((const struct fb_videomode *)buf, i,
 				 &fb_info->modelist);
@@ -187,8 +183,7 @@ static ssize_t store_modes(struct device *device,
 	} else
 		fb_destroy_modelist(&old_list);
 
-	console_unlock();
-	unlock_fb_info(fb_info);
+	release_console_sem();
 
 	return 0;
 }
@@ -304,11 +299,11 @@ static ssize_t store_blank(struct device *device,
 	char *last = NULL;
 	int err;
 
-	console_lock();
+	acquire_console_sem();
 	fb_info->flags |= FBINFO_MISC_USEREVENT;
 	err = fb_blank(fb_info, simple_strtoul(buf, &last, 0));
 	fb_info->flags &= ~FBINFO_MISC_USEREVENT;
-	console_unlock();
+	release_console_sem();
 	if (err < 0)
 		return err;
 	return count;
@@ -367,9 +362,9 @@ static ssize_t store_pan(struct device *device,
 		return -EINVAL;
 	var.yoffset = simple_strtoul(last, &last, 0);
 
-	console_lock();
+	acquire_console_sem();
 	err = fb_pan_display(fb_info, &var);
-	console_unlock();
+	release_console_sem();
 
 	if (err < 0)
 		return err;
@@ -402,12 +397,9 @@ static ssize_t store_fbstate(struct device *device,
 
 	state = simple_strtoul(buf, &last, 0);
 
-	if (!lock_fb_info(fb_info))
-		return -ENODEV;
-	console_lock();
+	acquire_console_sem();
 	fb_set_suspend(fb_info, (int)state);
-	console_unlock();
-	unlock_fb_info(fb_info);
+	release_console_sem();
 
 	return count;
 }

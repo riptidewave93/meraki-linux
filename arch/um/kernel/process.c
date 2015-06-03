@@ -7,25 +7,23 @@
 #include <linux/stddef.h>
 #include <linux/err.h>
 #include <linux/hardirq.h>
+#include <linux/gfp.h>
 #include <linux/mm.h>
-#include <linux/module.h>
 #include <linux/personality.h>
 #include <linux/proc_fs.h>
 #include <linux/ptrace.h>
 #include <linux/random.h>
-#include <linux/slab.h>
 #include <linux/sched.h>
-#include <linux/seq_file.h>
 #include <linux/tick.h>
 #include <linux/threads.h>
 #include <asm/current.h>
 #include <asm/pgtable.h>
-#include <asm/mmu_context.h>
 #include <asm/uaccess.h>
 #include "as-layout.h"
 #include "kern_util.h"
 #include "os.h"
 #include "skas.h"
+#include "tlb.h"
 
 /*
  * This is a per-cpu array.  A processor only modifies its entry and it only
@@ -78,7 +76,6 @@ int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags)
 		      &current->thread.regs, 0, NULL, NULL);
 	return pid;
 }
-EXPORT_SYMBOL(kernel_thread);
 
 static inline void set_current(struct task_struct *task)
 {
@@ -88,8 +85,11 @@ static inline void set_current(struct task_struct *task)
 
 extern void arch_switch_to(struct task_struct *to);
 
-void *__switch_to(struct task_struct *from, struct task_struct *to)
+void *_switch_to(void *prev, void *next, void *last)
 {
+	struct task_struct *from = prev;
+	struct task_struct *to = next;
+
 	to->thread.prev_sched = from;
 	set_current(to);
 
@@ -108,6 +108,7 @@ void *__switch_to(struct task_struct *from, struct task_struct *to)
 	} while (current->thread.saved_task);
 
 	return current->thread.prev_sched;
+
 }
 
 void interrupt_end(void)
@@ -122,9 +123,9 @@ void exit_thread(void)
 {
 }
 
-int get_current_pid(void)
+void *get_current(void)
 {
-	return task_pid_nr(current);
+	return current;
 }
 
 /*
@@ -199,7 +200,7 @@ int copy_thread(unsigned long clone_flags, unsigned long sp,
 		arch_copy_thread(&current->thread.arch, &p->thread.arch);
 	}
 	else {
-		get_safe_registers(p->thread.regs.regs.gp, p->thread.regs.regs.fp);
+		get_safe_registers(p->thread.regs.regs.gp);
 		p->thread.request.u.thread = current->thread.request.u.thread;
 		handler = new_thread_handler;
 	}
@@ -242,12 +243,10 @@ void default_idle(void)
 		if (need_resched())
 			schedule();
 
-		tick_nohz_idle_enter();
-		rcu_idle_enter();
+		tick_nohz_stop_sched_tick(1);
 		nsecs = disable_timer();
 		idle_sleep(nsecs);
-		rcu_idle_exit();
-		tick_nohz_idle_exit();
+		tick_nohz_restart_sched_tick();
 	}
 }
 
@@ -285,7 +284,6 @@ char *uml_strdup(const char *string)
 {
 	return kstrdup(string, GFP_KERNEL);
 }
-EXPORT_SYMBOL(uml_strdup);
 
 int copy_to_user_proc(void __user *to, void *from, int size)
 {
@@ -338,19 +336,16 @@ int get_using_sysemu(void)
 	return atomic_read(&using_sysemu);
 }
 
-static int sysemu_proc_show(struct seq_file *m, void *v)
+static int proc_read_sysemu(char *buf, char **start, off_t offset, int size,int *eof, void *data)
 {
-	seq_printf(m, "%d\n", get_using_sysemu());
-	return 0;
+	if (snprintf(buf, size, "%d\n", get_using_sysemu()) < size)
+		/* No overflow */
+		*eof = 1;
+
+	return strlen(buf);
 }
 
-static int sysemu_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, sysemu_proc_show, NULL);
-}
-
-static ssize_t sysemu_proc_write(struct file *file, const char __user *buf,
-				 size_t count, loff_t *pos)
+static int proc_write_sysemu(struct file *file,const char __user *buf, unsigned long count,void *data)
 {
 	char tmp[2];
 
@@ -363,28 +358,22 @@ static ssize_t sysemu_proc_write(struct file *file, const char __user *buf,
 	return count;
 }
 
-static const struct file_operations sysemu_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= sysemu_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-	.write		= sysemu_proc_write,
-};
-
 int __init make_proc_sysemu(void)
 {
 	struct proc_dir_entry *ent;
 	if (!sysemu_supported)
 		return 0;
 
-	ent = proc_create("sysemu", 0600, NULL, &sysemu_proc_fops);
+	ent = create_proc_entry("sysemu", 0600, NULL);
 
 	if (ent == NULL)
 	{
 		printk(KERN_WARNING "Failed to register /proc/sysemu\n");
 		return 0;
 	}
+
+	ent->read_proc  = proc_read_sysemu;
+	ent->write_proc = proc_write_sysemu;
 
 	return 0;
 }

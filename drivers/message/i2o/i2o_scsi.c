@@ -57,8 +57,9 @@
 #include <linux/scatterlist.h>
 
 #include <asm/dma.h>
+#include <asm/system.h>
 #include <asm/io.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_host.h>
@@ -203,7 +204,7 @@ static int i2o_scsi_remove(struct device *dev)
  *	i2o_scsi_probe - verify if dev is a I2O SCSI device and install it
  *	@dev: device to verify if it is a I2O SCSI device
  *
- *	Retrieve channel, id and lun for I2O device. If everything goes well
+ *	Retrieve channel, id and lun for I2O device. If everthing goes well
  *	register the I2O device as SCSI device on the I2O SCSI controller.
  *
  *	Returns 0 on success or negative error code on failure.
@@ -360,7 +361,7 @@ static int i2o_scsi_reply(struct i2o_controller *c, u32 m,
 	 */
 	error = le32_to_cpu(msg->body[0]);
 
-	osm_debug("Completed %0x%p\n", cmd);
+	osm_debug("Completed %ld\n", cmd->serial_number);
 
 	cmd->result = error & 0xff;
 	/*
@@ -505,7 +506,7 @@ static struct i2o_driver i2o_scsi_driver = {
  *	Locks: takes the controller lock on error path only
  */
 
-static int i2o_scsi_queuecommand_lck(struct scsi_cmnd *SCpnt,
+static int i2o_scsi_queuecommand(struct scsi_cmnd *SCpnt,
 				 void (*done) (struct scsi_cmnd *))
 {
 	struct i2o_controller *c;
@@ -527,6 +528,7 @@ static int i2o_scsi_queuecommand_lck(struct scsi_cmnd *SCpnt,
 	 *      Do the incoming paperwork
 	 */
 	i2o_dev = SCpnt->device->hostdata;
+	c = i2o_dev->iop;
 
 	SCpnt->scsi_done = done;
 
@@ -536,7 +538,7 @@ static int i2o_scsi_queuecommand_lck(struct scsi_cmnd *SCpnt,
 		done(SCpnt);
 		goto exit;
 	}
-	c = i2o_dev->iop;
+
 	tid = i2o_dev->lct_data.tid;
 
 	osm_debug("qcmd: Tid = %03x\n", tid);
@@ -677,7 +679,7 @@ static int i2o_scsi_queuecommand_lck(struct scsi_cmnd *SCpnt,
 	/* Queue the message */
 	i2o_msg_post(c, msg);
 
-	osm_debug("Issued %0x%p\n", SCpnt);
+	osm_debug("Issued %ld\n", SCpnt->serial_number);
 
 	return 0;
 
@@ -687,9 +689,7 @@ static int i2o_scsi_queuecommand_lck(struct scsi_cmnd *SCpnt,
 
       exit:
 	return rc;
-}
-
-static DEF_SCSI_QCMD(i2o_scsi_queuecommand)
+};
 
 /**
  *	i2o_scsi_abort - abort a running command

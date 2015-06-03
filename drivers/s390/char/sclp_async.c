@@ -11,7 +11,6 @@
 #include <linux/device.h>
 #include <linux/stat.h>
 #include <linux/string.h>
-#include <linux/slab.h>
 #include <linux/ctype.h>
 #include <linux/kmod.h>
 #include <linux/err.h>
@@ -82,9 +81,11 @@ static int proc_handler_callhome(struct ctl_table *ctl, int write,
 			return -EFAULT;
 	} else {
 		len = *count;
-		rc = kstrtoul_from_user(buffer, len, 0, &val);
-		if (rc)
-			return rc;
+		rc = copy_from_user(buf, buffer, sizeof(buf));
+		if (rc != 0)
+			return -EFAULT;
+		if (strict_strtoul(buf, 0, &val) != 0)
+			return -EINVAL;
 		if (val != 0 && val != 1)
 			return -EINVAL;
 		callhome_enabled = val;
@@ -100,17 +101,18 @@ static struct ctl_table callhome_table[] = {
 		.mode		= 0644,
 		.proc_handler	= proc_handler_callhome,
 	},
-	{}
+	{ .ctl_name = 0 }
 };
 
 static struct ctl_table kern_dir_table[] = {
 	{
+		.ctl_name	= CTL_KERN,
 		.procname	= "kernel",
 		.maxlen		= 0,
 		.mode		= 0555,
 		.child		= callhome_table,
 	},
-	{}
+	{ .ctl_name = 0 }
 };
 
 /*

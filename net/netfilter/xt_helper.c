@@ -6,7 +6,7 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/module.h>
 #include <linux/skbuff.h>
 #include <linux/netfilter.h>
@@ -24,7 +24,7 @@ MODULE_ALIAS("ip6t_helper");
 
 
 static bool
-helper_mt(const struct sk_buff *skb, struct xt_action_param *par)
+helper_mt(const struct sk_buff *skb, const struct xt_match_param *par)
 {
 	const struct xt_helper_info *info = par->matchinfo;
 	const struct nf_conn *ct;
@@ -54,19 +54,17 @@ helper_mt(const struct sk_buff *skb, struct xt_action_param *par)
 	return ret;
 }
 
-static int helper_mt_check(const struct xt_mtchk_param *par)
+static bool helper_mt_check(const struct xt_mtchk_param *par)
 {
 	struct xt_helper_info *info = par->matchinfo;
-	int ret;
 
-	ret = nf_ct_l3proto_try_module_get(par->family);
-	if (ret < 0) {
-		pr_info("cannot load conntrack support for proto=%u\n",
-			par->family);
-		return ret;
+	if (nf_ct_l3proto_try_module_get(par->family) < 0) {
+		printk(KERN_WARNING "can't load conntrack support for "
+				    "proto=%u\n", par->family);
+		return false;
 	}
 	info->name[29] = '\0';
-	return 0;
+	return true;
 }
 
 static void helper_mt_destroy(const struct xt_mtdtor_param *par)

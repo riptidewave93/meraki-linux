@@ -67,7 +67,6 @@ static inline int pte_file(pte_t pte) { return 0; }
  */
 #define pgprot_noncached(prot)	__pgprot(0)
 #define pgprot_writecombine(prot) __pgprot(0)
-#define pgprot_dmacoherent(prot) __pgprot(0)
 
 
 /*
@@ -79,6 +78,7 @@ extern unsigned int kobjsize(const void *objp);
  * No page table caches to initialise.
  */
 #define pgtable_cache_init()	do { } while (0)
+#define io_remap_page_range	remap_page_range
 #define io_remap_pfn_range	remap_pfn_range
 
 
@@ -86,8 +86,8 @@ extern unsigned int kobjsize(const void *objp);
  * All 32bit addresses are effectively valid for vmalloc...
  * Sort of meaningless for non-VM targets.
  */
-#define	VMALLOC_START	0UL
-#define	VMALLOC_END	0xffffffffUL
+#define	VMALLOC_START	0
+#define	VMALLOC_END	0xffffffff
 
 #define FIRST_USER_ADDRESS      (0)
 

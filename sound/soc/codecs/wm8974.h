@@ -57,7 +57,17 @@
 /* Clock divider Id's */
 #define WM8974_OPCLKDIV		0
 #define WM8974_MCLKDIV		1
-#define WM8974_BCLKDIV		2
+#define WM8974_ADCCLK		2
+#define WM8974_DACCLK		3
+#define WM8974_BCLKDIV		4
+
+/* DAC clock dividers */
+#define WM8974_DACCLK_F2	(1 << 3)
+#define WM8974_DACCLK_F4	(0 << 3)
+
+/* ADC clock dividers */
+#define WM8974_ADCCLK_F2	(1 << 3)
+#define WM8974_ADCCLK_F4	(0 << 3)
 
 /* PLL Out dividers */
 #define WM8974_OPCLKDIV_1	(0 << 4)
@@ -82,5 +92,8 @@
 #define WM8974_MCLKDIV_6	(5 << 5)
 #define WM8974_MCLKDIV_8	(6 << 5)
 #define WM8974_MCLKDIV_12	(7 << 5)
+
+extern struct snd_soc_dai wm8974_dai;
+extern struct snd_soc_codec_device soc_codec_dev_wm8974;
 
 #endif

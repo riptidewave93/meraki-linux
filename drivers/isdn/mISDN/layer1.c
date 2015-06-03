@@ -16,7 +16,6 @@
  */
 
 
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/mISDNhw.h>
 #include "core.h"
@@ -26,12 +25,12 @@
 static u_int *debug;
 
 struct layer1 {
-	u_long Flags;
-	struct FsmInst l1m;
-	struct FsmTimer timer;
-	int delay;
-	struct dchannel *dch;
-	dchannel_l1callback *dcb;
+	u_long			Flags;
+	struct FsmInst		l1m;
+	struct FsmTimer 	timer;
+	int			delay;
+	struct dchannel		*dch;
+	dchannel_l1callback	*dcb;
 };
 
 #define TIMER3_VALUE 7000
@@ -49,7 +48,7 @@ enum {
 	ST_L1_F8,
 };
 
-#define L1S_STATE_COUNT (ST_L1_F8 + 1)
+#define L1S_STATE_COUNT (ST_L1_F8+1)
 
 static char *strL1SState[] =
 {
@@ -99,16 +98,12 @@ static void
 l1m_debug(struct FsmInst *fi, char *fmt, ...)
 {
 	struct layer1 *l1 = fi->userdata;
-	struct va_format vaf;
 	va_list va;
 
 	va_start(va, fmt);
-
-	vaf.fmt = fmt;
-	vaf.va = &va;
-
-	printk(KERN_DEBUG "%s: %pV\n", dev_name(&l1->dch->dev.dev), &vaf);
-
+	printk(KERN_DEBUG "%s: ", dev_name(&l1->dch->dev.dev));
+	vprintk(fmt, va);
+	printk("\n");
 	va_end(va);
 }
 
@@ -358,7 +353,7 @@ l1_event(struct layer1 *l1, u_int event)
 	default:
 		if (*debug & DEBUG_L1)
 			printk(KERN_DEBUG "%s %x unhandled\n",
-			       __func__, event);
+			    __func__, event);
 		err = -EINVAL;
 	}
 	return err;

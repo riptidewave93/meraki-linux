@@ -7,7 +7,6 @@
  *	      Martin Schwidefsky <schwidefsky@de.ibm.com>
  */
 
-#include <linux/kernel_stat.h>
 #include <linux/module.h>
 #include <linux/err.h>
 #include <linux/spinlock.h>
@@ -20,11 +19,14 @@
 #include <linux/completion.h>
 #include <linux/platform_device.h>
 #include <asm/types.h>
-#include <asm/irq.h>
+#include <asm/s390_ext.h>
 
 #include "sclp.h"
 
 #define SCLP_HEADER		"sclp: "
+
+/* Structure for register_early_external_interrupt. */
+static ext_int_info_t ext_int_info_hwc;
 
 /* Lock to protect internal data consistency. */
 static DEFINE_SPINLOCK(sclp_lock);
@@ -194,7 +196,7 @@ __sclp_start_request(struct sclp_req *req)
 	req->start_count++;
 
 	if (rc == 0) {
-		/* Successfully started request */
+		/* Sucessfully started request */
 		req->status = SCLP_REQ_RUNNING;
 		sclp_running_state = sclp_running_state_running;
 		__sclp_set_request_timer(SCLP_RETRY_INTERVAL * HZ,
@@ -393,17 +395,16 @@ __sclp_find_req(u32 sccb)
 /* Handler for external interruption. Perform request post-processing.
  * Prepare read event data request if necessary. Start processing of next
  * request on queue. */
-static void sclp_interrupt_handler(struct ext_code ext_code,
-				   unsigned int param32, unsigned long param64)
+static void
+sclp_interrupt_handler(__u16 code)
 {
 	struct sclp_req *req;
 	u32 finished_sccb;
 	u32 evbuf_pending;
 
-	kstat_cpu(smp_processor_id()).irqs[EXTINT_SCP]++;
 	spin_lock(&sclp_lock);
-	finished_sccb = param32 & 0xfffffff8;
-	evbuf_pending = param32 & 0x3;
+	finished_sccb = S390_lowcore.ext_params & 0xfffffff8;
+	evbuf_pending = S390_lowcore.ext_params & 0x3;
 	if (finished_sccb) {
 		del_timer(&sclp_request_timer);
 		sclp_running_state = sclp_running_state_reset_pending;
@@ -467,7 +468,7 @@ sclp_sync_wait(void)
 	cr0_sync &= 0xffff00a0;
 	cr0_sync |= 0x00000200;
 	__ctl_load(cr0_sync, 0, 0);
-	__arch_local_irq_stosm(0x01);
+	__raw_local_irq_stosm(0x01);
 	/* Loop until driver state indicates finished request */
 	while (sclp_running_state != sclp_running_state_idle) {
 		/* Check for expired request timer */
@@ -818,13 +819,12 @@ EXPORT_SYMBOL(sclp_reactivate);
 
 /* Handler for external interruption used during initialization. Modify
  * request state to done. */
-static void sclp_check_handler(struct ext_code ext_code,
-			       unsigned int param32, unsigned long param64)
+static void
+sclp_check_handler(__u16 code)
 {
 	u32 finished_sccb;
 
-	kstat_cpu(smp_processor_id()).irqs[EXTINT_SCP]++;
-	finished_sccb = param32 & 0xfffffff8;
+	finished_sccb = S390_lowcore.ext_params & 0xfffffff8;
 	/* Is this the interrupt we are waiting for? */
 	if (finished_sccb == 0)
 		return;
@@ -866,7 +866,8 @@ sclp_check_interface(void)
 
 	spin_lock_irqsave(&sclp_lock, flags);
 	/* Prepare init mask command */
-	rc = register_external_interrupt(0x2401, sclp_check_handler);
+	rc = register_early_external_interrupt(0x2401, sclp_check_handler,
+					       &ext_int_info_hwc);
 	if (rc) {
 		spin_unlock_irqrestore(&sclp_lock, flags);
 		return rc;
@@ -884,12 +885,12 @@ sclp_check_interface(void)
 		spin_unlock_irqrestore(&sclp_lock, flags);
 		/* Enable service-signal interruption - needs to happen
 		 * with IRQs enabled. */
-		service_subclass_irq_register();
+		ctl_set_bit(0, 9);
 		/* Wait for signal from interrupt or timeout */
 		sclp_sync_wait();
 		/* Disable service-signal interruption - needs to happen
 		 * with IRQs enabled. */
-		service_subclass_irq_unregister();
+		ctl_clear_bit(0,9);
 		spin_lock_irqsave(&sclp_lock, flags);
 		del_timer(&sclp_request_timer);
 		if (sclp_init_req.status == SCLP_REQ_DONE &&
@@ -899,7 +900,8 @@ sclp_check_interface(void)
 		} else
 			rc = -EBUSY;
 	}
-	unregister_external_interrupt(0x2401, sclp_check_handler);
+	unregister_early_external_interrupt(0x2401, sclp_check_handler,
+					    &ext_int_info_hwc);
 	spin_unlock_irqrestore(&sclp_lock, flags);
 	return rc;
 }
@@ -1017,7 +1019,7 @@ static int sclp_restore(struct device *dev)
 	return sclp_undo_suspend(SCLP_PM_EVENT_RESTORE);
 }
 
-static const struct dev_pm_ops sclp_pm_ops = {
+static struct dev_pm_ops sclp_pm_ops = {
 	.freeze		= sclp_freeze,
 	.thaw		= sclp_thaw,
 	.restore	= sclp_restore,
@@ -1062,14 +1064,15 @@ sclp_init(void)
 	if (rc)
 		goto fail_init_state_uninitialized;
 	/* Register interrupt handler */
-	rc = register_external_interrupt(0x2401, sclp_interrupt_handler);
+	rc = register_early_external_interrupt(0x2401, sclp_interrupt_handler,
+					       &ext_int_info_hwc);
 	if (rc)
 		goto fail_unregister_reboot_notifier;
 	sclp_init_state = sclp_init_state_initialized;
 	spin_unlock_irqrestore(&sclp_lock, flags);
 	/* Enable service-signal external interruption - needs to happen with
 	 * IRQs enabled. */
-	service_subclass_irq_register();
+	ctl_set_bit(0, 9);
 	sclp_init_mask(1);
 	return 0;
 

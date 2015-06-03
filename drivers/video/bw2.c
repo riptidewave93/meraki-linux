@@ -12,6 +12,7 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/fb.h>
@@ -273,9 +274,9 @@ static int __devinit bw2_do_default_mode(struct bw2_par *par,
 	return 0;
 }
 
-static int __devinit bw2_probe(struct platform_device *op)
+static int __devinit bw2_probe(struct of_device *op, const struct of_device_id *match)
 {
-	struct device_node *dp = op->dev.of_node;
+	struct device_node *dp = op->node;
 	struct fb_info *info;
 	struct bw2_par *par;
 	int linebytes, err;
@@ -350,7 +351,7 @@ out_err:
 	return err;
 }
 
-static int __devexit bw2_remove(struct platform_device *op)
+static int __devexit bw2_remove(struct of_device *op)
 {
 	struct fb_info *info = dev_get_drvdata(&op->dev);
 	struct bw2_par *par = info->par;
@@ -375,12 +376,9 @@ static const struct of_device_id bw2_match[] = {
 };
 MODULE_DEVICE_TABLE(of, bw2_match);
 
-static struct platform_driver bw2_driver = {
-	.driver = {
-		.name = "bw2",
-		.owner = THIS_MODULE,
-		.of_match_table = bw2_match,
-	},
+static struct of_platform_driver bw2_driver = {
+	.name		= "bw2",
+	.match_table	= bw2_match,
 	.probe		= bw2_probe,
 	.remove		= __devexit_p(bw2_remove),
 };
@@ -390,12 +388,12 @@ static int __init bw2_init(void)
 	if (fb_get_options("bw2fb", NULL))
 		return -ENODEV;
 
-	return platform_driver_register(&bw2_driver);
+	return of_register_driver(&bw2_driver, &of_bus_type);
 }
 
 static void __exit bw2_exit(void)
 {
-	platform_driver_unregister(&bw2_driver);
+	of_unregister_driver(&bw2_driver);
 }
 
 module_init(bw2_init);

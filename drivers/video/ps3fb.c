@@ -513,9 +513,9 @@ static int ps3fb_release(struct fb_info *info, int user)
 	if (atomic_dec_and_test(&ps3fb.f_count)) {
 		if (atomic_read(&ps3fb.ext_flip)) {
 			atomic_set(&ps3fb.ext_flip, 0);
-			if (console_trylock()) {
+			if (!try_acquire_console_sem()) {
 				ps3fb_sync(info, 0);	/* single buffer */
-				console_unlock();
+				release_console_sem();
 			}
 		}
 	}
@@ -830,14 +830,14 @@ static int ps3fb_ioctl(struct fb_info *info, unsigned int cmd,
 			if (vmode) {
 				var = info->var;
 				fb_videomode_to_var(&var, vmode);
-				console_lock();
+				acquire_console_sem();
 				info->flags |= FBINFO_MISC_USEREVENT;
 				/* Force, in case only special bits changed */
 				var.activate |= FB_ACTIVATE_FORCE;
 				par->new_mode_id = val;
 				retval = fb_set_var(info, &var);
 				info->flags &= ~FBINFO_MISC_USEREVENT;
-				console_unlock();
+				release_console_sem();
 			}
 			break;
 		}
@@ -881,9 +881,9 @@ static int ps3fb_ioctl(struct fb_info *info, unsigned int cmd,
 			break;
 
 		dev_dbg(info->device, "PS3FB_IOCTL_FSEL:%d\n", val);
-		console_lock();
+		acquire_console_sem();
 		retval = ps3fb_sync(info, val);
-		console_unlock();
+		release_console_sem();
 		break;
 
 	default:
@@ -903,9 +903,9 @@ static int ps3fbd(void *arg)
 		set_current_state(TASK_INTERRUPTIBLE);
 		if (ps3fb.is_kicked) {
 			ps3fb.is_kicked = 0;
-			console_lock();
+			acquire_console_sem();
 			ps3fb_sync(info, 0);	/* single buffer */
-			console_unlock();
+			release_console_sem();
 		}
 		schedule();
 	}
@@ -1082,7 +1082,7 @@ static int __devinit ps3fb_probe(struct ps3_system_bus_device *dev)
 	}
 
 	retval = request_irq(ps3fb.irq_no, ps3fb_vsync_interrupt,
-			     0, DEVICE_NAME, &dev->core);
+			     IRQF_DISABLED, DEVICE_NAME, &dev->core);
 	if (retval) {
 		dev_err(&dev->core, "%s: request_irq failed %d\n", __func__,
 			retval);

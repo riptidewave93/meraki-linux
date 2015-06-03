@@ -11,6 +11,7 @@
 
 #include <asm/page.h>
 #include <asm/pgtable.h>
+#include <asm/system.h>
 #include <asm/irq.h>
 #include <asm/sun3x.h>
 

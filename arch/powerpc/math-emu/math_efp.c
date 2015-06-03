@@ -1,7 +1,7 @@
 /*
  * arch/powerpc/math-emu/math_efp.c
  *
- * Copyright (C) 2006-2008, 2010 Freescale Semiconductor, Inc.
+ * Copyright (C) 2006-2008 Freescale Semiconductor, Inc. All rights reserved.
  *
  * Author: Ebony Zhu,	<ebony.zhu@freescale.com>
  *         Yu Liu,	<yu.liu@freescale.com>
@@ -104,8 +104,6 @@
 #define FP_EX_MASK	(FP_EX_INEXACT | FP_EX_INVALID | FP_EX_DIVZERO | \
 			FP_EX_UNDERFLOW | FP_EX_OVERFLOW)
 
-static int have_e500_cpu_a005_erratum;
-
 union dw_union {
 	u64 dp[1];
 	u32 wp[2];
@@ -171,6 +169,10 @@ static unsigned long insn_type(unsigned long speinsn)
 	case EFDNABS:	ret = XA;	break;
 	case EFDNEG:	ret = XA;	break;
 	case EFDSUB:	ret = AB;	break;
+
+	default:
+		printk(KERN_ERR "\nOoops! SPE instruction no type found.");
+		printk(KERN_ERR "\ninst code: %08lx\n", speinsn);
 	}
 
 	return ret;
@@ -191,7 +193,7 @@ int do_spe_mathemu(struct pt_regs *regs)
 
 	type = insn_type(speinsn);
 	if (type == NOTYPE)
-		goto illegal;
+		return -ENOSYS;
 
 	func = speinsn & 0x7ff;
 	fc = (speinsn >> 21) & 0x1f;
@@ -208,10 +210,12 @@ int do_spe_mathemu(struct pt_regs *regs)
 
 	__FPU_FPSCR = mfspr(SPRN_SPEFSCR);
 
-	pr_debug("speinsn:%08lx spefscr:%08lx\n", speinsn, __FPU_FPSCR);
-	pr_debug("vc: %08x  %08x\n", vc.wp[0], vc.wp[1]);
-	pr_debug("va: %08x  %08x\n", va.wp[0], va.wp[1]);
-	pr_debug("vb: %08x  %08x\n", vb.wp[0], vb.wp[1]);
+#ifdef DEBUG
+	printk("speinsn:%08lx spefscr:%08lx\n", speinsn, __FPU_FPSCR);
+	printk("vc: %08x  %08x\n", vc.wp[0], vc.wp[1]);
+	printk("va: %08x  %08x\n", va.wp[0], va.wp[1]);
+	printk("vb: %08x  %08x\n", vb.wp[0], vb.wp[1]);
+#endif
 
 	switch (src) {
 	case SPFP: {
@@ -229,8 +233,10 @@ int do_spe_mathemu(struct pt_regs *regs)
 			break;
 		}
 
-		pr_debug("SA: %ld %08lx %ld (%ld)\n", SA_s, SA_f, SA_e, SA_c);
-		pr_debug("SB: %ld %08lx %ld (%ld)\n", SB_s, SB_f, SB_e, SB_c);
+#ifdef DEBUG
+		printk("SA: %ld %08lx %ld (%ld)\n", SA_s, SA_f, SA_e, SA_c);
+		printk("SB: %ld %08lx %ld (%ld)\n", SB_s, SB_f, SB_e, SB_c);
+#endif
 
 		switch (func) {
 		case EFSABS:
@@ -297,10 +303,10 @@ int do_spe_mathemu(struct pt_regs *regs)
 			FP_DECL_D(DB);
 			FP_CLEAR_EXCEPTIONS;
 			FP_UNPACK_DP(DB, vb.dp);
-
-			pr_debug("DB: %ld %08lx %08lx %ld (%ld)\n",
+#ifdef DEBUG
+			printk("DB: %ld %08lx %08lx %ld (%ld)\n",
 					DB_s, DB_f1, DB_f0, DB_e, DB_c);
-
+#endif
 			FP_CONV(S, D, 1, 2, SR, DB);
 			goto pack_s;
 		}
@@ -314,8 +320,7 @@ int do_spe_mathemu(struct pt_regs *regs)
 			} else {
 				_FP_ROUND_ZERO(1, SB);
 			}
-			FP_TO_INT_S(vc.wp[1], SB, 32,
-					(((func & 0x3) != 0) || SB_s));
+			FP_TO_INT_S(vc.wp[1], SB, 32, ((func & 0x3) != 0));
 			goto update_regs;
 
 		default:
@@ -324,8 +329,9 @@ int do_spe_mathemu(struct pt_regs *regs)
 		break;
 
 pack_s:
-		pr_debug("SR: %ld %08lx %ld (%ld)\n", SR_s, SR_f, SR_e, SR_c);
-
+#ifdef DEBUG
+		printk("SR: %ld %08lx %ld (%ld)\n", SR_s, SR_f, SR_e, SR_c);
+#endif
 		FP_PACK_SP(vc.wp + 1, SR);
 		goto update_regs;
 
@@ -356,10 +362,12 @@ cmp_s:
 			break;
 		}
 
-		pr_debug("DA: %ld %08lx %08lx %ld (%ld)\n",
+#ifdef DEBUG
+		printk("DA: %ld %08lx %08lx %ld (%ld)\n",
 				DA_s, DA_f1, DA_f0, DA_e, DA_c);
-		pr_debug("DB: %ld %08lx %08lx %ld (%ld)\n",
+		printk("DB: %ld %08lx %08lx %ld (%ld)\n",
 				DB_s, DB_f1, DB_f0, DB_e, DB_c);
+#endif
 
 		switch (func) {
 		case EFDABS:
@@ -427,10 +435,10 @@ cmp_s:
 			FP_DECL_S(SB);
 			FP_CLEAR_EXCEPTIONS;
 			FP_UNPACK_SP(SB, vb.wp + 1);
-
-			pr_debug("SB: %ld %08lx %ld (%ld)\n",
+#ifdef DEBUG
+			printk("SB: %ld %08lx %ld (%ld)\n",
 					SB_s, SB_f, SB_e, SB_c);
-
+#endif
 			FP_CONV(D, S, 2, 1, DR, SB);
 			goto pack_d;
 		}
@@ -450,8 +458,7 @@ cmp_s:
 			} else {
 				_FP_ROUND_ZERO(2, DB);
 			}
-			FP_TO_INT_D(vc.wp[1], DB, 32,
-					(((func & 0x3) != 0) || DB_s));
+			FP_TO_INT_D(vc.wp[1], DB, 32, ((func & 0x3) != 0));
 			goto update_regs;
 
 		default:
@@ -460,9 +467,10 @@ cmp_s:
 		break;
 
 pack_d:
-		pr_debug("DR: %ld %08lx %08lx %ld (%ld)\n",
+#ifdef DEBUG
+		printk("DR: %ld %08lx %08lx %ld (%ld)\n",
 				DR_s, DR_f1, DR_f0, DR_e, DR_c);
-
+#endif
 		FP_PACK_DP(vc.dp, DR);
 		goto update_regs;
 
@@ -499,14 +507,12 @@ cmp_d:
 			break;
 		}
 
-		pr_debug("SA0: %ld %08lx %ld (%ld)\n",
-				SA0_s, SA0_f, SA0_e, SA0_c);
-		pr_debug("SA1: %ld %08lx %ld (%ld)\n",
-				SA1_s, SA1_f, SA1_e, SA1_c);
-		pr_debug("SB0: %ld %08lx %ld (%ld)\n",
-				SB0_s, SB0_f, SB0_e, SB0_c);
-		pr_debug("SB1: %ld %08lx %ld (%ld)\n",
-				SB1_s, SB1_f, SB1_e, SB1_c);
+#ifdef DEBUG
+		printk("SA0: %ld %08lx %ld (%ld)\n", SA0_s, SA0_f, SA0_e, SA0_c);
+		printk("SA1: %ld %08lx %ld (%ld)\n", SA1_s, SA1_f, SA1_e, SA1_c);
+		printk("SB0: %ld %08lx %ld (%ld)\n", SB0_s, SB0_f, SB0_e, SB0_c);
+		printk("SB1: %ld %08lx %ld (%ld)\n", SB1_s, SB1_f, SB1_e, SB1_c);
+#endif
 
 		switch (func) {
 		case EVFSABS:
@@ -583,10 +589,8 @@ cmp_d:
 				_FP_ROUND_ZERO(1, SB0);
 				_FP_ROUND_ZERO(1, SB1);
 			}
-			FP_TO_INT_S(vc.wp[0], SB0, 32,
-					(((func & 0x3) != 0) || SB0_s));
-			FP_TO_INT_S(vc.wp[1], SB1, 32,
-					(((func & 0x3) != 0) || SB1_s));
+			FP_TO_INT_S(vc.wp[0], SB0, 32, ((func & 0x3) != 0));
+			FP_TO_INT_S(vc.wp[1], SB1, 32, ((func & 0x3) != 0));
 			goto update_regs;
 
 		default:
@@ -595,11 +599,10 @@ cmp_d:
 		break;
 
 pack_vs:
-		pr_debug("SR0: %ld %08lx %ld (%ld)\n",
-				SR0_s, SR0_f, SR0_e, SR0_c);
-		pr_debug("SR1: %ld %08lx %ld (%ld)\n",
-				SR1_s, SR1_f, SR1_e, SR1_c);
-
+#ifdef DEBUG
+		printk("SR0: %ld %08lx %ld (%ld)\n", SR0_s, SR0_f, SR0_e, SR0_c);
+		printk("SR1: %ld %08lx %ld (%ld)\n", SR1_s, SR1_f, SR1_e, SR1_c);
+#endif
 		FP_PACK_SP(vc.wp, SR0);
 		FP_PACK_SP(vc.wp + 1, SR1);
 		goto update_regs;
@@ -637,23 +640,18 @@ update_regs:
 	current->thread.evr[fc] = vc.wp[0];
 	regs->gpr[fc] = vc.wp[1];
 
-	pr_debug("ccr = %08lx\n", regs->ccr);
-	pr_debug("cur exceptions = %08x spefscr = %08lx\n",
+#ifdef DEBUG
+	printk("ccr = %08lx\n", regs->ccr);
+	printk("cur exceptions = %08x spefscr = %08lx\n",
 			FP_CUR_EXCEPTIONS, __FPU_FPSCR);
-	pr_debug("vc: %08x  %08x\n", vc.wp[0], vc.wp[1]);
-	pr_debug("va: %08x  %08x\n", va.wp[0], va.wp[1]);
-	pr_debug("vb: %08x  %08x\n", vb.wp[0], vb.wp[1]);
+	printk("vc: %08x  %08x\n", vc.wp[0], vc.wp[1]);
+	printk("va: %08x  %08x\n", va.wp[0], va.wp[1]);
+	printk("vb: %08x  %08x\n", vb.wp[0], vb.wp[1]);
+#endif
 
 	return 0;
 
 illegal:
-	if (have_e500_cpu_a005_erratum) {
-		/* according to e500 cpu a005 erratum, reissue efp inst */
-		regs->nip -= 4;
-		pr_debug("re-issue efp inst: %08lx\n", speinsn);
-		return 0;
-	}
-
 	printk(KERN_ERR "\nOoops! IEEE-754 compliance handler encountered un-supported instruction.\ninst code: %08lx\n", speinsn);
 	return -ENOSYS;
 }
@@ -672,20 +670,13 @@ int speround_handler(struct pt_regs *regs)
 	type = insn_type(speinsn & 0x7ff);
 	if (type == XCR) return -ENOSYS;
 
-	__FPU_FPSCR = mfspr(SPRN_SPEFSCR);
-	pr_debug("speinsn:%08lx spefscr:%08lx\n", speinsn, __FPU_FPSCR);
-
-	/* No need to round if the result is exact */
-	if (!(__FPU_FPSCR & FP_EX_INEXACT))
-		return 0;
-
 	fc = (speinsn >> 21) & 0x1f;
 	s_lo = regs->gpr[fc] & SIGN_BIT_S;
 	s_hi = current->thread.evr[fc] & SIGN_BIT_S;
 	fgpr.wp[0] = current->thread.evr[fc];
 	fgpr.wp[1] = regs->gpr[fc];
 
-	pr_debug("round fgpr: %08x  %08x\n", fgpr.wp[0], fgpr.wp[1]);
+	__FPU_FPSCR = mfspr(SPRN_SPEFSCR);
 
 	switch ((speinsn >> 5) & 0x7) {
 	/* Since SPE instructions on E500 core can handle round to nearest
@@ -725,47 +716,5 @@ int speround_handler(struct pt_regs *regs)
 	current->thread.evr[fc] = fgpr.wp[0];
 	regs->gpr[fc] = fgpr.wp[1];
 
-	pr_debug("  to fgpr: %08x  %08x\n", fgpr.wp[0], fgpr.wp[1]);
-
 	return 0;
 }
-
-int __init spe_mathemu_init(void)
-{
-	u32 pvr, maj, min;
-
-	pvr = mfspr(SPRN_PVR);
-
-	if ((PVR_VER(pvr) == PVR_VER_E500V1) ||
-	    (PVR_VER(pvr) == PVR_VER_E500V2)) {
-		maj = PVR_MAJ(pvr);
-		min = PVR_MIN(pvr);
-
-		/*
-		 * E500 revision below 1.1, 2.3, 3.1, 4.1, 5.1
-		 * need cpu a005 errata workaround
-		 */
-		switch (maj) {
-		case 1:
-			if (min < 1)
-				have_e500_cpu_a005_erratum = 1;
-			break;
-		case 2:
-			if (min < 3)
-				have_e500_cpu_a005_erratum = 1;
-			break;
-		case 3:
-		case 4:
-		case 5:
-			if (min < 1)
-				have_e500_cpu_a005_erratum = 1;
-			break;
-		default:
-			break;
-		}
-	}
-
-	return 0;
-}
-
-module_init(spe_mathemu_init);

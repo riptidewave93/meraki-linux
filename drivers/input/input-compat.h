@@ -19,8 +19,10 @@
 
 /* Note to the author of this code: did it ever occur to
    you why the ifdefs are needed? Think about it again. -AK */
-#if defined(CONFIG_X86_64) || defined(CONFIG_TILE)
+#ifdef CONFIG_X86_64
 #  define INPUT_COMPAT_TEST is_compat_task()
+#elif defined(CONFIG_IA64)
+#  define INPUT_COMPAT_TEST IS_IA32_PROCESS(task_pt_regs(current))
 #elif defined(CONFIG_S390)
 #  define INPUT_COMPAT_TEST test_thread_flag(TIF_31BIT)
 #elif defined(CONFIG_MIPS)
@@ -67,7 +69,7 @@ struct ff_effect_compat {
 
 static inline size_t input_event_size(void)
 {
-	return (INPUT_COMPAT_TEST && !COMPAT_USE_64BIT_TIME) ?
+	return INPUT_COMPAT_TEST ?
 		sizeof(struct input_event_compat) : sizeof(struct input_event);
 }
 

@@ -25,6 +25,7 @@
 #endif
 
 #if defined CONFIG_IA64
+#include <asm/system.h>
 #include <asm/sn/arch.h>	/* defines is_shub1() and is_shub2() */
 #define is_shub()	ia64_platform_is("sn2")
 #endif
@@ -338,7 +339,6 @@ extern short xp_partition_id;
 extern u8 xp_region_size;
 
 extern unsigned long (*xp_pa) (void *);
-extern unsigned long (*xp_socket_pa) (unsigned long);
 extern enum xp_retval (*xp_remote_memcpy) (unsigned long, const unsigned long,
 		       size_t);
 extern int (*xp_cpu_to_nasid) (int);

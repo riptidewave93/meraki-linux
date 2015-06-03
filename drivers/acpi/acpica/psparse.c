@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -55,6 +55,7 @@
 #include "acparser.h"
 #include "acdispat.h"
 #include "amlcode.h"
+#include "acnamesp.h"
 #include "acinterp.h"
 
 #define _COMPONENT          ACPI_PARSER
@@ -538,16 +539,24 @@ acpi_status acpi_ps_parse_aml(struct acpi_walk_state *walk_state)
 			/* Check for possible multi-thread reentrancy problem */
 
 			if ((status == AE_ALREADY_EXISTS) &&
-			    (!(walk_state->method_desc->method.
-			       info_flags & ACPI_METHOD_SERIALIZED))) {
+			    (!walk_state->method_desc->method.mutex)) {
+				ACPI_INFO((AE_INFO,
+					   "Marking method %4.4s as Serialized because of AE_ALREADY_EXISTS error",
+					   walk_state->method_node->name.
+					   ascii));
+
 				/*
-				 * Method is not serialized and tried to create an object
-				 * twice. The probable cause is that the method cannot
-				 * handle reentrancy. Mark as "pending serialized" now, and
-				 * then mark "serialized" when the last thread exits.
+				 * Method tried to create an object twice. The probable cause is
+				 * that the method cannot handle reentrancy.
+				 *
+				 * The method is marked not_serialized, but it tried to create
+				 * a named object, causing the second thread entrance to fail.
+				 * Workaround this problem by marking the method permanently
+				 * as Serialized.
 				 */
-				walk_state->method_desc->method.info_flags |=
-				    ACPI_METHOD_SERIALIZED_PENDING;
+				walk_state->method_desc->method.method_flags |=
+				    AML_METHOD_SERIALIZED;
+				walk_state->method_desc->method.sync_level = 0;
 			}
 		}
 
@@ -601,13 +610,17 @@ acpi_status acpi_ps_parse_aml(struct acpi_walk_state *walk_state)
 					    implicit_return_obj) {
 						previous_walk_state->
 						    implicit_return_obj =
-						    acpi_ut_create_integer_object
-						    ((u64) 0);
+						    acpi_ut_create_internal_object
+						    (ACPI_TYPE_INTEGER);
 						if (!previous_walk_state->
 						    implicit_return_obj) {
 							return_ACPI_STATUS
 							    (AE_NO_MEMORY);
 						}
+
+						previous_walk_state->
+						    implicit_return_obj->
+						    integer.value = 0;
 					}
 
 					/* Restart the calling control method */

@@ -220,6 +220,7 @@ clear_DTLB:
 	add.l	r22, r63, r22		/* Sign extend */
 	putcfg	r21, 0, r22		/* Set MMUDR[0].PTEH */
 
+#ifdef CONFIG_EARLY_PRINTK
 	/*
 	 * Setup a DTLB translation for SCIF phys.
 	 */
@@ -230,6 +231,7 @@ clear_DTLB:
 	movi    0xfa03, r22	/* 0xfa030000, fixed SCIF virt */
 	shori   0x0003, r22
 	putcfg  r21, 0, r22	/* PTEH last */
+#endif
 
 	/*
 	 * Set cache behaviours.

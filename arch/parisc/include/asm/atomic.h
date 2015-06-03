@@ -6,7 +6,7 @@
 #define _ASM_PARISC_ATOMIC_H_
 
 #include <linux/types.h>
-#include <asm/cmpxchg.h>
+#include <asm/system.h>
 
 /*
  * Atomic operations that C can't guarantee us.  Useful for
@@ -27,19 +27,19 @@
 #  define ATOMIC_HASH_SIZE 4
 #  define ATOMIC_HASH(a) (&(__atomic_hash[ (((unsigned long) (a))/L1_CACHE_BYTES) & (ATOMIC_HASH_SIZE-1) ]))
 
-extern arch_spinlock_t __atomic_hash[ATOMIC_HASH_SIZE] __lock_aligned;
+extern raw_spinlock_t __atomic_hash[ATOMIC_HASH_SIZE] __lock_aligned;
 
 /* Can't use raw_spin_lock_irq because of #include problems, so
  * this is the substitute */
 #define _atomic_spin_lock_irqsave(l,f) do {	\
-	arch_spinlock_t *s = ATOMIC_HASH(l);		\
+	raw_spinlock_t *s = ATOMIC_HASH(l);		\
 	local_irq_save(f);			\
-	arch_spin_lock(s);			\
+	__raw_spin_lock(s);			\
 } while(0)
 
 #define _atomic_spin_unlock_irqrestore(l,f) do {	\
-	arch_spinlock_t *s = ATOMIC_HASH(l);			\
-	arch_spin_unlock(s);				\
+	raw_spinlock_t *s = ATOMIC_HASH(l);			\
+	__raw_spin_unlock(s);				\
 	local_irq_restore(f);				\
 } while(0)
 
@@ -47,6 +47,112 @@ extern arch_spinlock_t __atomic_hash[ATOMIC_HASH_SIZE] __lock_aligned;
 #else
 #  define _atomic_spin_lock_irqsave(l,f) do { local_irq_save(f); } while (0)
 #  define _atomic_spin_unlock_irqrestore(l,f) do { local_irq_restore(f); } while (0)
+#endif
+
+/* This should get optimized out since it's never called.
+** Or get a link error if xchg is used "wrong".
+*/
+extern void __xchg_called_with_bad_pointer(void);
+
+
+/* __xchg32/64 defined in arch/parisc/lib/bitops.c */
+extern unsigned long __xchg8(char, char *);
+extern unsigned long __xchg32(int, int *);
+#ifdef CONFIG_64BIT
+extern unsigned long __xchg64(unsigned long, unsigned long *);
+#endif
+
+/* optimizer better get rid of switch since size is a constant */
+static __inline__ unsigned long
+__xchg(unsigned long x, __volatile__ void * ptr, int size)
+{
+	switch(size) {
+#ifdef CONFIG_64BIT
+	case 8: return __xchg64(x,(unsigned long *) ptr);
+#endif
+	case 4: return __xchg32((int) x, (int *) ptr);
+	case 1: return __xchg8((char) x, (char *) ptr);
+	}
+	__xchg_called_with_bad_pointer();
+	return x;
+}
+
+
+/*
+** REVISIT - Abandoned use of LDCW in xchg() for now:
+** o need to test sizeof(*ptr) to avoid clearing adjacent bytes
+** o and while we are at it, could CONFIG_64BIT code use LDCD too?
+**
+**	if (__builtin_constant_p(x) && (x == NULL))
+**		if (((unsigned long)p & 0xf) == 0)
+**			return __ldcw(p);
+*/
+#define xchg(ptr,x) \
+	((__typeof__(*(ptr)))__xchg((unsigned long)(x),(ptr),sizeof(*(ptr))))
+
+
+#define __HAVE_ARCH_CMPXCHG	1
+
+/* bug catcher for when unsupported size is used - won't link */
+extern void __cmpxchg_called_with_bad_pointer(void);
+
+/* __cmpxchg_u32/u64 defined in arch/parisc/lib/bitops.c */
+extern unsigned long __cmpxchg_u32(volatile unsigned int *m, unsigned int old, unsigned int new_);
+extern unsigned long __cmpxchg_u64(volatile unsigned long *ptr, unsigned long old, unsigned long new_);
+
+/* don't worry...optimizer will get rid of most of this */
+static __inline__ unsigned long
+__cmpxchg(volatile void *ptr, unsigned long old, unsigned long new_, int size)
+{
+	switch(size) {
+#ifdef CONFIG_64BIT
+	case 8: return __cmpxchg_u64((unsigned long *)ptr, old, new_);
+#endif
+	case 4: return __cmpxchg_u32((unsigned int *)ptr, (unsigned int) old, (unsigned int) new_);
+	}
+	__cmpxchg_called_with_bad_pointer();
+	return old;
+}
+
+#define cmpxchg(ptr,o,n)						 \
+  ({									 \
+     __typeof__(*(ptr)) _o_ = (o);					 \
+     __typeof__(*(ptr)) _n_ = (n);					 \
+     (__typeof__(*(ptr))) __cmpxchg((ptr), (unsigned long)_o_,		 \
+				    (unsigned long)_n_, sizeof(*(ptr))); \
+  })
+
+#include <asm-generic/cmpxchg-local.h>
+
+static inline unsigned long __cmpxchg_local(volatile void *ptr,
+				      unsigned long old,
+				      unsigned long new_, int size)
+{
+	switch (size) {
+#ifdef CONFIG_64BIT
+	case 8:	return __cmpxchg_u64((unsigned long *)ptr, old, new_);
+#endif
+	case 4:	return __cmpxchg_u32(ptr, old, new_);
+	default:
+		return __cmpxchg_local_generic(ptr, old, new_, size);
+	}
+}
+
+/*
+ * cmpxchg_local and cmpxchg64_local are atomic wrt current CPU. Always make
+ * them available.
+ */
+#define cmpxchg_local(ptr, o, n)				  	\
+	((__typeof__(*(ptr)))__cmpxchg_local((ptr), (unsigned long)(o),	\
+			(unsigned long)(n), sizeof(*(ptr))))
+#ifdef CONFIG_64BIT
+#define cmpxchg64_local(ptr, o, n)					\
+  ({									\
+	BUILD_BUG_ON(sizeof(*(ptr)) != 8);				\
+	cmpxchg_local((ptr), (o), (n));					\
+  })
+#else
+#define cmpxchg64_local(ptr, o, n) __cmpxchg64_local_generic((ptr), (o), (n))
 #endif
 
 /*
@@ -83,7 +189,7 @@ static __inline__ void atomic_set(atomic_t *v, int i)
 
 static __inline__ int atomic_read(const atomic_t *v)
 {
-	return (*(volatile int *)&(v)->counter);
+	return v->counter;
 }
 
 /* exported interface */
@@ -91,15 +197,15 @@ static __inline__ int atomic_read(const atomic_t *v)
 #define atomic_xchg(v, new) (xchg(&((v)->counter), new))
 
 /**
- * __atomic_add_unless - add unless the number is a given value
+ * atomic_add_unless - add unless the number is a given value
  * @v: pointer of type atomic_t
  * @a: the amount to add to v...
  * @u: ...unless v is equal to u.
  *
  * Atomically adds @a to @v, so long as it was not @u.
- * Returns the old value of @v.
+ * Returns non-zero if @v was not @u, and zero otherwise.
  */
-static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
+static __inline__ int atomic_add_unless(atomic_t *v, int a, int u)
 {
 	int c, old;
 	c = atomic_read(v);
@@ -111,9 +217,10 @@ static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
 			break;
 		c = old;
 	}
-	return c;
+	return c != (u);
 }
 
+#define atomic_inc_not_zero(v) atomic_add_unless((v), 1, 0)
 
 #define atomic_add(i,v)	((void)(__atomic_add_return( (i),(v))))
 #define atomic_sub(i,v)	((void)(__atomic_add_return(-(i),(v))))
@@ -152,10 +259,10 @@ static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
 
 #define ATOMIC64_INIT(i) { (i) }
 
-static __inline__ s64
+static __inline__ int
 __atomic64_add_return(s64 i, atomic64_t *v)
 {
-	s64 ret;
+	int ret;
 	unsigned long flags;
 	_atomic_spin_lock_irqsave(v, flags);
 
@@ -179,7 +286,7 @@ atomic64_set(atomic64_t *v, s64 i)
 static __inline__ s64
 atomic64_read(const atomic64_t *v)
 {
-	return (*(volatile long *)&(v)->counter);
+	return v->counter;
 }
 
 #define atomic64_add(i,v)	((void)(__atomic64_add_return( ((s64)(i)),(v))))
@@ -210,7 +317,7 @@ atomic64_read(const atomic64_t *v)
  * @u: ...unless v is equal to u.
  *
  * Atomically adds @a to @v, so long as it was not @u.
- * Returns the old value of @v.
+ * Returns non-zero if @v was not @u, and zero otherwise.
  */
 static __inline__ int atomic64_add_unless(atomic64_t *v, long a, long u)
 {
@@ -229,7 +336,12 @@ static __inline__ int atomic64_add_unless(atomic64_t *v, long a, long u)
 
 #define atomic64_inc_not_zero(v) atomic64_add_unless((v), 1, 0)
 
+#else /* CONFIG_64BIT */
+
+#include <asm-generic/atomic64.h>
+
 #endif /* !CONFIG_64BIT */
 
+#include <asm-generic/atomic-long.h>
 
 #endif /* _ASM_PARISC_ATOMIC_H_ */

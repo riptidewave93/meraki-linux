@@ -18,9 +18,8 @@ SOURCE:
   Master
   Master Mono
   Hardware Master
-  Speaker	(internal speaker)
   Headphone
-  Beep		(beep generator)
+  PC Speaker
   Phone
   Phone Input
   Phone Output

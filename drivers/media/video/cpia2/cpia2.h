@@ -31,7 +31,8 @@
 #ifndef __CPIA2_H__
 #define __CPIA2_H__
 
-#include <linux/videodev2.h>
+#include <linux/version.h>
+#include <linux/videodev.h>
 #include <media/v4l2-common.h>
 #include <linux/usb.h>
 #include <linux/poll.h>
@@ -41,6 +42,10 @@
 
 /* define for verbose debug output */
 //#define _CPIA2_DEBUG_
+
+#define CPIA2_MAJ_VER	2
+#define CPIA2_MIN_VER   0
+#define CPIA2_PATCH_VER	0
 
 /***
  * Image defines
@@ -373,7 +378,7 @@ struct cpia2_fh {
 
 struct camera_data {
 	/* locks */
-	struct mutex v4l2_lock;	/* serialize file operations */
+	struct mutex busy_lock;	/* guard against SMP multithreading */
 	struct v4l2_prio_state prio;
 
 	/* camera status */
@@ -391,8 +396,8 @@ struct camera_data {
 	/* v4l */
 	int video_size;			/* VIDEO_SIZE_ */
 	struct video_device *vdev;	/* v4l videodev */
-	u32 width;
-	u32 height;			/* Its size */
+	struct video_picture vp;	/* v4l camera settings */
+	struct video_window vw;		/* v4l capture area */
 	__u32 pixelformat;       /* Format fourcc      */
 
 	/* USB */

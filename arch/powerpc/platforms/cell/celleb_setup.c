@@ -30,7 +30,6 @@
 #include <linux/cpu.h>
 #include <linux/sched.h>
 #include <linux/kernel.h>
-#include <linux/export.h>
 #include <linux/mm.h>
 #include <linux/stddef.h>
 #include <linux/unistd.h>
@@ -127,6 +126,10 @@ static void __init celleb_setup_arch_beat(void)
 #ifdef CONFIG_SPU_BASE
 	spu_priv1_ops		= &spu_priv1_beat_ops;
 	spu_management_ops	= &spu_management_of_ops;
+#endif
+
+#ifdef CONFIG_SMP
+	smp_init_celleb();
 #endif
 
 	celleb_setup_arch_common();

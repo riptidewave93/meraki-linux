@@ -7,6 +7,7 @@
  * of the GNU General Public License version 2.
  */
 
+#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/completion.h>
 #include <linux/buffer_head.h>
@@ -36,13 +37,9 @@ static int gfs2_encode_fh(struct dentry *dentry, __u32 *p, int *len,
 	struct super_block *sb = inode->i_sb;
 	struct gfs2_inode *ip = GFS2_I(inode);
 
-	if (connectable && (*len < GFS2_LARGE_FH_SIZE)) {
-		*len = GFS2_LARGE_FH_SIZE;
+	if (*len < GFS2_SMALL_FH_SIZE ||
+	    (connectable && *len < GFS2_LARGE_FH_SIZE))
 		return 255;
-	} else if (*len < GFS2_SMALL_FH_SIZE) {
-		*len = GFS2_SMALL_FH_SIZE;
-		return 255;
-	}
 
 	fh[0] = cpu_to_be32(ip->i_no_formal_ino >> 32);
 	fh[1] = cpu_to_be32(ip->i_no_formal_ino & 0xFFFFFFFF);
@@ -99,7 +96,6 @@ static int gfs2_get_name(struct dentry *parent, char *name,
 	struct gfs2_holder gh;
 	u64 offset = 0;
 	int error;
-	struct file_ra_state f_ra = { .start = 0 };
 
 	if (!dir)
 		return -EINVAL;
@@ -119,7 +115,7 @@ static int gfs2_get_name(struct dentry *parent, char *name,
 	if (error)
 		return error;
 
-	error = gfs2_dir_read(dir, &offset, &gnfd, get_name_filldir, &f_ra);
+	error = gfs2_dir_read(dir, &offset, &gnfd, get_name_filldir);
 
 	gfs2_glock_dq_uninit(&gh);
 
@@ -131,16 +127,31 @@ static int gfs2_get_name(struct dentry *parent, char *name,
 
 static struct dentry *gfs2_get_parent(struct dentry *child)
 {
-	return d_obtain_alias(gfs2_lookupi(child->d_inode, &gfs2_qdotdot, 1));
+	struct qstr dotdot;
+	struct dentry *dentry;
+
+	/*
+	 * XXX(hch): it would be a good idea to keep this around as a
+	 *	     static variable.
+	 */
+	gfs2_str2qstr(&dotdot, "..");
+
+	dentry = d_obtain_alias(gfs2_lookupi(child->d_inode, &dotdot, 1));
+	if (!IS_ERR(dentry))
+		dentry->d_op = &gfs2_dops;
+	return dentry;
 }
 
 static struct dentry *gfs2_get_dentry(struct super_block *sb,
 				      struct gfs2_inum_host *inum)
 {
 	struct gfs2_sbd *sdp = sb->s_fs_info;
+	struct gfs2_holder i_gh;
 	struct inode *inode;
+	struct dentry *dentry;
+	int error;
 
-	inode = gfs2_ilookup(sb, inum->no_addr, 0);
+	inode = gfs2_ilookup(sb, inum->no_addr);
 	if (inode) {
 		if (GFS2_I(inode)->i_no_formal_ino != inum->no_formal_ino) {
 			iput(inode);
@@ -149,13 +160,52 @@ static struct dentry *gfs2_get_dentry(struct super_block *sb,
 		goto out_inode;
 	}
 
-	inode = gfs2_lookup_by_inum(sdp, inum->no_addr, &inum->no_formal_ino,
-				    GFS2_BLKST_DINODE);
-	if (IS_ERR(inode))
-		return ERR_CAST(inode);
+	error = gfs2_glock_nq_num(sdp, inum->no_addr, &gfs2_inode_glops,
+				  LM_ST_SHARED, LM_FLAG_ANY, &i_gh);
+	if (error)
+		return ERR_PTR(error);
+
+	error = gfs2_check_blk_type(sdp, inum->no_addr, GFS2_BLKST_DINODE);
+	if (error)
+		goto fail;
+
+	inode = gfs2_inode_lookup(sb, DT_UNKNOWN, inum->no_addr, 0, 0);
+	if (IS_ERR(inode)) {
+		error = PTR_ERR(inode);
+		goto fail;
+	}
+
+	error = gfs2_inode_refresh(GFS2_I(inode));
+	if (error) {
+		iput(inode);
+		goto fail;
+	}
+
+	/* Pick up the works we bypass in gfs2_inode_lookup */
+	if (inode->i_state & I_NEW) 
+		gfs2_set_iop(inode);
+
+	if (GFS2_I(inode)->i_no_formal_ino != inum->no_formal_ino) {
+		iput(inode);
+		goto fail;
+	}
+
+	error = -EIO;
+	if (GFS2_I(inode)->i_diskflags & GFS2_DIF_SYSTEM) {
+		iput(inode);
+		goto fail;
+	}
+
+	gfs2_glock_dq_uninit(&i_gh);
 
 out_inode:
-	return d_obtain_alias(inode);
+	dentry = d_obtain_alias(inode);
+	if (!IS_ERR(dentry))
+		dentry->d_op = &gfs2_dops;
+	return dentry;
+fail:
+	gfs2_glock_dq_uninit(&i_gh);
+	return ERR_PTR(error);
 }
 
 static struct dentry *gfs2_fh_to_dentry(struct super_block *sb, struct fid *fid,
@@ -168,8 +218,6 @@ static struct dentry *gfs2_fh_to_dentry(struct super_block *sb, struct fid *fid,
 	case GFS2_SMALL_FH_SIZE:
 	case GFS2_LARGE_FH_SIZE:
 	case GFS2_OLD_FH_SIZE:
-		if (fh_len < GFS2_SMALL_FH_SIZE)
-			return NULL;
 		this.no_formal_ino = ((u64)be32_to_cpu(fh[0])) << 32;
 		this.no_formal_ino |= be32_to_cpu(fh[1]);
 		this.no_addr = ((u64)be32_to_cpu(fh[2])) << 32;
@@ -189,8 +237,6 @@ static struct dentry *gfs2_fh_to_parent(struct super_block *sb, struct fid *fid,
 	switch (fh_type) {
 	case GFS2_LARGE_FH_SIZE:
 	case GFS2_OLD_FH_SIZE:
-		if (fh_len < GFS2_LARGE_FH_SIZE)
-			return NULL;
 		parent.no_formal_ino = ((u64)be32_to_cpu(fh[4])) << 32;
 		parent.no_formal_ino |= be32_to_cpu(fh[5]);
 		parent.no_addr = ((u64)be32_to_cpu(fh[6])) << 32;

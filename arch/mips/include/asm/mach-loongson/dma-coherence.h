@@ -28,11 +28,7 @@ static inline dma_addr_t plat_map_dma_mem_page(struct device *dev,
 static inline unsigned long plat_dma_addr_to_phys(struct device *dev,
 	dma_addr_t dma_addr)
 {
-#if defined(CONFIG_CPU_LOONGSON2F) && defined(CONFIG_64BIT)
-	return (dma_addr > 0x8fffffff) ? dma_addr : (dma_addr & 0x0fffffff);
-#else
 	return dma_addr & 0x7fffffff;
-#endif
 }
 
 static inline void plat_unmap_dma_mem(struct device *dev, dma_addr_t dma_addr,
@@ -55,6 +51,7 @@ static inline int plat_dma_supported(struct device *dev, u64 mask)
 
 static inline void plat_extra_sync_for_device(struct device *dev)
 {
+	return;
 }
 
 static inline int plat_dma_mapping_error(struct device *dev,

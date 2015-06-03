@@ -622,7 +622,7 @@ typedef union h1_icrbb_u {
  */
 #define	IIO_ICRB_PROC0		0	/* Source of request is Proc 0 */
 #define	IIO_ICRB_PROC1		1	/* Source of request is Proc 1 */
-#define	IIO_ICRB_GB_REQ		2	/* Source is Guaranteed BW request */
+#define	IIO_ICRB_GB_REQ		2	/* Source is Guranteed BW request */
 #define	IIO_ICRB_IO_REQ		3	/* Source is Normal IO request	*/
 
 /*
@@ -825,7 +825,7 @@ typedef union iprb_u {
 	struct {
 	    u64	rsvd1:	15,
 		error:	1,	/* Widget rcvd wr resp pkt w/ error */
-		ovflow:	5,	/* Overflow count. perf measurement */
+		ovflow:	5,	/* Over flow count. perf measurement */
 		fire_and_forget: 1, /* Launch Write without response */
 		mode:	2,	/* Widget operation Mode	*/
 		rsvd2:	2,

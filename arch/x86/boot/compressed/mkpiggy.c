@@ -29,7 +29,14 @@
 #include <stdio.h>
 #include <string.h>
 #include <inttypes.h>
-#include <tools/le_byteshift.h>
+
+static uint32_t getle32(const void *p)
+{
+	const uint8_t *cp = p;
+
+	return (uint32_t)cp[0] + ((uint32_t)cp[1] << 8) +
+		((uint32_t)cp[2] << 16) + ((uint32_t)cp[3] << 24);
+}
 
 int main(int argc, char *argv[])
 {
@@ -55,14 +62,9 @@ int main(int argc, char *argv[])
 	if (fseek(f, -4L, SEEK_END)) {
 		perror(argv[1]);
 	}
-
-	if (fread(&olen, sizeof(olen), 1, f) != 1) {
-		perror(argv[1]);
-		return 1;
-	}
-
+	fread(&olen, sizeof olen, 1, f);
 	ilen = ftell(f);
-	olen = get_unaligned_le32(&olen);
+	olen = getle32(&olen);
 	fclose(f);
 
 	/*
@@ -75,7 +77,7 @@ int main(int argc, char *argv[])
 	offs += 64*1024 + 128;	/* Add 64K + 128 bytes slack */
 	offs = (offs+4095) & ~4095; /* Round to a 4K boundary */
 
-	printf(".section \".rodata..compressed\",\"a\",@progbits\n");
+	printf(".section \".rodata.compressed\",\"a\",@progbits\n");
 	printf(".globl z_input_len\n");
 	printf("z_input_len = %lu\n", ilen);
 	printf(".globl z_output_len\n");

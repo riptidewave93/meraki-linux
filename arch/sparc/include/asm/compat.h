@@ -5,8 +5,7 @@
  */
 #include <linux/types.h>
 
-#define COMPAT_USER_HZ		100
-#define COMPAT_UTS_MACHINE	"sparc\0\0"
+#define COMPAT_USER_HZ	100
 
 typedef u32		compat_size_t;
 typedef s32		compat_ssize_t;
@@ -134,8 +133,7 @@ struct compat_statfs {
 	compat_fsid_t	f_fsid;
 	int		f_namelen;	/* SunOS ignores this field. */
 	int		f_frsize;
-	int		f_flags;
-	int		f_spare[4];
+	int		f_spare[5];
 };
 
 #define COMPAT_RLIM_INFINITY 0x7fffffff

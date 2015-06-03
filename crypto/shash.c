@@ -17,8 +17,6 @@
 #include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/seq_file.h>
-#include <linux/cryptouser.h>
-#include <net/netlink.h>
 
 #include "internal.h"
 
@@ -39,7 +37,7 @@ static int shash_setkey_unaligned(struct crypto_shash *tfm, const u8 *key,
 	u8 *buffer, *alignbuffer;
 	int err;
 
-	absize = keylen + (alignmask & ~(crypto_tfm_ctx_alignment() - 1));
+	absize = keylen + (alignmask & ~(CRYPTO_MINALIGN - 1));
 	buffer = kmalloc(absize, GFP_KERNEL);
 	if (!buffer)
 		return -ENOMEM;
@@ -142,6 +140,14 @@ int crypto_shash_final(struct shash_desc *desc, u8 *out)
 	return shash->final(desc, out);
 }
 EXPORT_SYMBOL_GPL(crypto_shash_final);
+
+int crypto_shash_partial(struct shash_desc *desc, u8 *out)
+{
+	struct crypto_shash *tfm = desc->tfm;
+	struct shash_alg *shash = crypto_shash_alg(tfm);
+
+	return shash->partial(desc, out);
+}
 
 static int shash_finup_unaligned(struct shash_desc *desc, const u8 *data,
 				 unsigned int len, u8 *out)
@@ -281,10 +287,10 @@ int shash_ahash_digest(struct ahash_request *req, struct shash_desc *desc)
 	if (nbytes < min(sg->length, ((unsigned int)(PAGE_SIZE)) - offset)) {
 		void *data;
 
-		data = kmap_atomic(sg_page(sg));
+		data = crypto_kmap(sg_page(sg), 0);
 		err = crypto_shash_digest(desc, data + offset, nbytes,
 					  req->result);
-		kunmap_atomic(data);
+		crypto_kunmap(data, 0);
 		crypto_yield(desc->flags);
 	} else
 		err = crypto_shash_init(desc) ?:
@@ -312,13 +318,7 @@ static int shash_async_export(struct ahash_request *req, void *out)
 
 static int shash_async_import(struct ahash_request *req, const void *in)
 {
-	struct crypto_shash **ctx = crypto_ahash_ctx(crypto_ahash_reqtfm(req));
-	struct shash_desc *desc = ahash_request_ctx(req);
-
-	desc->tfm = *ctx;
-	desc->flags = req->base.flags;
-
-	return crypto_shash_import(desc, in);
+	return crypto_shash_import(ahash_request_ctx(req), in);
 }
 
 static void crypto_exit_shash_ops_async(struct crypto_tfm *tfm)
@@ -407,6 +407,13 @@ static int shash_compat_final(struct hash_desc *hdesc, u8 *out)
 	return crypto_shash_final(*descp, out);
 }
 
+static int shash_compat_partial(struct hash_desc *hdesc, u8 *out)
+{
+	struct shash_desc **descp = crypto_hash_ctx(hdesc->tfm);
+	
+	return crypto_shash_partial(*descp, out);
+}
+
 static int shash_compat_digest(struct hash_desc *hdesc, struct scatterlist *sg,
 			       unsigned int nbytes, u8 *out)
 {
@@ -420,9 +427,9 @@ static int shash_compat_digest(struct hash_desc *hdesc, struct scatterlist *sg,
 
 		desc->flags = hdesc->flags;
 
-		data = kmap_atomic(sg_page(sg));
+		data = crypto_kmap(sg_page(sg), 0);
 		err = crypto_shash_digest(desc, data + offset, nbytes, out);
-		kunmap_atomic(data);
+		crypto_kunmap(data, 0);
 		crypto_yield(desc->flags);
 		goto out;
 	}
@@ -484,8 +491,10 @@ static int crypto_init_shash_ops_compat(struct crypto_tfm *tfm)
 	crt->final  = shash_compat_final;
 	crt->digest = shash_compat_digest;
 	crt->setkey = shash_compat_setkey;
-
 	crt->digestsize = alg->digestsize;
+
+	crt->partial = shash_compat_partial;
+	crt->partialsize = alg->partialsize;
 
 	return 0;
 }
@@ -524,32 +533,6 @@ static unsigned int crypto_shash_extsize(struct crypto_alg *alg)
 	return alg->cra_ctxsize;
 }
 
-#ifdef CONFIG_NET
-static int crypto_shash_report(struct sk_buff *skb, struct crypto_alg *alg)
-{
-	struct crypto_report_hash rhash;
-	struct shash_alg *salg = __crypto_shash_alg(alg);
-
-	strncpy(rhash.type, "shash", sizeof(rhash.type));
-
-	rhash.blocksize = alg->cra_blocksize;
-	rhash.digestsize = salg->digestsize;
-
-	NLA_PUT(skb, CRYPTOCFGA_REPORT_HASH,
-		sizeof(struct crypto_report_hash), &rhash);
-
-	return 0;
-
-nla_put_failure:
-	return -EMSGSIZE;
-}
-#else
-static int crypto_shash_report(struct sk_buff *skb, struct crypto_alg *alg)
-{
-	return -ENOSYS;
-}
-#endif
-
 static void crypto_shash_show(struct seq_file *m, struct crypto_alg *alg)
 	__attribute__ ((unused));
 static void crypto_shash_show(struct seq_file *m, struct crypto_alg *alg)
@@ -569,7 +552,6 @@ static const struct crypto_type crypto_shash_type = {
 #ifdef CONFIG_PROC_FS
 	.show = crypto_shash_show,
 #endif
-	.report = crypto_shash_report,
 	.maskclear = ~CRYPTO_ALG_TYPE_MASK,
 	.maskset = CRYPTO_ALG_TYPE_MASK,
 	.type = CRYPTO_ALG_TYPE_SHASH,

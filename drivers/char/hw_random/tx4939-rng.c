@@ -14,7 +14,6 @@
 #include <linux/io.h>
 #include <linux/platform_device.h>
 #include <linux/hw_random.h>
-#include <linux/gfp.h>
 
 #define TX4939_RNG_RCSR		0x00000000
 #define TX4939_RNG_ROR(n)	(0x00000018 + (n) * 8)
@@ -115,7 +114,10 @@ static int __init tx4939_rng_probe(struct platform_device *dev)
 	rngdev = devm_kzalloc(&dev->dev, sizeof(*rngdev), GFP_KERNEL);
 	if (!rngdev)
 		return -ENOMEM;
-	rngdev->base = devm_request_and_ioremap(&dev->dev, r);
+	if (!devm_request_mem_region(&dev->dev, r->start, resource_size(r),
+				     dev_name(&dev->dev)))
+		return -EBUSY;
+	rngdev->base = devm_ioremap(&dev->dev, r->start, resource_size(r));
 	if (!rngdev->base)
 		return -EBUSY;
 

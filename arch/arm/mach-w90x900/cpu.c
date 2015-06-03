@@ -28,17 +28,14 @@
 #include <asm/mach/map.h>
 #include <asm/mach/irq.h>
 #include <asm/irq.h>
-#include <asm/system_misc.h>
 
 #include <mach/hardware.h>
 #include <mach/regs-serial.h>
 #include <mach/regs-clock.h>
 #include <mach/regs-ebi.h>
-#include <mach/regs-timer.h>
 
 #include "cpu.h"
 #include "clock.h"
-#include "nuc9xx.h"
 
 /* Initial IO mappings */
 
@@ -48,7 +45,6 @@ static struct map_desc nuc900_iodesc[] __initdata = {
 	IODESC_ENT(UART),
 	IODESC_ENT(TIMER),
 	IODESC_ENT(EBI),
-	IODESC_ENT(GPIO),
 };
 
 /* Initial clock declarations. */
@@ -63,7 +59,7 @@ static DEFINE_CLK(emc, 7);
 static DEFINE_SUBCLK(rmii, 2);
 static DEFINE_CLK(usbd, 8);
 static DEFINE_CLK(usbh, 9);
-static DEFINE_CLK(g2d, 10);
+static DEFINE_CLK(g2d, 10);;
 static DEFINE_CLK(pwm, 18);
 static DEFINE_CLK(ps2, 24);
 static DEFINE_CLK(kpi, 25);
@@ -72,15 +68,10 @@ static DEFINE_CLK(gdma, 27);
 static DEFINE_CLK(adc, 28);
 static DEFINE_CLK(usi, 29);
 static DEFINE_CLK(ext, 0);
-static DEFINE_CLK(timer0, 19);
-static DEFINE_CLK(timer1, 20);
-static DEFINE_CLK(timer2, 21);
-static DEFINE_CLK(timer3, 22);
-static DEFINE_CLK(timer4, 23);
 
 static struct clk_lookup nuc900_clkregs[] = {
 	DEF_CLKLOOK(&clk_lcd, "nuc900-lcd", NULL),
-	DEF_CLKLOOK(&clk_audio, "nuc900-ac97", NULL),
+	DEF_CLKLOOK(&clk_audio, "nuc900-audio", NULL),
 	DEF_CLKLOOK(&clk_fmi, "nuc900-fmi", NULL),
 	DEF_CLKLOOK(&clk_ms, "nuc900-fmi", "MS"),
 	DEF_CLKLOOK(&clk_sd, "nuc900-fmi", "SD"),
@@ -96,21 +87,15 @@ static struct clk_lookup nuc900_clkregs[] = {
 	DEF_CLKLOOK(&clk_kpi, "nuc900-kpi", NULL),
 	DEF_CLKLOOK(&clk_wdt, "nuc900-wdt", NULL),
 	DEF_CLKLOOK(&clk_gdma, "nuc900-gdma", NULL),
-	DEF_CLKLOOK(&clk_adc, "nuc900-ts", NULL),
+	DEF_CLKLOOK(&clk_adc, "nuc900-adc", NULL),
 	DEF_CLKLOOK(&clk_usi, "nuc900-spi", NULL),
 	DEF_CLKLOOK(&clk_ext, NULL, "ext"),
-	DEF_CLKLOOK(&clk_timer0, NULL, "timer0"),
-	DEF_CLKLOOK(&clk_timer1, NULL, "timer1"),
-	DEF_CLKLOOK(&clk_timer2, NULL, "timer2"),
-	DEF_CLKLOOK(&clk_timer3, NULL, "timer3"),
-	DEF_CLKLOOK(&clk_timer4, NULL, "timer4"),
 };
 
 /* Initial serial platform data */
 
 struct plat_serial8250_port nuc900_uart_data[] = {
 	NUC900_8250PORT(UART0),
-	{},
 };
 
 struct platform_device nuc900_serial_device = {
@@ -222,20 +207,6 @@ void __init nuc900_map_io(struct map_desc *mach_desc, int mach_size)
 
 void __init nuc900_init_clocks(void)
 {
-	clkdev_add_table(nuc900_clkregs, ARRAY_SIZE(nuc900_clkregs));
+	clks_register(nuc900_clkregs, ARRAY_SIZE(nuc900_clkregs));
 }
 
-#define	WTCR	(TMR_BA + 0x1C)
-#define	WTCLK	(1 << 10)
-#define	WTE	(1 << 7)
-#define	WTRE	(1 << 1)
-
-void nuc9xx_restart(char mode, const char *cmd)
-{
-	if (mode == 's') {
-		/* Jump into ROM at address 0 */
-		soft_restart(0);
-	} else {
-		__raw_writel(WTE | WTRE | WTCLK, WTCR);
-	}
-}

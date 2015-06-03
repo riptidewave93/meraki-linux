@@ -63,7 +63,7 @@ void rds_tcp_xmit_complete(struct rds_connection *conn)
 }
 
 /* the core send_sem serializes this with other xmit and shutdown */
-static int rds_tcp_sendmsg(struct socket *sock, void *data, unsigned int len)
+int rds_tcp_sendmsg(struct socket *sock, void *data, unsigned int len)
 {
 	struct kvec vec = {
                 .iov_base = data,
@@ -74,6 +74,56 @@ static int rds_tcp_sendmsg(struct socket *sock, void *data, unsigned int len)
         };
 
 	return kernel_sendmsg(sock, &msg, &vec, 1, vec.iov_len);
+}
+
+/* the core send_sem serializes this with other xmit and shutdown */
+int rds_tcp_xmit_cong_map(struct rds_connection *conn,
+			  struct rds_cong_map *map, unsigned long offset)
+{
+	static struct rds_header rds_tcp_map_header = {
+		.h_flags = RDS_FLAG_CONG_BITMAP,
+	};
+	struct rds_tcp_connection *tc = conn->c_transport_data;
+	unsigned long i;
+	int ret;
+	int copied = 0;
+
+	/* Some problem claims cpu_to_be32(constant) isn't a constant. */
+	rds_tcp_map_header.h_len = cpu_to_be32(RDS_CONG_MAP_BYTES);
+
+	if (offset < sizeof(struct rds_header)) {
+		ret = rds_tcp_sendmsg(tc->t_sock,
+				      (void *)&rds_tcp_map_header + offset,
+				      sizeof(struct rds_header) - offset);
+		if (ret <= 0)
+			return ret;
+		offset += ret;
+		copied = ret;
+		if (offset < sizeof(struct rds_header))
+			return ret;
+	}
+
+	offset -= sizeof(struct rds_header);
+	i = offset / PAGE_SIZE;
+	offset = offset % PAGE_SIZE;
+	BUG_ON(i >= RDS_CONG_MAP_PAGES);
+
+	do {
+		ret = tc->t_sock->ops->sendpage(tc->t_sock,
+					virt_to_page(map->m_page_addrs[i]),
+					offset, PAGE_SIZE - offset,
+					MSG_DONTWAIT);
+		if (ret <= 0)
+			break;
+		copied += ret;
+		offset += ret;
+		if (offset == PAGE_SIZE) {
+			offset = 0;
+			i++;
+		}
+	} while (i < RDS_CONG_MAP_PAGES);
+
+        return copied ? copied : ret;
 }
 
 /* the core send_sem serializes this with other xmit and shutdown */
@@ -116,21 +166,21 @@ int rds_tcp_xmit(struct rds_connection *conn, struct rds_message *rm,
 			goto out;
 	}
 
-	while (sg < rm->data.op_nents) {
+	while (sg < rm->m_nents) {
 		ret = tc->t_sock->ops->sendpage(tc->t_sock,
-						sg_page(&rm->data.op_sg[sg]),
-						rm->data.op_sg[sg].offset + off,
-						rm->data.op_sg[sg].length - off,
+						sg_page(&rm->m_sg[sg]),
+						rm->m_sg[sg].offset + off,
+						rm->m_sg[sg].length - off,
 						MSG_DONTWAIT|MSG_NOSIGNAL);
-		rdsdebug("tcp sendpage %p:%u:%u ret %d\n", (void *)sg_page(&rm->data.op_sg[sg]),
-			 rm->data.op_sg[sg].offset + off, rm->data.op_sg[sg].length - off,
+		rdsdebug("tcp sendpage %p:%u:%u ret %d\n", (void *)sg_page(&rm->m_sg[sg]),
+			 rm->m_sg[sg].offset + off, rm->m_sg[sg].length - off,
 			 ret);
 		if (ret <= 0)
 			break;
 
 		off += ret;
 		done += ret;
-		if (off == rm->data.op_sg[sg].length) {
+		if (off == rm->m_sg[sg].length) {
 			off = 0;
 			sg++;
 		}
@@ -143,9 +193,9 @@ out:
 			rds_tcp_stats_inc(s_tcp_sndbuf_full);
 			ret = 0;
 		} else {
-			printk(KERN_WARNING "RDS/tcp: send to %pI4 "
+			printk(KERN_WARNING "RDS/tcp: send to %u.%u.%u.%u "
 			       "returned %d, disconnecting and reconnecting\n",
-			       &conn->c_faddr, ret);
+			       NIPQUAD(conn->c_faddr), ret);
 			rds_conn_drop(conn);
 		}
 	}
@@ -174,9 +224,9 @@ void rds_tcp_write_space(struct sock *sk)
 	struct rds_connection *conn;
 	struct rds_tcp_connection *tc;
 
-	read_lock_bh(&sk->sk_callback_lock);
+	read_lock(&sk->sk_callback_lock);
 	conn = sk->sk_user_data;
-	if (!conn) {
+	if (conn == NULL) {
 		write_space = sk->sk_write_space;
 		goto out;
 	}
@@ -190,11 +240,9 @@ void rds_tcp_write_space(struct sock *sk)
 	tc->t_last_seen_una = rds_tcp_snd_una(tc);
 	rds_send_drop_acked(conn, rds_tcp_snd_una(tc), rds_tcp_is_acked);
 
-        if ((atomic_read(&sk->sk_wmem_alloc) << 1) <= sk->sk_sndbuf)
-		queue_delayed_work(rds_wq, &conn->c_send_w, 0);
-
+	queue_delayed_work(rds_wq, &conn->c_send_w, 0);
 out:
-	read_unlock_bh(&sk->sk_callback_lock);
+	read_unlock(&sk->sk_callback_lock);
 
 	/*
 	 * write_space is only called when data leaves tcp's send queue if

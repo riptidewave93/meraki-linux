@@ -14,6 +14,7 @@
 #include <linux/mm.h>
 #include <asm/ptrace.h>
 #include <asm/processor.h>
+#include <asm/system.h>
 #include <asm/uaccess.h>
 
 #include "kernel.h"

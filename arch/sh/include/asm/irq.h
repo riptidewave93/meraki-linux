@@ -1,7 +1,6 @@
 #ifndef __ASM_SH_IRQ_H
 #define __ASM_SH_IRQ_H
 
-#include <linux/cpumask.h>
 #include <asm/machvec.h>
 
 /*
@@ -9,16 +8,19 @@
  * advised to cap this at the hard limit that they're interested in
  * through the machvec.
  */
-#define NR_IRQS			512
+#define NR_IRQS			256
 #define NR_IRQS_LEGACY		8	/* Legacy external IRQ0-7 */
 
 /*
- * This is a special IRQ number for indicating that no IRQ has been
- * triggered and to simply ignore the IRQ dispatch. This is a special
- * case that can happen with IRQ auto-distribution when multiple CPUs
- * are woken up and signalled in parallel.
+ * Convert back and forth between INTEVT and IRQ values.
  */
-#define NO_IRQ_IGNORE		((unsigned int)-1)
+#ifdef CONFIG_CPU_HAS_INTEVT
+#define evt2irq(evt)		(((evt) >> 5) - 16)
+#define irq2evt(irq)		(((irq) + 16) << 5)
+#else
+#define evt2irq(evt)		(evt)
+#define irq2evt(irq)		(irq)
+#endif
 
 /*
  * Simple Mask Register Support
@@ -40,8 +42,6 @@ static inline int generic_irq_demux(int irq)
 #define irq_demux(irq)		sh_mv.mv_irq_demux(irq)
 
 void init_IRQ(void);
-void migrate_irqs(void);
-
 asmlinkage int do_IRQ(unsigned int irq, struct pt_regs *regs);
 
 #ifdef CONFIG_IRQSTACKS
@@ -51,14 +51,6 @@ extern void irq_ctx_exit(int cpu);
 #else
 # define irq_ctx_init(cpu) do { } while (0)
 # define irq_ctx_exit(cpu) do { } while (0)
-#endif
-
-#ifdef CONFIG_INTC_BALANCING
-extern unsigned int irq_lookup(unsigned int irq);
-extern void irq_finish(unsigned int irq);
-#else
-#define irq_lookup(irq)		(irq)
-#define irq_finish(irq)		do { } while (0)
 #endif
 
 #include <asm-generic/irq.h>

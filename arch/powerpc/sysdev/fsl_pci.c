@@ -1,7 +1,7 @@
 /*
  * MPC83xx/85xx/86xx PCI/PCIE support routing.
  *
- * Copyright 2007-2011 Freescale Semiconductor, Inc.
+ * Copyright 2007-2009 Freescale Semiconductor, Inc.
  * Copyright 2008-2009 MontaVista Software, Inc.
  *
  * Initial author: Xianghua Xiao <x.xiao@freescale.com>
@@ -23,9 +23,8 @@
 #include <linux/string.h>
 #include <linux/init.h>
 #include <linux/bootmem.h>
-#include <linux/memblock.h>
+#include <linux/lmb.h>
 #include <linux/log2.h>
-#include <linux/slab.h>
 
 #include <asm/io.h>
 #include <asm/prom.h>
@@ -34,19 +33,12 @@
 #include <sysdev/fsl_soc.h>
 #include <sysdev/fsl_pci.h>
 
-static int fsl_pcie_bus_fixup, is_mpc83xx_pci;
+static int fsl_pcie_bus_fixup;
 
 static void __init quirk_fsl_pcie_header(struct pci_dev *dev)
 {
-	u8 progif;
-
 	/* if we aren't a PCIe don't bother */
 	if (!pci_find_capability(dev, PCI_CAP_ID_EXP))
-		return;
-
-	/* if we aren't in host mode don't bother */
-	pci_read_config_byte(dev, PCI_CLASS_PROG, &progif);
-	if (progif & 0x1)
 		return;
 
 	dev->class = PCI_CLASS_BRIDGE_PCI << 8;
@@ -64,38 +56,14 @@ static int __init fsl_pcie_check_link(struct pci_controller *hose)
 	return 0;
 }
 
-#if defined(CONFIG_FSL_SOC_BOOKE) || defined(CONFIG_PPC_86xx)
-
-#define MAX_PHYS_ADDR_BITS	40
-static u64 pci64_dma_offset = 1ull << MAX_PHYS_ADDR_BITS;
-
-static int fsl_pci_dma_set_mask(struct device *dev, u64 dma_mask)
-{
-	if (!dev->dma_mask || !dma_supported(dev, dma_mask))
-		return -EIO;
-
-	/*
-	 * Fixup PCI devices that are able to DMA to above the physical
-	 * address width of the SoC such that we can address any internal
-	 * SoC address from across PCI if needed
-	 */
-	if ((dev->bus == &pci_bus_type) &&
-	    dma_mask >= DMA_BIT_MASK(MAX_PHYS_ADDR_BITS)) {
-		set_dma_ops(dev, &dma_direct_ops);
-		set_dma_offset(dev, pci64_dma_offset);
-	}
-
-	*dev->dma_mask = dma_mask;
-	return 0;
-}
-
+#if defined(CONFIG_PPC_85xx) || defined(CONFIG_PPC_86xx)
 static int __init setup_one_atmu(struct ccsr_pci __iomem *pci,
 	unsigned int index, const struct resource *res,
 	resource_size_t offset)
 {
 	resource_size_t pci_addr = res->start - offset;
 	resource_size_t phys_addr = res->start;
-	resource_size_t size = resource_size(res);
+	resource_size_t size = res->end - res->start + 1;
 	u32 flags = 0x80044000; /* enable & mem R/W */
 	unsigned int i;
 
@@ -130,26 +98,17 @@ static void __init setup_pci_atmu(struct pci_controller *hose,
 				  struct resource *rsrc)
 {
 	struct ccsr_pci __iomem *pci;
-	int i, j, n, mem_log, win_idx = 3, start_idx = 1, end_idx = 4;
+	int i, j, n, mem_log, win_idx = 2;
 	u64 mem, sz, paddr_hi = 0;
 	u64 paddr_lo = ULLONG_MAX;
 	u32 pcicsrbar = 0, pcicsrbar_sz;
 	u32 piwar = PIWAR_EN | PIWAR_PF | PIWAR_TGI_LOCAL |
 			PIWAR_READ_SNOOP | PIWAR_WRITE_SNOOP;
 	char *name = hose->dn->full_name;
-	const u64 *reg;
-	int len;
 
 	pr_debug("PCI memory map start 0x%016llx, size 0x%016llx\n",
-		 (u64)rsrc->start, (u64)resource_size(rsrc));
-
-	if (of_device_is_compatible(hose->dn, "fsl,qoriq-pcie-v2.2")) {
-		win_idx = 2;
-		start_idx = 0;
-		end_idx = 3;
-	}
-
-	pci = ioremap(rsrc->start, resource_size(rsrc));
+		    (u64)rsrc->start, (u64)rsrc->end - (u64)rsrc->start + 1);
+	pci = ioremap(rsrc->start, rsrc->end - rsrc->start + 1);
 	if (!pci) {
 	    dev_err(hose->parent, "Unable to map ATMU registers\n");
 	    return;
@@ -158,7 +117,7 @@ static void __init setup_pci_atmu(struct pci_controller *hose,
 	/* Disable all windows (except powar0 since it's ignored) */
 	for(i = 1; i < 5; i++)
 		out_be32(&pci->pow[i].powar, 0);
-	for (i = start_idx; i < end_idx; i++)
+	for(i = 0; i < 3; i++)
 		out_be32(&pci->piw[i].piwar, 0);
 
 	/* Setup outbound MEM window */
@@ -186,9 +145,9 @@ static void __init setup_pci_atmu(struct pci_controller *hose,
 		} else {
 			pr_debug("PCI IO resource start 0x%016llx, size 0x%016llx, "
 				 "phy base 0x%016llx.\n",
-				 (u64)hose->io_resource.start,
-				 (u64)resource_size(&hose->io_resource),
-				 (u64)hose->io_base_phys);
+				(u64)hose->io_resource.start,
+				(u64)hose->io_resource.end - (u64)hose->io_resource.start + 1,
+				(u64)hose->io_base_phys);
 			out_be32(&pci->pow[j].potar, (hose->io_resource.start >> 12));
 			out_be32(&pci->pow[j].potear, 0);
 			out_be32(&pci->pow[j].powbar, (hose->io_base_phys >> 12));
@@ -205,12 +164,12 @@ static void __init setup_pci_atmu(struct pci_controller *hose,
 
 	if (paddr_hi == paddr_lo) {
 		pr_err("%s: No outbound window space\n", name);
-		goto out;
+		return ;
 	}
 
 	if (paddr_lo == 0) {
 		pr_err("%s: No space for inbound window\n", name);
-		goto out;
+		return ;
 	}
 
 	/* setup PCSRBAR/PEXCSRBAR */
@@ -230,34 +189,7 @@ static void __init setup_pci_atmu(struct pci_controller *hose,
 	pr_info("%s: PCICSRBAR @ 0x%x\n", name, pcicsrbar);
 
 	/* Setup inbound mem window */
-	mem = memblock_end_of_DRAM();
-
-	/*
-	 * The msi-address-64 property, if it exists, indicates the physical
-	 * address of the MSIIR register.  Normally, this register is located
-	 * inside CCSR, so the ATMU that covers all of CCSR is used. But if
-	 * this property exists, then we normally need to create a new ATMU
-	 * for it.  For now, however, we cheat.  The only entity that creates
-	 * this property is the Freescale hypervisor, and the address is
-	 * specified in the partition configuration.  Typically, the address
-	 * is located in the page immediately after the end of DDR.  If so, we
-	 * can avoid allocating a new ATMU by extending the DDR ATMU by one
-	 * page.
-	 */
-	reg = of_get_property(hose->dn, "msi-address-64", &len);
-	if (reg && (len == sizeof(u64))) {
-		u64 address = be64_to_cpup(reg);
-
-		if ((address >= mem) && (address < (mem + PAGE_SIZE))) {
-			pr_info("%s: extending DDR ATMU to cover MSIIR", name);
-			mem += PAGE_SIZE;
-		} else {
-			/* TODO: Create a new ATMU for MSIIR */
-			pr_warn("%s: msi-address-64 address of %llx is "
-				"unsupported\n", name, address);
-		}
-	}
-
+	mem = lmb_end_of_DRAM();
 	sz = min(mem, paddr_lo);
 	mem_log = __ilog2_u64(sz);
 
@@ -271,7 +203,7 @@ static void __init setup_pci_atmu(struct pci_controller *hose,
 			mem_log++;
 		}
 
-		piwar |= ((mem_log - 1) & PIWAR_SZ_MASK);
+		piwar |= (mem_log - 1);
 
 		/* Setup inbound memory window */
 		out_be32(&pci->piw[win_idx].pitar,  0x00000000);
@@ -281,37 +213,6 @@ static void __init setup_pci_atmu(struct pci_controller *hose,
 
 		hose->dma_window_base_cur = 0x00000000;
 		hose->dma_window_size = (resource_size_t)sz;
-
-		/*
-		 * if we have >4G of memory setup second PCI inbound window to
-		 * let devices that are 64-bit address capable to work w/o
-		 * SWIOTLB and access the full range of memory
-		 */
-		if (sz != mem) {
-			mem_log = __ilog2_u64(mem);
-
-			/* Size window up if we dont fit in exact power-of-2 */
-			if ((1ull << mem_log) != mem)
-				mem_log++;
-
-			piwar = (piwar & ~PIWAR_SZ_MASK) | (mem_log - 1);
-
-			/* Setup inbound memory window */
-			out_be32(&pci->piw[win_idx].pitar,  0x00000000);
-			out_be32(&pci->piw[win_idx].piwbear,
-					pci64_dma_offset >> 44);
-			out_be32(&pci->piw[win_idx].piwbar,
-					pci64_dma_offset >> 12);
-			out_be32(&pci->piw[win_idx].piwar,  piwar);
-
-			/*
-			 * install our own dma_set_mask handler to fixup dma_ops
-			 * and dma_offset
-			 */
-			ppc_md.dma_set_mask = fsl_pci_dma_set_mask;
-
-			pr_info("%s: Setup 64-bit PCI DMA window\n", name);
-		}
 	} else {
 		u64 paddr = 0;
 
@@ -340,6 +241,36 @@ static void __init setup_pci_atmu(struct pci_controller *hose,
 		hose->dma_window_size = (resource_size_t)paddr;
 	}
 
+	/* SKYROS AP1600 specific hack for now, eventually move this to DTS */
+#if 0
+	printk("**********************************************\n");
+	u32 x;
+	x = 0x0004401A;
+	out_be32(&pci->pow[0].powar, x);
+	x = 0x8004401A;
+	out_be32(&pci->pow[1].powar, x);
+	x = 0xa0fff01b;
+	out_be32(&pci->piw[0].piwar, x);
+	x = 0xa0fff01b;
+	out_be32(&pci->piw[2].piwar, x);
+
+#if 0
+	for(x=0; x<5; x++) {
+		printk("POTAR0 = 0x%x\n", in_be32(&pci->pow[x].potar));
+		printk("POTEAR0= 0x%x\n", in_be32(&pci->pow[x].potear));
+		printk("POWBAR0= 0x%x\n", in_be32(&pci->pow[x].powbar));
+		printk("OWAR0  = 0x%x\n", in_be32(&pci->pow[x].powar));
+		printk("\n");
+	}
+	for(x=0; x<4; x++) {
+		printk("PITAR0 = 0x%x\n", in_be32(&pci->piw[x].pitar));
+		printk("PIWBAR0= 0x%x\n", in_be32(&pci->piw[x].piwbar));
+		printk("IWAR0  = 0x%x\n", in_be32(&pci->piw[x].piwar));
+		printk("\n");
+	}
+#endif
+#endif
+
 	if (hose->dma_window_size < mem) {
 #ifndef CONFIG_SWIOTLB
 		pr_err("%s: ERROR: Memory size exceeds PCI ATMU ability to "
@@ -357,7 +288,6 @@ static void __init setup_pci_atmu(struct pci_controller *hose,
 			(u64)hose->dma_window_size);
 	}
 
-out:
 	iounmap(pci);
 }
 
@@ -385,36 +315,26 @@ static void __init setup_pci_cmd(struct pci_controller *hose)
 void fsl_pcibios_fixup_bus(struct pci_bus *bus)
 {
 	struct pci_controller *hose = pci_bus_to_host(bus);
-	int i, is_pcie = 0, no_link;
+	int i;
 
-	/* The root complex bridge comes up with bogus resources,
-	 * we copy the PHB ones in.
-	 *
-	 * With the current generic PCI code, the PHB bus no longer
-	 * has bus->resource[0..4] set, so things are a bit more
-	 * tricky.
-	 */
-
-	if (fsl_pcie_bus_fixup)
-		is_pcie = early_find_capability(hose, 0, 0, PCI_CAP_ID_EXP);
-	no_link = !!(hose->indirect_type & PPC_INDIRECT_TYPE_NO_PCIE_LINK);
-
-	if (bus->parent == hose->bus && (is_pcie || no_link)) {
-		for (i = 0; i < PCI_BRIDGE_RESOURCE_NUM; ++i) {
+	if ((bus->parent == hose->bus) &&
+	    ((fsl_pcie_bus_fixup &&
+	      early_find_capability(hose, 0, 0, PCI_CAP_ID_EXP)) ||
+	     (hose->indirect_type & PPC_INDIRECT_TYPE_NO_PCIE_LINK)))
+	{
+		for (i = 0; i < 4; ++i) {
 			struct resource *res = bus->resource[i];
-			struct resource *par;
-
-			if (!res)
-				continue;
-			if (i == 0)
-				par = &hose->io_resource;
-			else if (i < 4)
-				par = &hose->mem_resources[i-1];
-			else par = NULL;
-
-			res->start = par ? par->start : 0;
-			res->end   = par ? par->end   : 0;
-			res->flags = par ? par->flags : 0;
+			struct resource *par = bus->parent->resource[i];
+			if (res) {
+				res->start = 0;
+				res->end   = 0;
+				res->flags = 0;
+			}
+			if (res && par) {
+				res->start = par->start;
+				res->end   = par->end;
+				res->flags = par->flags;
+			}
 		}
 	}
 }
@@ -425,13 +345,6 @@ int __init fsl_add_bridge(struct device_node *dev, int is_primary)
 	struct pci_controller *hose;
 	struct resource rsrc;
 	const int *bus_range;
-	u8 progif;
-        u32 mps;
-
-	if (!of_device_is_available(dev)) {
-		pr_warning("%s: disabled\n", dev->full_name);
-		return -ENODEV;
-	}
 
 	pr_debug("Adding PCI host bridge %s\n", dev->full_name);
 
@@ -447,7 +360,7 @@ int __init fsl_add_bridge(struct device_node *dev, int is_primary)
 		printk(KERN_WARNING "Can't get bus-range for %s, assume"
 			" bus 0\n", dev->full_name);
 
-	pci_add_flags(PCI_REASSIGN_ALL_BUS);
+	ppc_pci_add_flags(PPC_PCI_REASSIGN_ALL_BUS);
 	hose = pcibios_alloc_controller(dev);
 	if (!hose)
 		return -ENOMEM;
@@ -457,18 +370,6 @@ int __init fsl_add_bridge(struct device_node *dev, int is_primary)
 
 	setup_indirect_pci(hose, rsrc.start, rsrc.start + 0x4,
 		PPC_INDIRECT_TYPE_BIG_ENDIAN);
-
-	early_read_config_byte(hose, 0, 0, PCI_CLASS_PROG, &progif);
-	if ((progif & 1) == 1) {
-		/* unmap cfg_data & cfg_addr separately if not on same page */
-		if (((unsigned long)hose->cfg_data & PAGE_MASK) !=
-		    ((unsigned long)hose->cfg_addr & PAGE_MASK))
-			iounmap(hose->cfg_data);
-		iounmap(hose->cfg_addr);
-		pcibios_free_controller(hose);
-		return 0;
-	}
-
 	setup_pci_cmd(hose);
 
 	/* check PCI express link status */
@@ -494,65 +395,65 @@ int __init fsl_add_bridge(struct device_node *dev, int is_primary)
 	/* Setup PEX window registers */
 	setup_pci_atmu(hose, &rsrc);
 
-	if (of_property_read_u32(hose->dn, "max-payload-size", &mps) == 0) {
-		int cap;
-		u16 devcap, devctl;
-		u32 mps_cap;
-
-		if (mps < 128 || mps > 4096 || !is_power_of_2(mps)) {
-			pr_err("%s: max-payload-size must be a power of 2 betwen 128 and 4096.\n", hose->dn->full_name);
-			goto out;
-		}
-
-		cap = early_find_capability(hose, 0, 0, PCI_CAP_ID_EXP);
-		if (!cap) {
-			pr_err("%s: Couldn't find PCI_CAP_ID_EXP!\n", hose->dn->full_name);
-			goto out;
-		}
-
-		if (early_read_config_word(hose, 0, 0, cap + PCI_EXP_DEVCAP, &devcap)) {
-			pr_err("%s: Couldn't read PCI_EXP_DEVCAP!\n", hose->dn->full_name);
-			goto out;
-		}
-
-		mps_cap = 1 << (((devcap & PCI_EXP_DEVCAP_PAYLOAD) >> (ffs(PCI_EXP_DEVCAP_PAYLOAD)-1)) + 7);
-		if (mps_cap < mps) {
-			pr_warn("%s: Setting max payload to the device max payload capability is %d, "
-				"which is less than the the requested %d\n", hose->dn->full_name, mps_cap, mps);
-			mps = mps_cap;
-		}
-
-		if (early_read_config_word(hose, 0, 0, cap + PCI_EXP_DEVCTL, &devctl)) {
-			pr_err("%s: Couldn't read PCI_EXP_DEVCTL!\n", hose->dn->full_name);
-			goto out;
-		}
-
-		devctl &= ~PCI_EXP_DEVCTL_PAYLOAD;
-		devctl |= ((ffs(mps) - 8) << (ffs(PCI_EXP_DEVCTL_PAYLOAD)-1));
-		if (early_write_config_word(hose, 0, 0, cap + PCI_EXP_DEVCTL, devctl)) {
-			pr_err("%s: Couldn't write PCI_EXP_DEVCTL!\n", hose->dn->full_name);
-		}
-	}
-
-out:
 	return 0;
 }
-#endif /* CONFIG_FSL_SOC_BOOKE || CONFIG_PPC_86xx */
 
-DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_FREESCALE, PCI_ANY_ID, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8548E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8548, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8543E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8543, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8547E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8545E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8545, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8569E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8569, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8568E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8568, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8567E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8567, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8533E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8533, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8544E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8544, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8572E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8572, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8536E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8536, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8641, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8641D, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8610, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P1011E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P1011, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P1013E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P1013, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P1020E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P1020, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P1022E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P1022, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P2010E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P2010, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P2020E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P2020, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P4040E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P4040, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P4080E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_P4080, quirk_fsl_pcie_header);
+#endif /* CONFIG_PPC_85xx || CONFIG_PPC_86xx */
 
 #if defined(CONFIG_PPC_83xx) || defined(CONFIG_PPC_MPC512x)
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8314E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8314, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8315E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8315, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8377E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8377, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8378E, quirk_fsl_pcie_header);
+DECLARE_PCI_FIXUP_HEADER(0x1957, PCI_DEVICE_ID_MPC8378, quirk_fsl_pcie_header);
+
 struct mpc83xx_pcie_priv {
 	void __iomem *cfg_type0;
 	void __iomem *cfg_type1;
 	u32 dev_base;
-};
-
-struct pex_inbound_window {
-	u32 ar;
-	u32 tar;
-	u32 barl;
-	u32 barh;
 };
 
 /*
@@ -562,8 +463,6 @@ struct pex_inbound_window {
 #define PEX_OUTWIN0_BAR		0xCA4
 #define PEX_OUTWIN0_TAL		0xCA8
 #define PEX_OUTWIN0_TAH		0xCAC
-#define PEX_RC_INWIN_BASE	0xE60
-#define PEX_RCIWARn_EN		0x1
 
 static int mpc83xx_pcie_exclude_device(struct pci_bus *bus, unsigned int devfn)
 {
@@ -595,7 +494,8 @@ static void __iomem *mpc83xx_pcie_remap_cfg(struct pci_bus *bus,
 {
 	struct pci_controller *hose = pci_bus_to_host(bus);
 	struct mpc83xx_pcie_priv *pcie = hose->dn->data;
-	u32 dev_base = bus->number << 24 | devfn << 16;
+	u8 bus_no = bus->number - hose->first_busno;
+	u32 dev_base = bus_no << 24 | devfn << 16;
 	int ret;
 
 	ret = mpc83xx_pcie_exclude_device(bus, devfn);
@@ -645,16 +545,11 @@ static int mpc83xx_pcie_read_config(struct pci_bus *bus, unsigned int devfn,
 static int mpc83xx_pcie_write_config(struct pci_bus *bus, unsigned int devfn,
 				     int offset, int len, u32 val)
 {
-	struct pci_controller *hose = pci_bus_to_host(bus);
 	void __iomem *cfg_addr;
 
 	cfg_addr = mpc83xx_pcie_remap_cfg(bus, devfn, offset);
 	if (!cfg_addr)
 		return PCIBIOS_DEVICE_NOT_FOUND;
-
-	/* PPC_INDIRECT_TYPE_SURPRESS_PRIMARY_BUS */
-	if (offset == PCI_PRIMARY_BUS && bus->number == hose->first_busno)
-		val &= 0xffffff00;
 
 	switch (len) {
 	case 1:
@@ -731,8 +626,6 @@ int __init mpc83xx_add_bridge(struct device_node *dev)
 	const int *bus_range;
 	int primary;
 
-	is_mpc83xx_pci = 1;
-
 	if (!of_device_is_available(dev)) {
 		pr_warning("%s: disabled by the firmware.\n",
 			   dev->full_name);
@@ -777,7 +670,7 @@ int __init mpc83xx_add_bridge(struct device_node *dev)
 		       " bus 0\n", dev->full_name);
 	}
 
-	pci_add_flags(PCI_REASSIGN_ALL_BUS);
+	ppc_pci_add_flags(PPC_PCI_REASSIGN_ALL_BUS);
 	hose = pcibios_alloc_controller(dev);
 	if (!hose)
 		return -ENOMEM;
@@ -812,40 +705,3 @@ err0:
 	return ret;
 }
 #endif /* CONFIG_PPC_83xx */
-
-u64 fsl_pci_immrbar_base(struct pci_controller *hose)
-{
-#ifdef CONFIG_PPC_83xx
-	if (is_mpc83xx_pci) {
-		struct mpc83xx_pcie_priv *pcie = hose->dn->data;
-		struct pex_inbound_window *in;
-		int i;
-
-		/* Walk the Root Complex Inbound windows to match IMMR base */
-		in = pcie->cfg_type0 + PEX_RC_INWIN_BASE;
-		for (i = 0; i < 4; i++) {
-			/* not enabled, skip */
-			if (!in_le32(&in[i].ar) & PEX_RCIWARn_EN)
-				 continue;
-
-			if (get_immrbase() == in_le32(&in[i].tar))
-				return (u64)in_le32(&in[i].barh) << 32 |
-					    in_le32(&in[i].barl);
-		}
-
-		printk(KERN_WARNING "could not find PCI BAR matching IMMR\n");
-	}
-#endif
-
-#if defined(CONFIG_FSL_SOC_BOOKE) || defined(CONFIG_PPC_86xx)
-	if (!is_mpc83xx_pci) {
-		u32 base;
-
-		pci_bus_read_config_dword(hose->bus,
-			PCI_DEVFN(0, 0), PCI_BASE_ADDRESS_0, &base);
-		return base;
-	}
-#endif
-
-	return 0;
-}

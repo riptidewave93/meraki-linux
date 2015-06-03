@@ -10,7 +10,7 @@
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
- * Software Foundation; either version 2 of the License, or (at your option)
+ * Software Foundation; either version 2 of the License, or (at your option) 
  * any later version.
  *
  */
@@ -293,11 +293,11 @@ static int crypto_init_ops(struct crypto_tfm *tfm, u32 type, u32 mask)
 
 	case CRYPTO_ALG_TYPE_COMPRESS:
 		return crypto_init_compress_ops(tfm);
-
+	
 	default:
 		break;
 	}
-
+	
 	BUG();
 	return -EINVAL;
 }
@@ -320,9 +320,10 @@ static void crypto_exit_ops(struct crypto_tfm *tfm)
 	case CRYPTO_ALG_TYPE_COMPRESS:
 		crypto_exit_compress_ops(tfm);
 		break;
-
+	
 	default:
 		BUG();
+		
 	}
 }
 
@@ -591,18 +592,18 @@ void crypto_destroy_tfm(void *mem, struct crypto_tfm *tfm)
 	crypto_mod_put(alg);
 	kzfree(mem);
 }
-EXPORT_SYMBOL(crypto_destroy_tfm);
+EXPORT_SYMBOL_GPL(crypto_destroy_tfm);
 
 int crypto_has_alg(const char *name, u32 type, u32 mask)
 {
 	int ret = 0;
 	struct crypto_alg *alg = crypto_alg_mod_lookup(name, type, mask);
-
+	
 	if (!IS_ERR(alg)) {
 		crypto_mod_put(alg);
 		ret = 1;
 	}
-
+	
 	return ret;
 }
 EXPORT_SYMBOL_GPL(crypto_has_alg);

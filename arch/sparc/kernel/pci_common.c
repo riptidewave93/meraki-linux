@@ -281,7 +281,7 @@ static int sun4v_read_pci_cfg(struct pci_bus *bus_dev, unsigned int devfn,
 	case 4:
 		*value = ret & 0xffffffff;
 		break;
-	}
+	};
 
 
 	return PCIBIOS_SUCCESSFUL;
@@ -295,17 +295,14 @@ static int sun4v_write_pci_cfg(struct pci_bus *bus_dev, unsigned int devfn,
 	unsigned int bus = bus_dev->number;
 	unsigned int device = PCI_SLOT(devfn);
 	unsigned int func = PCI_FUNC(devfn);
+	unsigned long ret;
 
 	if (config_out_of_range(pbm, bus, devfn, where)) {
 		/* Do nothing. */
 	} else {
-		/* We don't check for hypervisor errors here, but perhaps
-		 * we should and influence our return value depending upon
-		 * what kind of error is thrown.
-		 */
-		pci_sun4v_config_put(devhandle,
-				     HV_PCI_DEVICE_BUILD(bus, device, func),
-				     where, size, value);
+		ret = pci_sun4v_config_put(devhandle,
+				HV_PCI_DEVICE_BUILD(bus, device, func),
+				where, size, value);
 	}
 	return PCIBIOS_SUCCESSFUL;
 }
@@ -317,12 +314,12 @@ struct pci_ops sun4v_pci_ops = {
 
 void pci_get_pbm_props(struct pci_pbm_info *pbm)
 {
-	const u32 *val = of_get_property(pbm->op->dev.of_node, "bus-range", NULL);
+	const u32 *val = of_get_property(pbm->op->node, "bus-range", NULL);
 
 	pbm->pci_first_busno = val[0];
 	pbm->pci_last_busno = val[1];
 
-	val = of_get_property(pbm->op->dev.of_node, "ino-bitmap", NULL);
+	val = of_get_property(pbm->op->node, "ino-bitmap", NULL);
 	if (val) {
 		pbm->ino_bitmap = (((u64)val[1] << 32UL) |
 				   ((u64)val[0] <<  0UL));
@@ -368,26 +365,20 @@ static void pci_register_legacy_regions(struct resource *io_res,
 
 static void pci_register_iommu_region(struct pci_pbm_info *pbm)
 {
-	const u32 *vdma = of_get_property(pbm->op->dev.of_node, "virtual-dma",
-					  NULL);
+	const u32 *vdma = of_get_property(pbm->op->node, "virtual-dma", NULL);
 
 	if (vdma) {
 		struct resource *rp = kzalloc(sizeof(*rp), GFP_KERNEL);
 
 		if (!rp) {
-			pr_info("%s: Cannot allocate IOMMU resource.\n",
-				pbm->name);
-			return;
+			prom_printf("Cannot allocate IOMMU resource.\n");
+			prom_halt();
 		}
 		rp->name = "IOMMU";
 		rp->start = pbm->mem_space.start + (unsigned long) vdma[0];
 		rp->end = rp->start + (unsigned long) vdma[1] - 1UL;
 		rp->flags = IORESOURCE_BUSY;
-		if (request_resource(&pbm->mem_space, rp)) {
-			pr_info("%s: Unable to request IOMMU resource.\n",
-				pbm->name);
-			kfree(rp);
-		}
+		request_resource(&pbm->mem_space, rp);
 	}
 }
 
@@ -398,7 +389,7 @@ void pci_determine_mem_io_space(struct pci_pbm_info *pbm)
 	int num_pbm_ranges;
 
 	saw_mem = saw_io = 0;
-	pbm_ranges = of_get_property(pbm->op->dev.of_node, "ranges", &i);
+	pbm_ranges = of_get_property(pbm->op->node, "ranges", &i);
 	if (!pbm_ranges) {
 		prom_printf("PCI: Fatal error, missing PBM ranges property "
 			    " for %s\n",
@@ -456,7 +447,7 @@ void pci_determine_mem_io_space(struct pci_pbm_info *pbm)
 
 		default:
 			break;
-		}
+		};
 	}
 
 	if (!saw_io || !saw_mem) {

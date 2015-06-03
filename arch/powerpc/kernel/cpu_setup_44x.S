@@ -35,7 +35,8 @@ _GLOBAL(__setup_cpu_440grx)
 _GLOBAL(__setup_cpu_460ex)
 _GLOBAL(__setup_cpu_460gt)
 _GLOBAL(__setup_cpu_460sx)
-_GLOBAL(__setup_cpu_apm821xx)
+_GLOBAL(__setup_cpu_apm82181)
+_GLOBAL(__setup_cpu_am862xx)
 	mflr	r4
 	bl	__init_fpu_44x
 	bl	__fixup_440A_mcheck

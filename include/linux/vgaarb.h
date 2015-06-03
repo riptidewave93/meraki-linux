@@ -5,32 +5,11 @@
  * (C) Copyright 2005 Benjamin Herrenschmidt <benh@kernel.crashing.org>
  * (C) Copyright 2007 Paulo R. Zanoni <przanoni@gmail.com>
  * (C) Copyright 2007, 2009 Tiago Vignatti <vignatti@freedesktop.org>
- *
- * Permission is hereby granted, free of charge, to any person obtaining a
- * copy of this software and associated documentation files (the "Software"),
- * to deal in the Software without restriction, including without limitation
- * the rights to use, copy, modify, merge, publish, distribute, sublicense,
- * and/or sell copies of the Software, and to permit persons to whom the
- * Software is furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice (including the next
- * paragraph) shall be included in all copies or substantial portions of the
- * Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT.  IN NO EVENT SHALL
- * THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
- * DEALINGS
- * IN THE SOFTWARE.
- *
  */
 
 #ifndef LINUX_VGA_H
-#define LINUX_VGA_H
 
+#include <asm/vga.h>
 
 /* Legacy VGA regions */
 #define VGA_RSRC_NONE	       0x00
@@ -46,8 +25,6 @@
  * have to provide their own vga_default_device();
  */
 #define VGA_DEFAULT_DEVICE     (NULL)
-
-struct pci_dev;
 
 /* For use by clients */
 
@@ -80,7 +57,7 @@ extern void vga_set_legacy_decoding(struct pci_dev *pdev,
  *     wether the card is doing legacy decoding for that type of resource. If
  *     yes, the lock is "converted" into a legacy resource lock.
  *     The arbiter will first look for all VGA cards that might conflict
- *     and disable their IOs and/or Memory access, including VGA forwarding
+ *     and disable their IOs and/or Memory access, inlcuding VGA forwarding
  *     on P2P bridges if necessary, so that the requested resources can
  *     be used. Then, the card is marked as locking these resources and
  *     the IO and/or Memory accesse are enabled on the card (including
@@ -95,11 +72,8 @@ extern void vga_set_legacy_decoding(struct pci_dev *pdev,
  *     Nested calls are supported (a per-resource counter is maintained)
  */
 
-#if defined(CONFIG_VGA_ARB)
-extern int vga_get(struct pci_dev *pdev, unsigned int rsrc, int interruptible);
-#else
-static inline int vga_get(struct pci_dev *pdev, unsigned int rsrc, int interruptible) { return 0; }
-#endif
+extern int vga_get(struct pci_dev *pdev, unsigned int rsrc,
+											int interruptible);
 
 /**
  *     vga_get_interruptible
@@ -136,11 +110,7 @@ static inline int vga_get_uninterruptible(struct pci_dev *pdev,
  *     are already locked by another card. It can be called in any context
  */
 
-#if defined(CONFIG_VGA_ARB)
 extern int vga_tryget(struct pci_dev *pdev, unsigned int rsrc);
-#else
-static inline int vga_tryget(struct pci_dev *pdev, unsigned int rsrc) { return 0; }
-#endif
 
 /**
  *     vga_put         - release lock on legacy VGA resources
@@ -155,11 +125,7 @@ static inline int vga_tryget(struct pci_dev *pdev, unsigned int rsrc) { return 0
  *     released if the counter reaches 0.
  */
 
-#if defined(CONFIG_VGA_ARB)
 extern void vga_put(struct pci_dev *pdev, unsigned int rsrc);
-#else
-#define vga_put(pdev, rsrc)
-#endif
 
 
 /**
@@ -189,7 +155,7 @@ extern struct pci_dev *vga_default_device(void);
  *     vga_conflicts
  *
  *     Architectures should define this if they have several
- *     independent PCI domains that can afford concurrent VGA
+ *     independant PCI domains that can afford concurrent VGA
  *     decoding
  */
 

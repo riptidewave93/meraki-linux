@@ -267,35 +267,6 @@ hauppauge_tuner[] =
 	{ TUNER_ABSENT,                 "Xceive XC4000"},
 	{ TUNER_ABSENT,                 "Dibcom 7070"},
 	{ TUNER_PHILIPS_TDA8290,        "NXP 18271C2"},
-	{ TUNER_ABSENT,                 "Siano SMS1010"},
-	{ TUNER_ABSENT,                 "Siano SMS1150"},
-	{ TUNER_ABSENT,                 "MaxLinear 5007"},
-	{ TUNER_ABSENT,                 "TCL M09WPP_2P_E"},
-	/* 160-169 */
-	{ TUNER_ABSENT,                 "Siano SMS1180"},
-	{ TUNER_ABSENT,                 "Maxim_MAX2165"},
-	{ TUNER_ABSENT,                 "Siano SMS1140"},
-	{ TUNER_ABSENT,                 "Siano SMS1150 B1"},
-	{ TUNER_ABSENT,                 "MaxLinear 111"},
-	{ TUNER_ABSENT,                 "Dibcom 7770"},
-	{ TUNER_ABSENT,                 "Siano SMS1180VNS"},
-	{ TUNER_ABSENT,                 "Siano SMS1184"},
-	{ TUNER_PHILIPS_FQ1236_MK5,	"TCL M30WTP-4N-E"},
-	{ TUNER_ABSENT,                 "TCL_M11WPP_2PN_E"},
-	/* 170-179 */
-	{ TUNER_ABSENT,                 "MaxLinear 301"},
-	{ TUNER_ABSENT,                 "Mirics MSi001"},
-	{ TUNER_ABSENT,                 "MaxLinear MxL241SF"},
-	{ TUNER_XC5000C,                "Xceive XC5000C"},
-	{ TUNER_ABSENT,                 "Montage M68TS2020"},
-	{ TUNER_ABSENT,                 "Siano SMS1530"},
-	{ TUNER_ABSENT,                 "Dibcom 7090"},
-	{ TUNER_ABSENT,                 "Xceive XC5200C"},
-	{ TUNER_ABSENT,                 "NXP 18273"},
-	{ TUNER_ABSENT,                 "Montage M88TS2022"},
-	/* 180-189 */
-	{ TUNER_ABSENT,                 "NXP 18272M"},
-	{ TUNER_ABSENT,                 "NXP 18272S"},
 };
 
 /* Use V4L2_IDENT_AMBIGUOUS for those audio 'chips' that are
@@ -709,7 +680,10 @@ void tveeprom_hauppauge_analog(struct i2c_client *c, struct tveeprom *tvee,
 	tveeprom_info("Hauppauge model %d, rev %s, serial# %d\n",
 		tvee->model, tvee->rev_str, tvee->serial_number);
 	if (tvee->has_MAC_address == 1)
-		tveeprom_info("MAC address is %pM\n", tvee->MAC_address);
+		tveeprom_info("MAC address is %02X-%02X-%02X-%02X-%02X-%02X\n",
+			tvee->MAC_address[0], tvee->MAC_address[1],
+			tvee->MAC_address[2], tvee->MAC_address[3],
+			tvee->MAC_address[4], tvee->MAC_address[5]);
 	tveeprom_info("tuner model is %s (idx %d, type %d)\n",
 		t_name1, tuner1, tvee->tuner_type);
 	tveeprom_info("TV standards%s%s%s%s%s%s%s%s (eeprom 0x%02x)\n",

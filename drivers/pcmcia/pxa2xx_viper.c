@@ -1,8 +1,9 @@
 /*
- * Viper/Zeus PCMCIA support
+ * VIPER PCMCIA support
  *   Copyright 2004 Arcom Control Systems
  *
  * Maintained by Marc Zyngier <maz@misterjones.org>
+ * 			      <marc.zyngier@altran.com>
  *
  * Based on:
  *   iPAQ h2200 PCMCIA support
@@ -25,46 +26,53 @@
 
 #include <asm/irq.h>
 
-#include <mach/arcom-pcmcia.h>
+#include <mach/viper.h>
+#include <asm/mach-types.h>
 
 #include "soc_common.h"
 #include "pxa2xx_base.h"
 
-static struct platform_device *arcom_pcmcia_dev;
-
-static inline struct arcom_pcmcia_pdata *viper_get_pdata(void)
-{
-	return arcom_pcmcia_dev->dev.platform_data;
-}
+static struct pcmcia_irqs irqs[] = {
+	{ 0, gpio_to_irq(VIPER_CF_CD_GPIO),  "PCMCIA_CD" }
+};
 
 static int viper_pcmcia_hw_init(struct soc_pcmcia_socket *skt)
 {
-	struct arcom_pcmcia_pdata *pdata = viper_get_pdata();
 	unsigned long flags;
 
-	skt->stat[SOC_STAT_CD].gpio = pdata->cd_gpio;
-	skt->stat[SOC_STAT_CD].name = "PCMCIA_CD";
-	skt->stat[SOC_STAT_RDY].gpio = pdata->rdy_gpio;
-	skt->stat[SOC_STAT_RDY].name = "CF ready";
+	skt->irq = gpio_to_irq(VIPER_CF_RDY_GPIO);
 
-	if (gpio_request(pdata->pwr_gpio, "CF power"))
+	if (gpio_request(VIPER_CF_CD_GPIO, "CF detect"))
+		goto err_request_cd;
+
+	if (gpio_request(VIPER_CF_RDY_GPIO, "CF ready"))
+		goto err_request_rdy;
+
+	if (gpio_request(VIPER_CF_POWER_GPIO, "CF power"))
 		goto err_request_pwr;
 
 	local_irq_save(flags);
 
-	if (gpio_direction_output(pdata->pwr_gpio, 0)) {
+	/* GPIO 82 is the CF power enable line. initially off */
+	if (gpio_direction_output(VIPER_CF_POWER_GPIO, 0) ||
+	    gpio_direction_input(VIPER_CF_CD_GPIO) ||
+	    gpio_direction_input(VIPER_CF_RDY_GPIO)) {
 		local_irq_restore(flags);
 		goto err_dir;
 	}
 
 	local_irq_restore(flags);
 
-	return 0;
+	return soc_pcmcia_request_irqs(skt, irqs, ARRAY_SIZE(irqs));
 
 err_dir:
-	gpio_free(pdata->pwr_gpio);
+	gpio_free(VIPER_CF_POWER_GPIO);
 err_request_pwr:
-	dev_err(&arcom_pcmcia_dev->dev, "Failed to setup PCMCIA GPIOs\n");
+	gpio_free(VIPER_CF_RDY_GPIO);
+err_request_rdy:
+	gpio_free(VIPER_CF_CD_GPIO);
+err_request_cd:
+	printk(KERN_ERR "viper: Failed to setup PCMCIA GPIOs\n");
 	return -1;
 }
 
@@ -73,14 +81,20 @@ err_request_pwr:
  */
 static void viper_pcmcia_hw_shutdown(struct soc_pcmcia_socket *skt)
 {
-	struct arcom_pcmcia_pdata *pdata = viper_get_pdata();
-
-	gpio_free(pdata->pwr_gpio);
+	soc_pcmcia_free_irqs(skt, irqs, ARRAY_SIZE(irqs));
+	gpio_free(VIPER_CF_POWER_GPIO);
+	gpio_free(VIPER_CF_RDY_GPIO);
+	gpio_free(VIPER_CF_CD_GPIO);
 }
 
 static void viper_pcmcia_socket_state(struct soc_pcmcia_socket *skt,
 				      struct pcmcia_state *state)
 {
+	state->detect = gpio_get_value(VIPER_CF_CD_GPIO) ? 0 : 1;
+	state->ready  = gpio_get_value(VIPER_CF_RDY_GPIO) ? 1 : 0;
+	state->bvd1   = 1;
+	state->bvd2   = 1;
+	state->wrprot = 0;
 	state->vs_3v  = 1; /* Can only apply 3.3V */
 	state->vs_Xv  = 0;
 }
@@ -88,56 +102,57 @@ static void viper_pcmcia_socket_state(struct soc_pcmcia_socket *skt,
 static int viper_pcmcia_configure_socket(struct soc_pcmcia_socket *skt,
 					 const socket_state_t *state)
 {
-	struct arcom_pcmcia_pdata *pdata = viper_get_pdata();
-
 	/* Silently ignore Vpp, output enable, speaker enable. */
-	pdata->reset(state->flags & SS_RESET);
+	viper_cf_rst(state->flags & SS_RESET);
 
 	/* Apply socket voltage */
 	switch (state->Vcc) {
 	case 0:
-		gpio_set_value(pdata->pwr_gpio, 0);
+		gpio_set_value(VIPER_CF_POWER_GPIO, 0);
 		break;
 	case 33:
-		gpio_set_value(pdata->pwr_gpio, 1);
+		gpio_set_value(VIPER_CF_POWER_GPIO, 1);
 		break;
 	default:
-		dev_err(&arcom_pcmcia_dev->dev, "Unsupported Vcc:%d\n", state->Vcc);
+		printk(KERN_ERR "%s: Unsupported Vcc:%d\n",
+		       __func__, state->Vcc);
 		return -1;
 	}
 
 	return 0;
 }
 
-static struct pcmcia_low_level viper_pcmcia_ops = {
+static void viper_pcmcia_socket_init(struct soc_pcmcia_socket *skt)
+{
+}
+
+static void viper_pcmcia_socket_suspend(struct soc_pcmcia_socket *skt)
+{
+}
+
+static struct pcmcia_low_level viper_pcmcia_ops __initdata = {
 	.owner          	= THIS_MODULE,
 	.hw_init        	= viper_pcmcia_hw_init,
 	.hw_shutdown		= viper_pcmcia_hw_shutdown,
 	.socket_state		= viper_pcmcia_socket_state,
 	.configure_socket	= viper_pcmcia_configure_socket,
+	.socket_init		= viper_pcmcia_socket_init,
+	.socket_suspend		= viper_pcmcia_socket_suspend,
 	.nr         		= 1,
 };
 
 static struct platform_device *viper_pcmcia_device;
 
-static int viper_pcmcia_probe(struct platform_device *pdev)
+static int __init viper_pcmcia_init(void)
 {
 	int ret;
 
-	/* I can't imagine more than one device, but you never know... */
-	if (arcom_pcmcia_dev)
-		return -EEXIST;
-
-	if (!pdev->dev.platform_data)
-		return -EINVAL;
+	if (!machine_is_viper())
+		return -ENODEV;
 
 	viper_pcmcia_device = platform_device_alloc("pxa2xx-pcmcia", -1);
 	if (!viper_pcmcia_device)
 		return -ENOMEM;
-
-	arcom_pcmcia_dev = pdev;
-
-	viper_pcmcia_device->dev.parent = &pdev->dev;
 
 	ret = platform_device_add_data(viper_pcmcia_device,
 				       &viper_pcmcia_ops,
@@ -146,38 +161,18 @@ static int viper_pcmcia_probe(struct platform_device *pdev)
 	if (!ret)
 		ret = platform_device_add(viper_pcmcia_device);
 
-	if (ret) {
+	if (ret)
 		platform_device_put(viper_pcmcia_device);
-		arcom_pcmcia_dev = NULL;
-	}
 
 	return ret;
 }
 
-static int viper_pcmcia_remove(struct platform_device *pdev)
+static void __exit viper_pcmcia_exit(void)
 {
 	platform_device_unregister(viper_pcmcia_device);
-	arcom_pcmcia_dev = NULL;
-	return 0;
 }
 
-static struct platform_device_id viper_pcmcia_id_table[] = {
-	{ .name = "viper-pcmcia", },
-	{ .name = "zeus-pcmcia",  },
-	{ },
-};
+module_init(viper_pcmcia_init);
+module_exit(viper_pcmcia_exit);
 
-static struct platform_driver viper_pcmcia_driver = {
-	.probe		= viper_pcmcia_probe,
-	.remove		= viper_pcmcia_remove,
-	.driver		= {
-		.name	= "arcom-pcmcia",
-		.owner	= THIS_MODULE,
-	},
-	.id_table	= viper_pcmcia_id_table,
-};
-
-module_platform_driver(viper_pcmcia_driver);
-
-MODULE_DEVICE_TABLE(platform, viper_pcmcia_id_table);
 MODULE_LICENSE("GPL");

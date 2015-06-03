@@ -21,10 +21,8 @@
 
 #include <linux/init.h>
 #include <linux/slab.h>
-#include <linux/module.h>
 #include <linux/time.h>
 #include <linux/mutex.h>
-#include <linux/device.h>
 #include <sound/core.h>
 #include <sound/minors.h>
 #include <sound/pcm.h>
@@ -49,8 +47,6 @@ static struct snd_pcm *snd_pcm_get(struct snd_card *card, int device)
 	struct snd_pcm *pcm;
 
 	list_for_each_entry(pcm, &snd_pcm_devices, list) {
-		if (pcm->internal)
-			continue;
 		if (pcm->card == card && pcm->device == device)
 			return pcm;
 	}
@@ -62,8 +58,6 @@ static int snd_pcm_next(struct snd_card *card, int device)
 	struct snd_pcm *pcm;
 
 	list_for_each_entry(pcm, &snd_pcm_devices, list) {
-		if (pcm->internal)
-			continue;
 		if (pcm->card == card && pcm->device > device)
 			return pcm->device;
 		else if (pcm->card->number > card->number)
@@ -209,17 +203,11 @@ static char *snd_pcm_format_names[] = {
 	FORMAT(S18_3BE),
 	FORMAT(U18_3LE),
 	FORMAT(U18_3BE),
-	FORMAT(G723_24),
-	FORMAT(G723_24_1B),
-	FORMAT(G723_40),
-	FORMAT(G723_40_1B),
 };
 
 const char *snd_pcm_format_name(snd_pcm_format_t format)
 {
-	if ((__force unsigned int)format >= ARRAY_SIZE(snd_pcm_format_names))
-		return "Unknown";
-	return snd_pcm_format_names[(__force unsigned int)format];
+	return snd_pcm_format_names[format];
 }
 EXPORT_SYMBOL_GPL(snd_pcm_format_name);
 
@@ -275,12 +263,12 @@ static const char *snd_pcm_stream_name(int stream)
 
 static const char *snd_pcm_access_name(snd_pcm_access_t access)
 {
-	return snd_pcm_access_names[(__force int)access];
+	return snd_pcm_access_names[access];
 }
 
 static const char *snd_pcm_subformat_name(snd_pcm_subformat_t subformat)
 {
-	return snd_pcm_subformat_names[(__force int)subformat];
+	return snd_pcm_subformat_names[subformat];
 }
 
 static const char *snd_pcm_tstamp_mode_name(int mode)
@@ -290,7 +278,7 @@ static const char *snd_pcm_tstamp_mode_name(int mode)
 
 static const char *snd_pcm_state_name(snd_pcm_state_t state)
 {
-	return snd_pcm_state_names[(__force int)state];
+	return snd_pcm_state_names[state];
 }
 
 #if defined(CONFIG_SND_PCM_OSS) || defined(CONFIG_SND_PCM_OSS_MODULE)
@@ -370,24 +358,22 @@ static void snd_pcm_stream_proc_info_read(struct snd_info_entry *entry,
 static void snd_pcm_substream_proc_info_read(struct snd_info_entry *entry,
 					     struct snd_info_buffer *buffer)
 {
-	snd_pcm_proc_info_read(entry->private_data, buffer);
+	snd_pcm_proc_info_read((struct snd_pcm_substream *)entry->private_data,
+			       buffer);
 }
 
 static void snd_pcm_substream_proc_hw_params_read(struct snd_info_entry *entry,
 						  struct snd_info_buffer *buffer)
 {
 	struct snd_pcm_substream *substream = entry->private_data;
-	struct snd_pcm_runtime *runtime;
-
-	mutex_lock(&substream->pcm->open_mutex);
-	runtime = substream->runtime;
+	struct snd_pcm_runtime *runtime = substream->runtime;
 	if (!runtime) {
 		snd_iprintf(buffer, "closed\n");
-		goto unlock;
+		return;
 	}
 	if (runtime->status->state == SNDRV_PCM_STATE_OPEN) {
 		snd_iprintf(buffer, "no setup\n");
-		goto unlock;
+		return;
 	}
 	snd_iprintf(buffer, "access: %s\n", snd_pcm_access_name(runtime->access));
 	snd_iprintf(buffer, "format: %s\n", snd_pcm_format_name(runtime->format));
@@ -406,25 +392,20 @@ static void snd_pcm_substream_proc_hw_params_read(struct snd_info_entry *entry,
 		snd_iprintf(buffer, "OSS period frames: %lu\n", (unsigned long)runtime->oss.period_frames);
 	}
 #endif
- unlock:
-	mutex_unlock(&substream->pcm->open_mutex);
 }
 
 static void snd_pcm_substream_proc_sw_params_read(struct snd_info_entry *entry,
 						  struct snd_info_buffer *buffer)
 {
 	struct snd_pcm_substream *substream = entry->private_data;
-	struct snd_pcm_runtime *runtime;
-
-	mutex_lock(&substream->pcm->open_mutex);
-	runtime = substream->runtime;
+	struct snd_pcm_runtime *runtime = substream->runtime;
 	if (!runtime) {
 		snd_iprintf(buffer, "closed\n");
-		goto unlock;
+		return;
 	}
 	if (runtime->status->state == SNDRV_PCM_STATE_OPEN) {
 		snd_iprintf(buffer, "no setup\n");
-		goto unlock;
+		return;
 	}
 	snd_iprintf(buffer, "tstamp_mode: %s\n", snd_pcm_tstamp_mode_name(runtime->tstamp_mode));
 	snd_iprintf(buffer, "period_step: %u\n", runtime->period_step);
@@ -434,32 +415,26 @@ static void snd_pcm_substream_proc_sw_params_read(struct snd_info_entry *entry,
 	snd_iprintf(buffer, "silence_threshold: %lu\n", runtime->silence_threshold);
 	snd_iprintf(buffer, "silence_size: %lu\n", runtime->silence_size);
 	snd_iprintf(buffer, "boundary: %lu\n", runtime->boundary);
- unlock:
-	mutex_unlock(&substream->pcm->open_mutex);
 }
 
 static void snd_pcm_substream_proc_status_read(struct snd_info_entry *entry,
 					       struct snd_info_buffer *buffer)
 {
 	struct snd_pcm_substream *substream = entry->private_data;
-	struct snd_pcm_runtime *runtime;
+	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct snd_pcm_status status;
 	int err;
-
-	mutex_lock(&substream->pcm->open_mutex);
-	runtime = substream->runtime;
 	if (!runtime) {
 		snd_iprintf(buffer, "closed\n");
-		goto unlock;
+		return;
 	}
 	memset(&status, 0, sizeof(status));
 	err = snd_pcm_status(substream, &status);
 	if (err < 0) {
 		snd_iprintf(buffer, "error %d\n", err);
-		goto unlock;
+		return;
 	}
 	snd_iprintf(buffer, "state: %s\n", snd_pcm_state_name(status.state));
-	snd_iprintf(buffer, "owner_pid   : %d\n", pid_vnr(substream->pid));
 	snd_iprintf(buffer, "trigger_time: %ld.%09ld\n",
 		status.trigger_tstamp.tv_sec, status.trigger_tstamp.tv_nsec);
 	snd_iprintf(buffer, "tstamp      : %ld.%09ld\n",
@@ -470,8 +445,6 @@ static void snd_pcm_substream_proc_status_read(struct snd_info_entry *entry,
 	snd_iprintf(buffer, "-----\n");
 	snd_iprintf(buffer, "hw_ptr      : %ld\n", runtime->status->hw_ptr);
 	snd_iprintf(buffer, "appl_ptr    : %ld\n", runtime->control->appl_ptr);
- unlock:
-	mutex_unlock(&substream->pcm->open_mutex);
 }
 
 #ifdef CONFIG_SND_PCM_XRUN_DEBUG
@@ -655,7 +628,7 @@ int snd_pcm_new_stream(struct snd_pcm *pcm, int stream, int substream_count)
 	pstr->stream = stream;
 	pstr->pcm = pcm;
 	pstr->substream_count = substream_count;
-	if (substream_count > 0 && !pcm->internal) {
+	if (substream_count > 0) {
 		err = snd_pcm_stream_proc_init(pstr);
 		if (err < 0) {
 			snd_printk(KERN_ERR "Error in snd_pcm_stream_proc_init\n");
@@ -674,23 +647,23 @@ int snd_pcm_new_stream(struct snd_pcm *pcm, int stream, int substream_count)
 		substream->number = idx;
 		substream->stream = stream;
 		sprintf(substream->name, "subdevice #%i", idx);
+		snprintf(substream->latency_id, sizeof(substream->latency_id),
+			 "ALSA-PCM%d-%d%c%d", pcm->card->number, pcm->device,
+			 (stream ? 'c' : 'p'), idx);
 		substream->buffer_bytes_max = UINT_MAX;
 		if (prev == NULL)
 			pstr->substream = substream;
 		else
 			prev->next = substream;
-
-		if (!pcm->internal) {
-			err = snd_pcm_substream_proc_init(substream);
-			if (err < 0) {
-				snd_printk(KERN_ERR "Error in snd_pcm_stream_proc_init\n");
-				if (prev == NULL)
-					pstr->substream = NULL;
-				else
-					prev->next = NULL;
-				kfree(substream);
-				return err;
-			}
+		err = snd_pcm_substream_proc_init(substream);
+		if (err < 0) {
+			snd_printk(KERN_ERR "Error in snd_pcm_stream_proc_init\n");
+			if (prev == NULL)
+				pstr->substream = NULL;
+			else
+				prev->next = NULL;
+			kfree(substream);
+			return err;
 		}
 		substream->group = &substream->self_group;
 		spin_lock_init(&substream->self_group.lock);
@@ -704,9 +677,25 @@ int snd_pcm_new_stream(struct snd_pcm *pcm, int stream, int substream_count)
 
 EXPORT_SYMBOL(snd_pcm_new_stream);
 
-static int _snd_pcm_new(struct snd_card *card, const char *id, int device,
-		int playback_count, int capture_count, bool internal,
-		struct snd_pcm **rpcm)
+/**
+ * snd_pcm_new - create a new PCM instance
+ * @card: the card instance
+ * @id: the id string
+ * @device: the device index (zero based)
+ * @playback_count: the number of substreams for playback
+ * @capture_count: the number of substreams for capture
+ * @rpcm: the pointer to store the new pcm instance
+ *
+ * Creates a new PCM instance.
+ *
+ * The pcm operators have to be set afterwards to the new instance
+ * via snd_pcm_set_ops().
+ *
+ * Returns zero if successful, or a negative error code on failure.
+ */
+int snd_pcm_new(struct snd_card *card, const char *id, int device,
+		int playback_count, int capture_count,
+	        struct snd_pcm ** rpcm)
 {
 	struct snd_pcm *pcm;
 	int err;
@@ -727,7 +716,6 @@ static int _snd_pcm_new(struct snd_card *card, const char *id, int device,
 	}
 	pcm->card = card;
 	pcm->device = device;
-	pcm->internal = internal;
 	if (id)
 		strlcpy(pcm->id, id, sizeof(pcm->id));
 	if ((err = snd_pcm_new_stream(pcm, SNDRV_PCM_STREAM_PLAYBACK, playback_count)) < 0) {
@@ -749,58 +737,7 @@ static int _snd_pcm_new(struct snd_card *card, const char *id, int device,
 	return 0;
 }
 
-/**
- * snd_pcm_new - create a new PCM instance
- * @card: the card instance
- * @id: the id string
- * @device: the device index (zero based)
- * @playback_count: the number of substreams for playback
- * @capture_count: the number of substreams for capture
- * @rpcm: the pointer to store the new pcm instance
- *
- * Creates a new PCM instance.
- *
- * The pcm operators have to be set afterwards to the new instance
- * via snd_pcm_set_ops().
- *
- * Returns zero if successful, or a negative error code on failure.
- */
-int snd_pcm_new(struct snd_card *card, const char *id, int device,
-		int playback_count, int capture_count, struct snd_pcm **rpcm)
-{
-	return _snd_pcm_new(card, id, device, playback_count, capture_count,
-			false, rpcm);
-}
 EXPORT_SYMBOL(snd_pcm_new);
-
-/**
- * snd_pcm_new_internal - create a new internal PCM instance
- * @card: the card instance
- * @id: the id string
- * @device: the device index (zero based - shared with normal PCMs)
- * @playback_count: the number of substreams for playback
- * @capture_count: the number of substreams for capture
- * @rpcm: the pointer to store the new pcm instance
- *
- * Creates a new internal PCM instance with no userspace device or procfs
- * entries. This is used by ASoC Back End PCMs in order to create a PCM that
- * will only be used internally by kernel drivers. i.e. it cannot be opened
- * by userspace. It provides existing ASoC components drivers with a substream
- * and access to any private data.
- *
- * The pcm operators have to be set afterwards to the new instance
- * via snd_pcm_set_ops().
- *
- * Returns zero if successful, or a negative error code on failure.
- */
-int snd_pcm_new_internal(struct snd_card *card, const char *id, int device,
-	int playback_count, int capture_count,
-	struct snd_pcm **rpcm)
-{
-	return _snd_pcm_new(card, id, device, playback_count, capture_count,
-			true, rpcm);
-}
-EXPORT_SYMBOL(snd_pcm_new_internal);
 
 static void snd_pcm_free_stream(struct snd_pcm_str * pstr)
 {
@@ -872,7 +809,7 @@ int snd_pcm_attach_substream(struct snd_pcm *pcm, int stream,
 	card = pcm->card;
 	read_lock(&card->ctl_files_rwlock);
 	list_for_each_entry(kctl, &card->ctl_files, list) {
-		if (kctl->pid == task_pid(current)) {
+		if (kctl->pid == current->pid) {
 			prefer_subdevice = kctl->prefer_pcm_subdevice;
 			if (prefer_subdevice != -1)
 				break;
@@ -956,7 +893,6 @@ int snd_pcm_attach_substream(struct snd_pcm *pcm, int stream,
 	memset((void*)runtime->control, 0, size);
 
 	init_waitqueue_head(&runtime->sleep);
-	init_waitqueue_head(&runtime->tsleep);
 
 	runtime->status->state = SNDRV_PCM_STATE_OPEN;
 
@@ -964,7 +900,6 @@ int snd_pcm_attach_substream(struct snd_pcm *pcm, int stream,
 	substream->private_data = pcm->private_data;
 	substream->ref_count = 1;
 	substream->f_flags = file->f_flags;
-	substream->pid = get_pid(task_pid(current));
 	pstr->substream_opened++;
 	*rsubstream = substream;
 	return 0;
@@ -984,14 +919,8 @@ void snd_pcm_detach_substream(struct snd_pcm_substream *substream)
 	snd_free_pages((void*)runtime->control,
 		       PAGE_ALIGN(sizeof(struct snd_pcm_mmap_control)));
 	kfree(runtime->hw_constraints.rules);
-#ifdef CONFIG_SND_PCM_XRUN_DEBUG
-	if (runtime->hwptr_log)
-		kfree(runtime->hwptr_log);
-#endif
 	kfree(runtime);
 	substream->runtime = NULL;
-	put_pid(substream->pid);
-	substream->pid = NULL;
 	substream->pstr->substream_opened--;
 }
 
@@ -1038,7 +967,7 @@ static int snd_pcm_dev_register(struct snd_device *device)
 	}
 	for (cidx = 0; cidx < 2; cidx++) {
 		int devtype = -1;
-		if (pcm->streams[cidx].substream == NULL || pcm->internal)
+		if (pcm->streams[cidx].substream == NULL)
 			continue;
 		switch (cidx) {
 		case SNDRV_PCM_STREAM_PLAYBACK:
@@ -1090,19 +1019,11 @@ static int snd_pcm_dev_disconnect(struct snd_device *device)
 	if (list_empty(&pcm->list))
 		goto unlock;
 
-	mutex_lock(&pcm->open_mutex);
-	wake_up(&pcm->open_wait);
 	list_del_init(&pcm->list);
 	for (cidx = 0; cidx < 2; cidx++)
-		for (substream = pcm->streams[cidx].substream; substream; substream = substream->next) {
-			snd_pcm_stream_lock_irq(substream);
-			if (substream->runtime) {
+		for (substream = pcm->streams[cidx].substream; substream; substream = substream->next)
+			if (substream->runtime)
 				substream->runtime->status->state = SNDRV_PCM_STATE_DISCONNECTED;
-				wake_up(&substream->runtime->sleep);
-				wake_up(&substream->runtime->tsleep);
-			}
-			snd_pcm_stream_unlock_irq(substream);
-		}
 	list_for_each_entry(notify, &snd_pcm_notify_list, list) {
 		notify->n_disconnect(pcm);
 	}
@@ -1118,7 +1039,6 @@ static int snd_pcm_dev_disconnect(struct snd_device *device)
 		}
 		snd_unregister_device(devtype, pcm->card, pcm->device);
 	}
-	mutex_unlock(&pcm->open_mutex);
  unlock:
 	mutex_unlock(&register_mutex);
 	return 0;

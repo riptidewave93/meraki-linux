@@ -23,7 +23,6 @@
  * 02110-1301 USA
  */
 
-#include <linux/gfp.h>
 #include <linux/kernel.h>
 #include <linux/net.h>
 #include <linux/poll.h>
@@ -31,7 +30,6 @@
 #include <net/tcp_states.h>
 
 #include <linux/phonet.h>
-#include <linux/export.h>
 #include <net/phonet/phonet.h>
 #include <net/phonet/pep.h>
 #include <net/phonet/pn_dev.h>
@@ -47,28 +45,13 @@ static int pn_socket_release(struct socket *sock)
 	return 0;
 }
 
-#define PN_HASHSIZE	16
-#define PN_HASHMASK	(PN_HASHSIZE-1)
-
-
 static struct  {
-	struct hlist_head hlist[PN_HASHSIZE];
-	struct mutex lock;
-} pnsocks;
-
-void __init pn_sock_init(void)
-{
-	unsigned i;
-
-	for (i = 0; i < PN_HASHSIZE; i++)
-		INIT_HLIST_HEAD(pnsocks.hlist + i);
-	mutex_init(&pnsocks.lock);
-}
-
-static struct hlist_head *pn_hash_list(u16 obj)
-{
-	return pnsocks.hlist + (obj & PN_HASHMASK);
-}
+	struct hlist_head hlist;
+	spinlock_t lock;
+} pnsocks = {
+	.hlist = HLIST_HEAD_INIT,
+	.lock = __SPIN_LOCK_UNLOCKED(pnsocks.lock),
+};
 
 /*
  * Find address based on socket address, match only certain fields.
@@ -81,10 +64,10 @@ struct sock *pn_find_sock_by_sa(struct net *net, const struct sockaddr_pn *spn)
 	struct sock *rval = NULL;
 	u16 obj = pn_sockaddr_get_object(spn);
 	u8 res = spn->spn_resource;
-	struct hlist_head *hlist = pn_hash_list(obj);
 
-	rcu_read_lock();
-	sk_for_each_rcu(sknode, node, hlist) {
+	spin_lock_bh(&pnsocks.lock);
+
+	sk_for_each(sknode, node, &pnsocks.hlist) {
 		struct pn_sock *pn = pn_sk(sknode);
 		BUG_ON(!pn->sobject); /* unbound socket */
 
@@ -99,66 +82,34 @@ struct sock *pn_find_sock_by_sa(struct net *net, const struct sockaddr_pn *spn)
 			if (pn->resource != res)
 				continue;
 		}
-		if (pn_addr(pn->sobject) &&
-		    pn_addr(pn->sobject) != pn_addr(obj))
+		if (pn_addr(pn->sobject)
+		 && pn_addr(pn->sobject) != pn_addr(obj))
 			continue;
 
 		rval = sknode;
 		sock_hold(sknode);
 		break;
 	}
-	rcu_read_unlock();
+
+	spin_unlock_bh(&pnsocks.lock);
 
 	return rval;
-}
 
-/* Deliver a broadcast packet (only in bottom-half) */
-void pn_deliver_sock_broadcast(struct net *net, struct sk_buff *skb)
-{
-	struct hlist_head *hlist = pnsocks.hlist;
-	unsigned h;
-
-	rcu_read_lock();
-	for (h = 0; h < PN_HASHSIZE; h++) {
-		struct hlist_node *node;
-		struct sock *sknode;
-
-		sk_for_each(sknode, node, hlist) {
-			struct sk_buff *clone;
-
-			if (!net_eq(sock_net(sknode), net))
-				continue;
-			if (!sock_flag(sknode, SOCK_BROADCAST))
-				continue;
-
-			clone = skb_clone(skb, GFP_ATOMIC);
-			if (clone) {
-				sock_hold(sknode);
-				sk_receive_skb(sknode, clone, 0);
-			}
-		}
-		hlist++;
-	}
-	rcu_read_unlock();
 }
 
 void pn_sock_hash(struct sock *sk)
 {
-	struct hlist_head *hlist = pn_hash_list(pn_sk(sk)->sobject);
-
-	mutex_lock(&pnsocks.lock);
-	sk_add_node_rcu(sk, hlist);
-	mutex_unlock(&pnsocks.lock);
+	spin_lock_bh(&pnsocks.lock);
+	sk_add_node(sk, &pnsocks.hlist);
+	spin_unlock_bh(&pnsocks.lock);
 }
 EXPORT_SYMBOL(pn_sock_hash);
 
 void pn_sock_unhash(struct sock *sk)
 {
-	mutex_lock(&pnsocks.lock);
-	sk_del_node_init_rcu(sk);
-	mutex_unlock(&pnsocks.lock);
-	pn_sock_unbind_all_res(sk);
-	synchronize_rcu();
+	spin_lock_bh(&pnsocks.lock);
+	sk_del_node_init(sk);
+	spin_unlock_bh(&pnsocks.lock);
 }
 EXPORT_SYMBOL(pn_sock_unhash);
 
@@ -225,92 +176,12 @@ static int pn_socket_autobind(struct socket *sock)
 	return 0; /* socket was already bound */
 }
 
-static int pn_socket_connect(struct socket *sock, struct sockaddr *addr,
-		int len, int flags)
-{
-	struct sock *sk = sock->sk;
-	struct pn_sock *pn = pn_sk(sk);
-	struct sockaddr_pn *spn = (struct sockaddr_pn *)addr;
-	struct task_struct *tsk = current;
-	long timeo = sock_rcvtimeo(sk, flags & O_NONBLOCK);
-	int err;
-
-	if (pn_socket_autobind(sock))
-		return -ENOBUFS;
-	if (len < sizeof(struct sockaddr_pn))
-		return -EINVAL;
-	if (spn->spn_family != AF_PHONET)
-		return -EAFNOSUPPORT;
-
-	lock_sock(sk);
-
-	switch (sock->state) {
-	case SS_UNCONNECTED:
-		if (sk->sk_state != TCP_CLOSE) {
-			err = -EISCONN;
-			goto out;
-		}
-		break;
-	case SS_CONNECTING:
-		err = -EALREADY;
-		goto out;
-	default:
-		err = -EISCONN;
-		goto out;
-	}
-
-	pn->dobject = pn_sockaddr_get_object(spn);
-	pn->resource = pn_sockaddr_get_resource(spn);
-	sock->state = SS_CONNECTING;
-
-	err = sk->sk_prot->connect(sk, addr, len);
-	if (err) {
-		sock->state = SS_UNCONNECTED;
-		pn->dobject = 0;
-		goto out;
-	}
-
-	while (sk->sk_state == TCP_SYN_SENT) {
-		DEFINE_WAIT(wait);
-
-		if (!timeo) {
-			err = -EINPROGRESS;
-			goto out;
-		}
-		if (signal_pending(tsk)) {
-			err = sock_intr_errno(timeo);
-			goto out;
-		}
-
-		prepare_to_wait_exclusive(sk_sleep(sk), &wait,
-						TASK_INTERRUPTIBLE);
-		release_sock(sk);
-		timeo = schedule_timeout(timeo);
-		lock_sock(sk);
-		finish_wait(sk_sleep(sk), &wait);
-	}
-
-	if ((1 << sk->sk_state) & (TCPF_SYN_RECV|TCPF_ESTABLISHED))
-		err = 0;
-	else if (sk->sk_state == TCP_CLOSE_WAIT)
-		err = -ECONNRESET;
-	else
-		err = -ECONNREFUSED;
-	sock->state = err ? SS_UNCONNECTED : SS_CONNECTED;
-out:
-	release_sock(sk);
-	return err;
-}
-
 static int pn_socket_accept(struct socket *sock, struct socket *newsock,
 				int flags)
 {
 	struct sock *sk = sock->sk;
 	struct sock *newsk;
 	int err;
-
-	if (unlikely(sk->sk_state != TCP_LISTEN))
-		return -EINVAL;
 
 	newsk = sk->sk_prot->accept(sk, flags, &err);
 	if (!newsk)
@@ -346,10 +217,15 @@ static unsigned int pn_socket_poll(struct file *file, struct socket *sock,
 	struct pep_sock *pn = pep_sk(sk);
 	unsigned int mask = 0;
 
-	poll_wait(file, sk_sleep(sk), wait);
+	poll_wait(file, &sock->wait, wait);
 
-	if (sk->sk_state == TCP_CLOSE)
+	switch (sk->sk_state) {
+	case TCP_LISTEN:
+		return hlist_empty(&pn->ackq) ? 0 : POLLIN;
+	case TCP_CLOSE:
 		return POLLERR;
+	}
+
 	if (!skb_queue_empty(&sk->sk_receive_queue))
 		mask |= POLLIN | POLLRDNORM;
 	if (!skb_queue_empty(&pn->ctrlreq_queue))
@@ -357,9 +233,7 @@ static unsigned int pn_socket_poll(struct file *file, struct socket *sock,
 	if (!mask && sk->sk_state == TCP_CLOSE_WAIT)
 		return POLLHUP;
 
-	if (sk->sk_state == TCP_ESTABLISHED &&
-		atomic_read(&sk->sk_wmem_alloc) < sk->sk_sndbuf &&
-		atomic_read(&pn->tx_credits))
+	if (sk->sk_state == TCP_ESTABLISHED && atomic_read(&pn->tx_credits))
 		mask |= POLLOUT | POLLWRNORM | POLLWRBAND;
 
 	return mask;
@@ -408,19 +282,19 @@ static int pn_socket_listen(struct socket *sock, int backlog)
 	struct sock *sk = sock->sk;
 	int err = 0;
 
+	if (sock->state != SS_UNCONNECTED)
+		return -EINVAL;
 	if (pn_socket_autobind(sock))
 		return -ENOBUFS;
 
 	lock_sock(sk);
-	if (sock->state != SS_UNCONNECTED) {
+	if (sk->sk_state != TCP_CLOSE) {
 		err = -EINVAL;
 		goto out;
 	}
 
-	if (sk->sk_state != TCP_LISTEN) {
-		sk->sk_state = TCP_LISTEN;
-		sk->sk_ack_backlog = 0;
-	}
+	sk->sk_state = TCP_LISTEN;
+	sk->sk_ack_backlog = 0;
 	sk->sk_max_ack_backlog = backlog;
 out:
 	release_sock(sk);
@@ -468,7 +342,7 @@ const struct proto_ops phonet_stream_ops = {
 	.owner		= THIS_MODULE,
 	.release	= pn_socket_release,
 	.bind		= pn_socket_bind,
-	.connect	= pn_socket_connect,
+	.connect	= sock_no_connect,
 	.socketpair	= sock_no_socketpair,
 	.accept		= pn_socket_accept,
 	.getname	= pn_socket_getname,
@@ -542,20 +416,15 @@ EXPORT_SYMBOL(pn_sock_get_port);
 static struct sock *pn_sock_get_idx(struct seq_file *seq, loff_t pos)
 {
 	struct net *net = seq_file_net(seq);
-	struct hlist_head *hlist = pnsocks.hlist;
 	struct hlist_node *node;
 	struct sock *sknode;
-	unsigned h;
 
-	for (h = 0; h < PN_HASHSIZE; h++) {
-		sk_for_each_rcu(sknode, node, hlist) {
-			if (!net_eq(net, sock_net(sknode)))
-				continue;
-			if (!pos)
-				return sknode;
-			pos--;
-		}
-		hlist++;
+	sk_for_each(sknode, node, &pnsocks.hlist) {
+		if (!net_eq(net, sock_net(sknode)))
+			continue;
+		if (!pos)
+			return sknode;
+		pos--;
 	}
 	return NULL;
 }
@@ -572,9 +441,9 @@ static struct sock *pn_sock_get_next(struct seq_file *seq, struct sock *sk)
 }
 
 static void *pn_sock_seq_start(struct seq_file *seq, loff_t *pos)
-	__acquires(rcu)
+	__acquires(pnsocks.lock)
 {
-	rcu_read_lock();
+	spin_lock_bh(&pnsocks.lock);
 	return *pos ? pn_sock_get_idx(seq, *pos - 1) : SEQ_START_TOKEN;
 }
 
@@ -591,9 +460,9 @@ static void *pn_sock_seq_next(struct seq_file *seq, void *v, loff_t *pos)
 }
 
 static void pn_sock_seq_stop(struct seq_file *seq, void *v)
-	__releases(rcu)
+	__releases(pnsocks.lock)
 {
-	rcu_read_unlock();
+	spin_unlock_bh(&pnsocks.lock);
 }
 
 static int pn_sock_seq_show(struct seq_file *seq, void *v)
@@ -608,9 +477,9 @@ static int pn_sock_seq_show(struct seq_file *seq, void *v)
 		struct pn_sock *pn = pn_sk(sk);
 
 		seq_printf(seq, "%2d %04X:%04X:%02X %02X %08X:%08X %5d %lu "
-			"%d %pK %d%n",
-			sk->sk_protocol, pn->sobject, pn->dobject,
-			pn->resource, sk->sk_state,
+			"%d %p %d%n",
+			sk->sk_protocol, pn->sobject, 0, pn->resource,
+			sk->sk_state,
 			sk_wmem_alloc_get(sk), sk_rmem_alloc_get(sk),
 			sock_i_uid(sk), sock_i_ino(sk),
 			atomic_read(&sk->sk_refcnt), sk,
@@ -636,189 +505,6 @@ static int pn_sock_open(struct inode *inode, struct file *file)
 const struct file_operations pn_sock_seq_fops = {
 	.owner = THIS_MODULE,
 	.open = pn_sock_open,
-	.read = seq_read,
-	.llseek = seq_lseek,
-	.release = seq_release_net,
-};
-#endif
-
-static struct  {
-	struct sock *sk[256];
-} pnres;
-
-/*
- * Find and hold socket based on resource.
- */
-struct sock *pn_find_sock_by_res(struct net *net, u8 res)
-{
-	struct sock *sk;
-
-	if (!net_eq(net, &init_net))
-		return NULL;
-
-	rcu_read_lock();
-	sk = rcu_dereference(pnres.sk[res]);
-	if (sk)
-		sock_hold(sk);
-	rcu_read_unlock();
-	return sk;
-}
-
-static DEFINE_MUTEX(resource_mutex);
-
-int pn_sock_bind_res(struct sock *sk, u8 res)
-{
-	int ret = -EADDRINUSE;
-
-	if (!net_eq(sock_net(sk), &init_net))
-		return -ENOIOCTLCMD;
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-	if (pn_socket_autobind(sk->sk_socket))
-		return -EAGAIN;
-
-	mutex_lock(&resource_mutex);
-	if (pnres.sk[res] == NULL) {
-		sock_hold(sk);
-		rcu_assign_pointer(pnres.sk[res], sk);
-		ret = 0;
-	}
-	mutex_unlock(&resource_mutex);
-	return ret;
-}
-
-int pn_sock_unbind_res(struct sock *sk, u8 res)
-{
-	int ret = -ENOENT;
-
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	mutex_lock(&resource_mutex);
-	if (pnres.sk[res] == sk) {
-		RCU_INIT_POINTER(pnres.sk[res], NULL);
-		ret = 0;
-	}
-	mutex_unlock(&resource_mutex);
-
-	if (ret == 0) {
-		synchronize_rcu();
-		sock_put(sk);
-	}
-	return ret;
-}
-
-void pn_sock_unbind_all_res(struct sock *sk)
-{
-	unsigned res, match = 0;
-
-	mutex_lock(&resource_mutex);
-	for (res = 0; res < 256; res++) {
-		if (pnres.sk[res] == sk) {
-			RCU_INIT_POINTER(pnres.sk[res], NULL);
-			match++;
-		}
-	}
-	mutex_unlock(&resource_mutex);
-
-	while (match > 0) {
-		__sock_put(sk);
-		match--;
-	}
-	/* Caller is responsible for RCU sync before final sock_put() */
-}
-
-#ifdef CONFIG_PROC_FS
-static struct sock **pn_res_get_idx(struct seq_file *seq, loff_t pos)
-{
-	struct net *net = seq_file_net(seq);
-	unsigned i;
-
-	if (!net_eq(net, &init_net))
-		return NULL;
-
-	for (i = 0; i < 256; i++) {
-		if (pnres.sk[i] == NULL)
-			continue;
-		if (!pos)
-			return pnres.sk + i;
-		pos--;
-	}
-	return NULL;
-}
-
-static struct sock **pn_res_get_next(struct seq_file *seq, struct sock **sk)
-{
-	struct net *net = seq_file_net(seq);
-	unsigned i;
-
-	BUG_ON(!net_eq(net, &init_net));
-
-	for (i = (sk - pnres.sk) + 1; i < 256; i++)
-		if (pnres.sk[i])
-			return pnres.sk + i;
-	return NULL;
-}
-
-static void *pn_res_seq_start(struct seq_file *seq, loff_t *pos)
-	__acquires(resource_mutex)
-{
-	mutex_lock(&resource_mutex);
-	return *pos ? pn_res_get_idx(seq, *pos - 1) : SEQ_START_TOKEN;
-}
-
-static void *pn_res_seq_next(struct seq_file *seq, void *v, loff_t *pos)
-{
-	struct sock **sk;
-
-	if (v == SEQ_START_TOKEN)
-		sk = pn_res_get_idx(seq, 0);
-	else
-		sk = pn_res_get_next(seq, v);
-	(*pos)++;
-	return sk;
-}
-
-static void pn_res_seq_stop(struct seq_file *seq, void *v)
-	__releases(resource_mutex)
-{
-	mutex_unlock(&resource_mutex);
-}
-
-static int pn_res_seq_show(struct seq_file *seq, void *v)
-{
-	int len;
-
-	if (v == SEQ_START_TOKEN)
-		seq_printf(seq, "%s%n", "rs   uid inode", &len);
-	else {
-		struct sock **psk = v;
-		struct sock *sk = *psk;
-
-		seq_printf(seq, "%02X %5d %lu%n",
-			   (int) (psk - pnres.sk), sock_i_uid(sk),
-			   sock_i_ino(sk), &len);
-	}
-	seq_printf(seq, "%*s\n", 63 - len, "");
-	return 0;
-}
-
-static const struct seq_operations pn_res_seq_ops = {
-	.start = pn_res_seq_start,
-	.next = pn_res_seq_next,
-	.stop = pn_res_seq_stop,
-	.show = pn_res_seq_show,
-};
-
-static int pn_res_open(struct inode *inode, struct file *file)
-{
-	return seq_open_net(inode, file, &pn_res_seq_ops,
-				sizeof(struct seq_net_private));
-}
-
-const struct file_operations pn_res_seq_fops = {
-	.owner = THIS_MODULE,
-	.open = pn_res_open,
 	.read = seq_read,
 	.llseek = seq_lseek,
 	.release = seq_release_net,

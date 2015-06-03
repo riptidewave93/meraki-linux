@@ -1,27 +1,27 @@
 /*
- * ads7828.c - lm_sensors driver for ads7828 12-bit 8-channel ADC
- * (C) 2007 EADS Astrium
- *
- * This driver is based on the lm75 and other lm_sensors/hwmon drivers
- *
- * Written by Steve Hardy <shardy@redhat.com>
- *
- * Datasheet available at: http://focus.ti.com/lit/ds/symlink/ads7828.pdf
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
- */
+	ads7828.c - lm_sensors driver for ads7828 12-bit 8-channel ADC
+	(C) 2007 EADS Astrium
+
+	This driver is based on the lm75 and other lm_sensors/hwmon drivers
+
+	Written by Steve Hardy <steve@linuxrealtime.co.uk>
+
+	Datasheet available at: http://focus.ti.com/lit/ds/symlink/ads7828.pdf
+
+	This program is free software; you can redistribute it and/or modify
+	it under the terms of the GNU General Public License as published by
+	the Free Software Foundation; either version 2 of the License, or
+	(at your option) any later version.
+
+	This program is distributed in the hope that it will be useful,
+	but WITHOUT ANY WARRANTY; without even the implied warranty of
+	MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.	See the
+	GNU General Public License for more details.
+
+	You should have received a copy of the GNU General Public License
+	along with this program; if not, write to the Free Software
+	Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+*/
 
 #include <linux/module.h>
 #include <linux/init.h>
@@ -47,9 +47,12 @@
 static const unsigned short normal_i2c[] = { 0x48, 0x49, 0x4a, 0x4b,
 	I2C_CLIENT_END };
 
-/* Module parameters */
-static bool se_input = 1; /* Default is SE, 0 == diff */
-static bool int_vref = 1; /* Default is internal ref ON */
+/* Insmod parameters */
+I2C_CLIENT_INSMOD_1(ads7828);
+
+/* Other module parameters */
+static int se_input = 1; /* Default is SE, 0 == diff */
+static int int_vref = 1; /* Default is internal ref ON */
 static int vref_mv = ADS7828_INT_VREF_MV; /* set if vref != 2.5V */
 module_param(se_input, bool, S_IRUGO);
 module_param(int_vref, bool, S_IRUGO);
@@ -69,10 +72,17 @@ struct ads7828_data {
 };
 
 /* Function declaration - necessary due to function dependencies */
-static int ads7828_detect(struct i2c_client *client,
+static int ads7828_detect(struct i2c_client *client, int kind,
 			  struct i2c_board_info *info);
 static int ads7828_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id);
+
+/* The ADS7828 returns the 12-bit sample in two bytes,
+	these are read as a word then byte-swapped */
+static u16 ads7828_read_value(struct i2c_client *client, u8 reg)
+{
+	return swab16(i2c_smbus_read_word_data(client, reg));
+}
 
 static inline u8 channel_cmd_byte(int ch)
 {
@@ -97,8 +107,7 @@ static struct ads7828_data *ads7828_update_device(struct device *dev)
 
 		for (ch = 0; ch < ADS7828_NCH; ch++) {
 			u8 cmd = channel_cmd_byte(ch);
-			data->adc_input[ch] =
-				i2c_smbus_read_word_swapped(client, cmd);
+			data->adc_input[ch] = ads7828_read_value(client, cmd);
 		}
 		data->last_updated = jiffies;
 		data->valid = 1;
@@ -159,7 +168,7 @@ static int ads7828_remove(struct i2c_client *client)
 }
 
 static const struct i2c_device_id ads7828_id[] = {
-	{ "ads7828", 0 },
+	{ "ads7828", ads7828 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, ads7828_id);
@@ -174,38 +183,39 @@ static struct i2c_driver ads7828_driver = {
 	.remove = ads7828_remove,
 	.id_table = ads7828_id,
 	.detect = ads7828_detect,
-	.address_list = normal_i2c,
+	.address_data = &addr_data,
 };
 
 /* Return 0 if detection is successful, -ENODEV otherwise */
-static int ads7828_detect(struct i2c_client *client,
+static int ads7828_detect(struct i2c_client *client, int kind,
 			  struct i2c_board_info *info)
 {
 	struct i2c_adapter *adapter = client->adapter;
-	int ch;
 
 	/* Check we have a valid client */
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_READ_WORD_DATA))
 		return -ENODEV;
 
-	/*
-	 * Now, we do the remaining detection. There is no identification
-	 * dedicated register so attempt to sanity check using knowledge of
-	 * the chip
-	 * - Read from the 8 channel addresses
-	 * - Check the top 4 bits of each result are not set (12 data bits)
-	 */
-	for (ch = 0; ch < ADS7828_NCH; ch++) {
-		u16 in_data;
-		u8 cmd = channel_cmd_byte(ch);
-		in_data = i2c_smbus_read_word_swapped(client, cmd);
-		if (in_data & 0xF000) {
-			pr_debug("%s : Doesn't look like an ads7828 device\n",
-				 __func__);
-			return -ENODEV;
+	/* Now, we do the remaining detection. There is no identification
+	dedicated register so attempt to sanity check using knowledge of
+	the chip
+	- Read from the 8 channel addresses
+	- Check the top 4 bits of each result are not set (12 data bits)
+	*/
+	if (kind < 0) {
+		int ch;
+		for (ch = 0; ch < ADS7828_NCH; ch++) {
+			u16 in_data;
+			u8 cmd = channel_cmd_byte(ch);
+			in_data = ads7828_read_value(client, cmd);
+			if (in_data & 0xF000) {
+				printk(KERN_DEBUG
+				"%s : Doesn't look like an ads7828 device\n",
+				__func__);
+				return -ENODEV;
+			}
 		}
 	}
-
 	strlcpy(info->type, "ads7828", I2C_NAME_SIZE);
 
 	return 0;
@@ -266,7 +276,7 @@ static void __exit sensors_ads7828_exit(void)
 	i2c_del_driver(&ads7828_driver);
 }
 
-MODULE_AUTHOR("Steve Hardy <shardy@redhat.com>");
+MODULE_AUTHOR("Steve Hardy <steve@linuxrealtime.co.uk>");
 MODULE_DESCRIPTION("ADS7828 driver");
 MODULE_LICENSE("GPL");
 

@@ -6,12 +6,14 @@
 
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM kvmmmu
+#define TRACE_INCLUDE_PATH .
+#define TRACE_INCLUDE_FILE mmutrace
 
 #define KVM_MMU_PAGE_FIELDS \
 	__field(__u64, gfn) \
 	__field(__u32, role) \
 	__field(__u32, root_count) \
-	__field(bool, unsync)
+	__field(__u32, unsync)
 
 #define KVM_MMU_PAGE_ASSIGN(sp)			     \
 	__entry->gfn = sp->gfn;			     \
@@ -28,14 +30,14 @@
 								        \
 	role.word = __entry->role;					\
 									\
-	trace_seq_printf(p, "sp gfn %llx %u%s q%u%s %s%s"		\
+	trace_seq_printf(p, "sp gfn %llx %u/%u q%u%s %s%s %spge"	\
 			 " %snxe root %u %s%c",				\
-			 __entry->gfn, role.level,			\
-			 role.cr4_pae ? " pae" : "",			\
+			 __entry->gfn, role.level, role.glevels,	\
 			 role.quadrant,					\
 			 role.direct ? " direct" : "",			\
 			 access_str[role.access],			\
 			 role.invalid ? " invalid" : "",		\
+			 role.cr4_pge ? "" : "!",			\
 			 role.nxe ? "" : "!",				\
 			 __entry->root_count,				\
 			 __entry->unsync ? "unsync" : "sync", 0);	\
@@ -92,15 +94,15 @@ TRACE_EVENT(
 	TP_printk("pte %llx level %u", __entry->pte, __entry->level)
 );
 
-DECLARE_EVENT_CLASS(kvm_mmu_set_bit_class,
-
+/* We set a pte accessed bit */
+TRACE_EVENT(
+	kvm_mmu_set_accessed_bit,
 	TP_PROTO(unsigned long table_gfn, unsigned index, unsigned size),
-
 	TP_ARGS(table_gfn, index, size),
 
 	TP_STRUCT__entry(
 		__field(__u64, gpa)
-	),
+		),
 
 	TP_fast_assign(
 		__entry->gpa = ((u64)table_gfn << PAGE_SHIFT)
@@ -110,20 +112,22 @@ DECLARE_EVENT_CLASS(kvm_mmu_set_bit_class,
 	TP_printk("gpa %llx", __entry->gpa)
 );
 
-/* We set a pte accessed bit */
-DEFINE_EVENT(kvm_mmu_set_bit_class, kvm_mmu_set_accessed_bit,
-
-	TP_PROTO(unsigned long table_gfn, unsigned index, unsigned size),
-
-	TP_ARGS(table_gfn, index, size)
-);
-
 /* We set a pte dirty bit */
-DEFINE_EVENT(kvm_mmu_set_bit_class, kvm_mmu_set_dirty_bit,
-
+TRACE_EVENT(
+	kvm_mmu_set_dirty_bit,
 	TP_PROTO(unsigned long table_gfn, unsigned index, unsigned size),
+	TP_ARGS(table_gfn, index, size),
 
-	TP_ARGS(table_gfn, index, size)
+	TP_STRUCT__entry(
+		__field(__u64, gpa)
+		),
+
+	TP_fast_assign(
+		__entry->gpa = ((u64)table_gfn << PAGE_SHIFT)
+				+ index * size;
+		),
+
+	TP_printk("gpa %llx", __entry->gpa)
 );
 
 TRACE_EVENT(
@@ -162,93 +166,55 @@ TRACE_EVENT(
 		  __entry->created ? "new" : "existing")
 );
 
-DECLARE_EVENT_CLASS(kvm_mmu_page_class,
-
+TRACE_EVENT(
+	kvm_mmu_sync_page,
 	TP_PROTO(struct kvm_mmu_page *sp),
 	TP_ARGS(sp),
 
 	TP_STRUCT__entry(
 		KVM_MMU_PAGE_FIELDS
-	),
+		),
 
 	TP_fast_assign(
 		KVM_MMU_PAGE_ASSIGN(sp)
-	),
+		),
 
 	TP_printk("%s", KVM_MMU_PAGE_PRINTK())
 );
 
-DEFINE_EVENT(kvm_mmu_page_class, kvm_mmu_sync_page,
+TRACE_EVENT(
+	kvm_mmu_unsync_page,
 	TP_PROTO(struct kvm_mmu_page *sp),
+	TP_ARGS(sp),
 
-	TP_ARGS(sp)
-);
+	TP_STRUCT__entry(
+		KVM_MMU_PAGE_FIELDS
+		),
 
-DEFINE_EVENT(kvm_mmu_page_class, kvm_mmu_unsync_page,
-	TP_PROTO(struct kvm_mmu_page *sp),
+	TP_fast_assign(
+		KVM_MMU_PAGE_ASSIGN(sp)
+		),
 
-	TP_ARGS(sp)
-);
-
-DEFINE_EVENT(kvm_mmu_page_class, kvm_mmu_prepare_zap_page,
-	TP_PROTO(struct kvm_mmu_page *sp),
-
-	TP_ARGS(sp)
-);
-
-DEFINE_EVENT(kvm_mmu_page_class, kvm_mmu_delay_free_pages,
-	TP_PROTO(struct kvm_mmu_page *sp),
-
-	TP_ARGS(sp)
+	TP_printk("%s", KVM_MMU_PAGE_PRINTK())
 );
 
 TRACE_EVENT(
-	mark_mmio_spte,
-	TP_PROTO(u64 *sptep, gfn_t gfn, unsigned access),
-	TP_ARGS(sptep, gfn, access),
+	kvm_mmu_zap_page,
+	TP_PROTO(struct kvm_mmu_page *sp),
+	TP_ARGS(sp),
 
 	TP_STRUCT__entry(
-		__field(void *, sptep)
-		__field(gfn_t, gfn)
-		__field(unsigned, access)
-	),
+		KVM_MMU_PAGE_FIELDS
+		),
 
 	TP_fast_assign(
-		__entry->sptep = sptep;
-		__entry->gfn = gfn;
-		__entry->access = access;
-	),
+		KVM_MMU_PAGE_ASSIGN(sp)
+		),
 
-	TP_printk("sptep:%p gfn %llx access %x", __entry->sptep, __entry->gfn,
-		  __entry->access)
+	TP_printk("%s", KVM_MMU_PAGE_PRINTK())
 );
 
-TRACE_EVENT(
-	handle_mmio_page_fault,
-	TP_PROTO(u64 addr, gfn_t gfn, unsigned access),
-	TP_ARGS(addr, gfn, access),
-
-	TP_STRUCT__entry(
-		__field(u64, addr)
-		__field(gfn_t, gfn)
-		__field(unsigned, access)
-	),
-
-	TP_fast_assign(
-		__entry->addr = addr;
-		__entry->gfn = gfn;
-		__entry->access = access;
-	),
-
-	TP_printk("addr:%llx gfn %llx access %x", __entry->addr, __entry->gfn,
-		  __entry->access)
-);
 #endif /* _TRACE_KVMMMU_H */
-
-#undef TRACE_INCLUDE_PATH
-#define TRACE_INCLUDE_PATH .
-#undef TRACE_INCLUDE_FILE
-#define TRACE_INCLUDE_FILE mmutrace
 
 /* This part must be outside protection */
 #include <trace/define_trace.h>

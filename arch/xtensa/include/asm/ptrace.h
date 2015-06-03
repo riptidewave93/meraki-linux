@@ -77,8 +77,6 @@
 
 #ifndef __ASSEMBLY__
 
-#include <asm/coprocessor.h>
-
 /*
  * This struct defines the way the registers are stored on the
  * kernel stack during a system call or other kernel entry.
@@ -115,11 +113,11 @@ struct pt_regs {
 
 #include <variant/core.h>
 
-# define arch_has_single_step()	(1)
 # define task_pt_regs(tsk) ((struct pt_regs*) \
   (task_stack_page(tsk) + KERNEL_STACK_SIZE - (XCHAL_NUM_AREGS-16)*4) - 1)
 # define user_mode(regs) (((regs)->ps & 0x00000020)!=0)
 # define instruction_pointer(regs) ((regs)->pc)
+extern void show_regs(struct pt_regs *);
 
 # ifndef CONFIG_SMP
 #  define profile_pc(regs) instruction_pointer(regs)

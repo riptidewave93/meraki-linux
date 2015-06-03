@@ -11,6 +11,7 @@
  */
 #include <linux/types.h>
 #include <linux/kernel.h>
+#include <linux/skbuff.h>
 #include <linux/netlink.h>
 #include <linux/rtnetlink.h>
 #include <linux/if.h>
@@ -21,7 +22,6 @@
 
 #include "flask.h"
 #include "av_permissions.h"
-#include "security.h"
 
 struct nlmsg_perm {
 	u16	nlmsg_type;

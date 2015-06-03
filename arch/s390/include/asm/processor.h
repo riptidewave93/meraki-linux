@@ -14,7 +14,6 @@
 #define __ASM_S390_PROCESSOR_H
 
 #include <linux/linkage.h>
-#include <linux/irqflags.h>
 #include <asm/cpu.h>
 #include <asm/page.h>
 #include <asm/ptrace.h>
@@ -29,13 +28,12 @@
 
 static inline void get_cpu_id(struct cpuid *ptr)
 {
-	asm volatile("stidp %0" : "=Q" (*ptr));
+	asm volatile("stidp 0(%1)" : "=m" (*ptr) : "a" (ptr));
 }
 
 extern void s390_adjust_jiffies(void);
+extern void print_cpu_info(void);
 extern int get_cpu_capability(unsigned int *);
-extern const struct seq_operations cpuinfo_op;
-extern int sysctl_ieee_emulation_warnings;
 
 /*
  * User space process size: 2GB for 31 bit, 4TB or 8PT for 64 bit.
@@ -81,12 +79,13 @@ struct thread_struct {
 	unsigned int  acrs[NUM_ACRS];
         unsigned long ksp;              /* kernel stack pointer             */
 	mm_segment_t mm_segment;
-	unsigned long gmap_addr;	/* address of last gmap fault. */
-	struct per_regs per_user;	/* User specified PER registers */
-	struct per_event per_event;	/* Cause of the last PER trap */
+        unsigned long prot_addr;        /* address of protection-excep.     */
+        unsigned int trap_no;
+        per_struct per_info;
+	/* Used to give failing instruction back to user for ieee exceptions */
+	unsigned long ieee_instruction_pointer; 
         /* pfault_wait is used to block the process on a pfault event */
 	unsigned long pfault_wait;
-	struct list_head list;
 };
 
 typedef struct thread_struct thread_struct;
@@ -119,19 +118,19 @@ struct stack_frame {
 /*
  * Do necessary setup to start up a new thread.
  */
-#define start_thread(regs, new_psw, new_stackp) do {			\
-	regs->psw.mask	= psw_user_bits | PSW_MASK_EA | PSW_MASK_BA;	\
-	regs->psw.addr	= new_psw | PSW_ADDR_AMODE;			\
-	regs->gprs[15]	= new_stackp;					\
+#define start_thread(regs, new_psw, new_stackp) do {		\
+	set_fs(USER_DS);					\
+	regs->psw.mask	= psw_user_bits;			\
+	regs->psw.addr	= new_psw | PSW_ADDR_AMODE;		\
+	regs->gprs[15]	= new_stackp;				\
 } while (0)
 
-#define start_thread31(regs, new_psw, new_stackp) do {			\
-	regs->psw.mask	= psw_user_bits | PSW_MASK_BA;			\
-	regs->psw.addr	= new_psw | PSW_ADDR_AMODE;			\
-	regs->gprs[15]	= new_stackp;					\
-	__tlb_flush_mm(current->mm);					\
-	crst_table_downgrade(current->mm, 1UL << 31);			\
-	update_mm(current->mm, current);				\
+#define start_thread31(regs, new_psw, new_stackp) do {		\
+	set_fs(USER_DS);					\
+	regs->psw.mask	= psw_user32_bits;			\
+	regs->psw.addr	= new_psw | PSW_ADDR_AMODE;		\
+	regs->gprs[15]	= new_stackp;				\
+	crst_table_downgrade(current->mm, 1UL << 31);		\
 } while (0)
 
 /* Forward declaration, a strange C thing */
@@ -159,14 +158,6 @@ unsigned long get_wchan(struct task_struct *p);
 #define KSTK_EIP(tsk)	(task_pt_regs(tsk)->psw.addr)
 #define KSTK_ESP(tsk)	(task_pt_regs(tsk)->gprs[15])
 
-static inline unsigned short stap(void)
-{
-	unsigned short cpu_address;
-
-	asm volatile("stap %0" : "=m" (cpu_address));
-	return cpu_address;
-}
-
 /*
  * Give up the time slice of the virtual PU.
  */
@@ -188,9 +179,9 @@ static inline void psw_set_key(unsigned int key)
 static inline void __load_psw(psw_t psw)
 {
 #ifndef __s390x__
-	asm volatile("lpsw  %0" : : "Q" (psw) : "cc");
+	asm volatile("lpsw  0(%0)" : : "a" (&psw), "m" (psw) : "cc");
 #else
-	asm volatile("lpswe %0" : : "Q" (psw) : "cc");
+	asm volatile("lpswe 0(%0)" : : "a" (&psw), "m" (psw) : "cc");
 #endif
 }
 
@@ -198,6 +189,7 @@ static inline void __load_psw(psw_t psw)
  * Set PSW mask to specified value, while leaving the
  * PSW addr pointing to the next instruction.
  */
+
 static inline void __load_psw_mask (unsigned long mask)
 {
 	unsigned long addr;
@@ -209,50 +201,39 @@ static inline void __load_psw_mask (unsigned long mask)
 	asm volatile(
 		"	basr	%0,0\n"
 		"0:	ahi	%0,1f-0b\n"
-		"	st	%0,%O1+4(%R1)\n"
-		"	lpsw	%1\n"
+		"	st	%0,4(%1)\n"
+		"	lpsw	0(%1)\n"
 		"1:"
-		: "=&d" (addr), "=Q" (psw) : "Q" (psw) : "memory", "cc");
+		: "=&d" (addr) : "a" (&psw), "m" (psw) : "memory", "cc");
 #else /* __s390x__ */
 	asm volatile(
 		"	larl	%0,1f\n"
-		"	stg	%0,%O1+8(%R1)\n"
-		"	lpswe	%1\n"
+		"	stg	%0,8(%1)\n"
+		"	lpswe	0(%1)\n"
 		"1:"
-		: "=&d" (addr), "=Q" (psw) : "Q" (psw) : "memory", "cc");
+		: "=&d" (addr) : "a" (&psw), "m" (psw) : "memory", "cc");
 #endif /* __s390x__ */
-}
-
-/*
- * Rewind PSW instruction address by specified number of bytes.
- */
-static inline unsigned long __rewind_psw(psw_t psw, unsigned long ilc)
-{
-#ifndef __s390x__
-	if (psw.addr & PSW_ADDR_AMODE)
-		/* 31 bit mode */
-		return (psw.addr - ilc) | PSW_ADDR_AMODE;
-	/* 24 bit mode */
-	return (psw.addr - ilc) & ((1UL << 24) - 1);
-#else
-	unsigned long mask;
-
-	mask = (psw.mask & PSW_MASK_EA) ? -1UL :
-	       (psw.mask & PSW_MASK_BA) ? (1UL << 31) - 1 :
-					  (1UL << 24) - 1;
-	return (psw.addr - ilc) & mask;
-#endif
 }
  
 /*
+ * Function to stop a processor until an interruption occurred
+ */
+static inline void enabled_wait(void)
+{
+	__load_psw_mask(PSW_BASE_BITS | PSW_MASK_IO | PSW_MASK_EXT |
+			PSW_MASK_MCHECK | PSW_MASK_WAIT | PSW_DEFAULT_KEY);
+}
+
+/*
  * Function to drop a processor into disabled wait state
  */
-static inline void __noreturn disabled_wait(unsigned long code)
+
+static inline void ATTRIB_NORET disabled_wait(unsigned long code)
 {
         unsigned long ctl_buf;
         psw_t dw_psw;
 
-	dw_psw.mask = PSW_MASK_BASE | PSW_MASK_WAIT | PSW_MASK_BA | PSW_MASK_EA;
+        dw_psw.mask = PSW_BASE_BITS | PSW_MASK_WAIT;
         dw_psw.addr = code;
         /* 
          * Store status and then load disabled wait psw,
@@ -313,21 +294,6 @@ static inline void __noreturn disabled_wait(unsigned long code)
 #endif /* __s390x__ */
 	while (1);
 }
-
-/*
- * Use to set psw mask except for the first byte which
- * won't be changed by this function.
- */
-static inline void
-__set_psw_mask(unsigned long mask)
-{
-	__load_psw_mask(mask | (arch_local_save_flags() & ~(-1UL >> 8)));
-}
-
-#define local_mcck_enable() \
-	__set_psw_mask(psw_kernel_bits | PSW_MASK_DAT | PSW_MASK_MCHECK)
-#define local_mcck_disable() \
-	__set_psw_mask(psw_kernel_bits | PSW_MASK_DAT)
 
 /*
  * Basic Machine Check/Program Check Handler.

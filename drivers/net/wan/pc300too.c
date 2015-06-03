@@ -17,8 +17,6 @@
  * PC300/X21 cards.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/slab.h>
@@ -320,6 +318,7 @@ static int __devinit pc300_pci_init_one(struct pci_dev *pdev,
 
 	card = kzalloc(sizeof(card_t), GFP_KERNEL);
 	if (card == NULL) {
+		printk(KERN_ERR "pc300: unable to allocate memory\n");
 		pci_release_regions(pdev);
 		pci_disable_device(pdev);
 		return -ENOBUFS;
@@ -329,7 +328,7 @@ static int __devinit pc300_pci_init_one(struct pci_dev *pdev,
 	if (pci_resource_len(pdev, 0) != PC300_PLX_SIZE ||
 	    pci_resource_len(pdev, 2) != PC300_SCA_SIZE ||
 	    pci_resource_len(pdev, 3) < 16384) {
-		pr_err("invalid card EEPROM parameters\n");
+		printk(KERN_ERR "pc300: invalid card EEPROM parameters\n");
 		pc300_pci_remove_one(pdev);
 		return -EFAULT;
 	}
@@ -346,7 +345,7 @@ static int __devinit pc300_pci_init_one(struct pci_dev *pdev,
 	if (card->plxbase == NULL ||
 	    card->scabase == NULL ||
 	    card->rambase == NULL) {
-		pr_err("ioremap() failed\n");
+		printk(KERN_ERR "pc300: ioremap() failed\n");
 		pc300_pci_remove_one(pdev);
 	}
 
@@ -371,7 +370,7 @@ static int __devinit pc300_pci_init_one(struct pci_dev *pdev,
 
 	for (i = 0; i < card->n_ports; i++)
 		if (!(card->ports[i].netdev = alloc_hdlcdev(&card->ports[i]))) {
-			pr_err("unable to allocate memory\n");
+			printk(KERN_ERR "pc300: unable to allocate memory\n");
 			pc300_pci_remove_one(pdev);
 			return -ENOMEM;
 		}
@@ -412,14 +411,15 @@ static int __devinit pc300_pci_init_one(struct pci_dev *pdev,
 	card->buff_offset = card->n_ports * sizeof(pkt_desc) *
 		(card->tx_ring_buffers + card->rx_ring_buffers);
 
-	pr_info("PC300/%s, %u KB RAM at 0x%x, IRQ%u, using %u TX + %u RX packets rings\n",
-		card->type == PC300_X21 ? "X21" :
-		card->type == PC300_TE ? "TE" : "RSV",
-		ramsize / 1024, ramphys, pdev->irq,
-		card->tx_ring_buffers, card->rx_ring_buffers);
+	printk(KERN_INFO "pc300: PC300/%s, %u KB RAM at 0x%x, IRQ%u, "
+	       "using %u TX + %u RX packets rings\n",
+	       card->type == PC300_X21 ? "X21" :
+	       card->type == PC300_TE ? "TE" : "RSV",
+	       ramsize / 1024, ramphys, pdev->irq,
+	       card->tx_ring_buffers, card->rx_ring_buffers);
 
 	if (card->tx_ring_buffers < 1) {
-		pr_err("RAM test failed\n");
+		printk(KERN_ERR "pc300: RAM test failed\n");
 		pc300_pci_remove_one(pdev);
 		return -EFAULT;
 	}
@@ -429,7 +429,8 @@ static int __devinit pc300_pci_init_one(struct pci_dev *pdev,
 
 	/* Allocate IRQ */
 	if (request_irq(pdev->irq, sca_intr, IRQF_SHARED, "pc300", card)) {
-		pr_warn("could not allocate IRQ%d\n", pdev->irq);
+		printk(KERN_WARNING "pc300: could not allocate IRQ%d.\n",
+		       pdev->irq);
 		pc300_pci_remove_one(pdev);
 		return -EBUSY;
 	}
@@ -465,20 +466,22 @@ static int __devinit pc300_pci_init_one(struct pci_dev *pdev,
 
 		sca_init_port(port);
 		if (register_hdlc_device(dev)) {
-			pr_err("unable to register hdlc device\n");
+			printk(KERN_ERR "pc300: unable to register hdlc "
+			       "device\n");
 			port->card = NULL;
 			pc300_pci_remove_one(pdev);
 			return -ENOBUFS;
 		}
 
-		netdev_info(dev, "PC300 channel %d\n", port->chan);
+		printk(KERN_INFO "%s: PC300 channel %d\n",
+		       dev->name, port->chan);
 	}
 	return 0;
 }
 
 
 
-static DEFINE_PCI_DEVICE_TABLE(pc300_pci_tbl) = {
+static struct pci_device_id pc300_pci_tbl[] __devinitdata = {
 	{ PCI_VENDOR_ID_CYCLADES, PCI_DEVICE_ID_PC300_RX_1, PCI_ANY_ID,
 	  PCI_ANY_ID, 0, 0, 0 },
 	{ PCI_VENDOR_ID_CYCLADES, PCI_DEVICE_ID_PC300_RX_2, PCI_ANY_ID,
@@ -502,11 +505,11 @@ static struct pci_driver pc300_pci_driver = {
 static int __init pc300_init_module(void)
 {
 	if (pci_clock_freq < 1000000 || pci_clock_freq > 80000000) {
-		pr_err("Invalid PCI clock frequency\n");
+		printk(KERN_ERR "pc300: Invalid PCI clock frequency\n");
 		return -EINVAL;
 	}
 	if (use_crystal_clock != 0 && use_crystal_clock != 1) {
-		pr_err("Invalid 'use_crystal_clock' value\n");
+		printk(KERN_ERR "pc300: Invalid 'use_crystal_clock' value\n");
 		return -EINVAL;
 	}
 

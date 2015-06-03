@@ -7,10 +7,8 @@
  */
 #include <linux/delay.h>
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/dma-mapping.h>
-#include <linux/slab.h>
 #include <linux/uwb/whci.h>
 #include <linux/uwb/umc.h>
 

@@ -31,7 +31,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -42,7 +41,8 @@
 #include <net/act_api.h>
 #include <net/pkt_cls.h>
 
-struct tc_u_knode {
+struct tc_u_knode
+{
 	struct tc_u_knode	*next;
 	u32			handle;
 	struct tc_u_hnode	*ht_up;
@@ -62,17 +62,19 @@ struct tc_u_knode {
 	struct tc_u32_sel	sel;
 };
 
-struct tc_u_hnode {
+struct tc_u_hnode
+{
 	struct tc_u_hnode	*next;
 	u32			handle;
 	u32			prio;
 	struct tc_u_common	*tp_c;
 	int			refcnt;
-	unsigned int		divisor;
+	unsigned		divisor;
 	struct tc_u_knode	*ht[1];
 };
 
-struct tc_u_common {
+struct tc_u_common
+{
 	struct tc_u_hnode	*hlist;
 	struct Qdisc		*q;
 	int			refcnt;
@@ -84,24 +86,22 @@ static const struct tcf_ext_map u32_ext_map = {
 	.police = TCA_U32_POLICE
 };
 
-static inline unsigned int u32_hash_fold(__be32 key,
-					 const struct tc_u32_sel *sel,
-					 u8 fshift)
+static __inline__ unsigned u32_hash_fold(__be32 key, struct tc_u32_sel *sel, u8 fshift)
 {
-	unsigned int h = ntohl(key & sel->hmask) >> fshift;
+	unsigned h = ntohl(key & sel->hmask)>>fshift;
 
 	return h;
 }
 
-static int u32_classify(struct sk_buff *skb, const struct tcf_proto *tp, struct tcf_result *res)
+static int u32_classify(struct sk_buff *skb, struct tcf_proto *tp, struct tcf_result *res)
 {
 	struct {
 		struct tc_u_knode *knode;
-		unsigned int	  off;
+		u8		  *ptr;
 	} stack[TC_U32_MAXDEPTH];
 
-	struct tc_u_hnode *ht = (struct tc_u_hnode *)tp->root;
-	unsigned int off = skb_network_offset(skb);
+	struct tc_u_hnode *ht = (struct tc_u_hnode*)tp->root;
+	u8 *ptr = skb_network_header(skb);
 	struct tc_u_knode *n;
 	int sdepth = 0;
 	int off2 = 0;
@@ -119,7 +119,7 @@ next_knode:
 		struct tc_u32_key *key = n->sel.keys;
 
 #ifdef CONFIG_CLS_U32_PERF
-		n->pf->rcnt += 1;
+		n->pf->rcnt +=1;
 		j = 0;
 #endif
 
@@ -132,28 +132,20 @@ next_knode:
 		}
 #endif
 
-		for (i = n->sel.nkeys; i > 0; i--, key++) {
-			int toff = off + key->off + (off2 & key->offmask);
-			__be32 *data, hdata;
+		for (i = n->sel.nkeys; i>0; i--, key++) {
 
-			if (skb_headroom(skb) + toff > INT_MAX)
-				goto out;
-
-			data = skb_header_pointer(skb, toff, 4, &hdata);
-			if (!data)
-				goto out;
-			if ((*data ^ key->val) & key->mask) {
+			if ((*(__be32*)(ptr+key->off+(off2&key->offmask))^key->val)&key->mask) {
 				n = n->next;
 				goto next_knode;
 			}
 #ifdef CONFIG_CLS_U32_PERF
-			n->pf->kcnts[j] += 1;
+			n->pf->kcnts[j] +=1;
 			j++;
 #endif
 		}
 		if (n->ht_down == NULL) {
 check_terminal:
-			if (n->sel.flags & TC_U32_TERMINAL) {
+			if (n->sel.flags&TC_U32_TERMINAL) {
 
 				*res = n->res;
 #ifdef CONFIG_NET_CLS_IND
@@ -163,7 +155,7 @@ check_terminal:
 				}
 #endif
 #ifdef CONFIG_CLS_U32_PERF
-				n->pf->rhit += 1;
+				n->pf->rhit +=1;
 #endif
 				r = tcf_exts_exec(skb, &n->exts, res);
 				if (r < 0) {
@@ -181,45 +173,29 @@ check_terminal:
 		if (sdepth >= TC_U32_MAXDEPTH)
 			goto deadloop;
 		stack[sdepth].knode = n;
-		stack[sdepth].off = off;
+		stack[sdepth].ptr = ptr;
 		sdepth++;
 
 		ht = n->ht_down;
 		sel = 0;
-		if (ht->divisor) {
-			__be32 *data, hdata;
+		if (ht->divisor)
+			sel = ht->divisor&u32_hash_fold(*(__be32*)(ptr+n->sel.hoff), &n->sel,n->fshift);
 
-			data = skb_header_pointer(skb, off + n->sel.hoff, 4,
-						  &hdata);
-			if (!data)
-				goto out;
-			sel = ht->divisor & u32_hash_fold(*data, &n->sel,
-							  n->fshift);
-		}
-		if (!(n->sel.flags & (TC_U32_VAROFFSET | TC_U32_OFFSET | TC_U32_EAT)))
+		if (!(n->sel.flags&(TC_U32_VAROFFSET|TC_U32_OFFSET|TC_U32_EAT)))
 			goto next_ht;
 
-		if (n->sel.flags & (TC_U32_OFFSET | TC_U32_VAROFFSET)) {
+		if (n->sel.flags&(TC_U32_OFFSET|TC_U32_VAROFFSET)) {
 			off2 = n->sel.off + 3;
-			if (n->sel.flags & TC_U32_VAROFFSET) {
-				__be16 *data, hdata;
-
-				data = skb_header_pointer(skb,
-							  off + n->sel.offoff,
-							  2, &hdata);
-				if (!data)
-					goto out;
-				off2 += ntohs(n->sel.offmask & *data) >>
-					n->sel.offshift;
-			}
+			if (n->sel.flags&TC_U32_VAROFFSET)
+				off2 += ntohs(n->sel.offmask & *(__be16*)(ptr+n->sel.offoff)) >>n->sel.offshift;
 			off2 &= ~3;
 		}
-		if (n->sel.flags & TC_U32_EAT) {
-			off += off2;
+		if (n->sel.flags&TC_U32_EAT) {
+			ptr += off2;
 			off2 = 0;
 		}
 
-		if (off < skb->len)
+		if (ptr < skb_tail_pointer(skb))
 			goto next_ht;
 	}
 
@@ -227,19 +203,18 @@ check_terminal:
 	if (sdepth--) {
 		n = stack[sdepth].knode;
 		ht = n->ht_up;
-		off = stack[sdepth].off;
+		ptr = stack[sdepth].ptr;
 		goto check_terminal;
 	}
-out:
 	return -1;
 
 deadloop:
 	if (net_ratelimit())
-		pr_warning("cls_u32: dead loop\n");
+		printk("cls_u32: dead loop\n");
 	return -1;
 }
 
-static struct tc_u_hnode *
+static __inline__ struct tc_u_hnode *
 u32_lookup_ht(struct tc_u_common *tp_c, u32 handle)
 {
 	struct tc_u_hnode *ht;
@@ -251,10 +226,10 @@ u32_lookup_ht(struct tc_u_common *tp_c, u32 handle)
 	return ht;
 }
 
-static struct tc_u_knode *
+static __inline__ struct tc_u_knode *
 u32_lookup_key(struct tc_u_hnode *ht, u32 handle)
 {
-	unsigned int sel;
+	unsigned sel;
 	struct tc_u_knode *n = NULL;
 
 	sel = TC_U32_HASH(handle);
@@ -299,7 +274,7 @@ static u32 gen_new_htid(struct tc_u_common *tp_c)
 	do {
 		if (++tp_c->hgenerator == 0x7FF)
 			tp_c->hgenerator = 1;
-	} while (--i > 0 && u32_lookup_ht(tp_c, (tp_c->hgenerator|0x800)<<20));
+	} while (--i>0 && u32_lookup_ht(tp_c, (tp_c->hgenerator|0x800)<<20));
 
 	return i > 0 ? (tp_c->hgenerator|0x800)<<20 : 0;
 }
@@ -377,9 +352,9 @@ static int u32_delete_key(struct tcf_proto *tp, struct tc_u_knode* key)
 static void u32_clear_hnode(struct tcf_proto *tp, struct tc_u_hnode *ht)
 {
 	struct tc_u_knode *n;
-	unsigned int h;
+	unsigned h;
 
-	for (h = 0; h <= ht->divisor; h++) {
+	for (h=0; h<=ht->divisor; h++) {
 		while ((n = ht->ht[h]) != NULL) {
 			ht->ht[h] = n->next;
 
@@ -445,13 +420,13 @@ static void u32_destroy(struct tcf_proto *tp)
 
 static int u32_delete(struct tcf_proto *tp, unsigned long arg)
 {
-	struct tc_u_hnode *ht = (struct tc_u_hnode *)arg;
+	struct tc_u_hnode *ht = (struct tc_u_hnode*)arg;
 
 	if (ht == NULL)
 		return 0;
 
 	if (TC_U32_KEY(ht->handle))
-		return u32_delete_key(tp, (struct tc_u_knode *)ht);
+		return u32_delete_key(tp, (struct tc_u_knode*)ht);
 
 	if (tp->root == ht)
 		return -EINVAL;
@@ -469,14 +444,14 @@ static int u32_delete(struct tcf_proto *tp, unsigned long arg)
 static u32 gen_new_kid(struct tc_u_hnode *ht, u32 handle)
 {
 	struct tc_u_knode *n;
-	unsigned int i = 0x7FF;
+	unsigned i = 0x7FF;
 
-	for (n = ht->ht[TC_U32_HASH(handle)]; n; n = n->next)
+	for (n=ht->ht[TC_U32_HASH(handle)]; n; n = n->next)
 		if (i < TC_U32_NODE(n->handle))
 			i = TC_U32_NODE(n->handle);
 	i++;
 
-	return handle | (i > 0xFFF ? 0xFFF : i);
+	return handle|(i>0xFFF ? 0xFFF : i);
 }
 
 static const struct nla_policy u32_policy[TCA_U32_MAX + 1] = {
@@ -565,8 +540,7 @@ static int u32_change(struct tcf_proto *tp, unsigned long base, u32 handle,
 	if (err < 0)
 		return err;
 
-	n = (struct tc_u_knode *)*arg;
-	if (n) {
+	if ((n = (struct tc_u_knode*)*arg) != NULL) {
 		if (TC_U32_KEY(n->handle) == 0)
 			return -EINVAL;
 
@@ -574,7 +548,7 @@ static int u32_change(struct tcf_proto *tp, unsigned long base, u32 handle,
 	}
 
 	if (tb[TCA_U32_DIVISOR]) {
-		unsigned int divisor = nla_get_u32(tb[TCA_U32_DIVISOR]);
+		unsigned divisor = nla_get_u32(tb[TCA_U32_DIVISOR]);
 
 		if (--divisor > 0x100)
 			return -EINVAL;
@@ -585,7 +559,7 @@ static int u32_change(struct tcf_proto *tp, unsigned long base, u32 handle,
 			if (handle == 0)
 				return -ENOMEM;
 		}
-		ht = kzalloc(sizeof(*ht) + divisor*sizeof(void *), GFP_KERNEL);
+		ht = kzalloc(sizeof(*ht) + divisor*sizeof(void*), GFP_KERNEL);
 		if (ht == NULL)
 			return -ENOBUFS;
 		ht->tp_c = tp_c;
@@ -683,7 +657,7 @@ static void u32_walk(struct tcf_proto *tp, struct tcf_walker *arg)
 	struct tc_u_common *tp_c = tp->data;
 	struct tc_u_hnode *ht;
 	struct tc_u_knode *n;
-	unsigned int h;
+	unsigned h;
 
 	if (arg->stop)
 		return;
@@ -717,7 +691,7 @@ static void u32_walk(struct tcf_proto *tp, struct tcf_walker *arg)
 static int u32_dump(struct tcf_proto *tp, unsigned long fh,
 		     struct sk_buff *skb, struct tcmsg *t)
 {
-	struct tc_u_knode *n = (struct tc_u_knode *)fh;
+	struct tc_u_knode *n = (struct tc_u_knode*)fh;
 	struct nlattr *nest;
 
 	if (n == NULL)
@@ -730,9 +704,8 @@ static int u32_dump(struct tcf_proto *tp, unsigned long fh,
 		goto nla_put_failure;
 
 	if (TC_U32_KEY(n->handle) == 0) {
-		struct tc_u_hnode *ht = (struct tc_u_hnode *)fh;
-		u32 divisor = ht->divisor + 1;
-
+		struct tc_u_hnode *ht = (struct tc_u_hnode*)fh;
+		u32 divisor = ht->divisor+1;
 		NLA_PUT_U32(skb, TCA_U32_DIVISOR, divisor);
 	} else {
 		NLA_PUT(skb, TCA_U32_SEL,
@@ -756,7 +729,7 @@ static int u32_dump(struct tcf_proto *tp, unsigned long fh,
 			goto nla_put_failure;
 
 #ifdef CONFIG_NET_CLS_IND
-		if (strlen(n->indev))
+		if(strlen(n->indev))
 			NLA_PUT_STRING(skb, TCA_U32_INDEV, n->indev);
 #endif
 #ifdef CONFIG_CLS_U32_PERF
@@ -794,15 +767,15 @@ static struct tcf_proto_ops cls_u32_ops __read_mostly = {
 
 static int __init init_u32(void)
 {
-	pr_info("u32 classifier\n");
+	printk("u32 classifier\n");
 #ifdef CONFIG_CLS_U32_PERF
-	pr_info("    Performance counters on\n");
+	printk("    Performance counters on\n");
 #endif
 #ifdef CONFIG_NET_CLS_IND
-	pr_info("    input device check on\n");
+	printk("    input device check on \n");
 #endif
 #ifdef CONFIG_NET_CLS_ACT
-	pr_info("    Actions configured\n");
+	printk("    Actions configured \n");
 #endif
 	return register_tcf_proto_ops(&cls_u32_ops);
 }

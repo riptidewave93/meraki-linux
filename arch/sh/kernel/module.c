@@ -32,7 +32,30 @@
 #include <linux/string.h>
 #include <linux/kernel.h>
 #include <asm/unaligned.h>
-#include <asm/dwarf.h>
+
+void *module_alloc(unsigned long size)
+{
+	if (size == 0)
+		return NULL;
+
+	return vmalloc_exec(size);
+}
+
+
+/* Free memory returned from module_alloc */
+void module_free(struct module *mod, void *module_region)
+{
+	vfree(module_region);
+}
+
+/* We don't need anything special. */
+int module_frob_arch_sections(Elf_Ehdr *hdr,
+			      Elf_Shdr *sechdrs,
+			      char *secstrings,
+			      struct module *mod)
+{
+	return 0;
+}
 
 int apply_relocate_add(Elf32_Shdr *sechdrs,
 		   const char *strtab,
@@ -69,8 +92,6 @@ int apply_relocate_add(Elf32_Shdr *sechdrs,
 #endif
 
 		switch (ELF32_R_TYPE(rel[i].r_info)) {
-		case R_SH_NONE:
-			break;
 		case R_SH_DIR32:
 			value = get_unaligned(location);
 			value += relocation;
@@ -109,18 +130,25 @@ int apply_relocate_add(Elf32_Shdr *sechdrs,
 	return 0;
 }
 
+int apply_relocate(Elf32_Shdr *sechdrs,
+		       const char *strtab,
+		       unsigned int symindex,
+		       unsigned int relsec,
+		       struct module *me)
+{
+	printk(KERN_ERR "module %s: REL RELOCATION unsupported\n",
+	       me->name);
+	return -ENOEXEC;
+}
+
 int module_finalize(const Elf_Ehdr *hdr,
 		    const Elf_Shdr *sechdrs,
 		    struct module *me)
 {
-	int ret = 0;
-
-	ret |= module_dwarf_finalize(hdr, sechdrs, me);
-
-	return ret;
+	return module_bug_finalize(hdr, sechdrs, me);
 }
 
 void module_arch_cleanup(struct module *mod)
 {
-	module_dwarf_cleanup(mod);
+	module_bug_cleanup(mod);
 }

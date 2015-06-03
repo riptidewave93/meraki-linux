@@ -19,7 +19,7 @@
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/compiler.h>
-#include <linux/export.h>
+#include <linux/module.h>
 
 #include <asm/io.h>
 #include <asm/firmware.h>
@@ -161,7 +161,7 @@ void _memcpy_fromio(void *dest, const volatile void __iomem *src,
 		dest++;
 		n--;
 	}
-	while(n >= 4) {
+	while(n > 4) {
 		*((u32 *)dest) = *((volatile u32 *)vsrc);
 		eieio();
 		vsrc += 4;
@@ -190,7 +190,7 @@ void _memcpy_toio(volatile void __iomem *dest, const void *src, unsigned long n)
 		vdest++;
 		n--;
 	}
-	while(n >= 4) {
+	while(n > 4) {
 		*((volatile u32 *)vdest) = *((volatile u32 *)src);
 		src += 4;
 		vdest += 4;

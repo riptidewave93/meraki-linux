@@ -14,7 +14,6 @@
 #include <linux/gfp.h>
 #include <asm/io.h>
 #include <asm/hd64461.h>
-#include <asm/bl_bit.h>
 #include <mach/hp6xx.h>
 #include <cpu/dac.h>
 #include <asm/freq.h>
@@ -54,17 +53,17 @@ static void pm_enter(void)
 	sh_wdt_write_cnt(0);
 
 	/* disable PLL1 */
-	frqcr = __raw_readw(FRQCR);
+	frqcr = ctrl_inw(FRQCR);
 	frqcr &= ~(FRQCR_PLLEN | FRQCR_PSTBY);
-	__raw_writew(frqcr, FRQCR);
+	ctrl_outw(frqcr, FRQCR);
 
 	/* enable standby */
-	stbcr = __raw_readb(STBCR);
-	__raw_writeb(stbcr | STBCR_STBY | STBCR_MSTP2, STBCR);
+	stbcr = ctrl_inb(STBCR);
+	ctrl_outb(stbcr | STBCR_STBY | STBCR_MSTP2, STBCR);
 
 	/* set self-refresh */
-	mcr = __raw_readw(MCR);
-	__raw_writew(mcr & ~MCR_RFSH, MCR);
+	mcr = ctrl_inw(MCR);
+	ctrl_outw(mcr & ~MCR_RFSH, MCR);
 
 	/* set interrupt handler */
 	asm volatile("stc vbr, %0" : "=r" (vbr_old));
@@ -74,8 +73,8 @@ static void pm_enter(void)
 	       &wakeup_start, &wakeup_end - &wakeup_start);
 	asm volatile("ldc %0, vbr" : : "r" (vbr_new));
 
-	__raw_writew(0, RTCNT);
-	__raw_writew(mcr | MCR_RFSH | MCR_RMODE, MCR);
+	ctrl_outw(0, RTCNT);
+	ctrl_outw(mcr | MCR_RFSH | MCR_RMODE, MCR);
 
 	cpu_sleep();
 
@@ -84,14 +83,14 @@ static void pm_enter(void)
 	free_page(vbr_new);
 
 	/* enable PLL1 */
-	frqcr = __raw_readw(FRQCR);
+	frqcr = ctrl_inw(FRQCR);
 	frqcr |= FRQCR_PSTBY;
-	__raw_writew(frqcr, FRQCR);
+	ctrl_outw(frqcr, FRQCR);
 	udelay(50);
 	frqcr |= FRQCR_PLLEN;
-	__raw_writew(frqcr, FRQCR);
+	ctrl_outw(frqcr, FRQCR);
 
-	__raw_writeb(stbcr, STBCR);
+	ctrl_outb(stbcr, STBCR);
 
 	clear_bl_bit();
 }
@@ -116,21 +115,21 @@ static int hp6x0_pm_enter(suspend_state_t state)
 	outw(hd64461_stbcr, HD64461_STBCR);
 #endif
 
-	__raw_writeb(0x1f, DACR);
+	ctrl_outb(0x1f, DACR);
 
-	stbcr = __raw_readb(STBCR);
-	__raw_writeb(0x01, STBCR);
+	stbcr = ctrl_inb(STBCR);
+	ctrl_outb(0x01, STBCR);
 
-	stbcr2 = __raw_readb(STBCR2);
-	__raw_writeb(0x7f , STBCR2);
+	stbcr2 = ctrl_inb(STBCR2);
+	ctrl_outb(0x7f , STBCR2);
 
 	outw(0xf07f, HD64461_SCPUCR);
 
 	pm_enter();
 
 	outw(0, HD64461_SCPUCR);
-	__raw_writeb(stbcr, STBCR);
-	__raw_writeb(stbcr2, STBCR2);
+	ctrl_outb(stbcr, STBCR);
+	ctrl_outb(stbcr2, STBCR2);
 
 #ifdef CONFIG_HD64461_ENABLER
 	hd64461_stbcr = inw(HD64461_STBCR);
@@ -144,7 +143,7 @@ static int hp6x0_pm_enter(suspend_state_t state)
 	return 0;
 }
 
-static const struct platform_suspend_ops hp6x0_pm_ops = {
+static struct platform_suspend_ops hp6x0_pm_ops = {
 	.enter		= hp6x0_pm_enter,
 	.valid		= suspend_valid_only_mem,
 };

@@ -21,6 +21,7 @@
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 
 #include <asm/dma.h>
 #include <asm/mach-types.h>
@@ -28,6 +29,7 @@
 #include <asm/plat-sffsdr/sffsdr-fpga.h>
 #endif
 
+#include <mach/mcbsp.h>
 #include <mach/edma.h>
 
 #include "../codecs/pcm3008.h"
@@ -46,7 +48,7 @@ static int sffsdr_hw_params(struct snd_pcm_substream *substream,
 			    struct snd_pcm_hw_params *params)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
+	struct snd_soc_dai *cpu_dai = rtd->dai->cpu_dai;
 	int fs;
 	int ret = 0;
 
@@ -83,17 +85,15 @@ static struct snd_soc_ops sffsdr_ops = {
 static struct snd_soc_dai_link sffsdr_dai = {
 	.name = "PCM3008", /* Codec name */
 	.stream_name = "PCM3008 HiFi",
-	.cpu_dai_name = "davinci-mcbsp",
-	.codec_dai_name = "pcm3008-hifi",
-	.codec_name = "pcm3008-codec",
-	.platform_name = "davinci-pcm-audio",
+	.cpu_dai = &davinci_i2s_dai,
+	.codec_dai = &pcm3008_dai,
 	.ops = &sffsdr_ops,
 };
 
 /* davinci-sffsdr audio machine driver */
 static struct snd_soc_card snd_soc_sffsdr = {
 	.name = "DaVinci SFFSDR",
-	.owner = THIS_MODULE,
+	.platform = &davinci_soc_platform,
 	.dai_link = &sffsdr_dai,
 	.num_links = 1,
 };
@@ -106,12 +106,11 @@ static struct pcm3008_setup_data sffsdr_pcm3008_setup = {
 	.pdda_pin = GPIO(38),
 };
 
-struct platform_device pcm3008_codec = {
-		.name = "pcm3008-codec",
-		.id = 0,
-		.dev = {
-				.platform_data = &sffsdr_pcm3008_setup,
-		},
+/* sffsdr audio subsystem */
+static struct snd_soc_device sffsdr_snd_devdata = {
+	.card = &snd_soc_sffsdr,
+	.codec_dev = &soc_codec_dev_pcm3008,
+	.codec_data = &sffsdr_pcm3008_setup,
 };
 
 static struct resource sffsdr_snd_resources[] = {
@@ -136,15 +135,14 @@ static int __init sffsdr_init(void)
 	if (!machine_is_sffsdr())
 		return -EINVAL;
 
-	platform_device_register(&pcm3008_codec);
-
 	sffsdr_snd_device = platform_device_alloc("soc-audio", 0);
 	if (!sffsdr_snd_device) {
 		printk(KERN_ERR "platform device allocation failed\n");
 		return -ENOMEM;
 	}
 
-	platform_set_drvdata(sffsdr_snd_device, &snd_soc_sffsdr);
+	platform_set_drvdata(sffsdr_snd_device, &sffsdr_snd_devdata);
+	sffsdr_snd_devdata.dev = &sffsdr_snd_device->dev;
 	platform_device_add_data(sffsdr_snd_device, &sffsdr_snd_data,
 				 sizeof(sffsdr_snd_data));
 
@@ -152,7 +150,7 @@ static int __init sffsdr_init(void)
 					    sffsdr_snd_resources,
 					    ARRAY_SIZE(sffsdr_snd_resources));
 	if (ret) {
-		printk(KERN_ERR "platform device add resources failed\n");
+		printk(KERN_ERR "platform device add ressources failed\n");
 		goto error;
 	}
 
@@ -170,7 +168,6 @@ error:
 static void __exit sffsdr_exit(void)
 {
 	platform_device_unregister(sffsdr_snd_device);
-	platform_device_unregister(&pcm3008_codec);
 }
 
 module_init(sffsdr_init);

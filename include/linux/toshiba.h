@@ -33,8 +33,6 @@ typedef struct {
 	unsigned int edi __attribute__ ((packed));
 } SMMRegisters;
 
-#ifdef __KERNEL__
 int tosh_smm(SMMRegisters *regs);
-#endif /* __KERNEL__ */
 
 #endif

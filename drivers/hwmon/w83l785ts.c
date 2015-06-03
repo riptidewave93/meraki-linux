@@ -1,7 +1,7 @@
 /*
  * w83l785ts.c - Part of lm_sensors, Linux kernel modules for hardware
  *               monitoring
- * Copyright (C) 2003-2009  Jean Delvare <khali@linux-fr.org>
+ * Copyright (C) 2003-2004  Jean Delvare <khali@linux-fr.org>
  *
  * Inspired from the lm83 driver. The W83L785TS-S is a sensor chip made
  * by Winbond. It reports a single external temperature with a 1 deg
@@ -52,6 +52,12 @@
 static const unsigned short normal_i2c[] = { 0x2e, I2C_CLIENT_END };
 
 /*
+ * Insmod parameters
+ */
+
+I2C_CLIENT_INSMOD_1(w83l785ts);
+
+/*
  * The W83L785TS-S registers
  * Manufacturer ID is 0x5CA3 for Winbond.
  */
@@ -77,7 +83,7 @@ static const unsigned short normal_i2c[] = { 0x2e, I2C_CLIENT_END };
 
 static int w83l785ts_probe(struct i2c_client *client,
 			   const struct i2c_device_id *id);
-static int w83l785ts_detect(struct i2c_client *client,
+static int w83l785ts_detect(struct i2c_client *client, int kind,
 			    struct i2c_board_info *info);
 static int w83l785ts_remove(struct i2c_client *client);
 static u8 w83l785ts_read_value(struct i2c_client *client, u8 reg, u8 defval);
@@ -86,9 +92,9 @@ static struct w83l785ts_data *w83l785ts_update_device(struct device *dev);
 /*
  * Driver data (common to all clients)
  */
-
+ 
 static const struct i2c_device_id w83l785ts_id[] = {
-	{ "w83l785ts", 0 },
+	{ "w83l785ts", w83l785ts },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, w83l785ts_id);
@@ -102,7 +108,7 @@ static struct i2c_driver w83l785ts_driver = {
 	.remove		= w83l785ts_remove,
 	.id_table	= w83l785ts_id,
 	.detect		= w83l785ts_detect,
-	.address_list	= normal_i2c,
+	.address_data	= &addr_data,
 };
 
 /*
@@ -116,7 +122,8 @@ struct w83l785ts_data {
 	unsigned long last_updated; /* in jiffies */
 
 	/* registers values */
-	s8 temp[2]; /* 0: input, 1: critical limit */
+	s8 temp[2]; /* 0: input
+		       1: critical limit */
 };
 
 /*
@@ -139,36 +146,60 @@ static SENSOR_DEVICE_ATTR(temp1_max, S_IRUGO, show_temp, NULL, 1);
  */
 
 /* Return 0 if detection is successful, -ENODEV otherwise */
-static int w83l785ts_detect(struct i2c_client *client,
+static int w83l785ts_detect(struct i2c_client *new_client, int kind,
 			    struct i2c_board_info *info)
 {
-	struct i2c_adapter *adapter = client->adapter;
-	u16 man_id;
-	u8 chip_id;
+	struct i2c_adapter *adapter = new_client->adapter;
 
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -ENODEV;
 
-	/* detection */
-	if ((w83l785ts_read_value(client, W83L785TS_REG_CONFIG, 0) & 0x80)
-	 || (w83l785ts_read_value(client, W83L785TS_REG_TYPE, 0) & 0xFC)) {
-		dev_dbg(&adapter->dev,
-			"W83L785TS-S detection failed at 0x%02x\n",
-			client->addr);
-		return -ENODEV;
+	/*
+	 * Now we do the remaining detection. A negative kind means that
+	 * the driver was loaded with no force parameter (default), so we
+	 * must both detect and identify the chip (actually there is only
+	 * one possible kind of chip for now, W83L785TS-S). A zero kind means
+	 * that the driver was loaded with the force parameter, the detection
+	 * step shall be skipped. A positive kind means that the driver
+	 * was loaded with the force parameter and a given kind of chip is
+	 * requested, so both the detection and the identification steps
+	 * are skipped.
+	 */
+	if (kind < 0) { /* detection */
+		if (((w83l785ts_read_value(new_client,
+		      W83L785TS_REG_CONFIG, 0) & 0x80) != 0x00)
+		 || ((w83l785ts_read_value(new_client,
+		      W83L785TS_REG_TYPE, 0) & 0xFC) != 0x00)) {
+			dev_dbg(&adapter->dev,
+				"W83L785TS-S detection failed at 0x%02x.\n",
+				new_client->addr);
+			return -ENODEV;
+		}
 	}
 
-	/* Identification */
-	man_id = (w83l785ts_read_value(client, W83L785TS_REG_MAN_ID1, 0) << 8)
-	       + w83l785ts_read_value(client, W83L785TS_REG_MAN_ID2, 0);
-	chip_id = w83l785ts_read_value(client, W83L785TS_REG_CHIP_ID, 0);
+	if (kind <= 0) { /* identification */
+		u16 man_id;
+		u8 chip_id;
 
-	if (man_id != 0x5CA3		/* Winbond */
-	 || chip_id != 0x70) {		/* W83L785TS-S */
-		dev_dbg(&adapter->dev,
-			"Unsupported chip (man_id=0x%04X, chip_id=0x%02X)\n",
-			man_id, chip_id);
-		return -ENODEV;
+		man_id = (w83l785ts_read_value(new_client,
+			 W83L785TS_REG_MAN_ID1, 0) << 8) +
+			 w83l785ts_read_value(new_client,
+			 W83L785TS_REG_MAN_ID2, 0);
+		chip_id = w83l785ts_read_value(new_client,
+			  W83L785TS_REG_CHIP_ID, 0);
+
+		if (man_id == 0x5CA3) { /* Winbond */
+			if (chip_id == 0x70) { /* W83L785TS-S */
+				kind = w83l785ts;			
+			}
+		}
+	
+		if (kind <= 0) { /* identification failed */
+			dev_info(&adapter->dev,
+				 "Unsupported chip (man_id=0x%04X, "
+				 "chip_id=0x%02X).\n", man_id, chip_id);
+			return -ENODEV;
+		}
 	}
 
 	strlcpy(info->type, "w83l785ts", I2C_NAME_SIZE);
@@ -249,10 +280,8 @@ static u8 w83l785ts_read_value(struct i2c_client *client, u8 reg, u8 defval)
 	struct device *dev;
 	const char *prefix;
 
-	/*
-	 * We might be called during detection, at which point the client
-	 * isn't yet fully initialized, so we can't use dev_dbg on it
-	 */
+	/* We might be called during detection, at which point the client
+	   isn't yet fully initialized, so we can't use dev_dbg on it */
 	if (i2c_get_clientdata(client)) {
 		dev = &client->dev;
 		prefix = "";
@@ -261,11 +290,9 @@ static u8 w83l785ts_read_value(struct i2c_client *client, u8 reg, u8 defval)
 		prefix = "w83l785ts: ";
 	}
 
-	/*
-	 * Frequent read errors have been reported on Asus boards, so we
+	/* Frequent read errors have been reported on Asus boards, so we
 	 * retry on read errors. If it still fails (unlikely), return the
-	 * default value requested by the caller.
-	 */
+	 * default value requested by the caller. */
 	for (i = 1; i <= MAX_RETRIES; i++) {
 		value = i2c_smbus_read_byte_data(client, reg);
 		if (value >= 0) {
@@ -305,8 +332,19 @@ static struct w83l785ts_data *w83l785ts_update_device(struct device *dev)
 	return data;
 }
 
-module_i2c_driver(w83l785ts_driver);
+static int __init sensors_w83l785ts_init(void)
+{
+	return i2c_add_driver(&w83l785ts_driver);
+}
+
+static void __exit sensors_w83l785ts_exit(void)
+{
+	i2c_del_driver(&w83l785ts_driver);
+}
 
 MODULE_AUTHOR("Jean Delvare <khali@linux-fr.org>");
 MODULE_DESCRIPTION("W83L785TS-S driver");
 MODULE_LICENSE("GPL");
+
+module_init(sensors_w83l785ts_init);
+module_exit(sensors_w83l785ts_exit);

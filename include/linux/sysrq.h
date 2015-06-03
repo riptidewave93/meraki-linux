@@ -15,10 +15,9 @@
 #define _LINUX_SYSRQ_H
 
 #include <linux/errno.h>
-#include <linux/types.h>
 
-/* Enable/disable SYSRQ support by default (0==no, 1==yes). */
-#define SYSRQ_DEFAULT_ENABLE	1
+struct pt_regs;
+struct tty_struct;
 
 /* Possible values of bitmask for enabling sysrq functions */
 /* 0x0001 is reserved for enable everything */
@@ -32,7 +31,7 @@
 #define SYSRQ_ENABLE_RTNICE	0x0100
 
 struct sysrq_key_op {
-	void (*handler)(int);
+	void (*handler)(int, struct tty_struct *);
 	char *help_msg;
 	char *action_msg;
 	int enable_mask;
@@ -40,38 +39,40 @@ struct sysrq_key_op {
 
 #ifdef CONFIG_MAGIC_SYSRQ
 
+extern int sysrq_on(void);
+
+/*
+ * Do not use this one directly:
+ */
+extern int __sysrq_enabled;
+
 /* Generic SysRq interface -- you may call it from any device driver, supplying
  * ASCII code of the key, pointer to registers and kbd/tty structs (if they
  * are available -- else NULL's).
  */
 
-void handle_sysrq(int key);
-void __handle_sysrq(int key, bool check_mask);
+void handle_sysrq(int key, struct tty_struct *tty);
+void __handle_sysrq(int key, struct tty_struct *tty, int check_mask);
 int register_sysrq_key(int key, struct sysrq_key_op *op);
 int unregister_sysrq_key(int key, struct sysrq_key_op *op);
 struct sysrq_key_op *__sysrq_get_key_op(int key);
 
-int sysrq_toggle_support(int enable_mask);
-
 #else
 
-static inline void handle_sysrq(int key)
+static inline int sysrq_on(void)
 {
+	return 0;
 }
-
-static inline void __handle_sysrq(int key, bool check_mask)
-{
-}
-
-static inline int register_sysrq_key(int key, struct sysrq_key_op *op)
+static inline int __reterr(void)
 {
 	return -EINVAL;
 }
-
-static inline int unregister_sysrq_key(int key, struct sysrq_key_op *op)
+static inline void handle_sysrq(int key, struct tty_struct *tty)
 {
-	return -EINVAL;
 }
+
+#define register_sysrq_key(ig,nore) __reterr()
+#define unregister_sysrq_key(ig,nore) __reterr()
 
 #endif
 

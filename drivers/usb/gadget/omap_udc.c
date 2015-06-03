@@ -10,6 +10,15 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 #undef	DEBUG
@@ -35,16 +44,17 @@
 #include <linux/usb/otg.h>
 #include <linux/dma-mapping.h>
 #include <linux/clk.h>
-#include <linux/prefetch.h>
 
 #include <asm/byteorder.h>
 #include <asm/io.h>
 #include <asm/irq.h>
+#include <asm/system.h>
 #include <asm/unaligned.h>
 #include <asm/mach-types.h>
 
-#include <plat/dma.h>
-#include <plat/usb.h>
+#include <mach/dma.h>
+#include <mach/usb.h>
+#include <mach/control.h>
 
 #include "omap_udc.h"
 
@@ -97,7 +107,7 @@ module_param (fifo_mode, uint, 0);
 MODULE_PARM_DESC (fifo_mode, "endpoint configuration");
 
 #ifdef	USE_DMA
-static bool use_dma = 1;
+static unsigned use_dma = 1;
 
 /* "modprobe omap_udc use_dma=y", or else as a kernel
  * boot parameter "omap_udc:use_dma=y"
@@ -156,14 +166,15 @@ static int omap_ep_enable(struct usb_ep *_ep,
 	if (!_ep || !desc || ep->desc
 			|| desc->bDescriptorType != USB_DT_ENDPOINT
 			|| ep->bEndpointAddress != desc->bEndpointAddress
-			|| ep->maxpacket < usb_endpoint_maxp(desc)) {
+			|| ep->maxpacket < le16_to_cpu
+						(desc->wMaxPacketSize)) {
 		DBG("%s, bad ep or descriptor\n", __func__);
 		return -EINVAL;
 	}
-	maxp = usb_endpoint_maxp(desc);
+	maxp = le16_to_cpu (desc->wMaxPacketSize);
 	if ((desc->bmAttributes == USB_ENDPOINT_XFER_BULK
 				&& maxp != ep->maxpacket)
-			|| usb_endpoint_maxp(desc) > ep->maxpacket
+			|| le16_to_cpu(desc->wMaxPacketSize) > ep->maxpacket
 			|| !desc->wMaxPacketSize) {
 		DBG("%s, bad %s maxpacket\n", __func__, _ep->name);
 		return -ERANGE;
@@ -250,7 +261,6 @@ static int omap_ep_disable(struct usb_ep *_ep)
 
 	spin_lock_irqsave(&ep->udc->lock, flags);
 	ep->desc = NULL;
-	ep->ep.desc = NULL;
 	nuke (ep, -ESHUTDOWN);
 	ep->ep.maxpacket = ep->maxpacket;
 	ep->has_dma = 0;
@@ -1213,7 +1223,7 @@ static int omap_wakeup(struct usb_gadget *gadget)
 	/* NOTE:  non-OTG systems may use SRP TOO... */
 	} else if (!(udc->devstat & UDC_ATT)) {
 		if (udc->transceiver)
-			retval = otg_start_srp(udc->transceiver->otg);
+			retval = otg_start_srp(udc->transceiver);
 	}
 	spin_unlock_irqrestore(&udc->lock, flags);
 
@@ -1345,7 +1355,7 @@ static int omap_vbus_draw(struct usb_gadget *gadget, unsigned mA)
 
 	udc = container_of(gadget, struct omap_udc, gadget);
 	if (udc->transceiver)
-		return usb_phy_set_power(udc->transceiver, mA);
+		return otg_set_power(udc->transceiver, mA);
 	return -EOPNOTSUPP;
 }
 
@@ -1365,10 +1375,6 @@ static int omap_pullup(struct usb_gadget *gadget, int is_on)
 	return 0;
 }
 
-static int omap_udc_start(struct usb_gadget_driver *driver,
-		int (*bind)(struct usb_gadget *));
-static int omap_udc_stop(struct usb_gadget_driver *driver);
-
 static struct usb_gadget_ops omap_gadget_ops = {
 	.get_frame		= omap_get_frame,
 	.wakeup			= omap_wakeup,
@@ -1376,8 +1382,6 @@ static struct usb_gadget_ops omap_gadget_ops = {
 	.vbus_session		= omap_vbus_session,
 	.vbus_draw		= omap_vbus_draw,
 	.pullup			= omap_pullup,
-	.start			= omap_udc_start,
-	.stop			= omap_udc_stop,
 };
 
 /*-------------------------------------------------------------------------*/
@@ -1839,13 +1843,11 @@ static void devstate_irq(struct omap_udc *udc, u16 irq_src)
 					spin_lock(&udc->lock);
 				}
 				if (udc->transceiver)
-					usb_phy_set_suspend(
-							udc->transceiver, 1);
+					otg_set_suspend(udc->transceiver, 1);
 			} else {
 				VDBG("resume\n");
 				if (udc->transceiver)
-					usb_phy_set_suspend(
-							udc->transceiver, 0);
+					otg_set_suspend(udc->transceiver, 0);
 				if (udc->gadget.speed == USB_SPEED_FULL
 						&& udc->driver->resume) {
 					spin_unlock(&udc->lock);
@@ -2096,12 +2098,10 @@ static inline int machine_without_vbus_sense(void)
 		|| machine_is_omap_h4()
 #endif
 		|| machine_is_sx1()
-		|| cpu_is_omap7xx() /* No known omap7xx boards with vbus sense */
 		);
 }
 
-static int omap_udc_start(struct usb_gadget_driver *driver,
-		int (*bind)(struct usb_gadget *))
+int usb_gadget_register_driver (struct usb_gadget_driver *driver)
 {
 	int		status = -ENODEV;
 	struct omap_ep	*ep;
@@ -2112,8 +2112,9 @@ static int omap_udc_start(struct usb_gadget_driver *driver,
 		return -ENODEV;
 	if (!driver
 			// FIXME if otg, check:  driver->is_otg
-			|| driver->max_speed < USB_SPEED_FULL
-			|| !bind || !driver->setup)
+			|| driver->speed < USB_SPEED_FULL
+			|| !driver->bind
+			|| !driver->setup)
 		return -EINVAL;
 
 	spin_lock_irqsave(&udc->lock, flags);
@@ -2143,7 +2144,7 @@ static int omap_udc_start(struct usb_gadget_driver *driver,
 	if (udc->dc_clk != NULL)
 		omap_udc_enable_clock(1);
 
-	status = bind(&udc->gadget);
+	status = driver->bind (&udc->gadget);
 	if (status) {
 		DBG("bind to %s --> %d\n", driver->driver.name, status);
 		udc->gadget.dev.driver = NULL;
@@ -2156,8 +2157,7 @@ static int omap_udc_start(struct usb_gadget_driver *driver,
 
 	/* connect to bus through transceiver */
 	if (udc->transceiver) {
-		status = otg_set_peripheral(udc->transceiver->otg,
-						&udc->gadget);
+		status = otg_set_peripheral(udc->transceiver, &udc->gadget);
 		if (status < 0) {
 			ERR("can't bind to transceiver\n");
 			if (driver->unbind) {
@@ -2185,8 +2185,9 @@ done:
 		omap_udc_enable_clock(0);
 	return status;
 }
+EXPORT_SYMBOL(usb_gadget_register_driver);
 
-static int omap_udc_stop(struct usb_gadget_driver *driver)
+int usb_gadget_unregister_driver (struct usb_gadget_driver *driver)
 {
 	unsigned long	flags;
 	int		status = -ENODEV;
@@ -2203,7 +2204,7 @@ static int omap_udc_stop(struct usb_gadget_driver *driver)
 		omap_vbus_session(&udc->gadget, 0);
 
 	if (udc->transceiver)
-		(void) otg_set_peripheral(udc->transceiver->otg, NULL);
+		(void) otg_set_peripheral(udc->transceiver, NULL);
 	else
 		pullup_disable(udc);
 
@@ -2220,6 +2221,8 @@ static int omap_udc_stop(struct usb_gadget_driver *driver)
 	DBG("unregistered driver '%s'\n", driver->driver.name);
 	return status;
 }
+EXPORT_SYMBOL(usb_gadget_unregister_driver);
+
 
 /*-------------------------------------------------------------------------*/
 
@@ -2305,12 +2308,21 @@ static char *trx_mode(unsigned m, int enabled)
 static int proc_otg_show(struct seq_file *s)
 {
 	u32		tmp;
-	u32		trans = 0;
-	char		*ctrl_name = "(UNKNOWN)";
+	u32		trans;
+	char		*ctrl_name;
 
-	/* XXX This needs major revision for OMAP2+ */
 	tmp = omap_readl(OTG_REV);
-	if (cpu_class_is_omap1()) {
+	if (cpu_is_omap24xx()) {
+		/*
+		 * REVISIT: Not clear how this works on OMAP2.  trans
+		 * is ANDed to produce bits 7 and 8, which might make
+		 * sense for USB_TRANSCEIVER_CTRL on OMAP1,
+		 * but with CONTROL_DEVCONF, these bits have something to
+		 * do with the frame adjustment counter and McBSP2.
+		 */
+		ctrl_name = "control_devconf";
+		trans = omap_ctrl_readl(OMAP2_CONTROL_DEVCONF0);
+	} else {
 		ctrl_name = "tranceiver_ctrl";
 		trans = omap_readw(USB_TRANSCEIVER_CTRL);
 	}
@@ -2653,7 +2665,7 @@ static void omap_udc_release(struct device *dev)
 }
 
 static int __init
-omap_udc_setup(struct platform_device *odev, struct usb_phy *xceiv)
+omap_udc_setup(struct platform_device *odev, struct otg_transceiver *xceiv)
 {
 	unsigned	tmp, buf;
 
@@ -2679,7 +2691,6 @@ omap_udc_setup(struct platform_device *odev, struct usb_phy *xceiv)
 	INIT_LIST_HEAD(&udc->gadget.ep_list);
 	INIT_LIST_HEAD(&udc->iso);
 	udc->gadget.speed = USB_SPEED_UNKNOWN;
-	udc->gadget.max_speed = USB_SPEED_FULL;
 	udc->gadget.name = driver_name;
 
 	device_initialize(&udc->gadget.dev);
@@ -2793,7 +2804,7 @@ static int __init omap_udc_probe(struct platform_device *pdev)
 {
 	int			status = -ENODEV;
 	int			hmc;
-	struct usb_phy		*xceiv = NULL;
+	struct otg_transceiver	*xceiv = NULL;
 	const char		*type = NULL;
 	struct omap_usb_config	*config = pdev->dev.platform_data;
 	struct clk		*dc_clk;
@@ -2820,16 +2831,6 @@ static int __init omap_udc_probe(struct platform_device *pdev)
 	if (cpu_is_omap24xx()) {
 		dc_clk = clk_get(&pdev->dev, "usb_fck");
 		hhc_clk = clk_get(&pdev->dev, "usb_l4_ick");
-		BUG_ON(IS_ERR(dc_clk) || IS_ERR(hhc_clk));
-		/* can't use omap_udc_enable_clock yet */
-		clk_enable(dc_clk);
-		clk_enable(hhc_clk);
-		udelay(100);
-	}
-
-	if (cpu_is_omap7xx()) {
-		dc_clk = clk_get(&pdev->dev, "usb_dc_ck");
-		hhc_clk = clk_get(&pdev->dev, "l3_ocpi_ck");
 		BUG_ON(IS_ERR(dc_clk) || IS_ERR(hhc_clk));
 		/* can't use omap_udc_enable_clock yet */
 		clk_enable(dc_clk);
@@ -2866,7 +2867,7 @@ static int __init omap_udc_probe(struct platform_device *pdev)
 		 * use it.  Except for OTG, we don't _need_ to talk to one;
 		 * but not having one probably means no VBUS detection.
 		 */
-		xceiv = usb_get_transceiver();
+		xceiv = otg_get_transceiver();
 		if (xceiv)
 			type = xceiv->label;
 		else if (config->otg) {
@@ -2962,14 +2963,14 @@ known:
 	}
 #ifdef	USE_ISO
 	status = request_irq(pdev->resource[3].start, omap_udc_iso_irq,
-			0, "omap_udc iso", udc);
+			IRQF_DISABLED, "omap_udc iso", udc);
 	if (status != 0) {
 		ERR("can't get irq %d, err %d\n",
 			(int) pdev->resource[3].start, status);
 		goto cleanup3;
 	}
 #endif
-	if (cpu_is_omap16xx() || cpu_is_omap7xx()) {
+	if (cpu_is_omap16xx()) {
 		udc->dc_clk = dc_clk;
 		udc->hhc_clk = hhc_clk;
 		clk_disable(hhc_clk);
@@ -2988,16 +2989,9 @@ known:
 
 	create_proc_file();
 	status = device_add(&udc->gadget.dev);
-	if (status)
-		goto cleanup4;
-
-	status = usb_add_gadget_udc(&pdev->dev, &udc->gadget);
 	if (!status)
 		return status;
 	/* If fail, fall through */
-cleanup4:
-	remove_proc_file();
-
 #ifdef	USE_ISO
 cleanup3:
 	free_irq(pdev->resource[2].start, udc);
@@ -3012,9 +3006,9 @@ cleanup1:
 
 cleanup0:
 	if (xceiv)
-		usb_put_transceiver(xceiv);
+		otg_put_transceiver(xceiv);
 
-	if (cpu_is_omap16xx() || cpu_is_omap24xx() || cpu_is_omap7xx()) {
+	if (cpu_is_omap16xx() || cpu_is_omap24xx()) {
 		clk_disable(hhc_clk);
 		clk_disable(dc_clk);
 		clk_put(hhc_clk);
@@ -3033,8 +3027,6 @@ static int __exit omap_udc_remove(struct platform_device *pdev)
 
 	if (!udc)
 		return -ENODEV;
-
-	usb_del_gadget_udc(&udc->gadget);
 	if (udc->driver)
 		return -EBUSY;
 
@@ -3042,7 +3034,7 @@ static int __exit omap_udc_remove(struct platform_device *pdev)
 
 	pullup_disable(udc);
 	if (udc->transceiver) {
-		usb_put_transceiver(udc->transceiver);
+		otg_put_transceiver(udc->transceiver);
 		udc->transceiver = NULL;
 	}
 	omap_writew(0, UDC_SYSCON1);
@@ -3123,10 +3115,6 @@ static struct platform_driver udc_driver = {
 
 static int __init udc_init(void)
 {
-	/* Disable DMA for omap7xx -- it doesn't work right. */
-	if (cpu_is_omap7xx())
-		use_dma = 0;
-
 	INFO("%s, version: " DRIVER_VERSION
 #ifdef	USE_ISO
 		" (iso)"

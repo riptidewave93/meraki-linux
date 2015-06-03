@@ -270,14 +270,18 @@ static int interact_connect(struct gameport *gameport, struct gameport_driver *d
 	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
 
 	for (i = 0; (t = interact_type[interact->type].abs[i]) >= 0; i++) {
-		if (i < interact_type[interact->type].b8)
-			input_set_abs_params(input_dev, t, 0, 255, 0, 0);
-		else
-			input_set_abs_params(input_dev, t, -1, 1, 0, 0);
+		set_bit(t, input_dev->absbit);
+		if (i < interact_type[interact->type].b8) {
+			input_dev->absmin[t] = 0;
+			input_dev->absmax[t] = 255;
+		} else {
+			input_dev->absmin[t] = -1;
+			input_dev->absmax[t] = 1;
+		}
 	}
 
 	for (i = 0; (t = interact_type[interact->type].btn[i]) >= 0; i++)
-		__set_bit(t, input_dev->keybit);
+		set_bit(t, input_dev->keybit);
 
 	err = input_register_device(interact->dev);
 	if (err)

@@ -135,7 +135,7 @@ struct frhdr
    __be16 PID;
 
 #define IP_NLPID pad 
-} __packed;
+} __attribute__((packed));
 
 /* see RFC 1490 for the definition of the following */
 #define FRAD_I_UI		0x03

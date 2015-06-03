@@ -65,21 +65,19 @@ int kvmppc_core_emulate_op(struct kvm_run *run, struct kvm_vcpu *vcpu,
 			 */
 			switch (dcrn) {
 			case DCRN_CPR0_CONFIG_ADDR:
-				kvmppc_set_gpr(vcpu, rt, vcpu->arch.cpr0_cfgaddr);
+				vcpu->arch.gpr[rt] = vcpu->arch.cpr0_cfgaddr;
 				break;
 			case DCRN_CPR0_CONFIG_DATA:
 				local_irq_disable();
 				mtdcr(DCRN_CPR0_CONFIG_ADDR,
 					  vcpu->arch.cpr0_cfgaddr);
-				kvmppc_set_gpr(vcpu, rt,
-					       mfdcr(DCRN_CPR0_CONFIG_DATA));
+				vcpu->arch.gpr[rt] = mfdcr(DCRN_CPR0_CONFIG_DATA);
 				local_irq_enable();
 				break;
 			default:
 				run->dcr.dcrn = dcrn;
 				run->dcr.data =  0;
 				run->dcr.is_write = 0;
-				vcpu->arch.dcr_is_write = 0;
 				vcpu->arch.io_gpr = rt;
 				vcpu->arch.dcr_needed = 1;
 				kvmppc_account_exit(vcpu, DCR_EXITS);
@@ -95,13 +93,12 @@ int kvmppc_core_emulate_op(struct kvm_run *run, struct kvm_vcpu *vcpu,
 			/* emulate some access in kernel */
 			switch (dcrn) {
 			case DCRN_CPR0_CONFIG_ADDR:
-				vcpu->arch.cpr0_cfgaddr = kvmppc_get_gpr(vcpu, rs);
+				vcpu->arch.cpr0_cfgaddr = vcpu->arch.gpr[rs];
 				break;
 			default:
 				run->dcr.dcrn = dcrn;
-				run->dcr.data = kvmppc_get_gpr(vcpu, rs);
+				run->dcr.data = vcpu->arch.gpr[rs];
 				run->dcr.is_write = 1;
-				vcpu->arch.dcr_is_write = 1;
 				vcpu->arch.dcr_needed = 1;
 				kvmppc_account_exit(vcpu, DCR_EXITS);
 				emulated = EMULATE_DO_DCR;
@@ -149,17 +146,18 @@ int kvmppc_core_emulate_mtspr(struct kvm_vcpu *vcpu, int sprn, int rs)
 
 	switch (sprn) {
 	case SPRN_PID:
-		kvmppc_set_pid(vcpu, kvmppc_get_gpr(vcpu, rs)); break;
+		kvmppc_set_pid(vcpu, vcpu->arch.gpr[rs]); break;
 	case SPRN_MMUCR:
-		vcpu->arch.mmucr = kvmppc_get_gpr(vcpu, rs); break;
+		vcpu->arch.mmucr = vcpu->arch.gpr[rs]; break;
 	case SPRN_CCR0:
-		vcpu->arch.ccr0 = kvmppc_get_gpr(vcpu, rs); break;
+		vcpu->arch.ccr0 = vcpu->arch.gpr[rs]; break;
 	case SPRN_CCR1:
-		vcpu->arch.ccr1 = kvmppc_get_gpr(vcpu, rs); break;
+		vcpu->arch.ccr1 = vcpu->arch.gpr[rs]; break;
 	default:
 		emulated = kvmppc_booke_emulate_mtspr(vcpu, sprn, rs);
 	}
 
+	kvmppc_set_exit_type(vcpu, EMULATED_MTSPR_EXITS);
 	return emulated;
 }
 
@@ -169,17 +167,18 @@ int kvmppc_core_emulate_mfspr(struct kvm_vcpu *vcpu, int sprn, int rt)
 
 	switch (sprn) {
 	case SPRN_PID:
-		kvmppc_set_gpr(vcpu, rt, vcpu->arch.pid); break;
+		vcpu->arch.gpr[rt] = vcpu->arch.pid; break;
 	case SPRN_MMUCR:
-		kvmppc_set_gpr(vcpu, rt, vcpu->arch.mmucr); break;
+		vcpu->arch.gpr[rt] = vcpu->arch.mmucr; break;
 	case SPRN_CCR0:
-		kvmppc_set_gpr(vcpu, rt, vcpu->arch.ccr0); break;
+		vcpu->arch.gpr[rt] = vcpu->arch.ccr0; break;
 	case SPRN_CCR1:
-		kvmppc_set_gpr(vcpu, rt, vcpu->arch.ccr1); break;
+		vcpu->arch.gpr[rt] = vcpu->arch.ccr1; break;
 	default:
 		emulated = kvmppc_booke_emulate_mfspr(vcpu, sprn, rt);
 	}
 
+	kvmppc_set_exit_type(vcpu, EMULATED_MFSPR_EXITS);
 	return emulated;
 }
 

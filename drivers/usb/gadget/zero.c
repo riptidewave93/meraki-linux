@@ -8,6 +8,15 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 
 
@@ -41,7 +50,6 @@
 /* #define VERBOSE_DEBUG */
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/utsname.h>
 #include <linux/device.h>
 
@@ -81,7 +89,7 @@ module_param(buflen, uint, 0);
  * work better with hosts where config changes are problematic or
  * controllers (like original superh) that only support one config.
  */
-static bool loopdefault = 0;
+static int loopdefault = 0;
 module_param(loopdefault, bool, S_IRUGO|S_IWUSR);
 
 /*-------------------------------------------------------------------------*/
@@ -289,10 +297,12 @@ static int __init zero_bind(struct usb_composite_dev *cdev)
 	 */
 	if (loopdefault) {
 		loopback_add(cdev, autoresume != 0);
-		sourcesink_add(cdev, autoresume != 0);
+		if (!gadget_is_sh(gadget))
+			sourcesink_add(cdev, autoresume != 0);
 	} else {
 		sourcesink_add(cdev, autoresume != 0);
-		loopback_add(cdev, autoresume != 0);
+		if (!gadget_is_sh(gadget))
+			loopback_add(cdev, autoresume != 0);
 	}
 
 	gcnum = usb_gadget_controller_number(gadget);
@@ -331,7 +341,7 @@ static struct usb_composite_driver zero_driver = {
 	.name		= "zero",
 	.dev		= &device_desc,
 	.strings	= dev_strings,
-	.max_speed	= USB_SPEED_SUPER,
+	.bind		= zero_bind,
 	.unbind		= zero_unbind,
 	.suspend	= zero_suspend,
 	.resume		= zero_resume,
@@ -342,7 +352,7 @@ MODULE_LICENSE("GPL");
 
 static int __init init(void)
 {
-	return usb_composite_probe(&zero_driver, zero_bind);
+	return usb_composite_register(&zero_driver);
 }
 module_init(init);
 

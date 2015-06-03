@@ -12,7 +12,7 @@
  *     within cong_avoid.
  *   o Error correcting in remote HZ, therefore remote HZ will be keeped
  *     on checking and updating.
- *   o Handling calculation of One-Way-Delay (OWD) within rtt_sample, since
+ *   o Handling calculation of One-Way-Delay (OWD) within rtt_sample, sicne
  *     OWD have a similar meaning as RTT. Also correct the buggy formular.
  *   o Handle reaction for Early Congestion Indication (ECI) within
  *     pkts_acked, as mentioned within pseudo code.
@@ -143,8 +143,8 @@ static u32 tcp_lp_remote_hz_estimator(struct sock *sk)
 		goto out;
 
 	/* we can't calc remote HZ with no different!! */
-	if (tp->rx_opt.rcv_tsval == lp->remote_ref_time ||
-	    tp->rx_opt.rcv_tsecr == lp->local_ref_time)
+	if (tp->rx_opt.rcv_tsval == lp->remote_ref_time
+	    || tp->rx_opt.rcv_tsecr == lp->local_ref_time)
 		goto out;
 
 	m = HZ * (tp->rx_opt.rcv_tsval -
@@ -313,7 +313,7 @@ static void tcp_lp_pkts_acked(struct sock *sk, u32 num_acked, s32 rtt_us)
 	lp->last_drop = tcp_time_stamp;
 }
 
-static struct tcp_congestion_ops tcp_lp __read_mostly = {
+static struct tcp_congestion_ops tcp_lp = {
 	.flags = TCP_CONG_RTT_STAMP,
 	.init = tcp_lp_init,
 	.ssthresh = tcp_reno_ssthresh,

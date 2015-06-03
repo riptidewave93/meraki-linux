@@ -26,7 +26,7 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/time.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <sound/core.h>
 #include <sound/emu10k1.h>
 #include <sound/initval.h>
@@ -44,13 +44,13 @@ MODULE_SUPPORTED_DEVICE("{{Creative Labs,SB Live!/PCI512/E-mu APS},"
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;	/* Enable this card */
+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;	/* Enable this card */
 static int extin[SNDRV_CARDS];
 static int extout[SNDRV_CARDS];
 static int seq_ports[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS - 1)] = 4};
 static int max_synth_voices[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS - 1)] = 64};
 static int max_buffer_size[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS - 1)] = 128};
-static bool enable_ir[SNDRV_CARDS];
+static int enable_ir[SNDRV_CARDS];
 static uint subsystem[SNDRV_CARDS]; /* Force card subsystem model */
 static uint delay_pcm_irq[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS - 1)] = 2};
 
@@ -79,7 +79,7 @@ MODULE_PARM_DESC(delay_pcm_irq, "Delay PCM interrupt by specified number of samp
 /*
  * Class 0401: 1102:0008 (rev 00) Subsystem: 1102:1001 -> Audigy2 Value  Model:SB0400
  */
-static DEFINE_PCI_DEVICE_TABLE(snd_emu10k1_ids) = {
+static struct pci_device_id snd_emu10k1_ids[] = {
 	{ PCI_VDEVICE(CREATIVE, 0x0002), 0 },	/* EMU10K1 */
 	{ PCI_VDEVICE(CREATIVE, 0x0004), 1 },	/* Audigy */
 	{ PCI_VDEVICE(CREATIVE, 0x0008), 1 },	/* Audigy 2 Value SB0400 */
@@ -264,7 +264,7 @@ static int snd_emu10k1_resume(struct pci_dev *pci)
 #endif
 
 static struct pci_driver driver = {
-	.name = KBUILD_MODNAME,
+	.name = "EMU10K1_Audigy",
 	.id_table = snd_emu10k1_ids,
 	.probe = snd_card_emu10k1_probe,
 	.remove = __devexit_p(snd_card_emu10k1_remove),

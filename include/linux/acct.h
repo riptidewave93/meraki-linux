@@ -121,15 +121,16 @@ struct vfsmount;
 struct super_block;
 struct pacct_struct;
 struct pid_namespace;
-extern int acct_parm[]; /* for sysctl */
 extern void acct_auto_close_mnt(struct vfsmount *m);
 extern void acct_auto_close(struct super_block *sb);
+extern void acct_init_pacct(struct pacct_struct *pacct);
 extern void acct_collect(long exitcode, int group_dead);
 extern void acct_process(void);
 extern void acct_exit_ns(struct pid_namespace *);
 #else
 #define acct_auto_close_mnt(x)	do { } while (0)
 #define acct_auto_close(x)	do { } while (0)
+#define acct_init_pacct(x)	do { } while (0)
 #define acct_collect(x,y)	do { } while (0)
 #define acct_process()		do { } while (0)
 #define acct_exit_ns(ns)	do { } while (0)
@@ -145,9 +146,6 @@ extern void acct_exit_ns(struct pid_namespace *);
  * 5: new binary incompatible format (128 bytes, second half)
  *
  */
-
-#undef ACCT_VERSION
-#undef AHZ
 
 #ifdef CONFIG_BSD_PROCESS_ACCT_V3
 #define ACCT_VERSION	3

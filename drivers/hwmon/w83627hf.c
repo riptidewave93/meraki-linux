@@ -1,45 +1,43 @@
 /*
- * w83627hf.c - Part of lm_sensors, Linux kernel modules for hardware
- *		monitoring
- * Copyright (c) 1998 - 2003  Frodo Looijaard <frodol@dds.nl>,
- *			      Philip Edelbrock <phil@netroedge.com>,
- *			      and Mark Studebaker <mdsxyz123@yahoo.com>
- * Ported to 2.6 by Bernhard C. Schrenk <clemy@clemy.org>
- * Copyright (c) 2007  Jean Delvare <khali@linux-fr.org>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
- */
+    w83627hf.c - Part of lm_sensors, Linux kernel modules for hardware
+                monitoring
+    Copyright (c) 1998 - 2003  Frodo Looijaard <frodol@dds.nl>,
+    Philip Edelbrock <phil@netroedge.com>,
+    and Mark Studebaker <mdsxyz123@yahoo.com>
+    Ported to 2.6 by Bernhard C. Schrenk <clemy@clemy.org>
+    Copyright (c) 2007  Jean Delvare <khali@linux-fr.org>
+
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+*/
 
 /*
- * Supports following chips:
- *
- * Chip	#vin	#fanin	#pwm	#temp	wchipid	vendid	i2c	ISA
- * w83627hf	9	3	2	3	0x20	0x5ca3	no	yes(LPC)
- * w83627thf	7	3	3	3	0x90	0x5ca3	no	yes(LPC)
- * w83637hf	7	3	3	3	0x80	0x5ca3	no	yes(LPC)
- * w83687thf	7	3	3	3	0x90	0x5ca3	no	yes(LPC)
- * w83697hf	8	2	2	2	0x60	0x5ca3	no	yes(LPC)
- *
- * For other winbond chips, and for i2c support in the above chips,
- * use w83781d.c.
- *
- * Note: automatic ("cruise") fan control for 697, 637 & 627thf not
- * supported yet.
- */
+    Supports following chips:
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+    Chip	#vin	#fanin	#pwm	#temp	wchipid	vendid	i2c	ISA
+    w83627hf	9	3	2	3	0x20	0x5ca3	no	yes(LPC)
+    w83627thf	7	3	3	3	0x90	0x5ca3	no	yes(LPC)
+    w83637hf	7	3	3	3	0x80	0x5ca3	no	yes(LPC)
+    w83687thf	7	3	3	3	0x90	0x5ca3	no	yes(LPC)
+    w83697hf	8	2	2	2	0x60	0x5ca3	no	yes(LPC)
+
+    For other winbond chips, and for i2c support in the above chips,
+    use w83781d.c.
+
+    Note: automatic ("cruise") fan control for 697, 637 & 627thf not
+    supported yet.
+*/
 
 #include <linux/module.h>
 #include <linux/init.h>
@@ -61,17 +59,16 @@ static struct platform_device *pdev;
 #define DRVNAME "w83627hf"
 enum chips { w83627hf, w83627thf, w83697hf, w83637hf, w83687thf };
 
-struct w83627hf_sio_data {
-	enum chips type;
-	int sioaddr;
-};
-
+static u16 force_addr;
+module_param(force_addr, ushort, 0);
+MODULE_PARM_DESC(force_addr,
+		 "Initialize the base address of the sensors");
 static u8 force_i2c = 0x1f;
 module_param(force_i2c, byte, 0);
 MODULE_PARM_DESC(force_i2c,
 		 "Initialize the i2c address of the sensors");
 
-static bool init = 1;
+static int init = 1;
 module_param(init, bool, 0);
 MODULE_PARM_DESC(init, "Set to zero to bypass chip initialization");
 
@@ -80,7 +77,9 @@ module_param(force_id, ushort, 0);
 MODULE_PARM_DESC(force_id, "Override the detected device ID");
 
 /* modified from kernel/include/traps.c */
-#define DEV			0x07 /* Register: Logical device select */
+static int REG;		/* The register to read/write */
+#define	DEV	0x07	/* Register: Logical device select */
+static int VAL;		/* The value to read/write */
 
 /* logical device numbers for superio_select (below) */
 #define W83627HF_LD_FDC		0x00
@@ -99,7 +98,7 @@ MODULE_PARM_DESC(force_id, "Override the detected device ID");
 #define W83627HF_LD_ACPI	0x0a
 #define W83627HF_LD_HWM		0x0b
 
-#define DEVID			0x20 /* Register: Device ID */
+#define	DEVID	0x20	/* Register: Device ID */
 
 #define W83627THF_GPIO5_EN	0x30 /* w83627thf only */
 #define W83627THF_GPIO5_IOSR	0xf3 /* w83627thf only */
@@ -110,37 +109,37 @@ MODULE_PARM_DESC(force_id, "Override the detected device ID");
 #define W83687THF_VID_DATA	0xF1 /* w83687thf only */
 
 static inline void
-superio_outb(struct w83627hf_sio_data *sio, int reg, int val)
+superio_outb(int reg, int val)
 {
-	outb(reg, sio->sioaddr);
-	outb(val, sio->sioaddr + 1);
+	outb(reg, REG);
+	outb(val, VAL);
 }
 
 static inline int
-superio_inb(struct w83627hf_sio_data *sio, int reg)
+superio_inb(int reg)
 {
-	outb(reg, sio->sioaddr);
-	return inb(sio->sioaddr + 1);
+	outb(reg, REG);
+	return inb(VAL);
 }
 
 static inline void
-superio_select(struct w83627hf_sio_data *sio, int ld)
+superio_select(int ld)
 {
-	outb(DEV, sio->sioaddr);
-	outb(ld,  sio->sioaddr + 1);
+	outb(DEV, REG);
+	outb(ld, VAL);
 }
 
 static inline void
-superio_enter(struct w83627hf_sio_data *sio)
+superio_enter(void)
 {
-	outb(0x87, sio->sioaddr);
-	outb(0x87, sio->sioaddr);
+	outb(0x87, REG);
+	outb(0x87, REG);
 }
 
 static inline void
-superio_exit(struct w83627hf_sio_data *sio)
+superio_exit(void)
 {
-	outb(0xAA, sio->sioaddr);
+	outb(0xAA, REG);
 }
 
 #define W627_DEVID 0x52
@@ -248,12 +247,10 @@ static const u8 BIT_SCFG1[] = { 0x02, 0x04, 0x08 };
 static const u8 BIT_SCFG2[] = { 0x10, 0x20, 0x40 };
 #define W83781D_DEFAULT_BETA 3435
 
-/*
- * Conversions. Limit checking is only done on the TO_REG
- * variants. Note that you should be a bit careful with which arguments
- * these macros are called: arguments may be evaluated more than once.
- * Fixing this is just not worth it.
- */
+/* Conversions. Limit checking is only done on the TO_REG
+   variants. Note that you should be a bit careful with which arguments
+   these macros are called: arguments may be evaluated more than once.
+   Fixing this is just not worth it. */
 #define IN_TO_REG(val)  (SENSORS_LIMIT((((val) + 8)/16),0,255))
 #define IN_FROM_REG(val) ((val) * 16)
 
@@ -269,10 +266,8 @@ static inline u8 FAN_TO_REG(long rpm, int div)
 #define TEMP_MIN (-128000)
 #define TEMP_MAX ( 127000)
 
-/*
- * TEMP: 0.001C/bit (-128C to +127C)
- * REG: 1C/bit, two's complement
- */
+/* TEMP: 0.001C/bit (-128C to +127C)
+   REG: 1C/bit, two's complement */
 static u8 TEMP_TO_REG(long temp)
 {
         int ntemp = SENSORS_LIMIT(temp, TEMP_MIN, TEMP_MAX);
@@ -298,10 +293,8 @@ static inline unsigned long pwm_freq_from_reg_627hf(u8 reg)
 static inline u8 pwm_freq_to_reg_627hf(unsigned long val)
 {
 	u8 i;
-	/*
-	 * Only 5 dividers (1 2 4 8 16)
-	 * Search for the nearest available frequency
-	 */
+	/* Only 5 dividers (1 2 4 8 16)
+	   Search for the nearest available frequency */
 	for (i = 0; i < 4; i++) {
 		if (val > (((W83627HF_BASE_PWM_FREQ >> i) +
 			    (W83627HF_BASE_PWM_FREQ >> (i+1))) / 2))
@@ -319,7 +312,7 @@ static inline unsigned long pwm_freq_from_reg(u8 reg)
 	/* This should not happen but anyway... */
 	if (reg == 0)
 		reg++;
-	return clock / (reg << 8);
+	return (clock / (reg << 8));
 }
 static inline u8 pwm_freq_to_reg(unsigned long val)
 {
@@ -327,11 +320,11 @@ static inline u8 pwm_freq_to_reg(unsigned long val)
 	if (val >= 93750)	/* The highest we can do */
 		return 0x01;
 	if (val >= 720)	/* Use 24 MHz clock */
-		return 24000000UL / (val << 8);
+		return (24000000UL / (val << 8));
 	if (val < 6)		/* The lowest we can do */
 		return 0xFF;
 	else			/* Use 180 kHz clock */
-		return 0x80 | (180000UL / (val << 8));
+		return (0x80 | (180000UL / (val << 8)));
 }
 
 #define BEEP_MASK_FROM_REG(val)		((val) & 0xff7fff)
@@ -348,13 +341,11 @@ static inline u8 DIV_TO_REG(long val)
 			break;
 		val >>= 1;
 	}
-	return (u8)i;
+	return ((u8) i);
 }
 
-/*
- * For each registered chip, we need to keep some data in memory.
- * The structure is dynamically allocated.
- */
+/* For each registered chip, we need to keep some data in memory.
+   The structure is dynamically allocated. */
 struct w83627hf_data {
 	unsigned short addr;
 	const char *name;
@@ -380,15 +371,17 @@ struct w83627hf_data {
 	u32 beep_mask;		/* Register encoding, combined */
 	u8 pwm[3];		/* Register value */
 	u8 pwm_enable[3];	/* 1 = manual
-				 * 2 = thermal cruise (also called SmartFan I)
-				 * 3 = fan speed cruise
-				 */
+				   2 = thermal cruise (also called SmartFan I)
+				   3 = fan speed cruise */
 	u8 pwm_freq[3];		/* Register value */
 	u16 sens[3];		/* 1 = pentium diode; 2 = 3904 diode;
-				 * 4 = thermistor
-				 */
+				   4 = thermistor */
 	u8 vrm;
 	u8 vrm_ovt;		/* Register value, 627THF/637HF/687THF only */
+};
+
+struct w83627hf_sio_data {
+	enum chips type;
 };
 
 
@@ -437,12 +430,7 @@ store_in_min(struct device *dev, struct device_attribute *devattr,
 {
 	int nr = to_sensor_dev_attr(devattr)->index;
 	struct w83627hf_data *data = dev_get_drvdata(dev);
-	long val;
-	int err;
-
-	err = kstrtol(buf, 10, &val);
-	if (err)
-		return err;
+	long val = simple_strtol(buf, NULL, 10);
 
 	mutex_lock(&data->update_lock);
 	data->in_min[nr] = IN_TO_REG(val);
@@ -456,12 +444,7 @@ store_in_max(struct device *dev, struct device_attribute *devattr,
 {
 	int nr = to_sensor_dev_attr(devattr)->index;
 	struct w83627hf_data *data = dev_get_drvdata(dev);
-	long val;
-	int err;
-
-	err = kstrtol(buf, 10, &val);
-	if (err)
-		return err;
+	long val = simple_strtol(buf, NULL, 10);
 
 	mutex_lock(&data->update_lock);
 	data->in_max[nr] = IN_TO_REG(val);
@@ -526,12 +509,9 @@ static ssize_t store_regs_in_min0(struct device *dev, struct device_attribute *a
 	const char *buf, size_t count)
 {
 	struct w83627hf_data *data = dev_get_drvdata(dev);
-	unsigned long val;
-	int err;
+	u32 val;
 
-	err = kstrtoul(buf, 10, &val);
-	if (err)
-		return err;
+	val = simple_strtoul(buf, NULL, 10);
 
 	mutex_lock(&data->update_lock);
 	
@@ -556,12 +536,9 @@ static ssize_t store_regs_in_max0(struct device *dev, struct device_attribute *a
 	const char *buf, size_t count)
 {
 	struct w83627hf_data *data = dev_get_drvdata(dev);
-	unsigned long val;
-	int err;
+	u32 val;
 
-	err = kstrtoul(buf, 10, &val);
-	if (err)
-		return err;
+	val = simple_strtoul(buf, NULL, 10);
 
 	mutex_lock(&data->update_lock);
 
@@ -610,12 +587,7 @@ store_fan_min(struct device *dev, struct device_attribute *devattr,
 {
 	int nr = to_sensor_dev_attr(devattr)->index;
 	struct w83627hf_data *data = dev_get_drvdata(dev);
-	unsigned long val;
-	int err;
-
-	err = kstrtoul(buf, 10, &val);
-	if (err)
-		return err;
+	u32 val = simple_strtoul(buf, NULL, 10);
 
 	mutex_lock(&data->update_lock);
 	data->fan_min[nr] = FAN_TO_REG(val, DIV_FROM_REG(data->fan_div[nr]));
@@ -676,15 +648,9 @@ store_temp_max(struct device *dev, struct device_attribute *devattr,
 {
 	int nr = to_sensor_dev_attr(devattr)->index;
 	struct w83627hf_data *data = dev_get_drvdata(dev);
-	u16 tmp;
-	long val;
-	int err;
+	long val = simple_strtol(buf, NULL, 10);
+	u16 tmp = (nr) ? LM75_TEMP_TO_REG(val) : TEMP_TO_REG(val);
 
-	err = kstrtol(buf, 10, &val);
-	if (err)
-		return err;
-
-	tmp = (nr) ? LM75_TEMP_TO_REG(val) : TEMP_TO_REG(val);
 	mutex_lock(&data->update_lock);
 	data->temp_max[nr] = tmp;
 	w83627hf_write_value(data, w83627hf_reg_temp_over[nr], tmp);
@@ -698,15 +664,9 @@ store_temp_max_hyst(struct device *dev, struct device_attribute *devattr,
 {
 	int nr = to_sensor_dev_attr(devattr)->index;
 	struct w83627hf_data *data = dev_get_drvdata(dev);
-	u16 tmp;
-	long val;
-	int err;
+	long val = simple_strtol(buf, NULL, 10);
+	u16 tmp = (nr) ? LM75_TEMP_TO_REG(val) : TEMP_TO_REG(val);
 
-	err = kstrtol(buf, 10, &val);
-	if (err)
-		return err;
-
-	tmp = (nr) ? LM75_TEMP_TO_REG(val) : TEMP_TO_REG(val);
 	mutex_lock(&data->update_lock);
 	data->temp_max_hyst[nr] = tmp;
 	w83627hf_write_value(data, w83627hf_reg_temp_hyst[nr], tmp);
@@ -744,12 +704,9 @@ static ssize_t
 store_vrm_reg(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct w83627hf_data *data = dev_get_drvdata(dev);
-	unsigned long val;
-	int err;
+	u32 val;
 
-	err = kstrtoul(buf, 10, &val);
-	if (err)
-		return err;
+	val = simple_strtoul(buf, NULL, 10);
 	data->vrm = val;
 
 	return count;
@@ -801,11 +758,8 @@ store_beep_mask(struct device *dev, struct device_attribute *attr,
 {
 	struct w83627hf_data *data = dev_get_drvdata(dev);
 	unsigned long val;
-	int err;
 
-	err = kstrtoul(buf, 10, &val);
-	if (err)
-		return err;
+	val = simple_strtoul(buf, NULL, 10);
 
 	mutex_lock(&data->update_lock);
 
@@ -840,14 +794,10 @@ store_beep(struct device *dev, struct device_attribute *attr,
 {
 	struct w83627hf_data *data = dev_get_drvdata(dev);
 	int bitnr = to_sensor_dev_attr(attr)->index;
-	u8 reg;
 	unsigned long bit;
-	int err;
+	u8 reg;
 
-	err = kstrtoul(buf, 10, &bit);
-	if (err)
-		return err;
-
+	bit = simple_strtoul(buf, NULL, 10);
 	if (bit & ~1)
 		return -EINVAL;
 
@@ -925,12 +875,10 @@ show_fan_div(struct device *dev, struct device_attribute *devattr, char *buf)
 	return sprintf(buf, "%ld\n",
 		       (long) DIV_FROM_REG(data->fan_div[nr]));
 }
-/*
- * Note: we save and restore the fan minimum here, because its value is
- * determined in part by the fan divisor.  This follows the principle of
- * least surprise; the user doesn't expect the fan minimum to change just
- * because the divisor changed.
- */
+/* Note: we save and restore the fan minimum here, because its value is
+   determined in part by the fan divisor.  This follows the principle of
+   least surprise; the user doesn't expect the fan minimum to change just
+   because the divisor changed. */
 static ssize_t
 store_fan_div(struct device *dev, struct device_attribute *devattr,
 	      const char *buf, size_t count)
@@ -939,12 +887,7 @@ store_fan_div(struct device *dev, struct device_attribute *devattr,
 	struct w83627hf_data *data = dev_get_drvdata(dev);
 	unsigned long min;
 	u8 reg;
-	unsigned long val;
-	int err;
-
-	err = kstrtoul(buf, 10, &val);
-	if (err)
-		return err;
+	unsigned long val = simple_strtoul(buf, NULL, 10);
 
 	mutex_lock(&data->update_lock);
 
@@ -993,12 +936,7 @@ store_pwm(struct device *dev, struct device_attribute *devattr,
 {
 	int nr = to_sensor_dev_attr(devattr)->index;
 	struct w83627hf_data *data = dev_get_drvdata(dev);
-	unsigned long val;
-	int err;
-
-	err = kstrtoul(buf, 10, &val);
-	if (err)
-		return err;
+	u32 val = simple_strtoul(buf, NULL, 10);
 
 	mutex_lock(&data->update_lock);
 
@@ -1039,15 +977,10 @@ store_pwm_enable(struct device *dev, struct device_attribute *devattr,
 {
 	int nr = to_sensor_dev_attr(devattr)->index;
 	struct w83627hf_data *data = dev_get_drvdata(dev);
+	unsigned long val = simple_strtoul(buf, NULL, 10);
 	u8 reg;
-	unsigned long val;
-	int err;
 
-	err = kstrtoul(buf, 10, &val);
-	if (err)
-		return err;
-
-	if (!val || val > 3)	/* modes 1, 2 and 3 are supported */
+	if (!val || (val > 3))	/* modes 1, 2 and 3 are supported */
 		return -EINVAL;
 	mutex_lock(&data->update_lock);
 	data->pwm_enable[nr] = val;
@@ -1086,12 +1019,9 @@ store_pwm_freq(struct device *dev, struct device_attribute *devattr,
 	int nr = to_sensor_dev_attr(devattr)->index;
 	struct w83627hf_data *data = dev_get_drvdata(dev);
 	static const u8 mask[]={0xF8, 0x8F};
-	unsigned long val;
-	int err;
+	u32 val;
 
-	err = kstrtoul(buf, 10, &val);
-	if (err)
-		return err;
+	val = simple_strtoul(buf, NULL, 10);
 
 	mutex_lock(&data->update_lock);
 
@@ -1133,13 +1063,9 @@ store_temp_type(struct device *dev, struct device_attribute *devattr,
 {
 	int nr = to_sensor_dev_attr(devattr)->index;
 	struct w83627hf_data *data = dev_get_drvdata(dev);
-	unsigned long val;
-	u32 tmp;
-	int err;
+	u32 val, tmp;
 
-	err = kstrtoul(buf, 10, &val);
-	if (err)
-		return err;
+	val = simple_strtoul(buf, NULL, 10);
 
 	mutex_lock(&data->update_lock);
 
@@ -1214,9 +1140,11 @@ static int __init w83627hf_find(int sioaddr, unsigned short *addr,
 		"W83687THF",
 	};
 
-	sio_data->sioaddr = sioaddr;
-	superio_enter(sio_data);
-	val = force_id ? force_id : superio_inb(sio_data, DEVID);
+	REG = sioaddr;
+	VAL = sioaddr + 1;
+
+	superio_enter();
+	val = force_id ? force_id : superio_inb(DEVID);
 	switch (val) {
 	case W627_DEVID:
 		sio_data->type = w83627hf;
@@ -1240,19 +1168,27 @@ static int __init w83627hf_find(int sioaddr, unsigned short *addr,
 		goto exit;
 	}
 
-	superio_select(sio_data, W83627HF_LD_HWM);
-	val = (superio_inb(sio_data, WINB_BASE_REG) << 8) |
-	       superio_inb(sio_data, WINB_BASE_REG + 1);
+	superio_select(W83627HF_LD_HWM);
+	force_addr &= WINB_ALIGNMENT;
+	if (force_addr) {
+		printk(KERN_WARNING DRVNAME ": Forcing address 0x%x\n",
+		       force_addr);
+		superio_outb(WINB_BASE_REG, force_addr >> 8);
+		superio_outb(WINB_BASE_REG + 1, force_addr & 0xff);
+	}
+	val = (superio_inb(WINB_BASE_REG) << 8) |
+	       superio_inb(WINB_BASE_REG + 1);
 	*addr = val & WINB_ALIGNMENT;
 	if (*addr == 0) {
-		pr_warn("Base address not set, skipping\n");
+		printk(KERN_WARNING DRVNAME ": Base address not set, "
+		       "skipping\n");
 		goto exit;
 	}
 
-	val = superio_inb(sio_data, WINB_ACT_REG);
+	val = superio_inb(WINB_ACT_REG);
 	if (!(val & 0x01)) {
-		pr_warn("Enabling HWM logical device\n");
-		superio_outb(sio_data, WINB_ACT_REG, val | 0x01);
+		printk(KERN_WARNING DRVNAME ": Enabling HWM logical device\n");
+		superio_outb(WINB_ACT_REG, val | 0x01);
 	}
 
 	err = 0;
@@ -1260,7 +1196,7 @@ static int __init w83627hf_find(int sioaddr, unsigned short *addr,
 		names[sio_data->type], *addr);
 
  exit:
-	superio_exit(sio_data);
+	superio_exit();
 	return err;
 }
 
@@ -1367,8 +1303,7 @@ static int __devinit w83627hf_probe(struct platform_device *pdev)
 		goto ERROR0;
 	}
 
-	data = kzalloc(sizeof(struct w83627hf_data), GFP_KERNEL);
-	if (!data) {
+	if (!(data = kzalloc(sizeof(struct w83627hf_data), GFP_KERNEL))) {
 		err = -ENOMEM;
 		goto ERROR1;
 	}
@@ -1389,8 +1324,7 @@ static int __devinit w83627hf_probe(struct platform_device *pdev)
 	w83627hf_update_fan_div(data);
 
 	/* Register common device attributes */
-	err = sysfs_create_group(&dev->kobj, &w83627hf_group);
-	if (err)
+	if ((err = sysfs_create_group(&dev->kobj, &w83627hf_group)))
 		goto ERROR3;
 
 	/* Register chip-specific device attributes */
@@ -1466,11 +1400,10 @@ static int __devinit w83627hf_probe(struct platform_device *pdev)
 	}
 
 	if (data->type == w83627thf || data->type == w83637hf
-	    || data->type == w83687thf) {
-		err = device_create_file(dev, &sensor_dev_attr_pwm3.dev_attr);
-		if (err)
+	 || data->type == w83687thf)
+		if ((err = device_create_file(dev,
+				&sensor_dev_attr_pwm3.dev_attr)))
 			goto ERROR4;
-	}
 
 	if (data->type == w83637hf || data->type == w83687thf)
 		if ((err = device_create_file(dev,
@@ -1489,12 +1422,10 @@ static int __devinit w83627hf_probe(struct platform_device *pdev)
 			goto ERROR4;
 
 	if (data->type == w83627thf || data->type == w83637hf
-	    || data->type == w83687thf) {
-		err = device_create_file(dev,
-					 &sensor_dev_attr_pwm3_enable.dev_attr);
-		if (err)
+	 || data->type == w83687thf)
+		if ((err = device_create_file(dev,
+				&sensor_dev_attr_pwm3_enable.dev_attr)))
 			goto ERROR4;
-	}
 
 	data->hwmon_dev = hwmon_device_register(dev);
 	if (IS_ERR(data->hwmon_dev)) {
@@ -1580,23 +1511,20 @@ static int w83627hf_read_value(struct w83627hf_data *data, u16 reg)
 
 static int __devinit w83627thf_read_gpio5(struct platform_device *pdev)
 {
-	struct w83627hf_sio_data *sio_data = pdev->dev.platform_data;
 	int res = 0xff, sel;
 
-	superio_enter(sio_data);
-	superio_select(sio_data, W83627HF_LD_GPIO5);
+	superio_enter();
+	superio_select(W83627HF_LD_GPIO5);
 
 	/* Make sure these GPIO pins are enabled */
-	if (!(superio_inb(sio_data, W83627THF_GPIO5_EN) & (1<<3))) {
+	if (!(superio_inb(W83627THF_GPIO5_EN) & (1<<3))) {
 		dev_dbg(&pdev->dev, "GPIO5 disabled, no VID function\n");
 		goto exit;
 	}
 
-	/*
-	 * Make sure the pins are configured for input
-	 * There must be at least five (VRM 9), and possibly 6 (VRM 10)
-	 */
-	sel = superio_inb(sio_data, W83627THF_GPIO5_IOSR) & 0x3f;
+	/* Make sure the pins are configured for input
+	   There must be at least five (VRM 9), and possibly 6 (VRM 10) */
+	sel = superio_inb(W83627THF_GPIO5_IOSR) & 0x3f;
 	if ((sel & 0x1f) != 0x1f) {
 		dev_dbg(&pdev->dev, "GPIO5 not configured for VID "
 			"function\n");
@@ -1604,38 +1532,37 @@ static int __devinit w83627thf_read_gpio5(struct platform_device *pdev)
 	}
 
 	dev_info(&pdev->dev, "Reading VID from GPIO5\n");
-	res = superio_inb(sio_data, W83627THF_GPIO5_DR) & sel;
+	res = superio_inb(W83627THF_GPIO5_DR) & sel;
 
 exit:
-	superio_exit(sio_data);
+	superio_exit();
 	return res;
 }
 
 static int __devinit w83687thf_read_vid(struct platform_device *pdev)
 {
-	struct w83627hf_sio_data *sio_data = pdev->dev.platform_data;
 	int res = 0xff;
 
-	superio_enter(sio_data);
-	superio_select(sio_data, W83627HF_LD_HWM);
+	superio_enter();
+	superio_select(W83627HF_LD_HWM);
 
 	/* Make sure these GPIO pins are enabled */
-	if (!(superio_inb(sio_data, W83687THF_VID_EN) & (1 << 2))) {
+	if (!(superio_inb(W83687THF_VID_EN) & (1 << 2))) {
 		dev_dbg(&pdev->dev, "VID disabled, no VID function\n");
 		goto exit;
 	}
 
 	/* Make sure the pins are configured for input */
-	if (!(superio_inb(sio_data, W83687THF_VID_CFG) & (1 << 4))) {
+	if (!(superio_inb(W83687THF_VID_CFG) & (1 << 4))) {
 		dev_dbg(&pdev->dev, "VID configured as output, "
 			"no VID function\n");
 		goto exit;
 	}
 
-	res = superio_inb(sio_data, W83687THF_VID_DATA) & 0x3f;
+	res = superio_inb(W83687THF_VID_DATA) & 0x3f;
 
 exit:
-	superio_exit(sio_data);
+	superio_exit();
 	return res;
 }
 
@@ -1874,26 +1801,28 @@ static int __init w83627hf_device_add(unsigned short address,
 	pdev = platform_device_alloc(DRVNAME, address);
 	if (!pdev) {
 		err = -ENOMEM;
-		pr_err("Device allocation failed\n");
+		printk(KERN_ERR DRVNAME ": Device allocation failed\n");
 		goto exit;
 	}
 
 	err = platform_device_add_resources(pdev, &res, 1);
 	if (err) {
-		pr_err("Device resource addition failed (%d)\n", err);
+		printk(KERN_ERR DRVNAME ": Device resource addition failed "
+		       "(%d)\n", err);
 		goto exit_device_put;
 	}
 
 	err = platform_device_add_data(pdev, sio_data,
 				       sizeof(struct w83627hf_sio_data));
 	if (err) {
-		pr_err("Platform data allocation failed\n");
+		printk(KERN_ERR DRVNAME ": Platform data allocation failed\n");
 		goto exit_device_put;
 	}
 
 	err = platform_device_add(pdev);
 	if (err) {
-		pr_err("Device addition failed (%d)\n", err);
+		printk(KERN_ERR DRVNAME ": Device addition failed (%d)\n",
+		       err);
 		goto exit_device_put;
 	}
 

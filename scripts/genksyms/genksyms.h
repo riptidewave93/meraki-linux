@@ -26,8 +26,7 @@
 #include <stdio.h>
 
 enum symbol_type {
-	SYM_NORMAL, SYM_TYPEDEF, SYM_ENUM, SYM_STRUCT, SYM_UNION,
-	SYM_ENUM_CONST
+	SYM_NORMAL, SYM_TYPEDEF, SYM_ENUM, SYM_STRUCT, SYM_UNION
 };
 
 enum symbol_status {
@@ -37,7 +36,6 @@ enum symbol_status {
 struct string_list {
 	struct string_list *next;
 	enum symbol_type tag;
-	int in_source_file;
 	char *string;
 };
 
@@ -58,10 +56,9 @@ typedef struct string_list **yystype;
 #define YYSTYPE yystype
 
 extern int cur_line;
-extern char *cur_filename, *source_file;
-extern int in_source_file;
+extern char *cur_filename;
 
-struct symbol *find_symbol(const char *name, enum symbol_type ns, int exact);
+struct symbol *find_symbol(const char *name, enum symbol_type ns);
 struct symbol *add_symbol(const char *name, enum symbol_type type,
 			  struct string_list *defn, int is_extern);
 void export_symbol(const char *);
@@ -69,8 +66,6 @@ void export_symbol(const char *);
 void free_node(struct string_list *list);
 void free_list(struct string_list *s, struct string_list *e);
 struct string_list *copy_node(struct string_list *);
-struct string_list *copy_list_range(struct string_list *start,
-				    struct string_list *end);
 
 int yylex(void);
 int yyparse(void);

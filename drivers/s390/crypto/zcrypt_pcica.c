@@ -27,10 +27,9 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/err.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/uaccess.h>
 
 #include "ap_bus.h"
@@ -53,11 +52,13 @@ static struct ap_device_id zcrypt_pcica_ids[] = {
 	{ /* end of list */ },
 };
 
+#ifndef CONFIG_ZCRYPT_MONOLITHIC
 MODULE_DEVICE_TABLE(ap, zcrypt_pcica_ids);
 MODULE_AUTHOR("IBM Corporation");
 MODULE_DESCRIPTION("PCICA Cryptographic Coprocessor device driver, "
 		   "Copyright 2001, 2006 IBM Corporation");
 MODULE_LICENSE("GPL");
+#endif
 
 static int zcrypt_pcica_probe(struct ap_device *ap_dev);
 static void zcrypt_pcica_remove(struct ap_device *ap_dev);
@@ -280,7 +281,6 @@ static long zcrypt_pcica_modexpo(struct zcrypt_device *zdev,
 	struct completion work;
 	int rc;
 
-	ap_init_message(&ap_msg);
 	ap_msg.message = kmalloc(PCICA_MAX_MESSAGE_SIZE, GFP_KERNEL);
 	if (!ap_msg.message)
 		return -ENOMEM;
@@ -318,7 +318,6 @@ static long zcrypt_pcica_modexpo_crt(struct zcrypt_device *zdev,
 	struct completion work;
 	int rc;
 
-	ap_init_message(&ap_msg);
 	ap_msg.message = kmalloc(PCICA_MAX_MESSAGE_SIZE, GFP_KERNEL);
 	if (!ap_msg.message)
 		return -ENOMEM;
@@ -371,7 +370,6 @@ static int zcrypt_pcica_probe(struct ap_device *ap_dev)
 	zdev->min_mod_size = PCICA_MIN_MOD_SIZE;
 	zdev->max_mod_size = PCICA_MAX_MOD_SIZE;
 	zdev->speed_rating = PCICA_SPEED_RATING;
-	zdev->max_exp_bit_length = PCICA_MAX_MOD_SIZE;
 	ap_dev->reply = &zdev->reply;
 	ap_dev->private = zdev;
 	rc = zcrypt_device_register(zdev);
@@ -406,5 +404,7 @@ void zcrypt_pcica_exit(void)
 	ap_driver_unregister(&zcrypt_pcica_driver);
 }
 
+#ifndef CONFIG_ZCRYPT_MONOLITHIC
 module_init(zcrypt_pcica_init);
 module_exit(zcrypt_pcica_exit);
+#endif

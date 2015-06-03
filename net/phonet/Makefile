@@ -1,6 +1,6 @@
 obj-$(CONFIG_PHONET) += phonet.o pn_pep.o
 
-phonet-y := \
+phonet-objs := \
 	pn_dev.o \
 	pn_netlink.o \
 	socket.o \
@@ -8,4 +8,4 @@ phonet-y := \
 	sysctl.o \
 	af_phonet.o
 
-pn_pep-y := pep.o pep-gprs.o
+pn_pep-objs := pep.o pep-gprs.o

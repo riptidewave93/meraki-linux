@@ -12,6 +12,7 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/init.h>
 #include <linux/fb.h>
@@ -342,7 +343,7 @@ tcx_init_fix(struct fb_info *info, int linebytes)
 	info->fix.accel = FB_ACCEL_SUN_TCX;
 }
 
-static void tcx_unmap_regs(struct platform_device *op, struct fb_info *info,
+static void tcx_unmap_regs(struct of_device *op, struct fb_info *info,
 			   struct tcx_par *par)
 {
 	if (par->tec)
@@ -362,9 +363,10 @@ static void tcx_unmap_regs(struct platform_device *op, struct fb_info *info,
 			   info->screen_base, info->fix.smem_len);
 }
 
-static int __devinit tcx_probe(struct platform_device *op)
+static int __devinit tcx_probe(struct of_device *op,
+			       const struct of_device_id *match)
 {
-	struct device_node *dp = op->dev.of_node;
+	struct device_node *dp = op->node;
 	struct fb_info *info;
 	struct tcx_par *par;
 	int linebytes, i, err;
@@ -480,13 +482,12 @@ out_dealloc_cmap:
 
 out_unmap_regs:
 	tcx_unmap_regs(op, info, par);
-	framebuffer_release(info);
 
 out_err:
 	return err;
 }
 
-static int __devexit tcx_remove(struct platform_device *op)
+static int __devexit tcx_remove(struct of_device *op)
 {
 	struct fb_info *info = dev_get_drvdata(&op->dev);
 	struct tcx_par *par = info->par;
@@ -511,12 +512,9 @@ static const struct of_device_id tcx_match[] = {
 };
 MODULE_DEVICE_TABLE(of, tcx_match);
 
-static struct platform_driver tcx_driver = {
-	.driver = {
-		.name = "tcx",
-		.owner = THIS_MODULE,
-		.of_match_table = tcx_match,
-	},
+static struct of_platform_driver tcx_driver = {
+	.name		= "tcx",
+	.match_table	= tcx_match,
 	.probe		= tcx_probe,
 	.remove		= __devexit_p(tcx_remove),
 };
@@ -526,12 +524,12 @@ static int __init tcx_init(void)
 	if (fb_get_options("tcxfb", NULL))
 		return -ENODEV;
 
-	return platform_driver_register(&tcx_driver);
+	return of_register_driver(&tcx_driver, &of_bus_type);
 }
 
 static void __exit tcx_exit(void)
 {
-	platform_driver_unregister(&tcx_driver);
+	of_unregister_driver(&tcx_driver);
 }
 
 module_init(tcx_init);

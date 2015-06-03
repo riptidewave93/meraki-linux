@@ -7,7 +7,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/gfp.h>
 #include <linux/mm.h>
 #include <linux/swap.h>
 #include <linux/init.h>
@@ -24,6 +23,8 @@
 #include <asm/dma.h>
 #include <asm/setup.h>
 #include <asm/sections.h>
+
+DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
 
 pgd_t swapper_pg_dir[PTRS_PER_PGD] __page_aligned_data;
 

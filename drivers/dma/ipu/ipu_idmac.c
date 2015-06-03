@@ -9,7 +9,6 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/dma-mapping.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/err.h>
@@ -21,11 +20,9 @@
 #include <linux/string.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
-#include <linux/module.h>
 
 #include <mach/ipu.h>
 
-#include "../dmaengine.h"
 #include "ipu_intern.h"
 
 #define FS_VF_IN_VALID	0x00000002
@@ -313,7 +310,7 @@ static void ipu_ch_param_set_size(union chan_param_mem *params,
 	case IPU_PIX_FMT_RGB565:
 		params->ip.bpp	= 2;
 		params->ip.pfs	= 4;
-		params->ip.npb	= 15;
+		params->ip.npb	= 7;
 		params->ip.sat	= 2;		/* SAT = 32-bit access */
 		params->ip.ofs0	= 0;		/* Red bit offset */
 		params->ip.ofs1	= 5;		/* Green bit offset */
@@ -351,7 +348,6 @@ static void ipu_ch_param_set_size(union chan_param_mem *params,
 		break;
 	case IPU_PIX_FMT_BGRA32:
 	case IPU_PIX_FMT_BGR32:
-	case IPU_PIX_FMT_ABGR32:
 		params->ip.bpp	= 0;
 		params->ip.pfs	= 4;
 		params->ip.npb	= 7;
@@ -374,6 +370,20 @@ static void ipu_ch_param_set_size(union chan_param_mem *params,
 		params->ip.ofs0	= 24;		/* Red bit offset */
 		params->ip.ofs1	= 16;		/* Green bit offset */
 		params->ip.ofs2	= 8;		/* Blue bit offset */
+		params->ip.ofs3	= 0;		/* Alpha bit offset */
+		params->ip.wid0	= 7;		/* Red bit width - 1 */
+		params->ip.wid1	= 7;		/* Green bit width - 1 */
+		params->ip.wid2	= 7;		/* Blue bit width - 1 */
+		params->ip.wid3	= 7;		/* Alpha bit width - 1 */
+		break;
+	case IPU_PIX_FMT_ABGR32:
+		params->ip.bpp	= 0;
+		params->ip.pfs	= 4;
+		params->ip.npb	= 7;
+		params->ip.sat	= 2;		/* SAT = 32-bit access */
+		params->ip.ofs0	= 8;		/* Red bit offset */
+		params->ip.ofs1	= 16;		/* Green bit offset */
+		params->ip.ofs2	= 24;		/* Blue bit offset */
 		params->ip.ofs3	= 0;		/* Alpha bit offset */
 		params->ip.wid0	= 7;		/* Red bit width - 1 */
 		params->ip.wid1	= 7;		/* Green bit width - 1 */
@@ -421,6 +431,12 @@ static void ipu_ch_param_set_size(union chan_param_mem *params,
 	}
 
 	params->pp.nsb = 1;
+}
+
+static void ipu_ch_param_set_burst_size(union chan_param_mem *params,
+					uint16_t burst_pixels)
+{
+	params->pp.npb = burst_pixels - 1;
 }
 
 static void ipu_ch_param_set_buffer(union chan_param_mem *params,
@@ -685,6 +701,23 @@ static int ipu_init_channel_buffer(struct idmac_channel *ichan,
 	ipu_ch_param_set_size(&params, pixel_fmt, width, height, stride_bytes);
 	ipu_ch_param_set_buffer(&params, phyaddr_0, phyaddr_1);
 	ipu_ch_param_set_rotation(&params, rot_mode);
+	/* Some channels (rotation) have restriction on burst length */
+	switch (channel) {
+	case IDMAC_IC_7:	/* Hangs with burst 8, 16, other values
+				   invalid - Table 44-30 */
+/*
+		ipu_ch_param_set_burst_size(&params, 8);
+ */
+		break;
+	case IDMAC_SDC_0:
+	case IDMAC_SDC_1:
+		/* In original code only IPU_PIX_FMT_RGB565 was setting burst */
+		ipu_ch_param_set_burst_size(&params, 16);
+		break;
+	case IDMAC_IC_0:
+	default:
+		break;
+	}
 
 	spin_lock_irqsave(&ipu->lock, flags);
 
@@ -728,10 +761,12 @@ static void ipu_select_buffer(enum ipu_channel channel, int buffer_n)
  * @buffer_n:	buffer number to update.
  *		0 or 1 are the only valid values.
  * @phyaddr:	buffer physical address.
+ * @return:	Returns 0 on success or negative error code on failure. This
+ *              function will fail if the buffer is set to ready.
  */
 /* Called under spin_lock(_irqsave)(&ichan->lock) */
-static void ipu_update_channel_buffer(struct idmac_channel *ichan,
-				      int buffer_n, dma_addr_t phyaddr)
+static int ipu_update_channel_buffer(struct idmac_channel *ichan,
+				     int buffer_n, dma_addr_t phyaddr)
 {
 	enum ipu_channel channel = ichan->dma_chan.chan_id;
 	uint32_t reg;
@@ -771,6 +806,8 @@ static void ipu_update_channel_buffer(struct idmac_channel *ichan,
 	}
 
 	spin_unlock_irqrestore(&ipu_data.lock, flags);
+
+	return 0;
 }
 
 /* Called under spin_lock_irqsave(&ichan->lock) */
@@ -779,6 +816,7 @@ static int ipu_submit_buffer(struct idmac_channel *ichan,
 {
 	unsigned int chan_id = ichan->dma_chan.chan_id;
 	struct device *dev = &ichan->dma_chan.dev->device;
+	int ret;
 
 	if (async_tx_test_ack(&desc->txd))
 		return -EINTR;
@@ -789,7 +827,14 @@ static int ipu_submit_buffer(struct idmac_channel *ichan,
 	 * could make it conditional on status >= IPU_CHANNEL_ENABLED, but
 	 * doing it again shouldn't hurt either.
 	 */
-	ipu_update_channel_buffer(ichan, buf_idx, sg_dma_address(sg));
+	ret = ipu_update_channel_buffer(ichan, buf_idx,
+					sg_dma_address(sg));
+
+	if (ret < 0) {
+		dev_err(dev, "Updating sg %p on channel 0x%x buffer %d failed!\n",
+			sg, chan_id, buf_idx);
+		return ret;
+	}
 
 	ipu_select_buffer(chan_id, buf_idx);
 	dev_dbg(dev, "Updated sg %p on channel 0x%x buffer %d\n",
@@ -867,7 +912,14 @@ static dma_cookie_t idmac_tx_submit(struct dma_async_tx_descriptor *tx)
 
 	dev_dbg(dev, "Submitting sg %p\n", &desc->sg[0]);
 
-	cookie = dma_cookie_assign(tx);
+	cookie = ichan->dma_chan.cookie;
+
+	if (++cookie < 0)
+		cookie = 1;
+
+	/* from dmaengine.h: "last cookie value returned to client" */
+	ichan->dma_chan.cookie = cookie;
+	tx->cookie = cookie;
 
 	/* ipu->lock can be taken under ichan->lock, but not v.v. */
 	spin_lock_irqsave(&ichan->lock, flags);
@@ -1118,6 +1170,29 @@ static int ipu_disable_channel(struct idmac *idmac, struct idmac_channel *ichan,
 	reg = idmac_read_icreg(ipu, IDMAC_CHA_EN);
 	idmac_write_icreg(ipu, reg & ~chan_mask, IDMAC_CHA_EN);
 
+	/*
+	 * Problem (observed with channel DMAIC_7): after enabling the channel
+	 * and initialising buffers, there comes an interrupt with current still
+	 * pointing at buffer 0, whereas it should use buffer 0 first and only
+	 * generate an interrupt when it is done, then current should already
+	 * point to buffer 1. This spurious interrupt also comes on channel
+	 * DMASDC_0. With DMAIC_7 normally, is we just leave the ISR after the
+	 * first interrupt, there comes the second with current correctly
+	 * pointing to buffer 1 this time. But sometimes this second interrupt
+	 * doesn't come and the channel hangs. Clearing BUFx_RDY when disabling
+	 * the channel seems to prevent the channel from hanging, but it doesn't
+	 * prevent the spurious interrupt. This might also be unsafe. Think
+	 * about the IDMAC controller trying to switch to a buffer, when we
+	 * clear the ready bit, and re-enable it a moment later.
+	 */
+	reg = idmac_read_ipureg(ipu, IPU_CHA_BUF0_RDY);
+	idmac_write_ipureg(ipu, 0, IPU_CHA_BUF0_RDY);
+	idmac_write_ipureg(ipu, reg & ~(1UL << channel), IPU_CHA_BUF0_RDY);
+
+	reg = idmac_read_ipureg(ipu, IPU_CHA_BUF1_RDY);
+	idmac_write_ipureg(ipu, 0, IPU_CHA_BUF1_RDY);
+	idmac_write_ipureg(ipu, reg & ~(1UL << channel), IPU_CHA_BUF1_RDY);
+
 	spin_unlock_irqrestore(&ipu->lock, flags);
 
 	return 0;
@@ -1196,6 +1271,33 @@ static irqreturn_t idmac_interrupt(int irq, void *dev_id)
 
 	/* Other interrupts do not interfere with this channel */
 	spin_lock(&ichan->lock);
+	if (unlikely(chan_id != IDMAC_SDC_0 && chan_id != IDMAC_SDC_1 &&
+		     ((curbuf >> chan_id) & 1) == ichan->active_buffer &&
+		     !list_is_last(ichan->queue.next, &ichan->queue))) {
+		int i = 100;
+
+		/* This doesn't help. See comment in ipu_disable_channel() */
+		while (--i) {
+			curbuf = idmac_read_ipureg(&ipu_data, IPU_CHA_CUR_BUF);
+			if (((curbuf >> chan_id) & 1) != ichan->active_buffer)
+				break;
+			cpu_relax();
+		}
+
+		if (!i) {
+			spin_unlock(&ichan->lock);
+			dev_dbg(dev,
+				"IRQ on active buffer on channel %x, active "
+				"%d, ready %x, %x, current %x!\n", chan_id,
+				ichan->active_buffer, ready0, ready1, curbuf);
+			return IRQ_NONE;
+		} else
+			dev_dbg(dev,
+				"Buffer deactivated on channel %x, active "
+				"%d, ready %x, %x, current %x, rest %d!\n", chan_id,
+				ichan->active_buffer, ready0, ready1, curbuf, i);
+	}
+
 	if (unlikely((ichan->active_buffer && (ready1 >> chan_id) & 1) ||
 		     (!ichan->active_buffer && (ready0 >> chan_id) & 1)
 		     )) {
@@ -1277,19 +1379,17 @@ static irqreturn_t idmac_interrupt(int irq, void *dev_id)
 
 	if (likely(sgnew) &&
 	    ipu_submit_buffer(ichan, descnew, sgnew, ichan->active_buffer) < 0) {
-		callback = descnew->txd.callback;
-		callback_param = descnew->txd.callback_param;
-		list_del_init(&descnew->list);
+		callback = desc->txd.callback;
+		callback_param = desc->txd.callback_param;
 		spin_unlock(&ichan->lock);
-		if (callback)
-			callback(callback_param);
+		callback(callback_param);
 		spin_lock(&ichan->lock);
 	}
 
 	/* Flip the active buffer - even if update above failed */
 	ichan->active_buffer = !ichan->active_buffer;
 	if (done)
-		dma_cookie_complete(&desc->txd);
+		ichan->completed = desc->txd.cookie;
 
 	callback = desc->txd.callback;
 	callback_param = desc->txd.callback_param;
@@ -1335,8 +1435,7 @@ static void ipu_gc_tasklet(unsigned long arg)
 /* Allocate and initialise a transfer descriptor. */
 static struct dma_async_tx_descriptor *idmac_prep_slave_sg(struct dma_chan *chan,
 		struct scatterlist *sgl, unsigned int sg_len,
-		enum dma_transfer_direction direction, unsigned long tx_flags,
-		void *context)
+		enum dma_data_direction direction, unsigned long tx_flags)
 {
 	struct idmac_channel *ichan = to_idmac_chan(chan);
 	struct idmac_tx_desc *desc = NULL;
@@ -1348,7 +1447,7 @@ static struct dma_async_tx_descriptor *idmac_prep_slave_sg(struct dma_chan *chan
 	    chan->chan_id != IDMAC_IC_7)
 		return NULL;
 
-	if (direction != DMA_DEV_TO_MEM && direction != DMA_MEM_TO_DEV) {
+	if (direction != DMA_FROM_DEVICE && direction != DMA_TO_DEVICE) {
 		dev_err(chan->device->dev, "Invalid DMA direction %d!\n", direction);
 		return NULL;
 	}
@@ -1397,80 +1496,50 @@ static void idmac_issue_pending(struct dma_chan *chan)
 	 */
 }
 
-static int __idmac_control(struct dma_chan *chan, enum dma_ctrl_cmd cmd,
-			   unsigned long arg)
+static void __idmac_terminate_all(struct dma_chan *chan)
 {
 	struct idmac_channel *ichan = to_idmac_chan(chan);
 	struct idmac *idmac = to_idmac(chan->device);
-	struct ipu *ipu = to_ipu(idmac);
-	struct list_head *list, *tmp;
 	unsigned long flags;
 	int i;
 
-	switch (cmd) {
-	case DMA_PAUSE:
-		spin_lock_irqsave(&ipu->lock, flags);
-		ipu_ic_disable_task(ipu, chan->chan_id);
+	ipu_disable_channel(idmac, ichan,
+			    ichan->status >= IPU_CHANNEL_ENABLED);
 
-		/* Return all descriptors into "prepared" state */
-		list_for_each_safe(list, tmp, &ichan->queue)
-			list_del_init(list);
+	tasklet_disable(&to_ipu(idmac)->tasklet);
 
-		ichan->sg[0] = NULL;
-		ichan->sg[1] = NULL;
+	/* ichan->queue is modified in ISR, have to spinlock */
+	spin_lock_irqsave(&ichan->lock, flags);
+	list_splice_init(&ichan->queue, &ichan->free_list);
 
-		spin_unlock_irqrestore(&ipu->lock, flags);
+	if (ichan->desc)
+		for (i = 0; i < ichan->n_tx_desc; i++) {
+			struct idmac_tx_desc *desc = ichan->desc + i;
+			if (list_empty(&desc->list))
+				/* Descriptor was prepared, but not submitted */
+				list_add(&desc->list, &ichan->free_list);
 
-		ichan->status = IPU_CHANNEL_INITIALIZED;
-		break;
-	case DMA_TERMINATE_ALL:
-		ipu_disable_channel(idmac, ichan,
-				    ichan->status >= IPU_CHANNEL_ENABLED);
+			async_tx_clear_ack(&desc->txd);
+		}
 
-		tasklet_disable(&ipu->tasklet);
+	ichan->sg[0] = NULL;
+	ichan->sg[1] = NULL;
+	spin_unlock_irqrestore(&ichan->lock, flags);
 
-		/* ichan->queue is modified in ISR, have to spinlock */
-		spin_lock_irqsave(&ichan->lock, flags);
-		list_splice_init(&ichan->queue, &ichan->free_list);
+	tasklet_enable(&to_ipu(idmac)->tasklet);
 
-		if (ichan->desc)
-			for (i = 0; i < ichan->n_tx_desc; i++) {
-				struct idmac_tx_desc *desc = ichan->desc + i;
-				if (list_empty(&desc->list))
-					/* Descriptor was prepared, but not submitted */
-					list_add(&desc->list, &ichan->free_list);
-
-				async_tx_clear_ack(&desc->txd);
-			}
-
-		ichan->sg[0] = NULL;
-		ichan->sg[1] = NULL;
-		spin_unlock_irqrestore(&ichan->lock, flags);
-
-		tasklet_enable(&ipu->tasklet);
-
-		ichan->status = IPU_CHANNEL_INITIALIZED;
-		break;
-	default:
-		return -ENOSYS;
-	}
-
-	return 0;
+	ichan->status = IPU_CHANNEL_INITIALIZED;
 }
 
-static int idmac_control(struct dma_chan *chan, enum dma_ctrl_cmd cmd,
-			 unsigned long arg)
+static void idmac_terminate_all(struct dma_chan *chan)
 {
 	struct idmac_channel *ichan = to_idmac_chan(chan);
-	int ret;
 
 	mutex_lock(&ichan->chan_mutex);
 
-	ret = __idmac_control(chan, cmd, arg);
+	__idmac_terminate_all(chan);
 
 	mutex_unlock(&ichan->chan_mutex);
-
-	return ret;
 }
 
 #ifdef DEBUG
@@ -1505,7 +1574,8 @@ static int idmac_alloc_chan_resources(struct dma_chan *chan)
 	BUG_ON(chan->client_count > 1);
 	WARN_ON(ichan->status != IPU_CHANNEL_FREE);
 
-	dma_cookie_init(chan);
+	chan->cookie		= 1;
+	ichan->completed	= -ENXIO;
 
 	ret = ipu_irq_map(chan->chan_id);
 	if (ret < 0)
@@ -1561,7 +1631,7 @@ static void idmac_free_chan_resources(struct dma_chan *chan)
 
 	mutex_lock(&ichan->chan_mutex);
 
-	__idmac_control(chan, DMA_TERMINATE_ALL, 0);
+	__idmac_terminate_all(chan);
 
 	if (ichan->status > IPU_CHANNEL_FREE) {
 #ifdef DEBUG
@@ -1591,10 +1661,15 @@ static void idmac_free_chan_resources(struct dma_chan *chan)
 	tasklet_schedule(&to_ipu(idmac)->tasklet);
 }
 
-static enum dma_status idmac_tx_status(struct dma_chan *chan,
-		       dma_cookie_t cookie, struct dma_tx_state *txstate)
+static enum dma_status idmac_is_tx_complete(struct dma_chan *chan,
+		dma_cookie_t cookie, dma_cookie_t *done, dma_cookie_t *used)
 {
-	dma_set_tx_state(txstate, chan->completed_cookie, chan->cookie, 0);
+	struct idmac_channel *ichan = to_idmac_chan(chan);
+
+	if (done)
+		*done = ichan->completed;
+	if (used)
+		*used = chan->cookie;
 	if (cookie != chan->cookie)
 		return DMA_ERROR;
 	return DMA_SUCCESS;
@@ -1613,12 +1688,12 @@ static int __init ipu_idmac_init(struct ipu *ipu)
 	dma->dev				= ipu->dev;
 	dma->device_alloc_chan_resources	= idmac_alloc_chan_resources;
 	dma->device_free_chan_resources		= idmac_free_chan_resources;
-	dma->device_tx_status			= idmac_tx_status;
+	dma->device_is_tx_complete		= idmac_is_tx_complete;
 	dma->device_issue_pending		= idmac_issue_pending;
 
 	/* Compulsory for DMA_SLAVE fields */
 	dma->device_prep_slave_sg		= idmac_prep_slave_sg;
-	dma->device_control			= idmac_control;
+	dma->device_terminate_all		= idmac_terminate_all;
 
 	INIT_LIST_HEAD(&dma->channels);
 	for (i = 0; i < IPU_CHANNELS_NUM; i++) {
@@ -1630,10 +1705,11 @@ static int __init ipu_idmac_init(struct ipu *ipu)
 
 		ichan->status		= IPU_CHANNEL_FREE;
 		ichan->sec_chan_en	= false;
+		ichan->completed	= -ENXIO;
 		snprintf(ichan->eof_name, sizeof(ichan->eof_name), "IDMAC EOF %d", i);
 
 		dma_chan->device	= &idmac->dma;
-		dma_cookie_init(dma_chan);
+		dma_chan->cookie	= 1;
 		dma_chan->chan_id	= i;
 		list_add_tail(&dma_chan->device_node, &dma->channels);
 	}
@@ -1651,7 +1727,8 @@ static void __exit ipu_idmac_exit(struct ipu *ipu)
 	for (i = 0; i < IPU_CHANNELS_NUM; i++) {
 		struct idmac_channel *ichan = ipu->channel + i;
 
-		idmac_control(&ichan->dma_chan, DMA_TERMINATE_ALL, 0);
+		idmac_terminate_all(&ichan->dma_chan);
+		idmac_prep_slave_sg(&ichan->dma_chan, NULL, 0, DMA_NONE, 0);
 	}
 
 	dma_async_device_unregister(&idmac->dma);
@@ -1694,14 +1771,16 @@ static int __init ipu_probe(struct platform_device *pdev)
 		ipu_data.irq_fn, ipu_data.irq_err, ipu_data.irq_base);
 
 	/* Remap IPU common registers */
-	ipu_data.reg_ipu = ioremap(mem_ipu->start, resource_size(mem_ipu));
+	ipu_data.reg_ipu = ioremap(mem_ipu->start,
+				   mem_ipu->end - mem_ipu->start + 1);
 	if (!ipu_data.reg_ipu) {
 		ret = -ENOMEM;
 		goto err_ioremap_ipu;
 	}
 
 	/* Remap Image Converter and Image DMA Controller registers */
-	ipu_data.reg_ic = ioremap(mem_ic->start, resource_size(mem_ic));
+	ipu_data.reg_ic = ioremap(mem_ic->start,
+				  mem_ic->end - mem_ic->start + 1);
 	if (!ipu_data.reg_ic) {
 		ret = -ENOMEM;
 		goto err_ioremap_ic;

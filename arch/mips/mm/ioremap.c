@@ -10,7 +10,6 @@
 #include <asm/addrspace.h>
 #include <asm/byteorder.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <asm/cacheflush.h>
 #include <asm/io.h>

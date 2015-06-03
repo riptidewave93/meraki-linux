@@ -39,7 +39,7 @@ static void __init gapspci_fixup_resources(struct pci_dev *dev)
 		/*
 		 * We also assume that dev->devfn == 0
 		 */
-		dev->resource[1].start	= p->resources[0].start  + 0x100;
+		dev->resource[1].start	= p->io_resource->start  + 0x100;
 		dev->resource[1].end	= dev->resource[1].start + 0x200 - 1;
 
 		/*
@@ -64,7 +64,7 @@ static void __init gapspci_fixup_resources(struct pci_dev *dev)
 }
 DECLARE_PCI_FIXUP_HEADER(PCI_ANY_ID, PCI_ANY_ID, gapspci_fixup_resources);
 
-int __init pcibios_map_platform_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+int __init pcibios_map_platform_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	/*
 	 * The interrupt routing semantics here are quite trivial.

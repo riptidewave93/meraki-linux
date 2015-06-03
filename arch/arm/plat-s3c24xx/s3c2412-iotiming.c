@@ -1,6 +1,6 @@
 /* linux/arch/arm/plat-s3c24xx/s3c2412-iotiming.c
  *
- * Copyright (c) 2006-2008 Simtec Electronics
+ * Copyright (c) 2006,2008 Simtec Electronics
  *	http://armlinux.simtec.co.uk/
  *	Ben Dooks <ben@simtec.co.uk>
  *
@@ -17,11 +17,10 @@
 #include <linux/ioport.h>
 #include <linux/cpufreq.h>
 #include <linux/seq_file.h>
-#include <linux/device.h>
+#include <linux/sysdev.h>
 #include <linux/delay.h>
 #include <linux/clk.h>
 #include <linux/err.h>
-#include <linux/slab.h>
 
 #include <linux/amba/pl093.h>
 

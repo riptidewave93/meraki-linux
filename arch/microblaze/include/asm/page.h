@@ -23,29 +23,23 @@
 #ifdef __KERNEL__
 
 /* PAGE_SHIFT determines the page size */
-#if defined(CONFIG_MICROBLAZE_32K_PAGES)
-#define PAGE_SHIFT		15
-#elif defined(CONFIG_MICROBLAZE_16K_PAGES)
-#define PAGE_SHIFT		14
-#elif defined(CONFIG_MICROBLAZE_8K_PAGES)
-#define PAGE_SHIFT		13
-#else
-#define PAGE_SHIFT		12
-#endif
-#define PAGE_SIZE	(ASM_CONST(1) << PAGE_SHIFT)
+#define PAGE_SHIFT	(12)
+#define PAGE_SIZE	(_AC(1, UL) << PAGE_SHIFT)
 #define PAGE_MASK	(~(PAGE_SIZE-1))
 
 #define LOAD_OFFSET	ASM_CONST((CONFIG_KERNEL_START-CONFIG_KERNEL_BASE_ADDR))
 
 #ifndef __ASSEMBLY__
 
-/* MS be sure that SLAB allocates aligned objects */
-#define ARCH_DMA_MINALIGN	L1_CACHE_BYTES
-
-#define ARCH_SLAB_MINALIGN	L1_CACHE_BYTES
-
 #define PAGE_UP(addr)	(((addr)+((PAGE_SIZE)-1))&(~((PAGE_SIZE)-1)))
 #define PAGE_DOWN(addr)	((addr)&(~((PAGE_SIZE)-1)))
+
+/* align addr on a size boundary - adjust address up/down if needed */
+#define _ALIGN_UP(addr, size)	(((addr)+((size)-1))&(~((size)-1)))
+#define _ALIGN_DOWN(addr, size)	((addr)&(~((size)-1)))
+
+/* align addr on a size boundary - adjust address up if needed */
+#define _ALIGN(addr, size)	_ALIGN_UP(addr, size)
 
 #ifndef CONFIG_MMU
 /*
@@ -68,6 +62,12 @@ extern unsigned int __page_offset;
 #define PAGE_OFFSET	CONFIG_KERNEL_START
 
 /*
+ * MAP_NR -- given an address, calculate the index of the page struct which
+ * points to the address's page.
+ */
+#define MAP_NR(addr) (((unsigned long)(addr) - PAGE_OFFSET) >> PAGE_SHIFT)
+
+/*
  * The basic type of a PTE - 32 bit physical addressing.
  */
 typedef unsigned long pte_basic_t;
@@ -76,7 +76,14 @@ typedef unsigned long pte_basic_t;
 
 #endif /* CONFIG_MMU */
 
-# define copy_page(to, from)			memcpy((to), (from), PAGE_SIZE)
+#  ifndef CONFIG_MMU
+#  define copy_page(to, from)			memcpy((to), (from), PAGE_SIZE)
+#  define get_user_page(vaddr)			__get_free_page(GFP_KERNEL)
+#  define free_user_page(page, addr)		free_page(addr)
+#  else /* CONFIG_MMU */
+extern void copy_page(void *to, void *from);
+#  endif /* CONFIG_MMU */
+
 # define clear_page(pgaddr)			memset((pgaddr), 0, PAGE_SIZE)
 
 # define clear_user_page(pgaddr, vaddr, page)	memset((pgaddr), 0, PAGE_SIZE)
@@ -135,10 +142,8 @@ extern unsigned long min_low_pfn;
 extern unsigned long max_pfn;
 
 extern unsigned long memory_start;
+extern unsigned long memory_end;
 extern unsigned long memory_size;
-extern unsigned long lowmem_size;
-
-extern unsigned long kernel_tlb;
 
 extern int page_is_ram(unsigned long pfn);
 
@@ -149,11 +154,7 @@ extern int page_is_ram(unsigned long pfn);
 # define pfn_to_virt(pfn)	__va(pfn_to_phys((pfn)))
 
 #  ifdef CONFIG_MMU
-
-#  define virt_to_page(kaddr)	(pfn_to_page(__pa(kaddr) >> PAGE_SHIFT))
-#  define page_to_virt(page)   __va(page_to_pfn(page) << PAGE_SHIFT)
-#  define page_to_phys(page)     (page_to_pfn(page) << PAGE_SHIFT)
-
+#  define virt_to_page(kaddr) 	(mem_map +  MAP_NR(kaddr))
 #  else /* CONFIG_MMU */
 #  define virt_to_page(vaddr)	(pfn_to_page(virt_to_pfn(vaddr)))
 #  define page_to_virt(page)	(pfn_to_virt(page_to_pfn(page)))
@@ -163,8 +164,7 @@ extern int page_is_ram(unsigned long pfn);
 #  endif /* CONFIG_MMU */
 
 #  ifndef CONFIG_MMU
-#  define pfn_valid(pfn)	(((pfn) >= min_low_pfn) && \
-				((pfn) <= (min_low_pfn + max_mapnr)))
+#  define pfn_valid(pfn)	((pfn) >= min_low_pfn && (pfn) <= max_mapnr)
 #  define ARCH_PFN_OFFSET	(PAGE_OFFSET >> PAGE_SHIFT)
 #  else /* CONFIG_MMU */
 #  define ARCH_PFN_OFFSET	(memory_start >> PAGE_SHIFT)
@@ -176,8 +176,15 @@ extern int page_is_ram(unsigned long pfn);
 
 #define	virt_addr_valid(vaddr)	(pfn_valid(virt_to_pfn(vaddr)))
 
-# define __pa(x)	__virt_to_phys((unsigned long)(x))
-# define __va(x)	((void *)__phys_to_virt((unsigned long)(x)))
+
+#  ifndef CONFIG_MMU
+#  define __pa(vaddr)	((unsigned long) (vaddr))
+#  define __va(paddr)	((void *) (paddr))
+#  else /* CONFIG_MMU */
+#  define __pa(x)	__virt_to_phys((unsigned long)(x))
+#  define __va(x)	((void *)__phys_to_virt((unsigned long)(x)))
+#  endif /* CONFIG_MMU */
+
 
 /* Convert between virtual and physical address for MMU. */
 /* Handle MicroBlaze processor with virtual memory. */
@@ -200,6 +207,9 @@ extern int page_is_ram(unsigned long pfn);
 #define TOPHYS(addr)  __virt_to_phys(addr)
 
 #ifdef CONFIG_MMU
+#ifdef CONFIG_CONTIGUOUS_PAGE_ALLOC
+#define WANT_PAGE_VIRTUAL 1 /* page alloc 2 relies on this */
+#endif
 
 #define VM_DATA_DEFAULT_FLAGS	(VM_READ | VM_WRITE | VM_EXEC | \
 				 VM_MAYREAD | VM_MAYWRITE | VM_MAYEXEC)

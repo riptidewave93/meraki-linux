@@ -19,6 +19,12 @@ SUBSYS(debug)
 
 /* */
 
+#ifdef CONFIG_CGROUP_NS
+SUBSYS(ns)
+#endif
+
+/* */
+
 #ifdef CONFIG_CGROUP_SCHED
 SUBSYS(cpu_cgroup)
 #endif
@@ -51,24 +57,6 @@ SUBSYS(freezer)
 
 #ifdef CONFIG_NET_CLS_CGROUP
 SUBSYS(net_cls)
-#endif
-
-/* */
-
-#ifdef CONFIG_BLK_CGROUP
-SUBSYS(blkio)
-#endif
-
-/* */
-
-#ifdef CONFIG_CGROUP_PERF
-SUBSYS(perf)
-#endif
-
-/* */
-
-#ifdef CONFIG_NETPRIO_CGROUP
-SUBSYS(net_prio)
 #endif
 
 /* */

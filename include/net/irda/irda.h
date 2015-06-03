@@ -53,6 +53,10 @@ typedef __u32 magic_t;
 #ifndef IRDA_ALIGN
 #  define IRDA_ALIGN __attribute__((aligned))
 #endif
+#ifndef IRDA_PACK
+#  define IRDA_PACK __attribute__((packed))
+#endif
+
 
 #ifdef CONFIG_IRDA_DEBUG
 

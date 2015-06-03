@@ -16,44 +16,22 @@
 #include <linux/mutex.h>
 #include <linux/videodev2.h>
 
-#include <media/media-entity.h>
-
 #define VIDEO_MAJOR	81
 
 #define VFL_TYPE_GRABBER	0
 #define VFL_TYPE_VBI		1
 #define VFL_TYPE_RADIO		2
-#define VFL_TYPE_SUBDEV		3
+#define VFL_TYPE_VTX		3
 #define VFL_TYPE_MAX		4
 
 struct v4l2_ioctl_callbacks;
 struct video_device;
 struct v4l2_device;
-struct v4l2_ctrl_handler;
 
-/* Flag to mark the video_device struct as registered.
-   Drivers can clear this flag if they want to block all future
-   device access. It is cleared by video_unregister_device. */
-#define V4L2_FL_REGISTERED	(0)
-/* file->private_data points to struct v4l2_fh */
-#define V4L2_FL_USES_V4L2_FH	(1)
-/* Use the prio field of v4l2_fh for core priority checking */
-#define V4L2_FL_USE_FH_PRIO	(2)
-
-/* Priority helper functions */
-
-struct v4l2_prio_state {
-	atomic_t prios[4];
-};
-
-void v4l2_prio_init(struct v4l2_prio_state *global);
-int v4l2_prio_change(struct v4l2_prio_state *global, enum v4l2_priority *local,
-		     enum v4l2_priority new);
-void v4l2_prio_open(struct v4l2_prio_state *global, enum v4l2_priority *local);
-void v4l2_prio_close(struct v4l2_prio_state *global, enum v4l2_priority local);
-enum v4l2_priority v4l2_prio_max(struct v4l2_prio_state *global);
-int v4l2_prio_check(struct v4l2_prio_state *global, enum v4l2_priority local);
-
+/* Flag to mark the video_device struct as unregistered.
+   Drivers can set this flag if they want to block all future
+   device access. It is set by video_unregister_device. */
+#define V4L2_FL_UNREGISTERED	(0)
 
 struct v4l2_file_operations {
 	struct module *owner;
@@ -62,9 +40,6 @@ struct v4l2_file_operations {
 	unsigned int (*poll) (struct file *, struct poll_table_struct *);
 	long (*ioctl) (struct file *, unsigned int, unsigned long);
 	long (*unlocked_ioctl) (struct file *, unsigned int, unsigned long);
-#ifdef CONFIG_COMPAT
-	long (*compat_ioctl32) (struct file *, unsigned int, unsigned long);
-#endif
 	unsigned long (*get_unmapped_area) (struct file *, unsigned long,
 				unsigned long, unsigned long, unsigned long);
 	int (*mmap) (struct file *, struct vm_area_struct *);
@@ -80,9 +55,6 @@ struct v4l2_file_operations {
 
 struct video_device
 {
-#if defined(CONFIG_MEDIA_CONTROLLER)
-	struct media_entity entity;
-#endif
 	/* device ops */
 	const struct v4l2_file_operations *fops;
 
@@ -93,12 +65,6 @@ struct video_device
 	/* Set either parent or v4l2_dev if your driver uses v4l2_device */
 	struct device *parent;		/* device parent */
 	struct v4l2_device *v4l2_dev;	/* v4l2_device parent */
-
-	/* Control handler associated with this device node. May be NULL. */
-	struct v4l2_ctrl_handler *ctrl_handler;
-
-	/* Priority state. If NULL, then v4l2_dev->prio will be used. */
-	struct v4l2_prio_state *prio;
 
 	/* device info */
 	char name[32];
@@ -111,10 +77,6 @@ struct video_device
 	/* attribute to differentiate multiple indices on one physical device */
 	int index;
 
-	/* V4L2 file handles */
-	spinlock_t		fh_lock; /* Lock for all v4l2_fhs */
-	struct list_head	fh_list; /* List of struct v4l2_fh */
-
 	int debug;			/* Activates debug level*/
 
 	/* Video standard vars */
@@ -126,39 +88,25 @@ struct video_device
 
 	/* ioctl callbacks */
 	const struct v4l2_ioctl_ops *ioctl_ops;
-
-	/* serialization lock */
-	struct mutex *lock;
 };
 
-#define media_entity_to_video_device(__e) \
-	container_of(__e, struct video_device, entity)
 /* dev to video-device */
 #define to_video_device(cd) container_of(cd, struct video_device, dev)
-
-int __must_check __video_register_device(struct video_device *vdev, int type,
-		int nr, int warn_if_nr_in_use, struct module *owner);
 
 /* Register video devices. Note that if video_register_device fails,
    the release() callback of the video_device structure is *not* called, so
    the caller is responsible for freeing any data. Usually that means that
-   you call video_device_release() on failure. */
-static inline int __must_check video_register_device(struct video_device *vdev,
-		int type, int nr)
-{
-	return __video_register_device(vdev, type, nr, 1, vdev->fops->owner);
-}
+   you call video_device_release() on failure.
+
+   Also note that vdev->minor is set to -1 if the registration failed. */
+int __must_check video_register_device(struct video_device *vdev, int type, int nr);
 
 /* Same as video_register_device, but no warning is issued if the desired
    device node number was already in use. */
-static inline int __must_check video_register_device_no_warn(
-		struct video_device *vdev, int type, int nr)
-{
-	return __video_register_device(vdev, type, nr, 0, vdev->fops->owner);
-}
+int __must_check video_register_device_no_warn(struct video_device *vdev, int type, int nr);
 
 /* Unregister video devices. Will do nothing if vdev == NULL or
-   video_is_registered() returns false. */
+   vdev->minor < 0. */
 void video_unregister_device(struct video_device *vdev);
 
 /* helper functions to alloc/release struct video_device, the
@@ -193,14 +141,9 @@ static inline void *video_drvdata(struct file *file)
 	return video_get_drvdata(video_devdata(file));
 }
 
-static inline const char *video_device_node_name(struct video_device *vdev)
+static inline int video_is_unregistered(struct video_device *vdev)
 {
-	return dev_name(&vdev->dev);
-}
-
-static inline int video_is_registered(struct video_device *vdev)
-{
-	return test_bit(V4L2_FL_REGISTERED, &vdev->flags);
+	return test_bit(V4L2_FL_UNREGISTERED, &vdev->flags);
 }
 
 #endif /* _V4L2_DEV_H */

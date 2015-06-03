@@ -8,7 +8,6 @@
 
 #include <linux/interrupt.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <asm/dma.h>
 #include <asm/dmabrg.h>
 #include <asm/io.h>
@@ -87,8 +86,8 @@ static irqreturn_t dmabrg_irq(int irq, void *data)
 	unsigned long dcr;
 	unsigned int i;
 
-	dcr = __raw_readl(DMABRGCR);
-	__raw_writel(dcr & ~0x00ff0003, DMABRGCR);	/* ack all */
+	dcr = ctrl_inl(DMABRGCR);
+	ctrl_outl(dcr & ~0x00ff0003, DMABRGCR);	/* ack all */
 	dcr &= dcr >> 8;	/* ignore masked */
 
 	/* USB stuff, get it out of the way first */
@@ -110,17 +109,17 @@ static irqreturn_t dmabrg_irq(int irq, void *data)
 static void dmabrg_disable_irq(unsigned int dmairq)
 {
 	unsigned long dcr;
-	dcr = __raw_readl(DMABRGCR);
+	dcr = ctrl_inl(DMABRGCR);
 	dcr &= ~(1 << ((dmairq > 1) ? dmairq + 22 : dmairq + 8));
-	__raw_writel(dcr, DMABRGCR);
+	ctrl_outl(dcr, DMABRGCR);
 }
 
 static void dmabrg_enable_irq(unsigned int dmairq)
 {
 	unsigned long dcr;
-	dcr = __raw_readl(DMABRGCR);
+	dcr = ctrl_inl(DMABRGCR);
 	dcr |= (1 << ((dmairq > 1) ? dmairq + 22 : dmairq + 8));
-	__raw_writel(dcr, DMABRGCR);
+	ctrl_outl(dcr, DMABRGCR);
 }
 
 int dmabrg_request_irq(unsigned int dmairq, void(*handler)(void*),
@@ -166,31 +165,31 @@ static int __init dmabrg_init(void)
 		printk(KERN_INFO "DMABRG: DMAC ch0 not reserved!\n");
 #endif
 
-	__raw_writel(0, DMABRGCR);
-	__raw_writel(0, DMACHCR0);
-	__raw_writel(0x94000000, DMARSRA);	/* enable DMABRG in DMAC 0 */
+	ctrl_outl(0, DMABRGCR);
+	ctrl_outl(0, DMACHCR0);
+	ctrl_outl(0x94000000, DMARSRA);	/* enable DMABRG in DMAC 0 */
 
 	/* enable DMABRG mode, enable the DMAC */
-	or = __raw_readl(DMAOR);
-	__raw_writel(or | DMAOR_BRG | DMAOR_DMEN, DMAOR);
+	or = ctrl_inl(DMAOR);
+	ctrl_outl(or | DMAOR_BRG | DMAOR_DMEN, DMAOR);
 
-	ret = request_irq(DMABRGI0, dmabrg_irq, 0,
+	ret = request_irq(DMABRGI0, dmabrg_irq, IRQF_DISABLED,
 			"DMABRG USB address error", NULL);
 	if (ret)
 		goto out0;
 
-	ret = request_irq(DMABRGI1, dmabrg_irq, 0,
+	ret = request_irq(DMABRGI1, dmabrg_irq, IRQF_DISABLED,
 			"DMABRG Transfer End", NULL);
 	if (ret)
 		goto out1;
 
-	ret = request_irq(DMABRGI2, dmabrg_irq, 0,
+	ret = request_irq(DMABRGI2, dmabrg_irq, IRQF_DISABLED,
 			"DMABRG Transfer Half", NULL);
 	if (ret == 0)
 		return ret;
 
-	free_irq(DMABRGI1, NULL);
-out1:	free_irq(DMABRGI0, NULL);
+	free_irq(DMABRGI1, 0);
+out1:	free_irq(DMABRGI0, 0);
 out0:	kfree(dmabrg_handlers);
 	return ret;
 }

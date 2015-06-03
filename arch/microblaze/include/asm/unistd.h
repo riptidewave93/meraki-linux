@@ -377,25 +377,13 @@
 #define __NR_shutdown		359 /* new */
 #define __NR_sendmsg		360 /* new */
 #define __NR_recvmsg		361 /* new */
-#define __NR_accept4		362 /* new */
+#define __NR_accept04		362 /* new */
 #define __NR_preadv		363 /* new */
 #define __NR_pwritev		364 /* new */
 #define __NR_rt_tgsigqueueinfo	365 /* new */
 #define __NR_perf_event_open	366 /* new */
-#define __NR_recvmmsg		367 /* new */
-#define __NR_fanotify_init	368
-#define __NR_fanotify_mark	369
-#define __NR_prlimit64		370
-#define __NR_name_to_handle_at	371
-#define __NR_open_by_handle_at	372
-#define __NR_clock_adjtime	373
-#define __NR_syncfs		374
-#define __NR_setns		375
-#define __NR_sendmmsg		376
-#define __NR_process_vm_readv	377
-#define __NR_process_vm_writev	378
 
-#define __NR_syscalls		379
+#define __NR_syscalls		367
 
 #ifdef __KERNEL__
 #ifndef __ASSEMBLY__

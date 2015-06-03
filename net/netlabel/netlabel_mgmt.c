@@ -5,7 +5,7 @@
  * NetLabel system manages static and dynamic label mappings for network
  * protocols such as CIPSO and RIPSO.
  *
- * Author: Paul Moore <paul@paul-moore.com>
+ * Author: Paul Moore <paul.moore@hp.com>
  *
  */
 
@@ -34,7 +34,6 @@
 #include <linux/skbuff.h>
 #include <linux/in.h>
 #include <linux/in6.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/netlink.h>
 #include <net/genetlink.h>
@@ -42,7 +41,7 @@
 #include <net/ipv6.h>
 #include <net/netlabel.h>
 #include <net/cipso_ipv4.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include "netlabel_domainhash.h"
 #include "netlabel_user.h"
@@ -184,7 +183,7 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 
 		entry->type = NETLBL_NLTYPE_ADDRSELECT;
 		entry->type_def.addrsel = addrmap;
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	} else if (info->attrs[NLBL_MGMT_A_IPV6ADDR]) {
 		struct in6_addr *addr;
 		struct in6_addr *mask;
@@ -216,12 +215,12 @@ static int netlbl_mgmt_add_common(struct genl_info *info,
 			ret_val = -ENOMEM;
 			goto add_failure;
 		}
-		map->list.addr = *addr;
+		ipv6_addr_copy(&map->list.addr, addr);
 		map->list.addr.s6_addr32[0] &= mask->s6_addr32[0];
 		map->list.addr.s6_addr32[1] &= mask->s6_addr32[1];
 		map->list.addr.s6_addr32[2] &= mask->s6_addr32[2];
 		map->list.addr.s6_addr32[3] &= mask->s6_addr32[3];
-		map->list.mask = *mask;
+		ipv6_addr_copy(&map->list.mask, mask);
 		map->list.valid = 1;
 		map->type = entry->type;
 
@@ -259,7 +258,7 @@ add_failure:
  *
  * Description:
  * This function is a helper function used by the LISTALL and LISTDEF command
- * handlers.  The caller is responsible for ensuring that the RCU read lock
+ * handlers.  The caller is responsibile for ensuring that the RCU read lock
  * is held.  Returns zero on success, negative values on failure.
  *
  */
@@ -270,7 +269,7 @@ static int netlbl_mgmt_listentry(struct sk_buff *skb,
 	struct nlattr *nla_a;
 	struct nlattr *nla_b;
 	struct netlbl_af4list *iter4;
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 	struct netlbl_af6list *iter6;
 #endif
 
@@ -324,7 +323,7 @@ static int netlbl_mgmt_listentry(struct sk_buff *skb,
 
 			nla_nest_end(skb, nla_b);
 		}
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 		netlbl_af6list_foreach_rcu(iter6,
 					   &entry->type_def.addrsel->list6) {
 			struct netlbl_domaddr6_map *map6;

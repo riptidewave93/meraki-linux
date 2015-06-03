@@ -5,44 +5,35 @@
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/fs.h>
-#include "reiserfs.h"
+#include <linux/reiserfs_fs.h>
 #include <linux/stat.h>
 #include <linux/buffer_head.h>
-#include <linux/slab.h>
 #include <asm/uaccess.h>
 
 extern const struct reiserfs_key MIN_KEY;
 
 static int reiserfs_readdir(struct file *, void *, filldir_t);
-static int reiserfs_dir_fsync(struct file *filp, loff_t start, loff_t end,
+static int reiserfs_dir_fsync(struct file *filp, struct dentry *dentry,
 			      int datasync);
 
 const struct file_operations reiserfs_dir_operations = {
-	.llseek = generic_file_llseek,
 	.read = generic_read_dir,
 	.readdir = reiserfs_readdir,
 	.fsync = reiserfs_dir_fsync,
-	.unlocked_ioctl = reiserfs_ioctl,
+	.ioctl = reiserfs_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = reiserfs_compat_ioctl,
 #endif
 };
 
-static int reiserfs_dir_fsync(struct file *filp, loff_t start, loff_t end,
+static int reiserfs_dir_fsync(struct file *filp, struct dentry *dentry,
 			      int datasync)
 {
-	struct inode *inode = filp->f_mapping->host;
+	struct inode *inode = dentry->d_inode;
 	int err;
-
-	err = filemap_write_and_wait_range(inode->i_mapping, start, end);
-	if (err)
-		return err;
-
-	mutex_lock(&inode->i_mutex);
 	reiserfs_write_lock(inode->i_sb);
 	err = reiserfs_commit_for_inode(inode);
 	reiserfs_write_unlock(inode->i_sb);
-	mutex_unlock(&inode->i_mutex);
 	if (err < 0)
 		return err;
 	return 0;
@@ -128,7 +119,6 @@ int reiserfs_readdir_dentry(struct dentry *dentry, void *dirent,
 				char *d_name;
 				off_t d_off;
 				ino_t d_ino;
-				loff_t cur_pos = deh_offset(deh);
 
 				if (!de_visible(deh))
 					/* it is hidden entry */
@@ -182,28 +172,19 @@ int reiserfs_readdir_dentry(struct dentry *dentry, void *dirent,
 				// user space buffer is swapped out. At that time
 				// entry can move to somewhere else
 				memcpy(local_buf, d_name, d_reclen);
-
-				/*
-				 * Since filldir might sleep, we can release
-				 * the write lock here for other waiters
-				 */
-				reiserfs_write_unlock(inode->i_sb);
 				if (filldir
 				    (dirent, local_buf, d_reclen, d_off, d_ino,
 				     DT_UNKNOWN) < 0) {
-					reiserfs_write_lock(inode->i_sb);
 					if (local_buf != small_buf) {
 						kfree(local_buf);
 					}
 					goto end;
 				}
-				reiserfs_write_lock(inode->i_sb);
 				if (local_buf != small_buf) {
 					kfree(local_buf);
 				}
-
-				/* deh_offset(deh) may be invalid now. */
-				next_pos = cur_pos + 1;
+				// next entry should be looked for with such offset
+				next_pos = deh_offset(deh) + 1;
 
 				if (item_moved(&tmp_ih, &path_to_entry)) {
 					goto research;

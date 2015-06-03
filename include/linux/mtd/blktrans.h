@@ -36,7 +36,6 @@ struct mtd_blktrans_dev {
 	struct mtd_info *mtd;
 	struct mutex lock;
 	int devnum;
-	bool bg_stop;
 	unsigned long size;
 	int readonly;
 	int open;
@@ -47,7 +46,6 @@ struct mtd_blktrans_dev {
 	struct request_queue *rq;
 	spinlock_t queue_lock;
 	void *priv;
-	fmode_t file_mode;
 };
 
 struct mtd_blktrans_ops {

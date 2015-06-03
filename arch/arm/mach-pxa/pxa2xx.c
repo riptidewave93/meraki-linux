@@ -13,7 +13,6 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/device.h>
-#include <linux/io.h>
 
 #include <mach/hardware.h>
 #include <mach/pxa2xx-regs.h>

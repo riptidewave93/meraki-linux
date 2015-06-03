@@ -831,7 +831,7 @@ static int __devinit pvr2fb_common_init(void)
 	printk(KERN_NOTICE "fb%d: registering with SQ API\n", fb_info->node);
 
 	pvr2fb_map = sq_remap(fb_info->fix.smem_start, fb_info->fix.smem_len,
-			      fb_info->fix.id, PAGE_SHARED);
+			      fb_info->fix.id, pgprot_val(PAGE_SHARED));
 
 	printk(KERN_NOTICE "fb%d: Mapped video memory to SQ addr 0x%lx\n",
 	       fb_info->node, pvr2fb_map);
@@ -895,7 +895,7 @@ static int __init pvr2fb_dc_init(void)
 
 #ifdef CONFIG_PVR2_DMA
 	if (request_dma(pvr2dma, "pvr2") != 0) {
-		free_irq(HW_EVENT_VSYNC, fb_info);
+		free_irq(HW_EVENT_VSYNC, 0);
 		return -EBUSY;
 	}
 #endif
@@ -914,7 +914,7 @@ static void __exit pvr2fb_dc_exit(void)
 		currentpar->mmio_base = 0;
 	}
 
-	free_irq(HW_EVENT_VSYNC, fb_info);
+	free_irq(HW_EVENT_VSYNC, 0);
 #ifdef CONFIG_PVR2_DMA
 	free_dma(pvr2dma);
 #endif
@@ -1061,7 +1061,7 @@ static struct pvr2_board {
 	int (*init)(void);
 	void (*exit)(void);
 	char name[16];
-} board_driver[] __refdata = {
+} board_driver[] = {
 #ifdef CONFIG_SH_DREAMCAST
 	{ pvr2fb_dc_init, pvr2fb_dc_exit, "Sega DC PVR2" },
 #endif

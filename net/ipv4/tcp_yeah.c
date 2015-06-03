@@ -20,7 +20,7 @@
 #define TCP_YEAH_DELTA        3 //log minimum fraction of cwnd to be removed on loss
 #define TCP_YEAH_EPSILON      1 //log maximum fraction to be removed on early decongestion
 #define TCP_YEAH_PHY          8 //lin maximum delta from base
-#define TCP_YEAH_RHO         16 //lin minimum number of consecutive rtt to consider competition on loss
+#define TCP_YEAH_RHO         16 //lin minumum number of consecutive rtt to consider competition on loss
 #define TCP_YEAH_ZETA        50 //lin minimum number of state switchs to reset reno_count
 
 #define TCP_SCALABLE_AI_CNT	 100U
@@ -157,8 +157,8 @@ static void tcp_yeah_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
 
 			if (queue > TCP_YEAH_ALPHA ||
 			    rtt - yeah->vegas.baseRTT > (yeah->vegas.baseRTT / TCP_YEAH_PHY)) {
-				if (queue > TCP_YEAH_ALPHA &&
-				    tp->snd_cwnd > yeah->reno_count) {
+				if (queue > TCP_YEAH_ALPHA
+				    && tp->snd_cwnd > yeah->reno_count) {
 					u32 reduction = min(queue / TCP_YEAH_GAMMA ,
 							    tp->snd_cwnd >> TCP_YEAH_EPSILON);
 
@@ -225,7 +225,7 @@ static u32 tcp_yeah_ssthresh(struct sock *sk) {
 	return tp->snd_cwnd - reduction;
 }
 
-static struct tcp_congestion_ops tcp_yeah __read_mostly = {
+static struct tcp_congestion_ops tcp_yeah = {
 	.flags		= TCP_CONG_RTT_STAMP,
 	.init		= tcp_yeah_init,
 	.ssthresh	= tcp_yeah_ssthresh,

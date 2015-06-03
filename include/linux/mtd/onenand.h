@@ -1,7 +1,7 @@
 /*
  *  linux/include/linux/mtd/onenand.h
  *
- *  Copyright © 2005-2009 Samsung Electronics
+ *  Copyright (C) 2005-2007 Samsung Electronics
  *  Kyungmin Park <kyungmin.park@samsung.com>
  *
  * This program is free software; you can redistribute it and/or modify
@@ -152,8 +152,6 @@ struct onenand_chip {
 /*
  * Helper macros
  */
-#define ONENAND_PAGES_PER_BLOCK        (1<<6)
-
 #define ONENAND_CURRENT_BUFFERRAM(this)		(this->bufferram_index)
 #define ONENAND_NEXT_BUFFERRAM(this)		(this->bufferram_index ^ 1)
 #define ONENAND_SET_NEXT_BUFFERRAM(this)	(this->bufferram_index ^= 1)
@@ -184,9 +182,6 @@ struct onenand_chip {
 #define ONENAND_IS_CACHE_PROGRAM(this)					\
 	(this->options & ONENAND_HAS_CACHE_PROGRAM)
 
-#define ONENAND_IS_NOP_1(this)						\
-	(this->options & ONENAND_HAS_NOP_1)
-
 /* Check byte access in OneNAND */
 #define ONENAND_CHECK_BYTE_ACCESS(addr)		(addr & 0x1)
 
@@ -198,7 +193,6 @@ struct onenand_chip {
 #define ONENAND_HAS_2PLANE		(0x0004)
 #define ONENAND_HAS_4KB_PAGE		(0x0008)
 #define ONENAND_HAS_CACHE_PROGRAM	(0x0010)
-#define ONENAND_HAS_NOP_1		(0x0020)
 #define ONENAND_SKIP_UNLOCK_CHECK	(0x0100)
 #define ONENAND_PAGEBUF_ALLOC		(0x1000)
 #define ONENAND_OOBBUF_ALLOC		(0x2000)

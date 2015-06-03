@@ -38,8 +38,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <linux/slab.h>
-
 #include "ehca_tools.h"
 #include "ipz_pt_fn.h"
 #include "ehca_classes.h"
@@ -222,14 +220,15 @@ int ipz_queue_ctor(struct ehca_pd *pd, struct ipz_queue *queue,
 	queue->small_page = NULL;
 
 	/* allocate queue page pointers */
-	queue->queue_pages = kzalloc(nr_of_pages * sizeof(void *), GFP_KERNEL);
+	queue->queue_pages = kmalloc(nr_of_pages * sizeof(void *), GFP_KERNEL);
 	if (!queue->queue_pages) {
-		queue->queue_pages = vzalloc(nr_of_pages * sizeof(void *));
+		queue->queue_pages = vmalloc(nr_of_pages * sizeof(void *));
 		if (!queue->queue_pages) {
 			ehca_gen_err("Couldn't allocate queue page list");
 			return 0;
 		}
 	}
+	memset(queue->queue_pages, 0, nr_of_pages * sizeof(void *));
 
 	/* allocate actual queue pages */
 	if (is_small) {

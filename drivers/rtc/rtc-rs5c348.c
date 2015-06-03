@@ -19,11 +19,9 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
-#include <linux/slab.h>
 #include <linux/rtc.h>
 #include <linux/workqueue.h>
 #include <linux/spi/spi.h>
-#include <linux/module.h>
 
 #define DRV_VERSION "0.2"
 
@@ -122,12 +120,9 @@ rs5c348_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	tm->tm_min = bcd2bin(rxbuf[RS5C348_REG_MINS] & RS5C348_MINS_MASK);
 	tm->tm_hour = bcd2bin(rxbuf[RS5C348_REG_HOURS] & RS5C348_HOURS_MASK);
 	if (!pdata->rtc_24h) {
-		if (rxbuf[RS5C348_REG_HOURS] & RS5C348_BIT_PM) {
-			tm->tm_hour -= 20;
-			tm->tm_hour %= 12;
+		tm->tm_hour %= 12;
+		if (rxbuf[RS5C348_REG_HOURS] & RS5C348_BIT_PM)
 			tm->tm_hour += 12;
-		} else
-			tm->tm_hour %= 12;
 	}
 	tm->tm_wday = bcd2bin(rxbuf[RS5C348_REG_WDAY] & RS5C348_WDAY_MASK);
 	tm->tm_mday = bcd2bin(rxbuf[RS5C348_REG_DAY] & RS5C348_DAY_MASK);
@@ -232,13 +227,25 @@ static int __devexit rs5c348_remove(struct spi_device *spi)
 static struct spi_driver rs5c348_driver = {
 	.driver = {
 		.name	= "rtc-rs5c348",
+		.bus	= &spi_bus_type,
 		.owner	= THIS_MODULE,
 	},
 	.probe	= rs5c348_probe,
 	.remove	= __devexit_p(rs5c348_remove),
 };
 
-module_spi_driver(rs5c348_driver);
+static __init int rs5c348_init(void)
+{
+	return spi_register_driver(&rs5c348_driver);
+}
+
+static __exit void rs5c348_exit(void)
+{
+	spi_unregister_driver(&rs5c348_driver);
+}
+
+module_init(rs5c348_init);
+module_exit(rs5c348_exit);
 
 MODULE_AUTHOR("Atsushi Nemoto <anemo@mba.ocn.ne.jp>");
 MODULE_DESCRIPTION("Ricoh RS5C348 RTC driver");

@@ -5,29 +5,16 @@
 # error "please don't include this file directly"
 #endif
 
-#include <linux/types.h>
+typedef struct raw_spinlock {
+	unsigned int slock;
+} raw_spinlock_t;
 
-#if (CONFIG_NR_CPUS < 256)
-typedef u8  __ticket_t;
-typedef u16 __ticketpair_t;
-#else
-typedef u16 __ticket_t;
-typedef u32 __ticketpair_t;
-#endif
+#define __RAW_SPIN_LOCK_UNLOCKED	{ 0 }
 
-#define TICKET_SHIFT	(sizeof(__ticket_t) * 8)
+typedef struct {
+	unsigned int lock;
+} raw_rwlock_t;
 
-typedef struct arch_spinlock {
-	union {
-		__ticketpair_t head_tail;
-		struct __raw_tickets {
-			__ticket_t head, tail;
-		} tickets;
-	};
-} arch_spinlock_t;
-
-#define __ARCH_SPIN_LOCK_UNLOCKED	{ { 0 } }
-
-#include <asm/rwlock.h>
+#define __RAW_RW_LOCK_UNLOCKED		{ RW_LOCK_BIAS }
 
 #endif /* _ASM_X86_SPINLOCK_TYPES_H */

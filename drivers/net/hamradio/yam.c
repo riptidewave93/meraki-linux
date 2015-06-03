@@ -30,7 +30,7 @@
  *   0.1 F1OAT 07.06.98  Add timer polling routine for channel arbitration
  *   0.2 F6FBB 08.06.98  Added delay after FPGA programming
  *   0.3 F6FBB 29.07.98  Delayed PTT implementation for dupmode=2
- *   0.4 F6FBB 30.07.98  Added TxTail, Slottime and Persistence
+ *   0.4 F6FBB 30.07.98  Added TxTail, Slottime and Persistance
  *   0.5 F6FBB 01.08.98  Shared IRQs, /proc/net and network statistics
  *   0.6 F6FBB 25.08.98  Added 1200Bds format
  *   0.7 F6FBB 12.09.98  Added to the kernel configuration
@@ -52,6 +52,7 @@
 #include <linux/bitops.h>
 #include <linux/random.h>
 #include <asm/io.h>
+#include <asm/system.h>
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/firmware.h>
@@ -395,13 +396,14 @@ static unsigned char *add_mcs(unsigned char *bits, int bitrate,
 	while (p) {
 		if (p->bitrate == bitrate) {
 			memcpy(p->bits, bits, YAM_FPGA_SIZE);
-			goto out;
+			return p->bits;
 		}
 		p = p->next;
 	}
 
 	/* Allocate a new mcs */
 	if ((p = kmalloc(sizeof(struct yam_mcs), GFP_KERNEL)) == NULL) {
+		printk(KERN_WARNING "YAM: no memory to allocate mcs\n");
 		release_firmware(fw);
 		return NULL;
 	}
@@ -409,7 +411,7 @@ static unsigned char *add_mcs(unsigned char *bits, int bitrate,
 	p->bitrate = bitrate;
 	p->next = yam_data;
 	yam_data = p;
- out:
+
 	release_firmware(fw);
 	return p->bits;
 }
@@ -1150,7 +1152,8 @@ static int __init yam_init_driver(void)
 		dev = alloc_netdev(sizeof(struct yam_port), name,
 				   yam_setup);
 		if (!dev) {
-			pr_err("yam: cannot allocate net device\n");
+			printk(KERN_ERR "yam: cannot allocate net device %s\n",
+			       dev->name);
 			err = -ENOMEM;
 			goto error;
 		}

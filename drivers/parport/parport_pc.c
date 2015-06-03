@@ -1488,7 +1488,7 @@ static void __devinit winbond_check(int io, int key)
 
 	outb(key, io);
 	outb(key, io);     /* Write Magic Sequence to EFER, extended
-			      function enable register */
+			      funtion enable register */
 	outb(0x20, io);    /* Write EFIR, extended function index register */
 	devid = inb(io + 1);  /* Read EFDR, extended function data register */
 	outb(0x21, io);
@@ -1527,7 +1527,7 @@ static void __devinit winbond_check2(int io, int key)
 	x_oldid = inb(io + 2);
 
 	outb(key, io);     /* Write Magic Byte to EFER, extended
-			      function enable register */
+			      funtion enable register */
 	outb(0x20, io + 2);  /* Write EFIR, extended function index register */
 	devid = inb(io + 2);  /* Read EFDR, extended function data register */
 	outb(0x21, io + 1);
@@ -1569,7 +1569,7 @@ static void __devinit smsc_check(int io, int key)
 
 	outb(key, io);
 	outb(key, io);     /* Write Magic Sequence to EFER, extended
-			      function enable register */
+			      funtion enable register */
 	outb(0x0d, io);    /* Write EFIR, extended function index register */
 	oldid = inb(io + 1);  /* Read EFDR, extended function data register */
 	outb(0x0e, io);
@@ -1621,7 +1621,7 @@ static void __devinit detect_and_report_it87(void)
 	u8 origval, r;
 	if (verbose_probing)
 		printk(KERN_DEBUG "IT8705 Super-IO detection, now testing port 2E ...\n");
-	if (!request_muxed_region(0x2e, 2, __func__))
+	if (!request_region(0x2e, 2, __func__))
 		return;
 	origval = inb(0x2e);		/* Save original value */
 	outb(0x87, 0x2e);
@@ -2550,6 +2550,7 @@ static int __devinit sio_ite_8872_probe(struct pci_dev *pdev, int autoirq,
 					 const struct parport_pc_via_data *via)
 {
 	short inta_addr[6] = { 0x2A0, 0x2C0, 0x220, 0x240, 0x1E0 };
+	struct resource *base_res;
 	u32 ite8872set;
 	u32 ite8872_lpt, ite8872_lpthi;
 	u8 ite8872_irq, type;
@@ -2560,7 +2561,8 @@ static int __devinit sio_ite_8872_probe(struct pci_dev *pdev, int autoirq,
 
 	/* make sure which one chip */
 	for (i = 0; i < 5; i++) {
-		if (request_region(inta_addr[i], 32, "it887x")) {
+		base_res = request_region(inta_addr[i], 32, "it887x");
+		if (base_res) {
 			int test;
 			pci_write_config_dword(pdev, 0x60,
 						0xe5000000 | inta_addr[i]);
@@ -2569,7 +2571,7 @@ static int __devinit sio_ite_8872_probe(struct pci_dev *pdev, int autoirq,
 			test = inb(inta_addr[i]);
 			if (test != 0xff)
 				break;
-			release_region(inta_addr[i], 32);
+			release_region(inta_addr[i], 0x8);
 		}
 	}
 	if (i >= 5) {
@@ -2595,17 +2597,14 @@ static int __devinit sio_ite_8872_probe(struct pci_dev *pdev, int autoirq,
 		break;
 	case 0x6:
 		printk(KERN_INFO "parport_pc: ITE8873 found (1S)\n");
-		release_region(inta_addr[i], 32);
 		return 0;
 	case 0x8:
-		printk(KERN_INFO "parport_pc: ITE8874 found (2S)\n");
-		release_region(inta_addr[i], 32);
+		DPRINTK(KERN_DEBUG "parport_pc: ITE8874 found (2S)\n");
 		return 0;
 	default:
 		printk(KERN_INFO "parport_pc: unknown ITE887x\n");
 		printk(KERN_INFO "parport_pc: please mail 'lspci -nvv' "
 			"output to Rich.Liu@ite.com.tw\n");
-		release_region(inta_addr[i], 32);
 		return 0;
 	}
 
@@ -2636,7 +2635,7 @@ static int __devinit sio_ite_8872_probe(struct pci_dev *pdev, int autoirq,
 	/*
 	 * Release the resource so that parport_pc_probe_port can get it.
 	 */
-	release_region(inta_addr[i], 32);
+	release_resource(base_res);
 	if (parport_pc_probe_port(ite8872_lpt, ite8872_lpthi,
 				   irq, PARPORT_DMA_NONE, &pdev->dev, 0)) {
 		printk(KERN_INFO
@@ -2867,6 +2866,24 @@ enum parport_pc_pci_cards {
 	lava_parallel_dual_b,
 	boca_ioppar,
 	plx_9050,
+	timedia_4078a,
+	timedia_4079h,
+	timedia_4085h,
+	timedia_4088a,
+	timedia_4089a,
+	timedia_4095a,
+	timedia_4096a,
+	timedia_4078u,
+	timedia_4079a,
+	timedia_4085u,
+	timedia_4079r,
+	timedia_4079s,
+	timedia_4079d,
+	timedia_4079e,
+	timedia_4079f,
+	timedia_9079a,
+	timedia_9079b,
+	timedia_9079c,
 	timedia_4006a,
 	timedia_4014,
 	timedia_4008a,
@@ -2875,6 +2892,8 @@ enum parport_pc_pci_cards {
 	syba_2p_epp,
 	syba_1p_ecp,
 	titan_010l,
+	titan_1284p1,
+	titan_1284p2,
 	avlab_1p,
 	avlab_2p,
 	oxsemi_952,
@@ -2889,7 +2908,6 @@ enum parport_pc_pci_cards {
 	netmos_9805,
 	netmos_9815,
 	netmos_9901,
-	netmos_9865,
 	quatech_sppxp100,
 };
 
@@ -2923,6 +2941,24 @@ static struct parport_pc_pci {
 	/* lava_parallel_dual_b */	{ 1, { { 0, -1 }, } },
 	/* boca_ioppar */		{ 1, { { 0, -1 }, } },
 	/* plx_9050 */			{ 2, { { 4, -1 }, { 5, -1 }, } },
+	/* timedia_4078a */		{ 1, { { 2, -1 }, } },
+	/* timedia_4079h */             { 1, { { 2, 3 }, } },
+	/* timedia_4085h */             { 2, { { 2, -1 }, { 4, -1 }, } },
+	/* timedia_4088a */             { 2, { { 2, 3 }, { 4, 5 }, } },
+	/* timedia_4089a */             { 2, { { 2, 3 }, { 4, 5 }, } },
+	/* timedia_4095a */             { 2, { { 2, 3 }, { 4, 5 }, } },
+	/* timedia_4096a */             { 2, { { 2, 3 }, { 4, 5 }, } },
+	/* timedia_4078u */             { 1, { { 2, -1 }, } },
+	/* timedia_4079a */             { 1, { { 2, 3 }, } },
+	/* timedia_4085u */             { 2, { { 2, -1 }, { 4, -1 }, } },
+	/* timedia_4079r */             { 1, { { 2, 3 }, } },
+	/* timedia_4079s */             { 1, { { 2, 3 }, } },
+	/* timedia_4079d */             { 1, { { 2, 3 }, } },
+	/* timedia_4079e */             { 1, { { 2, 3 }, } },
+	/* timedia_4079f */             { 1, { { 2, 3 }, } },
+	/* timedia_9079a */             { 1, { { 2, 3 }, } },
+	/* timedia_9079b */             { 1, { { 2, 3 }, } },
+	/* timedia_9079c */             { 1, { { 2, 3 }, } },
 	/* timedia_4006a */             { 1, { { 0, -1 }, } },
 	/* timedia_4014  */             { 2, { { 0, -1 }, { 2, -1 }, } },
 	/* timedia_4008a */             { 1, { { 0, 1 }, } },
@@ -2933,6 +2969,8 @@ static struct parport_pc_pci {
 	/* syba_2p_epp AP138B */	{ 2, { { 0, 0x078 }, { 0, 0x178 }, } },
 	/* syba_1p_ecp W83787 */	{ 1, { { 0, 0x078 }, } },
 	/* titan_010l */		{ 1, { { 3, -1 }, } },
+	/* titan_1284p1 */              { 1, { { 0, 1 }, } },
+	/* titan_1284p2 */		{ 2, { { 0, 1 }, { 2, 3 }, } },
 	/* avlab_1p		*/	{ 1, { { 0, 1}, } },
 	/* avlab_2p		*/	{ 2, { { 0, 1}, { 2, 3 },} },
 	/* The Oxford Semi cards are unusual: 954 doesn't support ECP,
@@ -2948,10 +2986,9 @@ static struct parport_pc_pci {
 	/* netmos_9705 */               { 1, { { 0, -1 }, } },
 	/* netmos_9715 */               { 2, { { 0, 1 }, { 2, 3 },} },
 	/* netmos_9755 */               { 2, { { 0, 1 }, { 2, 3 },} },
-	/* netmos_9805 */		{ 1, { { 0, 1 }, } },
-	/* netmos_9815 */		{ 2, { { 0, 1 }, { 2, 3 }, } },
+	/* netmos_9805 */               { 1, { { 0, -1 }, } },
+	/* netmos_9815 */               { 2, { { 0, -1 }, { 2, -1 }, } },
 	/* netmos_9901 */               { 1, { { 0, -1 }, } },
-	/* netmos_9865 */               { 1, { { 0, -1 }, } },
 	/* quatech_sppxp100 */		{ 1, { { 0, 1 }, } },
 };
 
@@ -2982,6 +3019,24 @@ static const struct pci_device_id parport_pc_pci_tbl[] = {
 	{ PCI_VENDOR_ID_PLX, PCI_DEVICE_ID_PLX_9050,
 	  PCI_SUBVENDOR_ID_EXSYS, PCI_SUBDEVICE_ID_EXSYS_4014, 0, 0, plx_9050 },
 	/* PCI_VENDOR_ID_TIMEDIA/SUNIX has many differing cards ...*/
+	{ 0x1409, 0x7168, 0x1409, 0x4078, 0, 0, timedia_4078a },
+	{ 0x1409, 0x7168, 0x1409, 0x4079, 0, 0, timedia_4079h },
+	{ 0x1409, 0x7168, 0x1409, 0x4085, 0, 0, timedia_4085h },
+	{ 0x1409, 0x7168, 0x1409, 0x4088, 0, 0, timedia_4088a },
+	{ 0x1409, 0x7168, 0x1409, 0x4089, 0, 0, timedia_4089a },
+	{ 0x1409, 0x7168, 0x1409, 0x4095, 0, 0, timedia_4095a },
+	{ 0x1409, 0x7168, 0x1409, 0x4096, 0, 0, timedia_4096a },
+	{ 0x1409, 0x7168, 0x1409, 0x5078, 0, 0, timedia_4078u },
+	{ 0x1409, 0x7168, 0x1409, 0x5079, 0, 0, timedia_4079a },
+	{ 0x1409, 0x7168, 0x1409, 0x5085, 0, 0, timedia_4085u },
+	{ 0x1409, 0x7168, 0x1409, 0x6079, 0, 0, timedia_4079r },
+	{ 0x1409, 0x7168, 0x1409, 0x7079, 0, 0, timedia_4079s },
+	{ 0x1409, 0x7168, 0x1409, 0x8079, 0, 0, timedia_4079d },
+	{ 0x1409, 0x7168, 0x1409, 0x9079, 0, 0, timedia_4079e },
+	{ 0x1409, 0x7168, 0x1409, 0xa079, 0, 0, timedia_4079f },
+	{ 0x1409, 0x7168, 0x1409, 0xb079, 0, 0, timedia_9079a },
+	{ 0x1409, 0x7168, 0x1409, 0xc079, 0, 0, timedia_9079b },
+	{ 0x1409, 0x7168, 0x1409, 0xd079, 0, 0, timedia_9079c },
 	{ 0x1409, 0x7268, 0x1409, 0x0101, 0, 0, timedia_4006a },
 	{ 0x1409, 0x7268, 0x1409, 0x0102, 0, 0, timedia_4014 },
 	{ 0x1409, 0x7268, 0x1409, 0x0103, 0, 0, timedia_4008a },
@@ -2993,6 +3048,8 @@ static const struct pci_device_id parport_pc_pci_tbl[] = {
 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, syba_1p_ecp },
 	{ PCI_VENDOR_ID_TITAN, PCI_DEVICE_ID_TITAN_010L,
 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, titan_010l },
+	{ 0x9710, 0x9805, 0x1000, 0x0010, 0, 0, titan_1284p1 },
+	{ 0x9710, 0x9815, 0x1000, 0x0020, 0, 0, titan_1284p2 },
 	/* PCI_VENDOR_ID_AVLAB/Intek21 has another bunch of cards ...*/
 	/* AFAVLAB_TK9902 */
 	{ 0x14db, 0x2120, PCI_ANY_ID, PCI_ANY_ID, 0, 0, avlab_1p},
@@ -3035,10 +3092,6 @@ static const struct pci_device_id parport_pc_pci_tbl[] = {
 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, netmos_9815 },
 	{ PCI_VENDOR_ID_NETMOS, PCI_DEVICE_ID_NETMOS_9901,
 	  0xA000, 0x2000, 0, 0, netmos_9901 },
-	{ PCI_VENDOR_ID_NETMOS, PCI_DEVICE_ID_NETMOS_9865,
-	  0xA000, 0x1000, 0, 0, netmos_9865 },
-	{ PCI_VENDOR_ID_NETMOS, PCI_DEVICE_ID_NETMOS_9865,
-	  0xA000, 0x2000, 0, 0, netmos_9865 },
 	/* Quatech SPPXP-100 Parallel port PCI ExpressCard */
 	{ PCI_VENDOR_ID_QUATECH, PCI_DEVICE_ID_QUATECH_SPPXP_100,
 	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, quatech_sppxp100 },
@@ -3350,7 +3403,7 @@ static int __init parport_parse_param(const char *s, int *val,
 		*val = automatic;
 	else if (!strncmp(s, "none", 4))
 		*val = none;
-	else if (nofifo && !strncmp(s, "nofifo", 6))
+	else if (nofifo && !strncmp(s, "nofifo", 4))
 		*val = nofifo;
 	else {
 		char *ep;
@@ -3398,8 +3451,8 @@ static int __init parport_init_mode_setup(char *str)
 #endif
 
 #ifdef MODULE
-static char *irq[PARPORT_PC_MAX_PORTS];
-static char *dma[PARPORT_PC_MAX_PORTS];
+static const char *irq[PARPORT_PC_MAX_PORTS];
+static const char *dma[PARPORT_PC_MAX_PORTS];
 
 MODULE_PARM_DESC(io, "Base I/O address (SPP regs)");
 module_param_array(io, int, NULL, 0);

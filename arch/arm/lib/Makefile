@@ -12,9 +12,8 @@ lib-y		:= backtrace.o changebit.o csumipv6.o csumpartial.o   \
 		   strchr.o strrchr.o                                 \
 		   testchangebit.o testclearbit.o testsetbit.o        \
 		   ashldi3.o ashrdi3.o lshrdi3.o muldi3.o             \
-		   ucmpdi2.o lib1funcs.o div64.o                      \
-		   io-readsb.o io-writesb.o io-readsl.o io-writesl.o  \
-		   call_with_stack.o
+		   ucmpdi2.o lib1funcs.o div64.o sha1.o               \
+		   io-readsb.o io-writesb.o io-readsl.o io-writesl.o
 
 mmu-y	:= clear_user.o copy_page.o getuser.o putuser.o
 
@@ -42,6 +41,7 @@ else
 endif
 
 lib-$(CONFIG_ARCH_RPC)		+= ecard.o io-acorn.o floppydma.o
+lib-$(CONFIG_ARCH_L7200)	+= io-acorn.o
 lib-$(CONFIG_ARCH_SHARK)	+= io-shark.o
 
 $(obj)/csumpartialcopy.o:	$(obj)/csumpartialcopygeneric.S

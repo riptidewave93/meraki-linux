@@ -14,6 +14,7 @@
 
 #include <linux/init.h>
 #include <linux/vmalloc.h>
+#include <linux/slab.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/ctype.h>
@@ -79,15 +80,17 @@ static int pure_hex(char **cp, unsigned int *val, int min_digit,
 		    int max_digit, int max_val)
 {
 	int diff;
+	unsigned int value;
 
 	diff = 0;
 	*val = 0;
 
-	while (diff <= max_digit) {
-		int value = hex_to_bin(**cp);
+	while (isxdigit(**cp) && (diff <= max_digit)) {
 
-		if (value < 0)
-			break;
+		if (isdigit(**cp))
+			value = **cp - '0';
+		else
+			value = tolower(**cp) - 'a' + 10;
 		*val = *val * 16 + value;
 		(*cp)++;
 		diff++;
@@ -335,9 +338,10 @@ cio_ignore_write(struct file *file, const char __user *user_buf,
 		return -EINVAL;
 	if (user_len > 65536)
 		user_len = 65536;
-	buf = vzalloc(user_len + 1); /* maybe better use the stack? */
+	buf = vmalloc (user_len + 1); /* maybe better use the stack? */
 	if (buf == NULL)
 		return -ENOMEM;
+	memset(buf, 0, user_len + 1);
 
 	if (strncpy_from_user (buf, user_buf, user_len) < 0) {
 		rc = -EFAULT;

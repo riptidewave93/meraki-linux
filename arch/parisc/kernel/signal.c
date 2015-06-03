@@ -26,6 +26,7 @@
 #include <linux/stddef.h>
 #include <linux/compat.h>
 #include <linux/elf.h>
+#include <linux/tracehook.h>
 #include <asm/ucontext.h>
 #include <asm/rt_sigframe.h>
 #include <asm/uaccess.h>
@@ -98,6 +99,7 @@ void
 sys_rt_sigreturn(struct pt_regs *regs, int in_syscall)
 {
 	struct rt_sigframe __user *frame;
+	struct siginfo si;
 	sigset_t set;
 	unsigned long usp = (regs->gr[30] & ~(0x01UL));
 	unsigned long sigframe_size = PARISC_RT_SIGFRAME_SIZE;
@@ -177,7 +179,13 @@ sys_rt_sigreturn(struct pt_regs *regs, int in_syscall)
 
 give_sigsegv:
 	DBG(1,"sys_rt_sigreturn: Sending SIGSEGV\n");
-	force_sig(SIGSEGV, current);
+	si.si_signo = SIGSEGV;
+	si.si_errno = 0;
+	si.si_code = SI_KERNEL;
+	si.si_pid = task_pid_vnr(current);
+	si.si_uid = current_uid();
+	si.si_addr = &frame->uc;
+	force_sig_info(SIGSEGV, &si, current);
 	return;
 }
 
@@ -291,7 +299,7 @@ setup_rt_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
 		DBG(1,"setup_rt_frame: frame->uc = 0x%p\n", &frame->uc);
 		DBG(1,"setup_rt_frame: frame->uc.uc_mcontext = 0x%p\n", &frame->uc.uc_mcontext);
 		err |= setup_sigcontext(&frame->uc.uc_mcontext, regs, in_syscall);
-		/* FIXME: Should probably be converted as well for the compat case */
+		/* FIXME: Should probably be converted aswell for the compat case */
 		err |= __copy_to_user(&frame->uc.uc_sigmask, set, sizeof(*set));
 	}
 	
@@ -461,9 +469,7 @@ handle_signal(unsigned long sig, siginfo_t *info, struct k_sigaction *ka,
 	recalc_sigpending();
 	spin_unlock_irq(&current->sighand->siglock);
 
-	tracehook_signal_handler(sig, info, ka, regs, 
-		test_thread_flag(TIF_SINGLESTEP) ||
-		test_thread_flag(TIF_BLOCKSTEP));
+	tracehook_signal_handler(sig, info, ka, regs, 0);
 
 	return 1;
 }

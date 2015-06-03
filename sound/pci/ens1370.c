@@ -22,7 +22,7 @@
 /* Power-Management-Code ( CONFIG_PM )
  * for ens1371 only ( FIXME )
  * derived from cs4281.c, atiixp.c and via82xx.c
- * using http://www.alsa-project.org/~tiwai/writing-an-alsa-driver/ 
+ * using http://www.alsa-project.org/~iwai/writing-an-alsa-driver/c1540.htm
  * by Kurt J. Bosch
  */
 
@@ -33,7 +33,7 @@
 #include <linux/pci.h>
 #include <linux/slab.h>
 #include <linux/gameport.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/mutex.h>
 
 #include <sound/core.h>
@@ -83,12 +83,12 @@ MODULE_SUPPORTED_DEVICE("{{Ensoniq,AudioPCI ES1371/73},"
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;	/* Enable switches */
+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;	/* Enable switches */
 #ifdef SUPPORT_JOYSTICK
 #ifdef CHIP1371
 static int joystick_port[SNDRV_CARDS];
 #else
-static bool joystick[SNDRV_CARDS];
+static int joystick[SNDRV_CARDS];
 #endif
 #endif
 #ifdef CHIP1371
@@ -444,7 +444,7 @@ struct ensoniq {
 
 static irqreturn_t snd_audiopci_interrupt(int irq, void *dev_id);
 
-static DEFINE_PCI_DEVICE_TABLE(snd_audiopci_ids) = {
+static struct pci_device_id snd_audiopci_ids[] = {
 #ifdef CHIP1370
 	{ PCI_VDEVICE(ENSONIQ, 0x5000), 0, },	/* ES1370 */
 #endif
@@ -2120,7 +2120,7 @@ static int __devinit snd_ensoniq_create(struct snd_card *card,
 	}
 	ensoniq->port = pci_resource_start(pci, 0);
 	if (request_irq(pci->irq, snd_audiopci_interrupt, IRQF_SHARED,
-			KBUILD_MODNAME, ensoniq)) {
+			"Ensoniq AudioPCI", ensoniq)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		snd_ensoniq_free(ensoniq);
 		return -EBUSY;
@@ -2489,7 +2489,7 @@ static void __devexit snd_audiopci_remove(struct pci_dev *pci)
 }
 
 static struct pci_driver driver = {
-	.name = KBUILD_MODNAME,
+	.name = DRIVER_NAME,
 	.id_table = snd_audiopci_ids,
 	.probe = snd_audiopci_probe,
 	.remove = __devexit_p(snd_audiopci_remove),

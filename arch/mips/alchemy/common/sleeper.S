@@ -22,9 +22,10 @@
 	.set noat
 	.align	5
 
-
-/* preparatory stuff */
-.macro	SETUP_SLEEP
+/* Save all of the processor general registers and go to sleep.
+ * A wakeup condition will get us back here to restore the registers.
+ */
+LEAF(au1xxx_save_and_sleep)
 	subu	sp, PT_SIZE
 	sw	$1, PT_R1(sp)
 	sw	$2, PT_R2(sp)
@@ -68,32 +69,12 @@
 	 */
 	lui	t3, 0xb190		/* sys_xxx */
 	sw	sp, 0x0018(t3)
-	la	k0, alchemy_sleep_wakeup	/* resume path */
+	la	k0, 3f			/* resume path */
 	sw	k0, 0x001c(t3)
-.endm
 
-.macro	DO_SLEEP
-	/* put power supply and processor to sleep */
-	sw	zero, 0x0078(t3)	/* sys_slppwr */
-	sync
-	sw	zero, 0x007c(t3)	/* sys_sleep */
-	sync
-	nop
-	nop
-	nop
-	nop
-	nop
-	nop
-	nop
-	nop
-.endm
-
-/* sleep code for Au1000/Au1100/Au1500 memory controller type */
-LEAF(alchemy_sleep_au1000)
-
-	SETUP_SLEEP
-
-	/* cache following instructions, as memory gets put to sleep */
+	/* Put SDRAM into self refresh:  Preload instructions into cache,
+	 * issue a precharge, auto/self refresh, then sleep commands to it.
+	 */
 	la	t0, 1f
 	.set	mips3
 	cache	0x14, 0(t0)
@@ -103,32 +84,17 @@ LEAF(alchemy_sleep_au1000)
 	.set	mips0
 
 1:	lui 	a0, 0xb400		/* mem_xxx */
+#if defined(CONFIG_SOC_AU1000) || defined(CONFIG_SOC_AU1100) ||	\
+    defined(CONFIG_SOC_AU1500)
 	sw	zero, 0x001c(a0) 	/* Precharge */
 	sync
 	sw	zero, 0x0020(a0)	/* Auto Refresh */
 	sync
 	sw	zero, 0x0030(a0)  	/* Sleep */
 	sync
+#endif
 
-	DO_SLEEP
-
-END(alchemy_sleep_au1000)
-
-/* sleep code for Au1550/Au1200 memory controller type */
-LEAF(alchemy_sleep_au1550)
-
-	SETUP_SLEEP
-
-	/* cache following instructions, as memory gets put to sleep */
-	la	t0, 1f
-	.set	mips3
-	cache	0x14, 0(t0)
-	cache	0x14, 32(t0)
-	cache	0x14, 64(t0)
-	cache	0x14, 96(t0)
-	.set	mips0
-
-1:	lui 	a0, 0xb400		/* mem_xxx */
+#if defined(CONFIG_SOC_AU1550) || defined(CONFIG_SOC_AU1200)
 	sw	zero, 0x08c0(a0) 	/* Precharge */
 	sync
 	sw	zero, 0x08d0(a0)	/* Self Refresh */
@@ -148,90 +114,26 @@ LEAF(alchemy_sleep_au1550)
 	and 	t1, t0, t1		/* clear CE[1:0] */
 	sw 	t1, 0x0840(a0)		/* mem_sdconfiga */
 	sync
+#endif
 
-	DO_SLEEP
-
-END(alchemy_sleep_au1550)
-
-/* sleepcode for Au1300 memory controller type */
-LEAF(alchemy_sleep_au1300)
-
-	SETUP_SLEEP
-
-	/* cache following instructions, as memory gets put to sleep */
-	la	t0, 2f
-	la	t1, 4f
-	subu	t2, t1, t0
-
-	.set	mips3
-
-1:	cache	0x14, 0(t0)
-	subu	t2, t2, 32
-	bgez	t2, 1b
-	 addu	t0, t0, 32
-
-	.set	mips0
-
-2:	lui	a0, 0xb400		/* mem_xxx */
-
-	/* disable all ports in mem_sdportcfga */
-	sw	zero, 0x868(a0)		/* mem_sdportcfga */
+	/* put power supply and processor to sleep */
+	sw	zero, 0x0078(t3)	/* sys_slppwr */
 	sync
-
-	/* disable ODT */
-	li	t0, 0x03010000
-	sw	t0, 0x08d8(a0)		/* mem_sdcmd0 */
-	sw	t0, 0x08dc(a0)		/* mem_sdcmd1 */
+	sw	zero, 0x007c(t3)	/* sys_sleep */
 	sync
-
-	/* precharge */
-	li	t0, 0x23000400
-	sw	t0, 0x08dc(a0)		/* mem_sdcmd1 */
-	sw	t0, 0x08d8(a0)		/* mem_sdcmd0 */
-	sync
-
-	/* auto refresh */
-	sw	zero, 0x08c8(a0)	/* mem_sdautoref */
-	sync
-
-	/* block access to the DDR */
-	lw	t0, 0x0848(a0)		/* mem_sdconfigb */
-	li	t1, (1 << 7 | 0x3F)
-	or	t0, t0, t1
-	sw	t0, 0x0848(a0)		/* mem_sdconfigb */
-	sync
-
-	/* issue the Self Refresh command */
-	li	t0, 0x10000000
-	sw	t0, 0x08dc(a0)		/* mem_sdcmd1 */
-	sw	t0, 0x08d8(a0)		/* mem_sdcmd0 */
-	sync
-
-	/* wait for sdram to enter self-refresh mode */
-	lui	t0, 0x0300
-3:	lw	t1, 0x0850(a0)		/* mem_sdstat */
-	and	t2, t1, t0
-	bne	t2, t0, 3b
-	 nop
-
-	/* disable SDRAM clocks */
-	li	t0, ~(3<<28)
-	lw	t1, 0x0840(a0)		/* mem_sdconfiga */
-	and	t1, t1, t0		/* clear CE[1:0] */
-	sw	t1, 0x0840(a0)		/* mem_sdconfiga */
-	sync
-
-	DO_SLEEP
-4:
-
-END(alchemy_sleep_au1300)
-
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
+	nop
 
 	/* This is where we return upon wakeup.
 	 * Reload all of the registers and return.
 	 */
-LEAF(alchemy_sleep_wakeup)
-	lw	k0, 0x20(sp)
+3:	lw	k0, 0x20(sp)
 	mtc0	k0, CP0_STATUS
 	lw	k0, 0x1c(sp)
 	mtc0	k0, CP0_CONTEXT
@@ -267,4 +169,4 @@ LEAF(alchemy_sleep_wakeup)
 	lw	$31, PT_R31(sp)
 	jr	ra
 	 addiu	sp, PT_SIZE
-END(alchemy_sleep_wakeup)
+END(au1xxx_save_and_sleep)

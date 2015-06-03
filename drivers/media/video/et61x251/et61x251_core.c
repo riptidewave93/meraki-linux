@@ -18,9 +18,6 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.               *
  ***************************************************************************/
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
-#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
@@ -51,7 +48,8 @@
 #define ET61X251_MODULE_AUTHOR  "(C) 2006-2007 Luca Risolia"
 #define ET61X251_AUTHOR_EMAIL   "<luca.risolia@studio.unibo.it>"
 #define ET61X251_MODULE_LICENSE "GPL"
-#define ET61X251_MODULE_VERSION "1.1.10"
+#define ET61X251_MODULE_VERSION "1:1.09"
+#define ET61X251_MODULE_VERSION_CODE  KERNEL_VERSION(1, 1, 9)
 
 /*****************************************************************************/
 
@@ -76,8 +74,8 @@ MODULE_PARM_DESC(video_nr,
 		 "\none and for every other camera."
 		 "\n");
 
-static bool force_munmap[] = {[0 ... ET61X251_MAX_DEVICES-1] =
-			      ET61X251_FORCE_MUNMAP};
+static short force_munmap[] = {[0 ... ET61X251_MAX_DEVICES-1] =
+			       ET61X251_FORCE_MUNMAP};
 module_param_array(force_munmap, bool, NULL, 0444);
 MODULE_PARM_DESC(force_munmap,
 		 "\n<0|1[,...]> Force the application to unmap previously"
@@ -589,8 +587,8 @@ static int et61x251_stream_interrupt(struct et61x251_device* cam)
 	else if (cam->stream != STREAM_OFF) {
 		cam->state |= DEV_MISCONFIGURED;
 		DBG(1, "URB timeout reached. The camera is misconfigured. To "
-		       "use it, close and open %s again.",
-		    video_device_node_name(cam->v4ldev));
+		       "use it, close and open /dev/video%d again.",
+		    cam->v4ldev->num);
 		return -EIO;
 	}
 
@@ -1197,8 +1195,7 @@ static void et61x251_release_resources(struct kref *kref)
 
 	cam = container_of(kref, struct et61x251_device, kref);
 
-	DBG(2, "V4L2 device %s deregistered",
-	    video_device_node_name(cam->v4ldev));
+	DBG(2, "V4L2 device /dev/video%d deregistered", cam->v4ldev->num);
 	video_set_drvdata(cam->v4ldev, NULL);
 	video_unregister_device(cam->v4ldev);
 	usb_put_dev(cam->usbdev);
@@ -1239,8 +1236,8 @@ static int et61x251_open(struct file *filp)
 	}
 
 	if (cam->users) {
-		DBG(2, "Device %s is already in use",
-		       video_device_node_name(cam->v4ldev));
+		DBG(2, "Device /dev/video%d is already in use",
+		       cam->v4ldev->num);
 		DBG(3, "Simultaneous opens are not supported");
 		if ((filp->f_flags & O_NONBLOCK) ||
 		    (filp->f_flags & O_NDELAY)) {
@@ -1283,8 +1280,7 @@ static int et61x251_open(struct file *filp)
 	cam->frame_count = 0;
 	et61x251_empty_framequeues(cam);
 
-	DBG(3, "Video device %s is open",
-	    video_device_node_name(cam->v4ldev));
+	DBG(3, "Video device /dev/video%d is open", cam->v4ldev->num);
 
 out:
 	mutex_unlock(&cam->open_mutex);
@@ -1308,8 +1304,7 @@ static int et61x251_release(struct file *filp)
 	cam->users--;
 	wake_up_interruptible_nr(&cam->wait_open, 1);
 
-	DBG(3, "Video device %s closed",
-	    video_device_node_name(cam->v4ldev));
+	DBG(3, "Video device /dev/video%d closed", cam->v4ldev->num);
 
 	kref_put(&cam->kref, et61x251_release_resources);
 
@@ -1581,7 +1576,7 @@ et61x251_vidioc_querycap(struct et61x251_device* cam, void __user * arg)
 {
 	struct v4l2_capability cap = {
 		.driver = "et61x251",
-		.version = LINUX_VERSION_CODE,
+		.version = ET61X251_MODULE_VERSION_CODE,
 		.capabilities = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_READWRITE |
 				V4L2_CAP_STREAMING,
 	};
@@ -1612,7 +1607,6 @@ et61x251_vidioc_enuminput(struct et61x251_device* cam, void __user * arg)
 	memset(&i, 0, sizeof(i));
 	strcpy(i.name, "Camera");
 	i.type = V4L2_INPUT_TYPE_CAMERA;
-	i.capabilities = V4L2_IN_CAP_STD;
 
 	if (copy_to_user(arg, &i, sizeof(i)))
 		return -EFAULT;
@@ -1716,7 +1710,7 @@ et61x251_vidioc_s_ctrl(struct et61x251_device* cam, void __user * arg)
 	if (copy_from_user(&ctrl, arg, sizeof(ctrl)))
 		return -EFAULT;
 
-	for (i = 0; i < ARRAY_SIZE(s->qctrl); i++) {
+	for (i = 0; i < ARRAY_SIZE(s->qctrl); i++)
 		if (ctrl.id == s->qctrl[i].id) {
 			if (s->qctrl[i].flags & V4L2_CTRL_FLAG_DISABLED)
 				return -EINVAL;
@@ -1726,9 +1720,7 @@ et61x251_vidioc_s_ctrl(struct et61x251_device* cam, void __user * arg)
 			ctrl.value -= ctrl.value % s->qctrl[i].step;
 			break;
 		}
-	}
-	if (i == ARRAY_SIZE(s->qctrl))
-		return -EINVAL;
+
 	if ((err = s->set_ctrl(cam, &ctrl)))
 		return err;
 
@@ -1854,8 +1846,8 @@ et61x251_vidioc_s_crop(struct et61x251_device* cam, void __user * arg)
 	if (err) { /* atomic, no rollback in ioctl() */
 		cam->state |= DEV_MISCONFIGURED;
 		DBG(1, "VIDIOC_S_CROP failed because of hardware problems. To "
-		       "use the camera, close and open %s again.",
-		    video_device_node_name(cam->v4ldev));
+		       "use the camera, close and open /dev/video%d again.",
+		    cam->v4ldev->num);
 		return -EIO;
 	}
 
@@ -1867,8 +1859,8 @@ et61x251_vidioc_s_crop(struct et61x251_device* cam, void __user * arg)
 	    nbuffers != et61x251_request_buffers(cam, nbuffers, cam->io)) {
 		cam->state |= DEV_MISCONFIGURED;
 		DBG(1, "VIDIOC_S_CROP failed because of not enough memory. To "
-		       "use the camera, close and open %s again.",
-		    video_device_node_name(cam->v4ldev));
+		       "use the camera, close and open /dev/video%d again.",
+		    cam->v4ldev->num);
 		return -ENOMEM;
 	}
 
@@ -2077,8 +2069,8 @@ et61x251_vidioc_try_s_fmt(struct et61x251_device* cam, unsigned int cmd,
 	if (err) { /* atomic, no rollback in ioctl() */
 		cam->state |= DEV_MISCONFIGURED;
 		DBG(1, "VIDIOC_S_FMT failed because of hardware problems. To "
-		       "use the camera, close and open %s again.",
-		    video_device_node_name(cam->v4ldev));
+		       "use the camera, close and open /dev/video%d again.",
+		    cam->v4ldev->num);
 		return -EIO;
 	}
 
@@ -2089,8 +2081,8 @@ et61x251_vidioc_try_s_fmt(struct et61x251_device* cam, unsigned int cmd,
 	    nbuffers != et61x251_request_buffers(cam, nbuffers, cam->io)) {
 		cam->state |= DEV_MISCONFIGURED;
 		DBG(1, "VIDIOC_S_FMT failed because of not enough memory. To "
-		       "use the camera, close and open %s again.",
-		    video_device_node_name(cam->v4ldev));
+		       "use the camera, close and open /dev/video%d again.",
+		    cam->v4ldev->num);
 		return -ENOMEM;
 	}
 
@@ -2138,7 +2130,7 @@ et61x251_vidioc_s_jpegcomp(struct et61x251_device* cam, void __user * arg)
 		cam->state |= DEV_MISCONFIGURED;
 		DBG(1, "VIDIOC_S_JPEGCOMP failed because of hardware "
 		       "problems. To use the camera, close and open "
-		       "%s again.", video_device_node_name(cam->v4ldev));
+		       "/dev/video%d again.", cam->v4ldev->num);
 		return -EIO;
 	}
 
@@ -2482,8 +2474,16 @@ static long et61x251_ioctl_v4l2(struct file *filp,
 	case VIDIOC_S_PARM:
 		return et61x251_vidioc_s_parm(cam, arg);
 
+	case VIDIOC_G_STD:
+	case VIDIOC_S_STD:
+	case VIDIOC_QUERYSTD:
+	case VIDIOC_ENUMSTD:
+	case VIDIOC_QUERYMENU:
+	case VIDIOC_ENUM_FRAMEINTERVALS:
+		return -EINVAL;
+
 	default:
-		return -ENOTTY;
+		return -EINVAL;
 
 	}
 }
@@ -2525,7 +2525,7 @@ static const struct v4l2_file_operations et61x251_fops = {
 	.owner = THIS_MODULE,
 	.open =    et61x251_open,
 	.release = et61x251_release,
-	.unlocked_ioctl =   et61x251_ioctl,
+	.ioctl =   et61x251_ioctl,
 	.read =    et61x251_read,
 	.poll =    et61x251_poll,
 	.mmap =    et61x251_mmap,
@@ -2584,6 +2584,7 @@ et61x251_usb_probe(struct usb_interface* intf, const struct usb_device_id* id)
 
 	strcpy(cam->v4ldev->name, "ET61X[12]51 PC Camera");
 	cam->v4ldev->fops = &et61x251_fops;
+	cam->v4ldev->minor = video_nr[dev_nr];
 	cam->v4ldev->release = video_device_release;
 	cam->v4ldev->parent = &udev->dev;
 	video_set_drvdata(cam->v4ldev, cam);
@@ -2602,8 +2603,7 @@ et61x251_usb_probe(struct usb_interface* intf, const struct usb_device_id* id)
 		goto fail;
 	}
 
-	DBG(2, "V4L2 device registered as %s",
-	    video_device_node_name(cam->v4ldev));
+	DBG(2, "V4L2 device registered as /dev/video%d", cam->v4ldev->num);
 
 	cam->module_param.force_munmap = force_munmap[dev_nr];
 	cam->module_param.frame_timeout = frame_timeout[dev_nr];
@@ -2654,9 +2654,9 @@ static void et61x251_usb_disconnect(struct usb_interface* intf)
 	DBG(2, "Disconnecting %s...", cam->v4ldev->name);
 
 	if (cam->users) {
-		DBG(2, "Device %s is open! Deregistration and memory "
-		       "deallocation are deferred.",
-		    video_device_node_name(cam->v4ldev));
+		DBG(2, "Device /dev/video%d is open! Deregistration and "
+		       "memory deallocation are deferred.",
+		    cam->v4ldev->num);
 		cam->state |= DEV_MISCONFIGURED;
 		et61x251_stop_transfer(cam);
 		cam->state |= DEV_DISCONNECTED;
@@ -2680,4 +2680,27 @@ static struct usb_driver et61x251_usb_driver = {
 	.disconnect = et61x251_usb_disconnect,
 };
 
-module_usb_driver(et61x251_usb_driver);
+/*****************************************************************************/
+
+static int __init et61x251_module_init(void)
+{
+	int err = 0;
+
+	KDBG(2, ET61X251_MODULE_NAME " v" ET61X251_MODULE_VERSION);
+	KDBG(3, ET61X251_MODULE_AUTHOR);
+
+	if ((err = usb_register(&et61x251_usb_driver)))
+		KDBG(1, "usb_register() failed");
+
+	return err;
+}
+
+
+static void __exit et61x251_module_exit(void)
+{
+	usb_deregister(&et61x251_usb_driver);
+}
+
+
+module_init(et61x251_module_init);
+module_exit(et61x251_module_exit);

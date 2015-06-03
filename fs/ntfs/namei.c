@@ -23,7 +23,6 @@
 #include <linux/dcache.h>
 #include <linux/exportfs.h>
 #include <linux/security.h>
-#include <linux/slab.h>
 
 #include "attrib.h"
 #include "debug.h"

@@ -36,8 +36,6 @@
  *	Synchronous mode without DMA is unlikely to pass about 2400 baud.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
@@ -49,7 +47,6 @@
 #include <linux/hdlc.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
-#include <linux/gfp.h>
 #include <asm/dma.h>
 #include <asm/io.h>
 #define RT_LOCK
@@ -367,7 +364,7 @@ static void z8530_rx(struct z8530_channel *c)
 				c->count=0;
 				if(stat&Rx_OVR)
 				{
-					pr_warn("%s: overrun\n", c->dev->name);
+					printk(KERN_WARNING "%s: overrun\n", c->dev->name);
 					c->rx_overrun++;
 				}
 				if(stat&CRC_ERR)
@@ -466,12 +463,12 @@ static void z8530_status(struct z8530_channel *chan)
 	if (altered & chan->dcdcheck)
 	{
 		if (status & chan->dcdcheck) {
-			pr_info("%s: DCD raised\n", chan->dev->name);
+			printk(KERN_INFO "%s: DCD raised\n", chan->dev->name);
 			write_zsreg(chan, R3, chan->regs[3] | RxENABLE);
 			if (chan->netdevice)
 				netif_carrier_on(chan->netdevice);
 		} else {
-			pr_info("%s: DCD lost\n", chan->dev->name);
+			printk(KERN_INFO "%s: DCD lost\n", chan->dev->name);
 			write_zsreg(chan, R3, chan->regs[3] & ~RxENABLE);
 			z8530_flush_fifo(chan);
 			if (chan->netdevice)
@@ -540,12 +537,12 @@ static void z8530_dma_tx(struct z8530_channel *chan)
 {
 	if(!chan->dma_tx)
 	{
-		pr_warn("Hey who turned the DMA off?\n");
+		printk(KERN_WARNING "Hey who turned the DMA off?\n");
 		z8530_tx(chan);
 		return;
 	}
-	/* This shouldn't occur in DMA mode */
-	pr_err("DMA tx - bogus event!\n");
+	/* This shouldnt occur in DMA mode */
+	printk(KERN_ERR "DMA tx - bogus event!\n");
 	z8530_tx(chan);
 }
 
@@ -587,12 +584,12 @@ static void z8530_dma_status(struct z8530_channel *chan)
 	if (altered & chan->dcdcheck)
 	{
 		if (status & chan->dcdcheck) {
-			pr_info("%s: DCD raised\n", chan->dev->name);
+			printk(KERN_INFO "%s: DCD raised\n", chan->dev->name);
 			write_zsreg(chan, R3, chan->regs[3] | RxENABLE);
 			if (chan->netdevice)
 				netif_carrier_on(chan->netdevice);
 		} else {
-			pr_info("%s: DCD lost\n", chan->dev->name);
+			printk(KERN_INFO "%s:DCD lost\n", chan->dev->name);
 			write_zsreg(chan, R3, chan->regs[3] & ~RxENABLE);
 			z8530_flush_fifo(chan);
 			if (chan->netdevice)
@@ -714,7 +711,7 @@ irqreturn_t z8530_interrupt(int irq, void *dev_id)
 	
 	if(locker)
 	{
-		pr_err("IRQ re-enter\n");
+		printk(KERN_ERR "IRQ re-enter\n");
 		return IRQ_NONE;
 	}
 	locker=1;
@@ -760,8 +757,7 @@ irqreturn_t z8530_interrupt(int irq, void *dev_id)
 	}
 	spin_unlock(&dev->lock);
 	if(work==5000)
-		pr_err("%s: interrupt jammed - abort(0x%X)!\n",
-		       dev->name, intr);
+		printk(KERN_ERR "%s: interrupt jammed - abort(0x%X)!\n", dev->name, intr);
 	/* Ok all done */
 	locker=0;
 	return IRQ_HANDLED;
@@ -769,7 +765,7 @@ irqreturn_t z8530_interrupt(int irq, void *dev_id)
 
 EXPORT_SYMBOL(z8530_interrupt);
 
-static const u8 reg_init[16]=
+static char reg_init[16]=
 {
 	0,0,0,0,
 	0,0,0,0,
@@ -1209,7 +1205,7 @@ EXPORT_SYMBOL(z8530_sync_txdma_close);
  *	it exists...
  */
  
-static const char *z8530_type_name[]={
+static char *z8530_type_name[]={
 	"Z8530",
 	"Z85C30",
 	"Z85230"
@@ -1222,13 +1218,13 @@ static const char *z8530_type_name[]={
  *	@io: the port value in question
  *
  *	Describe a Z8530 in a standard format. We must pass the I/O as
- *	the port offset isn't predictable. The main reason for this function
+ *	the port offset isnt predictable. The main reason for this function
  *	is to try and get a common format of report.
  */
 
 void z8530_describe(struct z8530_dev *dev, char *mapping, unsigned long io)
 {
-	pr_info("%s: %s found at %s 0x%lX, IRQ %d\n",
+	printk(KERN_INFO "%s: %s found at %s 0x%lX, IRQ %d.\n",
 		dev->name, 
 		z8530_type_name[dev->type],
 		mapping,
@@ -1591,7 +1587,7 @@ static void z8530_rx_done(struct z8530_channel *c)
 		unsigned long flags;
 		
 		/*
-		 *	Complete this DMA. Necessary to find the length
+		 *	Complete this DMA. Neccessary to find the length
 		 */		
 		 
 		flags=claim_dma_lock();
@@ -1624,7 +1620,8 @@ static void z8530_rx_done(struct z8530_channel *c)
 		else
 			/* Can't occur as we dont reenable the DMA irq until
 			   after the flip is done */
-			netdev_warn(c->netdevice, "DMA flip overrun!\n");
+			printk(KERN_WARNING "%s: DMA flip overrun!\n",
+			       c->netdevice->name);
 
 		release_dma_lock(flags);
 
@@ -1639,7 +1636,8 @@ static void z8530_rx_done(struct z8530_channel *c)
 		skb = dev_alloc_skb(ct);
 		if (skb == NULL) {
 			c->netdevice->stats.rx_dropped++;
-			netdev_warn(c->netdevice, "Memory squeeze\n");
+			printk(KERN_WARNING "%s: Memory squeeze.\n",
+			       c->netdevice->name);
 		} else {
 			skb_put(skb, ct);
 			skb_copy_to_linear_data(skb, rxb, ct);
@@ -1658,7 +1656,7 @@ static void z8530_rx_done(struct z8530_channel *c)
 		 *	fifo length for this. Thus we want to flip to the new
 		 *	buffer and then mess around copying and allocating
 		 *	things. For the current case it doesn't matter but
-		 *	if you build a system where the sync irq isn't blocked
+		 *	if you build a system where the sync irq isnt blocked
 		 *	by the kernel IRQ disable then you need only block the
 		 *	sync IRQ for the RT_LOCK area.
 		 *
@@ -1679,7 +1677,8 @@ static void z8530_rx_done(struct z8530_channel *c)
 
 		c->skb2 = dev_alloc_skb(c->mtu);
 		if (c->skb2 == NULL)
-			netdev_warn(c->netdevice, "memory squeeze\n");
+			printk(KERN_WARNING "%s: memory squeeze.\n",
+			       c->netdevice->name);
 		else
 			skb_put(c->skb2, c->mtu);
 		c->netdevice->stats.rx_packets++;
@@ -1693,7 +1692,7 @@ static void z8530_rx_done(struct z8530_channel *c)
 		c->rx_function(c, skb);
 	} else {
 		c->netdevice->stats.rx_dropped++;
-		netdev_err(c->netdevice, "Lost a frame\n");
+		printk(KERN_ERR "%s: Lost a frame\n", c->netdevice->name);
 	}
 }
 

@@ -21,7 +21,6 @@
 #include <linux/fb.h>
 #include <linux/delay.h>
 #include <linux/init.h>
-#include <linux/io.h>
 #include <linux/ioport.h>
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
@@ -299,8 +298,8 @@ static void set_dma_control0(struct pxa168fb_info *fbi)
 	 * Set bit to enable graphics DMA.
 	 */
 	x = readl(fbi->reg_base + LCD_SPU_DMA_CTRL0);
-	x &= ~CFG_GRA_ENA_MASK;
-	x |= fbi->active ? CFG_GRA_ENA(1) : CFG_GRA_ENA(0);
+	x |= fbi->active ? 0x00000100 : 0;
+	fbi->active = 0;
 
 	/*
 	 * If we are in a pseudo-color mode, we need to enable
@@ -560,7 +559,7 @@ static struct fb_ops pxa168fb_ops = {
 	.fb_imageblit	= cfb_imageblit,
 };
 
-static int __devinit pxa168fb_init_mode(struct fb_info *info,
+static int __init pxa168fb_init_mode(struct fb_info *info,
 			      struct pxa168fb_mach_info *mi)
 {
 	struct pxa168fb_info *fbi = info->par;
@@ -600,7 +599,7 @@ static int __devinit pxa168fb_init_mode(struct fb_info *info,
 	return ret;
 }
 
-static int __devinit pxa168fb_probe(struct platform_device *pdev)
+static int __init pxa168fb_probe(struct platform_device *pdev)
 {
 	struct pxa168fb_mach_info *mi;
 	struct fb_info *info = 0;
@@ -624,21 +623,19 @@ static int __devinit pxa168fb_probe(struct platform_device *pdev)
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (res == NULL) {
 		dev_err(&pdev->dev, "no IO memory defined\n");
-		ret = -ENOENT;
-		goto failed_put_clk;
+		return -ENOENT;
 	}
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0) {
 		dev_err(&pdev->dev, "no IRQ defined\n");
-		ret = -ENOENT;
-		goto failed_put_clk;
+		return -ENOENT;
 	}
 
 	info = framebuffer_alloc(sizeof(struct pxa168fb_info), &pdev->dev);
 	if (info == NULL) {
-		ret = -ENOMEM;
-		goto failed_put_clk;
+		clk_put(clk);
+		return -ENOMEM;
 	}
 
 	/* Initialize private data */
@@ -663,7 +660,7 @@ static int __devinit pxa168fb_probe(struct platform_device *pdev)
 	info->fix.ypanstep = 0;
 	info->fix.ywrapstep = 0;
 	info->fix.mmio_start = res->start;
-	info->fix.mmio_len = resource_size(res);
+	info->fix.mmio_len = res->end - res->start + 1;
 	info->fix.accel = FB_ACCEL_NONE;
 	info->fbops = &pxa168fb_ops;
 	info->pseudo_palette = fbi->pseudo_palette;
@@ -671,11 +668,10 @@ static int __devinit pxa168fb_probe(struct platform_device *pdev)
 	/*
 	 * Map LCD controller registers.
 	 */
-	fbi->reg_base = devm_ioremap_nocache(&pdev->dev, res->start,
-					     resource_size(res));
+	fbi->reg_base = ioremap_nocache(res->start, res->end - res->start);
 	if (fbi->reg_base == NULL) {
 		ret = -ENOMEM;
-		goto failed_free_info;
+		goto failed;
 	}
 
 	/*
@@ -687,11 +683,10 @@ static int __devinit pxa168fb_probe(struct platform_device *pdev)
 						&fbi->fb_start_dma, GFP_KERNEL);
 	if (info->screen_base == NULL) {
 		ret = -ENOMEM;
-		goto failed_free_info;
+		goto failed;
 	}
 
 	info->fix.smem_start = (unsigned long)fbi->fb_start_dma;
-	set_graphics_start(info, 0, 0);
 
 	/*
 	 * Set video mode according to platform data.
@@ -705,12 +700,16 @@ static int __devinit pxa168fb_probe(struct platform_device *pdev)
 	 */
 	pxa168fb_init_mode(info, mi);
 
+	ret = pxa168fb_check_var(&info->var, info);
+	if (ret)
+		goto failed_free_fbmem;
+
 	/*
 	 * Fill in sane defaults.
 	 */
 	ret = pxa168fb_check_var(&info->var, info);
 	if (ret)
-		goto failed_free_fbmem;
+		goto failed;
 
 	/*
 	 * enable controller clock
@@ -741,8 +740,8 @@ static int __devinit pxa168fb_probe(struct platform_device *pdev)
 	/*
 	 * Register irq handler.
 	 */
-	ret = devm_request_irq(&pdev->dev, irq, pxa168fb_handle_irq,
-			       IRQF_SHARED, info->fix.id, fbi);
+	ret = request_irq(irq, pxa168fb_handle_irq, IRQF_SHARED,
+					info->fix.id, fbi);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "unable to request IRQ\n");
 		ret = -ENXIO;
@@ -761,12 +760,14 @@ static int __devinit pxa168fb_probe(struct platform_device *pdev)
 	if (ret < 0) {
 		dev_err(&pdev->dev, "Failed to register pxa168-fb: %d\n", ret);
 		ret = -ENXIO;
-		goto failed_free_cmap;
+		goto failed_free_irq;
 	}
 
 	platform_set_drvdata(pdev, fbi);
 	return 0;
 
+failed_free_irq:
+	free_irq(irq, fbi);
 failed_free_cmap:
 	fb_dealloc_cmap(&info->cmap);
 failed_free_clk:
@@ -774,50 +775,12 @@ failed_free_clk:
 failed_free_fbmem:
 	dma_free_coherent(fbi->dev, info->fix.smem_len,
 			info->screen_base, fbi->fb_start_dma);
-failed_free_info:
+failed:
 	kfree(info);
-failed_put_clk:
 	clk_put(clk);
 
 	dev_err(&pdev->dev, "frame buffer device init failed with %d\n", ret);
 	return ret;
-}
-
-static int __devexit pxa168fb_remove(struct platform_device *pdev)
-{
-	struct pxa168fb_info *fbi = platform_get_drvdata(pdev);
-	struct fb_info *info;
-	int irq;
-	unsigned int data;
-
-	if (!fbi)
-		return 0;
-
-	/* disable DMA transfer */
-	data = readl(fbi->reg_base + LCD_SPU_DMA_CTRL0);
-	data &= ~CFG_GRA_ENA_MASK;
-	writel(data, fbi->reg_base + LCD_SPU_DMA_CTRL0);
-
-	info = fbi->info;
-
-	unregister_framebuffer(info);
-
-	writel(GRA_FRAME_IRQ0_ENA(0x0), fbi->reg_base + SPU_IRQ_ENA);
-
-	if (info->cmap.len)
-		fb_dealloc_cmap(&info->cmap);
-
-	irq = platform_get_irq(pdev, 0);
-
-	dma_free_writecombine(fbi->dev, PAGE_ALIGN(info->fix.smem_len),
-				info->screen_base, info->fix.smem_start);
-
-	clk_disable(fbi->clk);
-	clk_put(fbi->clk);
-
-	framebuffer_release(info);
-
-	return 0;
 }
 
 static struct platform_driver pxa168fb_driver = {
@@ -826,10 +789,13 @@ static struct platform_driver pxa168fb_driver = {
 		.owner	= THIS_MODULE,
 	},
 	.probe		= pxa168fb_probe,
-	.remove		= __devexit_p(pxa168fb_remove),
 };
 
-module_platform_driver(pxa168fb_driver);
+static int __devinit pxa168fb_init(void)
+{
+	return platform_driver_register(&pxa168fb_driver);
+}
+module_init(pxa168fb_init);
 
 MODULE_AUTHOR("Lennert Buytenhek <buytenh@marvell.com> "
 	      "Green Wan <gwan@marvell.com>");

@@ -18,8 +18,11 @@
  *	(jj@sunsite.ms.mff.cuni.cz)
  */
 
-#include <linux/quotaops.h>
-#include "ext3.h"
+#include <linux/time.h>
+#include <linux/fs.h>
+#include <linux/jbd.h>
+#include <linux/ext3_fs.h>
+#include <linux/ext3_jbd.h>
 #include "xattr.h"
 #include "acl.h"
 
@@ -30,9 +33,9 @@
  */
 static int ext3_release_file (struct inode * inode, struct file * filp)
 {
-	if (ext3_test_inode_state(inode, EXT3_STATE_FLUSH_ON_CLOSE)) {
+	if (EXT3_I(inode)->i_state & EXT3_STATE_FLUSH_ON_CLOSE) {
 		filemap_flush(inode->i_mapping);
-		ext3_clear_inode_state(inode, EXT3_STATE_FLUSH_ON_CLOSE);
+		EXT3_I(inode)->i_state &= ~EXT3_STATE_FLUSH_ON_CLOSE;
 	}
 	/* if we are the last writer on the inode, drop the block reservation */
 	if ((filp->f_mode & FMODE_WRITE) &&
@@ -59,7 +62,7 @@ const struct file_operations ext3_file_operations = {
 	.compat_ioctl	= ext3_compat_ioctl,
 #endif
 	.mmap		= generic_file_mmap,
-	.open		= dquot_file_open,
+	.open		= generic_file_open,
 	.release	= ext3_release_file,
 	.fsync		= ext3_sync_file,
 	.splice_read	= generic_file_splice_read,
@@ -67,6 +70,7 @@ const struct file_operations ext3_file_operations = {
 };
 
 const struct inode_operations ext3_file_inode_operations = {
+	.truncate	= ext3_truncate,
 	.setattr	= ext3_setattr,
 #ifdef CONFIG_EXT3_FS_XATTR
 	.setxattr	= generic_setxattr,
@@ -74,7 +78,7 @@ const struct inode_operations ext3_file_inode_operations = {
 	.listxattr	= ext3_listxattr,
 	.removexattr	= generic_removexattr,
 #endif
-	.get_acl	= ext3_get_acl,
+	.check_acl	= ext3_check_acl,
 	.fiemap		= ext3_fiemap,
 };
 

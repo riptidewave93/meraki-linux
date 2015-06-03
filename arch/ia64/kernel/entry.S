@@ -71,6 +71,15 @@ ENTRY(ia64_execve)
 	add out3=16,sp			// regs
 	br.call.sptk.many rp=sys_execve
 .ret0:
+#ifdef CONFIG_IA32_SUPPORT
+	/*
+	 * Check if we're returning to ia32 mode. If so, we need to restore ia32 registers
+	 * from pt_regs.
+	 */
+	adds r16=PT(CR_IPSR)+16,sp
+	;;
+	ld8 r16=[r16]
+#endif
 	cmp4.ge p6,p7=r8,r0
 	mov ar.pfs=loc1			// restore ar.pfs
 	sxt4 r8=r8			// return 64-bit result
@@ -99,6 +108,12 @@ ENTRY(ia64_execve)
 	ldf.fill f23=[sp];	ldf.fill f24=[sp];	mov f25=f0
 	ldf.fill f26=[sp];	ldf.fill f27=[sp];	mov f28=f0
 	ldf.fill f29=[sp];	ldf.fill f30=[sp];	mov f31=f0
+#ifdef CONFIG_IA32_SUPPORT
+	tbit.nz p6,p0=r16, IA64_PSR_IS_BIT
+	movl loc0=ia64_ret_from_ia32_execve
+	;;
+(p6)	mov rp=loc0
+#endif
 	br.ret.sptk.many rp
 END(ia64_execve)
 
@@ -832,6 +847,30 @@ __paravirt_work_processed_syscall:
 	mov f11=f0			// F    clear f11
 	br.cond.sptk.many rbs_switch	// B
 END(__paravirt_leave_syscall)
+
+#ifdef __IA64_ASM_PARAVIRTUALIZED_NATIVE
+#ifdef CONFIG_IA32_SUPPORT
+GLOBAL_ENTRY(ia64_ret_from_ia32_execve)
+	PT_REGS_UNWIND_INFO(0)
+	adds r2=PT(R8)+16,sp			// r2 = &pt_regs.r8
+	adds r3=PT(R10)+16,sp			// r3 = &pt_regs.r10
+	;;
+	.mem.offset 0,0
+	st8.spill [r2]=r8	// store return value in slot for r8 and set unat bit
+	.mem.offset 8,0
+	st8.spill [r3]=r0	// clear error indication in slot for r10 and set unat bit
+#ifdef CONFIG_PARAVIRT
+	;;
+	// don't fall through, ia64_leave_kernel may be #define'd
+	br.cond.sptk.few ia64_leave_kernel
+	;;
+#endif /* CONFIG_PARAVIRT */
+END(ia64_ret_from_ia32_execve)
+#ifndef CONFIG_PARAVIRT
+	// fall through
+#endif
+#endif /* CONFIG_IA32_SUPPORT */
+#endif /* __IA64_ASM_PARAVIRTUALIZED_NATIVE */
 
 GLOBAL_ENTRY(__paravirt_leave_kernel)
 	PT_REGS_UNWIND_INFO(0)
@@ -1614,7 +1653,7 @@ sys_call_table:
 	data8 sys_sched_get_priority_min
 	data8 sys_sched_rr_get_interval
 	data8 sys_nanosleep
-	data8 sys_ni_syscall			// old nfsservctl
+	data8 sys_nfsservctl
 	data8 sys_prctl				// 1170
 	data8 sys_getpagesize
 	data8 sys_mmap2
@@ -1767,18 +1806,18 @@ sys_call_table:
 	data8 sys_preadv
 	data8 sys_pwritev			// 1320
 	data8 sys_rt_tgsigqueueinfo
-	data8 sys_recvmmsg
-	data8 sys_fanotify_init
-	data8 sys_fanotify_mark
-	data8 sys_prlimit64			// 1325
-	data8 sys_name_to_handle_at
-	data8 sys_open_by_handle_at
-	data8 sys_clock_adjtime
-	data8 sys_syncfs
-	data8 sys_setns				// 1330
-	data8 sys_sendmmsg
-	data8 sys_process_vm_readv
-	data8 sys_process_vm_writev
+	data8 sys_ni_syscall
+	data8 sys_ni_syscall
+	data8 sys_ni_syscall
+	data8 sys_ni_syscall			// 1325
+	data8 sys_ni_syscall
+	data8 sys_ni_syscall
+	data8 sys_ni_syscall
+	data8 sys_ni_syscall
+	data8 sys_ni_syscall			// 1330
+	data8 sys_ni_syscall
+	data8 sys_ni_syscall
+	data8 sys_ni_syscall
 	data8 sys_accept4
 
 	.org sys_call_table + 8*NR_syscalls	// guard against failures to increase NR_syscalls

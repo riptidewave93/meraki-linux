@@ -23,9 +23,10 @@
 #include <linux/interrupt.h>
 #include <linux/pci.h>
 #include <asm/processor.h>
+#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/smp.h>
 #include <asm/pgalloc.h>
 #include <asm/cpu-regs.h>
@@ -448,7 +449,8 @@ found_opcode:
 	       regs->pc, opcode, pop->opcode, pop->params[0], pop->params[1]);
 
 	tmp = format_tbl[pop->format].opsz;
-	BUG_ON(tmp > noc); /* match was less complete than it ought to have been */
+	if (tmp > noc)
+		BUG(); /* match was less complete than it ought to have been */
 
 	if (tmp < noc) {
 		tmp = noc - tmp;
@@ -631,13 +633,13 @@ static int misalignment_addr(unsigned long *registers, unsigned long sp,
 			goto displace_or_inc;
 		case SD24:
 			tmp = disp << 8;
-			asm("asr 8,%0" : "=r"(tmp) : "0"(tmp) : "cc");
+			asm("asr 8,%0" : "=r"(tmp) : "0"(tmp));
 			disp = (long) tmp;
 			goto displace_or_inc;
 		case SIMM4_2:
 			tmp = opcode >> 4 & 0x0f;
 			tmp <<= 28;
-			asm("asr 28,%0" : "=r"(tmp) : "0"(tmp) : "cc");
+			asm("asr 28,%0" : "=r"(tmp) : "0"(tmp));
 			disp = (long) tmp;
 			goto displace_or_inc;
 		case IMM8:

@@ -7,7 +7,6 @@
 #include <linux/kprobes.h>
 #include <linux/module.h>
 #include <linux/kdebug.h>
-#include <linux/slab.h>
 #include <asm/signal.h>
 #include <asm/cacheflush.h>
 #include <asm/uaccess.h>
@@ -47,9 +46,6 @@ struct kretprobe_blackpoint kretprobe_blacklist[] = {{NULL, NULL}};
 
 int __kprobes arch_prepare_kprobe(struct kprobe *p)
 {
-	if ((unsigned long) p->addr & 0x3UL)
-		return -EILSEQ;
-
 	p->ainsn.insn[0] = *p->addr;
 	flushi(&p->ainsn.insn[0]);
 

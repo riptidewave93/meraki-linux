@@ -30,7 +30,7 @@
  * Loosely based on the piix & svwks drivers.
  *
  * Documentation:
- *	Not publicly available.
+ *	Not publically available.
  */
 
 #include <linux/kernel.h>
@@ -196,10 +196,12 @@ static int triflex_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 		.port_ops = &triflex_port_ops
 	};
 	const struct ata_port_info *ppi[] = { &info, NULL };
+	static int printed_version;
 
-	ata_print_version_once(&dev->dev, DRV_VERSION);
+	if (!printed_version++)
+		dev_printk(KERN_DEBUG, &dev->dev, "version " DRV_VERSION "\n");
 
-	return ata_pci_bmdma_init_one(dev, ppi, &triflex_sht, NULL, 0);
+	return ata_pci_sff_init_one(dev, ppi, &triflex_sht, NULL);
 }
 
 static const struct pci_device_id triflex[] = {
@@ -208,34 +210,13 @@ static const struct pci_device_id triflex[] = {
 	{ },
 };
 
-#ifdef CONFIG_PM
-static int triflex_ata_pci_device_suspend(struct pci_dev *pdev, pm_message_t mesg)
-{
-	struct ata_host *host = dev_get_drvdata(&pdev->dev);
-	int rc = 0;
-
-	rc = ata_host_suspend(host, mesg);
-	if (rc)
-		return rc;
-
-	/*
-	 * We must not disable or powerdown the device.
-	 * APM bios refuses to suspend if IDE is not accessible.
-	 */
-	pci_save_state(pdev);
-
-	return 0;
-}
-
-#endif
-
 static struct pci_driver triflex_pci_driver = {
 	.name 		= DRV_NAME,
 	.id_table	= triflex,
 	.probe 		= triflex_init_one,
 	.remove		= ata_pci_remove_one,
 #ifdef CONFIG_PM
-	.suspend	= triflex_ata_pci_device_suspend,
+	.suspend	= ata_pci_device_suspend,
 	.resume		= ata_pci_device_resume,
 #endif
 };

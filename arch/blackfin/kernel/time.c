@@ -25,6 +25,7 @@
 
 static struct irqaction bfin_timer_irq = {
 	.name = "Blackfin Timer Tick",
+	.flags = IRQF_DISABLED
 };
 
 #if defined(CONFIG_IPIPE)
@@ -50,7 +51,7 @@ void __init setup_core_timer(void)
 	u32 tcount;
 
 	/* power up the timer, but don't enable it just yet */
-	bfin_write_TCNTL(TMPWR);
+	bfin_write_TCNTL(1);
 	CSYNC();
 
 	/* the TSCALE prescaler counter */
@@ -63,7 +64,7 @@ void __init setup_core_timer(void)
 	/* now enable the timer */
 	CSYNC();
 
-	bfin_write_TCNTL(TAUTORLD | TMREN | TMPWR);
+	bfin_write_TCNTL(7);
 }
 #endif
 
@@ -111,16 +112,44 @@ u32 arch_gettimeoffset(void)
 }
 #endif
 
+static inline int set_rtc_mmss(unsigned long nowtime)
+{
+	return 0;
+}
+
 /*
  * timer_interrupt() needs to keep up the real-time clock,
- * as well as call the "xtime_update()" routine every clocktick
+ * as well as call the "do_timer()" routine every clocktick
  */
 #ifdef CONFIG_CORE_TIMER_IRQ_L1
 __attribute__((l1_text))
 #endif
 irqreturn_t timer_interrupt(int irq, void *dummy)
 {
-	xtime_update(1);
+	/* last time the cmos clock got updated */
+	static long last_rtc_update;
+
+	write_seqlock(&xtime_lock);
+	do_timer(1);
+
+	/*
+	 * If we have an externally synchronized Linux clock, then update
+	 * CMOS clock accordingly every ~11 minutes. Set_rtc_mmss() has to be
+	 * called as close as possible to 500 ms before the new second starts.
+	 */
+	if (ntp_synced() &&
+	    xtime.tv_sec > last_rtc_update + 660 &&
+	    (xtime.tv_nsec / NSEC_PER_USEC) >=
+	    500000 - ((unsigned)TICK_SIZE) / 2
+	    && (xtime.tv_nsec / NSEC_PER_USEC) <=
+	    500000 + ((unsigned)TICK_SIZE) / 2) {
+		if (set_rtc_mmss(xtime.tv_sec) == 0)
+			last_rtc_update = xtime.tv_sec;
+		else
+			/* Do it again in 60s. */
+			last_rtc_update = xtime.tv_sec - 600;
+	}
+	write_sequnlock(&xtime_lock);
 
 #ifdef CONFIG_IPIPE
 	update_root_process_times(get_irq_regs());
@@ -132,15 +161,10 @@ irqreturn_t timer_interrupt(int irq, void *dummy)
 	return IRQ_HANDLED;
 }
 
-void read_persistent_clock(struct timespec *ts)
-{
-	time_t secs_since_1970 = (365 * 37 + 9) * 24 * 60 * 60;	/* 1 Jan 2007 */
-	ts->tv_sec = secs_since_1970;
-	ts->tv_nsec = 0;
-}
-
 void __init time_init(void)
 {
+	time_t secs_since_1970 = (365 * 37 + 9) * 24 * 60 * 60;	/* 1 Jan 2007 */
+
 #ifdef CONFIG_RTC_DRV_BFIN
 	/* [#2663] hack to filter junk RTC values that would cause
 	 * userspace to have to deal with time values greater than
@@ -152,5 +176,19 @@ void __init time_init(void)
 	}
 #endif
 
+	/* Initialize xtime. From now on, xtime is updated with timer interrupts */
+	xtime.tv_sec = secs_since_1970;
+	xtime.tv_nsec = 0;
+
+	wall_to_monotonic.tv_sec = -xtime.tv_sec;
+
 	time_sched_init(timer_interrupt);
+}
+
+/*
+ * Scheduler clock - returns current time in nanosec units.
+ */
+unsigned long long sched_clock(void)
+{
+	return (unsigned long long)jiffies *(NSEC_PER_SEC / HZ);
 }

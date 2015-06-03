@@ -26,10 +26,7 @@
 /* v4l2_device notifications. */
 
 /* Needed to reset the FIFO buffer when changing the input
-   or the video standard.
-
-   Note: these ioctls that internal to the kernel and are never called
-   from userspace. */
+   or the video standard. */
 #define BT819_FIFO_RESET_LOW 	_IO('b', 0)
 #define BT819_FIFO_RESET_HIGH 	_IO('b', 1)
 

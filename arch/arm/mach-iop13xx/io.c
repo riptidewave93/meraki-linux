@@ -21,8 +21,6 @@
 #include <linux/io.h>
 #include <mach/hardware.h>
 
-#include "pci.h"
-
 void * __iomem __iop13xx_io(unsigned long io_addr)
 {
 	void __iomem * io_virt;
@@ -42,8 +40,8 @@ void * __iomem __iop13xx_io(unsigned long io_addr)
 }
 EXPORT_SYMBOL(__iop13xx_io);
 
-static void __iomem *__iop13xx_ioremap_caller(unsigned long cookie,
-	size_t size, unsigned int mtype, void *caller)
+void * __iomem __iop13xx_ioremap(unsigned long cookie, size_t size,
+	unsigned int mtype)
 {
 	void __iomem * retval;
 
@@ -63,9 +61,9 @@ static void __iomem *__iop13xx_ioremap_caller(unsigned long cookie,
 			         (cookie - IOP13XX_PCIE_LOWER_MEM_RA));
 		break;
 	case IOP13XX_PBI_LOWER_MEM_RA ... IOP13XX_PBI_UPPER_MEM_RA:
-		retval = __arm_ioremap_caller(IOP13XX_PBI_LOWER_MEM_PA +
+		retval = __arm_ioremap(IOP13XX_PBI_LOWER_MEM_PA +
 				       (cookie - IOP13XX_PBI_LOWER_MEM_RA),
-				       size, mtype, __builtin_return_address(0));
+				       size, mtype);
 		break;
 	case IOP13XX_PCIE_LOWER_IO_PA ... IOP13XX_PCIE_UPPER_IO_PA:
 		retval = (void *) IOP13XX_PCIE_IO_PHYS_TO_VIRT(cookie);
@@ -77,15 +75,17 @@ static void __iomem *__iop13xx_ioremap_caller(unsigned long cookie,
 		retval = (void *) IOP13XX_PMMR_PHYS_TO_VIRT(cookie);
 		break;
 	default:
-		retval = __arm_ioremap_caller(cookie, size, mtype,
-				caller);
+		retval = __arm_ioremap(cookie, size, mtype);
 	}
 
 	return retval;
 }
+EXPORT_SYMBOL(__iop13xx_ioremap);
 
-static void __iop13xx_iounmap(volatile void __iomem *addr)
+void __iop13xx_iounmap(void __iomem *addr)
 {
+	extern void __iounmap(volatile void __iomem *addr);
+
 	if (iop13xx_atue_mem_base)
 		if (addr >= (void __iomem *) iop13xx_atue_mem_base &&
 	 	    addr < (void __iomem *) (iop13xx_atue_mem_base +
@@ -109,9 +109,4 @@ static void __iop13xx_iounmap(volatile void __iomem *addr)
 skip:
 	return;
 }
-
-void __init iop13xx_init_early(void)
-{
-	arch_ioremap_caller = __iop13xx_ioremap_caller;
-	arch_iounmap = __iop13xx_iounmap;
-}
+EXPORT_SYMBOL(__iop13xx_iounmap);

@@ -25,6 +25,7 @@
 
 #include <linux/fs.h>
 #include <linux/types.h>
+#include <linux/slab.h>
 #include <linux/highmem.h>
 
 #include <cluster/masklog.h>
@@ -35,8 +36,8 @@
 #include "inode.h"
 #include "journal.h"
 #include "uptodate.h"
+
 #include "buffer_head_io.h"
-#include "ocfs2_trace.h"
 
 /*
  * Bits on bh->b_state used by ocfs2.
@@ -55,7 +56,8 @@ int ocfs2_write_block(struct ocfs2_super *osb, struct buffer_head *bh,
 {
 	int ret = 0;
 
-	trace_ocfs2_write_block((unsigned long long)bh->b_blocknr, ci);
+	mlog_entry("(bh->b_blocknr = %llu, ci=%p)\n",
+		   (unsigned long long)bh->b_blocknr, ci);
 
 	BUG_ON(bh->b_blocknr < OCFS2_SUPER_BLOCK_BLKNO);
 	BUG_ON(buffer_jbd(bh));
@@ -65,7 +67,6 @@ int ocfs2_write_block(struct ocfs2_super *osb, struct buffer_head *bh,
 	 * can get modified during recovery even if read-only. */
 	if (ocfs2_is_hard_readonly(osb)) {
 		ret = -EROFS;
-		mlog_errno(ret);
 		goto out;
 	}
 
@@ -90,11 +91,12 @@ int ocfs2_write_block(struct ocfs2_super *osb, struct buffer_head *bh,
 		 * information for this bh as it's not marked locally
 		 * uptodate. */
 		ret = -EIO;
-		mlog_errno(ret);
+		put_bh(bh);
 	}
 
 	ocfs2_metadata_cache_io_unlock(ci);
 out:
+	mlog_exit(ret);
 	return ret;
 }
 
@@ -105,10 +107,10 @@ int ocfs2_read_blocks_sync(struct ocfs2_super *osb, u64 block,
 	unsigned int i;
 	struct buffer_head *bh;
 
-	trace_ocfs2_read_blocks_sync((unsigned long long)block, nr);
-
-	if (!nr)
+	if (!nr) {
+		mlog(ML_BH_IO, "No buffers will be read!\n");
 		goto bail;
+	}
 
 	for (i = 0 ; i < nr ; i++) {
 		if (bhs[i] == NULL) {
@@ -122,8 +124,10 @@ int ocfs2_read_blocks_sync(struct ocfs2_super *osb, u64 block,
 		bh = bhs[i];
 
 		if (buffer_jbd(bh)) {
-			trace_ocfs2_read_blocks_sync_jbd(
-					(unsigned long long)bh->b_blocknr);
+			mlog(ML_BH_IO,
+			     "trying to sync read a jbd "
+			     "managed bh (blocknr = %llu), skipping\n",
+			     (unsigned long long)bh->b_blocknr);
 			continue;
 		}
 
@@ -183,7 +187,8 @@ int ocfs2_read_blocks(struct ocfs2_caching_info *ci, u64 block, int nr,
 	struct buffer_head *bh;
 	struct super_block *sb = ocfs2_metadata_cache_get_super(ci);
 
-	trace_ocfs2_read_blocks_begin(ci, (unsigned long long)block, nr, flags);
+	mlog_entry("(ci=%p, block=(%llu), nr=(%d), flags=%d)\n",
+		   ci, (unsigned long long)block, nr, flags);
 
 	BUG_ON(!ci);
 	BUG_ON((flags & OCFS2_BH_READAHEAD) &&
@@ -203,6 +208,7 @@ int ocfs2_read_blocks(struct ocfs2_caching_info *ci, u64 block, int nr,
 	}
 
 	if (nr == 0) {
+		mlog(ML_BH_IO, "No buffers will be read!\n");
 		status = 0;
 		goto bail;
 	}
@@ -246,7 +252,8 @@ int ocfs2_read_blocks(struct ocfs2_caching_info *ci, u64 block, int nr,
 		 */
 
 		if (!ignore_cache && !ocfs2_buffer_uptodate(ci, bh)) {
-			trace_ocfs2_read_blocks_from_disk(
+			mlog(ML_UPTODATE,
+			     "bh (%llu), owner %llu not uptodate\n",
 			     (unsigned long long)bh->b_blocknr,
 			     (unsigned long long)ocfs2_metadata_cache_owner(ci));
 			/* We're using ignore_cache here to say
@@ -254,10 +261,11 @@ int ocfs2_read_blocks(struct ocfs2_caching_info *ci, u64 block, int nr,
 			ignore_cache = 1;
 		}
 
-		trace_ocfs2_read_blocks_bh((unsigned long long)bh->b_blocknr,
-			ignore_cache, buffer_jbd(bh), buffer_dirty(bh));
-
 		if (buffer_jbd(bh)) {
+			if (ignore_cache)
+				mlog(ML_BH_IO, "trying to sync read a jbd "
+					       "managed bh (blocknr = %llu)\n",
+				     (unsigned long long)bh->b_blocknr);
 			continue;
 		}
 
@@ -265,6 +273,9 @@ int ocfs2_read_blocks(struct ocfs2_caching_info *ci, u64 block, int nr,
 			if (buffer_dirty(bh)) {
 				/* This should probably be a BUG, or
 				 * at least return an error. */
+				mlog(ML_BH_IO, "asking me to sync read a dirty "
+					       "buffer! (blocknr = %llu)\n",
+				     (unsigned long long)bh->b_blocknr);
 				continue;
 			}
 
@@ -357,11 +368,14 @@ int ocfs2_read_blocks(struct ocfs2_caching_info *ci, u64 block, int nr,
 	}
 	ocfs2_metadata_cache_io_unlock(ci);
 
-	trace_ocfs2_read_blocks_end((unsigned long long)block, nr,
-				    flags, ignore_cache);
+	mlog(ML_BH_IO, "block=(%llu), nr=(%d), cached=%s, flags=0x%x\n", 
+	     (unsigned long long)block, nr,
+	     ((flags & OCFS2_BH_IGNORE_CACHE) || ignore_cache) ? "no" : "yes",
+	     flags);
 
 bail:
 
+	mlog_exit(status);
 	return status;
 }
 
@@ -395,12 +409,13 @@ int ocfs2_write_super_or_backup(struct ocfs2_super *osb,
 	int ret = 0;
 	struct ocfs2_dinode *di = (struct ocfs2_dinode *)bh->b_data;
 
+	mlog_entry_void();
+
 	BUG_ON(buffer_jbd(bh));
 	ocfs2_check_super_or_backup(osb->sb, bh->b_blocknr);
 
 	if (ocfs2_is_hard_readonly(osb) || ocfs2_is_soft_readonly(osb)) {
 		ret = -EROFS;
-		mlog_errno(ret);
 		goto out;
 	}
 
@@ -419,9 +434,10 @@ int ocfs2_write_super_or_backup(struct ocfs2_super *osb,
 
 	if (!buffer_uptodate(bh)) {
 		ret = -EIO;
-		mlog_errno(ret);
+		put_bh(bh);
 	}
 
 out:
+	mlog_exit(ret);
 	return ret;
 }

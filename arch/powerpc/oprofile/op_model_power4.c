@@ -14,6 +14,7 @@
 #include <linux/smp.h>
 #include <asm/firmware.h>
 #include <asm/ptrace.h>
+#include <asm/system.h>
 #include <asm/processor.h>
 #include <asm/cputable.h>
 #include <asm/rtas.h>
@@ -206,7 +207,7 @@ static unsigned long get_pc(struct pt_regs *regs)
 	unsigned long mmcra;
 	unsigned long slot;
 
-	/* Can't do much about it */
+	/* Cant do much about it */
 	if (!cur_cpu_spec->oprofile_mmcra_sihv)
 		return pc;
 

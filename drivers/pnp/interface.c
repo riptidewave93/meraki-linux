@@ -278,12 +278,9 @@ static ssize_t pnp_show_current_resources(struct device *dmdev,
 		switch (pnp_resource_type(res)) {
 		case IORESOURCE_IO:
 		case IORESOURCE_MEM:
-		case IORESOURCE_BUS:
-			pnp_printf(buffer, " %#llx-%#llx%s\n",
+			pnp_printf(buffer, " %#llx-%#llx\n",
 				   (unsigned long long) res->start,
-				   (unsigned long long) res->end,
-				   res->flags & IORESOURCE_WINDOW ?
-					" window" : "");
+				   (unsigned long long) res->end);
 			break;
 		case IORESOURCE_IRQ:
 		case IORESOURCE_DMA:
@@ -313,7 +310,8 @@ static ssize_t pnp_set_current_resources(struct device *dmdev,
 		goto done;
 	}
 
-	buf = skip_spaces(buf);
+	while (isspace(*buf))
+		++buf;
 	if (!strnicmp(buf, "disable", 7)) {
 		retval = pnp_disable_dev(dev);
 		goto done;
@@ -355,13 +353,19 @@ static ssize_t pnp_set_current_resources(struct device *dmdev,
 		pnp_init_resources(dev);
 		mutex_lock(&pnp_res_mutex);
 		while (1) {
-			buf = skip_spaces(buf);
+			while (isspace(*buf))
+				++buf;
 			if (!strnicmp(buf, "io", 2)) {
-				buf = skip_spaces(buf + 2);
+				buf += 2;
+				while (isspace(*buf))
+					++buf;
 				start = simple_strtoul(buf, &buf, 0);
-				buf = skip_spaces(buf);
+				while (isspace(*buf))
+					++buf;
 				if (*buf == '-') {
-					buf = skip_spaces(buf + 1);
+					buf += 1;
+					while (isspace(*buf))
+						++buf;
 					end = simple_strtoul(buf, &buf, 0);
 				} else
 					end = start;
@@ -369,11 +373,16 @@ static ssize_t pnp_set_current_resources(struct device *dmdev,
 				continue;
 			}
 			if (!strnicmp(buf, "mem", 3)) {
-				buf = skip_spaces(buf + 3);
+				buf += 3;
+				while (isspace(*buf))
+					++buf;
 				start = simple_strtoul(buf, &buf, 0);
-				buf = skip_spaces(buf);
+				while (isspace(*buf))
+					++buf;
 				if (*buf == '-') {
-					buf = skip_spaces(buf + 1);
+					buf += 1;
+					while (isspace(*buf))
+						++buf;
 					end = simple_strtoul(buf, &buf, 0);
 				} else
 					end = start;
@@ -381,13 +390,17 @@ static ssize_t pnp_set_current_resources(struct device *dmdev,
 				continue;
 			}
 			if (!strnicmp(buf, "irq", 3)) {
-				buf = skip_spaces(buf + 3);
+				buf += 3;
+				while (isspace(*buf))
+					++buf;
 				start = simple_strtoul(buf, &buf, 0);
 				pnp_add_irq_resource(dev, start, 0);
 				continue;
 			}
 			if (!strnicmp(buf, "dma", 3)) {
-				buf = skip_spaces(buf + 3);
+				buf += 3;
+				while (isspace(*buf))
+					++buf;
 				start = simple_strtoul(buf, &buf, 0);
 				pnp_add_dma_resource(dev, start, 0);
 				continue;

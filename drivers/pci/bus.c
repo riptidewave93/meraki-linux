@@ -14,85 +14,8 @@
 #include <linux/ioport.h>
 #include <linux/proc_fs.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 
 #include "pci.h"
-
-void pci_add_resource_offset(struct list_head *resources, struct resource *res,
-			     resource_size_t offset)
-{
-	struct pci_host_bridge_window *window;
-
-	window = kzalloc(sizeof(struct pci_host_bridge_window), GFP_KERNEL);
-	if (!window) {
-		printk(KERN_ERR "PCI: can't add host bridge window %pR\n", res);
-		return;
-	}
-
-	window->res = res;
-	window->offset = offset;
-	list_add_tail(&window->list, resources);
-}
-EXPORT_SYMBOL(pci_add_resource_offset);
-
-void pci_add_resource(struct list_head *resources, struct resource *res)
-{
-	pci_add_resource_offset(resources, res, 0);
-}
-EXPORT_SYMBOL(pci_add_resource);
-
-void pci_free_resource_list(struct list_head *resources)
-{
-	struct pci_host_bridge_window *window, *tmp;
-
-	list_for_each_entry_safe(window, tmp, resources, list) {
-		list_del(&window->list);
-		kfree(window);
-	}
-}
-EXPORT_SYMBOL(pci_free_resource_list);
-
-void pci_bus_add_resource(struct pci_bus *bus, struct resource *res,
-			  unsigned int flags)
-{
-	struct pci_bus_resource *bus_res;
-
-	bus_res = kzalloc(sizeof(struct pci_bus_resource), GFP_KERNEL);
-	if (!bus_res) {
-		dev_err(&bus->dev, "can't add %pR resource\n", res);
-		return;
-	}
-
-	bus_res->res = res;
-	bus_res->flags = flags;
-	list_add_tail(&bus_res->list, &bus->resources);
-}
-
-struct resource *pci_bus_resource_n(const struct pci_bus *bus, int n)
-{
-	struct pci_bus_resource *bus_res;
-
-	if (n < PCI_BRIDGE_RESOURCE_NUM)
-		return bus->resource[n];
-
-	n -= PCI_BRIDGE_RESOURCE_NUM;
-	list_for_each_entry(bus_res, &bus->resources, list) {
-		if (n-- == 0)
-			return bus_res->res;
-	}
-	return NULL;
-}
-EXPORT_SYMBOL_GPL(pci_bus_resource_n);
-
-void pci_bus_remove_resources(struct pci_bus *bus)
-{
-	int i;
-
-	for (i = 0; i < PCI_BRIDGE_RESOURCE_NUM; i++)
-		bus->resource[i] = NULL;
-
-	pci_free_resource_list(&bus->resources);
-}
 
 /**
  * pci_bus_alloc_resource - allocate a resource from a parent bus
@@ -113,14 +36,11 @@ int
 pci_bus_alloc_resource(struct pci_bus *bus, struct resource *res,
 		resource_size_t size, resource_size_t align,
 		resource_size_t min, unsigned int type_mask,
-		resource_size_t (*alignf)(void *,
-					  const struct resource *,
-					  resource_size_t,
-					  resource_size_t),
+		void (*alignf)(void *, struct resource *, resource_size_t,
+				resource_size_t),
 		void *alignf_data)
 {
 	int i, ret = -ENOMEM;
-	struct resource *r;
 	resource_size_t max = -1;
 
 	type_mask |= IORESOURCE_IO | IORESOURCE_MEM;
@@ -129,7 +49,8 @@ pci_bus_alloc_resource(struct pci_bus *bus, struct resource *res,
 	if (!(res->flags & IORESOURCE_MEM_64))
 		max = PCIBIOS_MAX_MEM_32;
 
-	pci_bus_for_each_resource(bus, r, i) {
+	for (i = 0; i < PCI_BUS_NUM_RESOURCES; i++) {
+		struct resource *r = bus->resource[i];
 		if (!r)
 			continue;
 
@@ -192,6 +113,12 @@ int pci_bus_add_child(struct pci_bus *bus)
 		return retval;
 
 	bus->is_added = 1;
+
+	retval = device_create_file(&bus->dev, &dev_attr_cpuaffinity);
+	if (retval)
+		return retval;
+
+	retval = device_create_file(&bus->dev, &dev_attr_cpulistaffinity);
 
 	/* Create legacy_io and legacy_mem files for this bus */
 	pci_create_legacy_files(bus);
@@ -264,8 +191,6 @@ void pci_enable_bridges(struct pci_bus *bus)
 		if (dev->subordinate) {
 			if (!pci_is_enabled(dev)) {
 				retval = pci_enable_device(dev);
-				if (retval)
-					dev_err(&dev->dev, "Error enabling bridge (%d), continuing\n", retval);
 				pci_set_master(dev);
 			}
 			pci_enable_bridges(dev->subordinate);
@@ -315,15 +240,14 @@ void pci_walk_bus(struct pci_bus *top, int (*cb)(struct pci_dev *, void *),
 			next = dev->bus_list.next;
 
 		/* Run device routines with the device locked */
-		device_lock(&dev->dev);
+		down(&dev->dev.sem);
 		retval = cb(dev, userdata);
-		device_unlock(&dev->dev);
+		up(&dev->dev.sem);
 		if (retval)
 			break;
 	}
 	up_read(&pci_bus_sem);
 }
-EXPORT_SYMBOL_GPL(pci_walk_bus);
 
 EXPORT_SYMBOL(pci_bus_alloc_resource);
 EXPORT_SYMBOL_GPL(pci_bus_add_device);

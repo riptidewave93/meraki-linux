@@ -7,25 +7,68 @@
 #ifndef __ARCH_BLACKFIN_GPIO_H__
 #define __ARCH_BLACKFIN_GPIO_H__
 
-#define gpio_bank(x)	((x) >> 4)
-#define gpio_bit(x)	(1<<((x) & 0xF))
-#define gpio_sub_n(x)	((x) & 0xF)
+#define gpio_bank(x) 	((x) >> 4)
+#define gpio_bit(x)  	(1<<((x) & 0xF))
+#define gpio_sub_n(x) 	((x) & 0xF)
 
-#define GPIO_BANKSIZE	16
-#define GPIO_BANK_NUM	DIV_ROUND_UP(MAX_BLACKFIN_GPIOS, GPIO_BANKSIZE)
+#define GPIO_BANKSIZE 	16
+#define GPIO_BANK_NUM 	DIV_ROUND_UP(MAX_BLACKFIN_GPIOS, GPIO_BANKSIZE)
 
 #include <mach/gpio.h>
+
+#define	GPIO_0	0
+#define	GPIO_1	1
+#define	GPIO_2	2
+#define	GPIO_3	3
+#define	GPIO_4	4
+#define	GPIO_5	5
+#define	GPIO_6	6
+#define	GPIO_7	7
+#define	GPIO_8	8
+#define	GPIO_9	9
+#define	GPIO_10	10
+#define	GPIO_11	11
+#define	GPIO_12	12
+#define	GPIO_13	13
+#define	GPIO_14	14
+#define	GPIO_15	15
+#define	GPIO_16	16
+#define	GPIO_17	17
+#define	GPIO_18	18
+#define	GPIO_19	19
+#define	GPIO_20	20
+#define	GPIO_21	21
+#define	GPIO_22	22
+#define	GPIO_23	23
+#define	GPIO_24	24
+#define	GPIO_25	25
+#define	GPIO_26	26
+#define	GPIO_27	27
+#define	GPIO_28	28
+#define	GPIO_29	29
+#define	GPIO_30	30
+#define	GPIO_31	31
+#define	GPIO_32	32
+#define	GPIO_33	33
+#define	GPIO_34	34
+#define	GPIO_35	35
+#define	GPIO_36	36
+#define	GPIO_37	37
+#define	GPIO_38	38
+#define	GPIO_39	39
+#define	GPIO_40	40
+#define	GPIO_41	41
+#define	GPIO_42	42
+#define	GPIO_43	43
+#define	GPIO_44	44
+#define	GPIO_45	45
+#define	GPIO_46	46
+#define	GPIO_47	47
 
 #define PERIPHERAL_USAGE 1
 #define GPIO_USAGE 0
 
-#ifndef BFIN_GPIO_PINT
-# define BFIN_GPIO_PINT 0
-#endif
-
 #ifndef __ASSEMBLY__
-
-#include <linux/compiler.h>
 
 /***********************************************************
 *
@@ -44,7 +87,7 @@
 * MODIFICATION HISTORY :
 **************************************************************/
 
-#if !BFIN_GPIO_PINT
+#ifndef CONFIG_BF54x
 void set_gpio_dir(unsigned, unsigned short);
 void set_gpio_inen(unsigned, unsigned short);
 void set_gpio_polar(unsigned, unsigned short);
@@ -116,33 +159,24 @@ struct gpio_port_t {
 };
 #endif
 
-#ifdef BFIN_SPECIAL_GPIO_BANKS
-void bfin_special_gpio_free(unsigned gpio);
-int bfin_special_gpio_request(unsigned gpio, const char *label);
-# ifdef CONFIG_PM
-void bfin_special_gpio_pm_hibernate_restore(void);
-void bfin_special_gpio_pm_hibernate_suspend(void);
-# endif
-#endif
-
 #ifdef CONFIG_PM
-int bfin_pm_standby_ctrl(unsigned ctrl);
 
-static inline int bfin_pm_standby_setup(void)
-{
-	return bfin_pm_standby_ctrl(1);
-}
-
-static inline void bfin_pm_standby_restore(void)
-{
-	bfin_pm_standby_ctrl(0);
-}
+unsigned int bfin_pm_standby_setup(void);
+void bfin_pm_standby_restore(void);
 
 void bfin_gpio_pm_hibernate_restore(void);
 void bfin_gpio_pm_hibernate_suspend(void);
 
-# if !BFIN_GPIO_PINT
-int gpio_pm_wakeup_ctrl(unsigned gpio, unsigned ctrl);
+#ifndef CONFIG_BF54x
+#define PM_WAKE_RISING	0x1
+#define PM_WAKE_FALLING	0x2
+#define PM_WAKE_HIGH	0x4
+#define PM_WAKE_LOW	0x8
+#define PM_WAKE_BOTH_EDGES	(PM_WAKE_RISING | PM_WAKE_FALLING)
+#define PM_WAKE_IGNORE	0xF0
+
+int gpio_pm_wakeup_request(unsigned gpio, unsigned char type);
+void gpio_pm_wakeup_free(unsigned gpio);
 
 struct gpio_port_s {
 	unsigned short data;
@@ -158,9 +192,8 @@ struct gpio_port_s {
 	unsigned short reserved;
 	unsigned short mux;
 };
-# endif
+#endif /*CONFIG_BF54x*/
 #endif /*CONFIG_PM*/
-
 /***********************************************************
 *
 * FUNCTIONS: Blackfin GPIO Driver
@@ -184,9 +217,6 @@ int bfin_gpio_direction_input(unsigned gpio);
 int bfin_gpio_direction_output(unsigned gpio, int value);
 int bfin_gpio_get_value(unsigned gpio);
 void bfin_gpio_set_value(unsigned gpio, int value);
-
-#include <asm/irq.h>
-#include <asm/errno.h>
 
 #ifdef CONFIG_GPIOLIB
 #include <asm-generic/gpio.h>		/* cansleep wrappers */
@@ -212,11 +242,6 @@ static inline int gpio_cansleep(unsigned int gpio)
 	return __gpio_cansleep(gpio);
 }
 
-static inline int gpio_to_irq(unsigned gpio)
-{
-	return __gpio_to_irq(gpio);
-}
-
 #else /* !CONFIG_GPIOLIB */
 
 static inline int gpio_request(unsigned gpio, const char *label)
@@ -239,30 +264,19 @@ static inline int gpio_direction_output(unsigned gpio, int value)
 	return bfin_gpio_direction_output(gpio, value);
 }
 
-static inline int gpio_set_debounce(unsigned gpio, unsigned debounce)
-{
-	return -EINVAL;
-}
-
-static inline int __gpio_get_value(unsigned gpio)
+static inline int gpio_get_value(unsigned gpio)
 {
 	return bfin_gpio_get_value(gpio);
 }
 
-static inline void __gpio_set_value(unsigned gpio, int value)
+static inline void gpio_set_value(unsigned gpio, int value)
 {
 	return bfin_gpio_set_value(gpio, value);
 }
 
-static inline int gpio_get_value(unsigned gpio)
-{
-	return __gpio_get_value(gpio);
-}
-
-static inline void gpio_set_value(unsigned gpio, int value)
-{
-	return __gpio_set_value(gpio, value);
-}
+#include <asm-generic/gpio.h>		/* cansleep wrappers */
+#endif	/* !CONFIG_GPIOLIB */
+#include <asm/irq.h>
 
 static inline int gpio_to_irq(unsigned gpio)
 {
@@ -271,9 +285,6 @@ static inline int gpio_to_irq(unsigned gpio)
 
 	return -EINVAL;
 }
-
-#include <asm-generic/gpio.h>		/* cansleep wrappers */
-#endif	/* !CONFIG_GPIOLIB */
 
 static inline int irq_to_gpio(unsigned irq)
 {

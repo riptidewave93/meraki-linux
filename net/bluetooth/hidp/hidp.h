@@ -80,12 +80,10 @@
 #define HIDP_VIRTUAL_CABLE_UNPLUG	0
 #define HIDP_BOOT_PROTOCOL_MODE		1
 #define HIDP_BLUETOOTH_VENDOR_ID	9
-#define HIDP_WAITING_FOR_RETURN		10
-#define HIDP_WAITING_FOR_SEND_ACK	11
 
 struct hidp_connadd_req {
-	int   ctrl_sock;	/* Connected control socket */
-	int   intr_sock;	/* Connected interrupt socket */
+	int   ctrl_sock;	// Connected control socket
+	int   intr_sock;	// Connteted interrupt socket
 	__u16 parser;
 	__u16 rd_size;
 	__u8 __user *rd_data;
@@ -143,7 +141,6 @@ struct hidp_session {
 	uint intr_mtu;
 
 	atomic_t terminate;
-	struct task_struct *task;
 
 	unsigned char keys[8];
 	unsigned char leds;
@@ -157,22 +154,7 @@ struct hidp_session {
 	struct sk_buff_head ctrl_transmit;
 	struct sk_buff_head intr_transmit;
 
-	/* Used in hidp_get_raw_report() */
-	int waiting_report_type; /* HIDP_DATA_RTYPE_* */
-	int waiting_report_number; /* -1 for not numbered */
-	struct mutex report_mutex;
-	struct sk_buff *report_return;
-	wait_queue_head_t report_queue;
-
-	/* Used in hidp_output_raw_report() */
-	int output_report_success; /* boolean */
-
-	/* Report descriptor */
-	__u8 *rd_data;
-	uint rd_size;
-
-	wait_queue_head_t startup_queue;
-	int waiting_for_startup;
+	struct hidp_connadd_req *req;
 };
 
 static inline void hidp_schedule(struct hidp_session *session)
@@ -180,8 +162,8 @@ static inline void hidp_schedule(struct hidp_session *session)
 	struct sock *ctrl_sk = session->ctrl_sock->sk;
 	struct sock *intr_sk = session->intr_sock->sk;
 
-	wake_up_interruptible(sk_sleep(ctrl_sk));
-	wake_up_interruptible(sk_sleep(intr_sk));
+	wake_up_interruptible(ctrl_sk->sk_sleep);
+	wake_up_interruptible(intr_sk->sk_sleep);
 }
 
 /* HIDP init defines */

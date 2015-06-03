@@ -3,7 +3,8 @@
 
 #include <linux/types.h>
 
-struct xt_esp {
+struct xt_esp
+{
 	__u32 spis[2];	/* Security Parameter Index */
 	__u8  invflags;	/* Inverse flags */
 };

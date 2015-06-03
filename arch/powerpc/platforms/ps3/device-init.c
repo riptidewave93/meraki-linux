@@ -23,7 +23,6 @@
 #include <linux/kernel.h>
 #include <linux/kthread.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/reboot.h>
 
 #include <asm/firmware.h>
@@ -566,10 +565,10 @@ static int ps3_setup_dynamic_device(const struct ps3_repository_device *repo)
 	case PS3_DEV_TYPE_STOR_DISK:
 		result = ps3_setup_storage_dev(repo, PS3_MATCH_ID_STOR_DISK);
 
-		/* Some devices are not accessible from the Other OS lpar. */
+		/* Some devices are not accessable from the Other OS lpar. */
 		if (result == -ENODEV) {
 			result = 0;
-			pr_debug("%s:%u: not accessible\n", __func__,
+			pr_debug("%s:%u: not accessable\n", __func__,
 				 __LINE__);
 		}
 
@@ -825,7 +824,7 @@ static int ps3_probe_thread(void *data)
 
 	spin_lock_init(&dev.lock);
 
-	res = request_irq(irq, ps3_notification_interrupt, 0,
+	res = request_irq(irq, ps3_notification_interrupt, IRQF_DISABLED,
 			  "ps3_notification", &dev);
 	if (res) {
 		pr_err("%s:%u: request_irq failed %d\n", __func__, __LINE__,

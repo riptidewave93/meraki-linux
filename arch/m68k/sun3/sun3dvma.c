@@ -8,7 +8,6 @@
 
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/gfp.h>
 #include <linux/mm.h>
 #include <linux/list.h>
 

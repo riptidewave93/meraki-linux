@@ -1,4 +1,6 @@
 /*
+ * linux/fs/nfsd/nfsfh.c
+ *
  * NFS server file handle treatment.
  *
  * Copyright (C) 1995, 1996 Olaf Kirch <okir@monad.swb.de>
@@ -7,11 +9,19 @@
  * ... and again Southern-Winter 2001 to support export_operations
  */
 
+#include <linux/slab.h>
+#include <linux/fs.h>
+#include <linux/unistd.h>
+#include <linux/string.h>
+#include <linux/stat.h>
+#include <linux/dcache.h>
 #include <linux/exportfs.h>
+#include <linux/mount.h>
 
+#include <linux/sunrpc/clnt.h>
+#include <linux/sunrpc/svc.h>
 #include <linux/sunrpc/svcauth_gss.h>
-#include "nfsd.h"
-#include "vfs.h"
+#include <linux/nfsd/nfsd.h>
 #include "auth.h"
 
 #define NFSDDBG_FACILITY		NFSDDBG_FH
@@ -59,34 +69,35 @@ static int nfsd_acceptable(void *expv, struct dentry *dentry)
  * the write call).
  */
 static inline __be32
-nfsd_mode_check(struct svc_rqst *rqstp, umode_t mode, umode_t requested)
+nfsd_mode_check(struct svc_rqst *rqstp, umode_t mode, int type)
 {
-	mode &= S_IFMT;
-
-	if (requested == 0) /* the caller doesn't care */
-		return nfs_ok;
-	if (mode == requested)
-		return nfs_ok;
-	/*
-	 * v4 has an error more specific than err_notdir which we should
-	 * return in preference to err_notdir:
-	 */
-	if (rqstp->rq_vers == 4 && mode == S_IFLNK)
-		return nfserr_symlink;
-	if (requested == S_IFDIR)
-		return nfserr_notdir;
-	if (mode == S_IFDIR)
-		return nfserr_isdir;
-	return nfserr_inval;
+	/* Type can be negative when creating hardlinks - not to a dir */
+	if (type > 0 && (mode & S_IFMT) != type) {
+		if (rqstp->rq_vers == 4 && (mode & S_IFMT) == S_IFLNK)
+			return nfserr_symlink;
+		else if (type == S_IFDIR)
+			return nfserr_notdir;
+		else if ((mode & S_IFMT) == S_IFDIR)
+			return nfserr_isdir;
+		else
+			return nfserr_inval;
+	}
+	if (type < 0 && (mode & S_IFMT) == -type) {
+		if (rqstp->rq_vers == 4 && (mode & S_IFMT) == S_IFLNK)
+			return nfserr_symlink;
+		else if (type == -S_IFDIR)
+			return nfserr_isdir;
+		else
+			return nfserr_notdir;
+	}
+	return 0;
 }
 
 static __be32 nfsd_setuser_and_check_port(struct svc_rqst *rqstp,
 					  struct svc_export *exp)
 {
-	int flags = nfsexp_flags(rqstp, exp);
-
 	/* Check if the request originated from a secure port. */
-	if (!rqstp->rq_secure && !(flags & NFSEXP_INSECURE_PORT)) {
+	if (!rqstp->rq_secure && EX_SECURE(exp)) {
 		RPC_IFDEBUG(char buf[RPC_MAX_ADDRBUFLEN]);
 		dprintk(KERN_WARNING
 		       "nfsd: request from insecure port %s!\n",
@@ -96,36 +107,6 @@ static __be32 nfsd_setuser_and_check_port(struct svc_rqst *rqstp,
 
 	/* Set user creds for this exportpoint */
 	return nfserrno(nfsd_setuser(rqstp, exp));
-}
-
-static inline __be32 check_pseudo_root(struct svc_rqst *rqstp,
-	struct dentry *dentry, struct svc_export *exp)
-{
-	if (!(exp->ex_flags & NFSEXP_V4ROOT))
-		return nfs_ok;
-	/*
-	 * v2/v3 clients have no need for the V4ROOT export--they use
-	 * the mount protocl instead; also, further V4ROOT checks may be
-	 * in v4-specific code, in which case v2/v3 clients could bypass
-	 * them.
-	 */
-	if (!nfsd_v4client(rqstp))
-		return nfserr_stale;
-	/*
-	 * We're exposing only the directories and symlinks that have to be
-	 * traversed on the way to real exports:
-	 */
-	if (unlikely(!S_ISDIR(dentry->d_inode->i_mode) &&
-		     !S_ISLNK(dentry->d_inode->i_mode)))
-		return nfserr_stale;
-	/*
-	 * A pseudoroot export gives permission to access only one
-	 * single directory; the kernel has to make another upcall
-	 * before granting access to anything else under it:
-	 */
-	if (unlikely(dentry != exp->ex_path.dentry))
-		return nfserr_stale;
-	return nfs_ok;
 }
 
 /*
@@ -251,6 +232,14 @@ static __be32 nfsd_set_fh_dentry(struct svc_rqst *rqstp, struct svc_fh *fhp)
 		goto out;
 	}
 
+	if (exp->ex_flags & NFSEXP_NOSUBTREECHECK) {
+		error = nfsd_setuser_and_check_port(rqstp, exp);
+		if (error) {
+			dput(dentry);
+			goto out;
+		}
+	}
+
 	if (S_ISDIR(dentry->d_inode->i_mode) &&
 			(dentry->d_flags & DCACHE_DISCONNECTED)) {
 		printk("nfsd: find_fh_dentry returned a DISCONNECTED directory: %s/%s\n",
@@ -293,7 +282,7 @@ out:
  * include/linux/nfsd/nfsd.h.
  */
 __be32
-fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, umode_t type, int access)
+fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, int type, int access)
 {
 	struct svc_export *exp;
 	struct dentry	*dentry;
@@ -305,32 +294,28 @@ fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, umode_t type, int access)
 		error = nfsd_set_fh_dentry(rqstp, fhp);
 		if (error)
 			goto out;
+		dentry = fhp->fh_dentry;
+		exp = fhp->fh_export;
+	} else {
+		/*
+		 * just rechecking permissions
+		 * (e.g. nfsproc_create calls fh_verify, then nfsd_create
+		 * does as well)
+		 */
+		dprintk("nfsd: fh_verify - just checking\n");
+		dentry = fhp->fh_dentry;
+		exp = fhp->fh_export;
+		/*
+		 * Set user creds for this exportpoint; necessary even
+		 * in the "just checking" case because this may be a
+		 * filehandle that was created by fh_compose, and that
+		 * is about to be used in another nfsv4 compound
+		 * operation.
+		 */
+		error = nfsd_setuser_and_check_port(rqstp, exp);
+		if (error)
+			goto out;
 	}
-	dentry = fhp->fh_dentry;
-	exp = fhp->fh_export;
-	/*
-	 * We still have to do all these permission checks, even when
-	 * fh_dentry is already set:
-	 * 	- fh_verify may be called multiple times with different
-	 * 	  "access" arguments (e.g. nfsd_proc_create calls
-	 * 	  fh_verify(...,NFSD_MAY_EXEC) first, then later (in
-	 * 	  nfsd_create) calls fh_verify(...,NFSD_MAY_CREATE).
-	 *	- in the NFSv4 case, the filehandle may have been filled
-	 *	  in by fh_compose, and given a dentry, but further
-	 *	  compound operations performed with that filehandle
-	 *	  still need permissions checks.  In the worst case, a
-	 *	  mountpoint crossing may have changed the export
-	 *	  options, and we may now need to use a different uid
-	 *	  (for example, if different id-squashing options are in
-	 *	  effect on the new filesystem).
-	 */
-	error = check_pseudo_root(rqstp, dentry, exp);
-	if (error)
-		goto out;
-
-	error = nfsd_setuser_and_check_port(rqstp, exp);
-	if (error)
-		goto out;
 
 	error = nfsd_mode_check(rqstp, dentry->d_inode->i_mode, type);
 	if (error)
@@ -341,7 +326,7 @@ fh_verify(struct svc_rqst *rqstp, struct svc_fh *fhp, umode_t type, int access)
 	 * which clients virtually always use auth_sys for,
 	 * even while using RPCSEC_GSS for NFS.
 	 */
-	if (access & NFSD_MAY_LOCK || access & NFSD_MAY_BYPASS_GSS)
+	if (access & NFSD_MAY_LOCK)
 		goto skip_pseudoflavor_check;
 	/*
 	 * Clients may expect to be able to use auth_sys during mount,

@@ -11,7 +11,6 @@
 #include <linux/ioport.h>
 #include <linux/timer.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/pci.h>
 #include <linux/gpio.h>
@@ -475,7 +474,7 @@ static void __devexit bcm63xx_cb_exit(struct pci_dev *dev)
 	bcm63xx_cb_dev = NULL;
 }
 
-static DEFINE_PCI_DEVICE_TABLE(bcm63xx_cb_table) = {
+static struct pci_device_id bcm63xx_cb_table[] = {
 	{
 		.vendor		= PCI_VENDOR_ID_BROADCOM,
 		.device		= BCM6348_CPU_ID,

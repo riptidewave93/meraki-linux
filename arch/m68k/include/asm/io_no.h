@@ -3,7 +3,6 @@
 
 #ifdef __KERNEL__
 
-#include <asm/virtconvert.h>
 
 /*
  * These are for ISA/PCI shared memory _only_ and should never be used
@@ -16,7 +15,7 @@
  * memory location directly.
  */
 /* ++roman: The assignments to temp. vars avoid that gcc sometimes generates
- * two accesses to memory, which may be undesirable for some devices.
+ * two accesses to memory, which may be undesireable for some devices.
  */
 
 /*
@@ -144,10 +143,9 @@ static inline void io_insl(unsigned int addr, void *buf, int len)
 #define IOMAP_NOCACHE_NONSER		2
 #define IOMAP_WRITETHROUGH		3
 
-static inline void *__ioremap(unsigned long physaddr, unsigned long size, int cacheflag)
-{
-	return (void *) physaddr;
-}
+extern void *__ioremap(unsigned long physaddr, unsigned long size, int cacheflag);
+extern void __iounmap(void *addr, unsigned long size);
+
 static inline void *ioremap(unsigned long physaddr, unsigned long size)
 {
 	return __ioremap(physaddr, size, IOMAP_NOCACHE_SER);
@@ -165,7 +163,20 @@ static inline void *ioremap_fullcache(unsigned long physaddr, unsigned long size
 	return __ioremap(physaddr, size, IOMAP_FULL_CACHING);
 }
 
-#define	iounmap(addr)	do { } while(0)
+extern void iounmap(void *addr);
+
+/* Pages to physical address... */
+#define page_to_phys(page)      ((page - mem_map) << PAGE_SHIFT)
+#define page_to_bus(page)       ((page - mem_map) << PAGE_SHIFT)
+
+/*
+ * Macros used for converting between virtual and physical mappings.
+ */
+#define phys_to_virt(vaddr)	((void *) (vaddr))
+#define virt_to_phys(vaddr)	((unsigned long) (vaddr))
+
+#define virt_to_bus virt_to_phys
+#define bus_to_virt phys_to_virt
 
 /*
  * Convert a physical pointer to a virtual kernel pointer for /dev/mem

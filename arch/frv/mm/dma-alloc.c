@@ -37,7 +37,6 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/hardirq.h>
-#include <linux/gfp.h>
 
 #include <asm/pgalloc.h>
 #include <asm/io.h>

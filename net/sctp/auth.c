@@ -34,7 +34,6 @@
  * be incorporated into the next SCTP release.
  */
 
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/crypto.h>
 #include <linux/scatterlist.h>
@@ -82,7 +81,7 @@ static struct sctp_auth_bytes *sctp_auth_create_key(__u32 key_len, gfp_t gfp)
 	struct sctp_auth_bytes *key;
 
 	/* Verify that we are not going to overflow INT_MAX */
-	if (key_len > (INT_MAX - sizeof(struct sctp_auth_bytes)))
+	if ((INT_MAX - key_len) < sizeof(struct sctp_auth_bytes))
 		return NULL;
 
 	/* Allocate the shared key */
@@ -113,7 +112,7 @@ struct sctp_shared_key *sctp_auth_shkey_create(__u16 key_id, gfp_t gfp)
 	return new;
 }
 
-/* Free the shared key structure */
+/* Free the shared key stucture */
 static void sctp_auth_shkey_free(struct sctp_shared_key *sh_key)
 {
 	BUG_ON(!list_empty(&sh_key->key_list));
@@ -122,7 +121,7 @@ static void sctp_auth_shkey_free(struct sctp_shared_key *sh_key)
 	kfree(sh_key);
 }
 
-/* Destroy the entire key list.  This is done during the
+/* Destory the entire key list.  This is done during the
  * associon and endpoint free process.
  */
 void sctp_auth_destroy_keys(struct list_head *keys)
@@ -324,7 +323,7 @@ static struct sctp_auth_bytes *sctp_auth_asoc_create_secret(
 	if (!peer_key_vector || !local_key_vector)
 		goto out;
 
-	/* Figure out the order in which the key_vectors will be
+	/* Figure out the order in wich the key_vectors will be
 	 * added to the endpoint shared key.
 	 * SCTP-AUTH, Section 6.1:
 	 *   This is performed by selecting the numerically smaller key

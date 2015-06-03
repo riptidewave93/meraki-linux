@@ -21,6 +21,7 @@
 #include <linux/mmzone.h>
 #include <linux/pagemap.h>
 #include <linux/swap.h>
+#include <linux/slab.h>
 #include <linux/smp.h>
 #include <linux/seq_file.h>
 #include <linux/hugetlb.h>

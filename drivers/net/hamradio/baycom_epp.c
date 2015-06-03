@@ -69,7 +69,7 @@ static const char paranoia_str[] = KERN_ERR
 
 static const char bc_drvname[] = "baycom_epp";
 static const char bc_drvinfo[] = KERN_INFO "baycom_epp: (C) 1998-2000 Thomas Sailer, HB9JNX/AE4WA\n"
-"baycom_epp: version 0.7\n";
+"baycom_epp: version 0.7 compiled " __TIME__ " " __DATE__ "\n";
 
 /* --------------------------------------------------------------------- */
 
@@ -596,16 +596,16 @@ static int receive(struct net_device *dev, int cnt)
 					if (!(notbitstream & (0x1fc << j)))
 						state = 0;
 
-					/* flag received */
-					else if ((bitstream & (0x1fe << j)) == (0x0fc << j)) {
+					/* not flag received */
+					else if (!(bitstream & (0x1fe << j)) != (0x0fc << j)) {
 						if (state)
 							do_rxpacket(dev);
 						bc->hdlcrx.bufcnt = 0;
 						bc->hdlcrx.bufptr = bc->hdlcrx.buf;
 						state = 1;
 						numbits = 7-j;
+						}
 					}
-				}
 
 				/* stuffed bit */
 				else if (unlikely((bitstream & (0x1f8 << j)) == (0xf8 << j))) {
@@ -1162,7 +1162,7 @@ static void baycom_probe(struct net_device *dev)
 /*
  * command line settable parameters
  */
-static char *mode[NR_PORTS] = { "", };
+static const char *mode[NR_PORTS] = { "", };
 static int iobase[NR_PORTS] = { 0x378, };
 
 module_param_array(mode, charp, NULL, 0);

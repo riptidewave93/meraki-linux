@@ -8,6 +8,7 @@
 #include <linux/init.h>
 
 #include <asm/processor.h>
+#include <asm/system.h>
 #include <asm/mce.h>
 #include <asm/msr.h>
 

@@ -7,27 +7,21 @@
 #include "linux/ptrace.h"
 #include "linux/sched.h"
 #include "asm/uaccess.h"
+#ifdef CONFIG_PROC_MM
+#include "proc_mm.h"
+#endif
 #include "skas_ptrace.h"
 
-
-
-void user_enable_single_step(struct task_struct *child)
+static inline void set_singlestepping(struct task_struct *child, int on)
 {
-	child->ptrace |= PT_DTRACE;
+	if (on)
+		child->ptrace |= PT_DTRACE;
+	else
+		child->ptrace &= ~PT_DTRACE;
 	child->thread.singlestep_syscall = 0;
 
 #ifdef SUBARCH_SET_SINGLESTEPPING
-	SUBARCH_SET_SINGLESTEPPING(child, 1);
-#endif
-}
-
-void user_disable_single_step(struct task_struct *child)
-{
-	child->ptrace &= ~PT_DTRACE;
-	child->thread.singlestep_syscall = 0;
-
-#ifdef SUBARCH_SET_SINGLESTEPPING
-	SUBARCH_SET_SINGLESTEPPING(child, 0);
+	SUBARCH_SET_SINGLESTEPPING(child, on);
 #endif
 }
 
@@ -36,23 +30,33 @@ void user_disable_single_step(struct task_struct *child)
  */
 void ptrace_disable(struct task_struct *child)
 {
-	user_disable_single_step(child);
+	set_singlestepping(child,0);
 }
 
 extern int peek_user(struct task_struct * child, long addr, long data);
 extern int poke_user(struct task_struct * child, long addr, long data);
 
-long arch_ptrace(struct task_struct *child, long request,
-		 unsigned long addr, unsigned long data)
+long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 {
 	int i, ret;
-	unsigned long __user *p = (void __user *)data;
-	void __user *vp = p;
+	unsigned long __user *p = (void __user *)(unsigned long)data;
 
 	switch (request) {
+	/* read word at location addr. */
+	case PTRACE_PEEKTEXT:
+	case PTRACE_PEEKDATA:
+		ret = generic_ptrace_peekdata(child, addr, data);
+		break;
+
 	/* read the word at location addr in the USER area. */
 	case PTRACE_PEEKUSR:
 		ret = peek_user(child, addr, data);
+		break;
+
+	/* write the word at location addr. */
+	case PTRACE_POKETEXT:
+	case PTRACE_POKEDATA:
+		ret = generic_ptrace_pokedata(child, addr, data);
 		break;
 
 	/* write the word at location addr in the USER area */
@@ -64,6 +68,53 @@ long arch_ptrace(struct task_struct *child, long request,
 	case PTRACE_SYSEMU_SINGLESTEP:
 		ret = -EIO;
 		break;
+
+	/* continue and stop at next (return from) syscall */
+	case PTRACE_SYSCALL:
+	/* restart after signal. */
+	case PTRACE_CONT: {
+		ret = -EIO;
+		if (!valid_signal(data))
+			break;
+
+		set_singlestepping(child, 0);
+		if (request == PTRACE_SYSCALL)
+			set_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
+		else clear_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
+		child->exit_code = data;
+		wake_up_process(child);
+		ret = 0;
+		break;
+	}
+
+/*
+ * make the child exit.  Best I can do is send it a sigkill.
+ * perhaps it should be put in the status that it wants to
+ * exit.
+ */
+	case PTRACE_KILL: {
+		ret = 0;
+		if (child->exit_state == EXIT_ZOMBIE)	/* already dead */
+			break;
+
+		set_singlestepping(child, 0);
+		child->exit_code = SIGKILL;
+		wake_up_process(child);
+		break;
+	}
+
+	case PTRACE_SINGLESTEP: {  /* set the trap flag. */
+		ret = -EIO;
+		if (!valid_signal(data))
+			break;
+		clear_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
+		set_singlestepping(child, 1);
+		child->exit_code = data;
+		/* give it a chance to run. */
+		wake_up_process(child);
+		ret = 0;
+		break;
+	}
 
 #ifdef PTRACE_GETREGS
 	case PTRACE_GETREGS: { /* Get all gp regs from the child. */
@@ -95,12 +146,26 @@ long arch_ptrace(struct task_struct *child, long request,
 		break;
 	}
 #endif
+#ifdef PTRACE_GETFPREGS
+	case PTRACE_GETFPREGS: /* Get the child FPU state. */
+		ret = get_fpregs((struct user_i387_struct __user *) data,
+				 child);
+		break;
+#endif
+#ifdef PTRACE_SETFPREGS
+	case PTRACE_SETFPREGS: /* Set the child FPU state. */
+	        ret = set_fpregs((struct user_i387_struct __user *) data,
+				 child);
+		break;
+#endif
 	case PTRACE_GET_THREAD_AREA:
-		ret = ptrace_get_thread_area(child, addr, vp);
+		ret = ptrace_get_thread_area(child, addr,
+					     (struct user_desc __user *) data);
 		break;
 
 	case PTRACE_SET_THREAD_AREA:
-		ret = ptrace_set_thread_area(child, addr, vp);
+		ret = ptrace_set_thread_area(child, addr,
+					     (struct user_desc __user *) data);
 		break;
 
 	case PTRACE_FAULTINFO: {
@@ -110,8 +175,7 @@ long arch_ptrace(struct task_struct *child, long request,
 		 * On i386, ptrace_faultinfo is smaller!
 		 */
 		ret = copy_to_user(p, &child->thread.arch.faultinfo,
-				   sizeof(struct ptrace_faultinfo)) ?
-			-EIO : 0;
+				   sizeof(struct ptrace_faultinfo));
 		break;
 	}
 
@@ -131,6 +195,30 @@ long arch_ptrace(struct task_struct *child, long request,
 		ret = -EIO;
 		break;
 	}
+#endif
+#ifdef CONFIG_PROC_MM
+	case PTRACE_SWITCH_MM: {
+		struct mm_struct *old = child->mm;
+		struct mm_struct *new = proc_mm_get_mm(data);
+
+		if (IS_ERR(new)) {
+			ret = PTR_ERR(new);
+			break;
+		}
+
+		atomic_inc(&new->mm_users);
+		child->mm = new;
+		child->active_mm = new;
+		mmput(old);
+		ret = 0;
+		break;
+	}
+#endif
+#ifdef PTRACE_ARCH_PRCTL
+	case PTRACE_ARCH_PRCTL:
+		/* XXX Calls ptrace on the host - needs some SMP thinking */
+		ret = arch_prctl(child, data, (void *) addr);
+		break;
 #endif
 	default:
 		ret = ptrace_request(child, request, addr, data);
@@ -167,15 +255,17 @@ void syscall_trace(struct uml_pt_regs *regs, int entryexit)
 	int is_singlestep = (current->ptrace & PT_DTRACE) && entryexit;
 	int tracesysgood;
 
-	if (!entryexit)
-		audit_syscall_entry(HOST_AUDIT_ARCH,
-				    UPT_SYSCALL_NR(regs),
-				    UPT_SYSCALL_ARG1(regs),
-				    UPT_SYSCALL_ARG2(regs),
-				    UPT_SYSCALL_ARG3(regs),
-				    UPT_SYSCALL_ARG4(regs));
-	else
-		audit_syscall_exit(regs);
+	if (unlikely(current->audit_context)) {
+		if (!entryexit)
+			audit_syscall_entry(HOST_AUDIT_ARCH,
+					    UPT_SYSCALL_NR(regs),
+					    UPT_SYSCALL_ARG1(regs),
+					    UPT_SYSCALL_ARG2(regs),
+					    UPT_SYSCALL_ARG3(regs),
+					    UPT_SYSCALL_ARG4(regs));
+		else audit_syscall_exit(AUDITSC_RESULT(UPT_SYSCALL_RET(regs)),
+					UPT_SYSCALL_RET(regs));
+	}
 
 	/* Fake a debug trap */
 	if (is_singlestep)

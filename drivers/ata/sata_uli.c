@@ -26,7 +26,6 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/gfp.h>
 #include <linux/pci.h>
 #include <linux/init.h>
 #include <linux/blkdev.h>
@@ -88,7 +87,8 @@ static struct ata_port_operations uli_ops = {
 };
 
 static const struct ata_port_info uli_port_info = {
-	.flags		= ATA_FLAG_SATA | ATA_FLAG_IGN_SIMPLEX,
+	.flags		= ATA_FLAG_SATA | ATA_FLAG_NO_LEGACY |
+			  ATA_FLAG_IGN_SIMPLEX,
 	.pio_mask       = ATA_PIO4,
 	.udma_mask      = ATA_UDMA6,
 	.port_ops       = &uli_ops,
@@ -145,6 +145,7 @@ static int uli_scr_write(struct ata_link *link, unsigned int sc_reg, u32 val)
 
 static int uli_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
+	static int printed_version;
 	const struct ata_port_info *ppi[] = { &uli_port_info, NULL };
 	unsigned int board_idx = (unsigned int) ent->driver_data;
 	struct ata_host *host;
@@ -153,7 +154,8 @@ static int uli_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	struct ata_ioports *ioaddr;
 	int n_ports, rc;
 
-	ata_print_version_once(&pdev->dev, DRV_VERSION);
+	if (!printed_version++)
+		dev_printk(KERN_INFO, &pdev->dev, "version " DRV_VERSION "\n");
 
 	rc = pcim_enable_device(pdev);
 	if (rc)
@@ -178,7 +180,9 @@ static int uli_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	if (rc)
 		return rc;
 
-	ata_pci_bmdma_init(host);
+	rc = ata_pci_bmdma_init(host);
+	if (rc)
+		return rc;
 
 	iomap = host->iomap;
 
@@ -239,7 +243,7 @@ static int uli_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 
 	pci_set_master(pdev);
 	pci_intx(pdev, 1);
-	return ata_host_activate(host, pdev->irq, ata_bmdma_interrupt,
+	return ata_host_activate(host, pdev->irq, ata_sff_interrupt,
 				 IRQF_SHARED, &uli_sht);
 }
 

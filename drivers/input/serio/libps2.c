@@ -14,6 +14,7 @@
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/sched.h>
+#include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/input.h>
 #include <linux/serio.h>
@@ -210,7 +211,7 @@ int __ps2_command(struct ps2dev *ps2dev, unsigned char *param, int command)
 	/*
 	 * Some devices (Synaptics) peform the reset before
 	 * ACKing the reset command, and so it can take a long
-	 * time before the ACK arrives.
+	 * time before the ACK arrrives.
 	 */
 	if (ps2_sendbyte(ps2dev, command & 0xff,
 			 command == PS2_CMD_RESET_BAT ? 1000 : 200))

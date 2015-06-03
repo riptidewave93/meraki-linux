@@ -20,6 +20,7 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -149,11 +150,10 @@ int g364fb_cursor(struct fb_info *info, struct fb_cursor *cursor)
 static int g364fb_pan_display(struct fb_var_screeninfo *var, 
 			      struct fb_info *info)
 {
-	if (var->xoffset ||
-	    var->yoffset + info->var.yres > info->var.yres_virtual)
+	if (var->xoffset || var->yoffset + var->yres > var->yres_virtual)
 		return -EINVAL;
 
-	*(unsigned int *) TOP_REG = var->yoffset * info->var.xres;
+	*(unsigned int *) TOP_REG = var->yoffset * var->xres;
 	return 0;
 }
 

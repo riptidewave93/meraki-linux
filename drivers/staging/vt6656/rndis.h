@@ -69,7 +69,6 @@
 
 #define VIAUSB20_PACKET_HEADER          0x04
 
-#define USB_REG4	0x604
 
 /*---------------------  Export Classes  ----------------------------*/
 
@@ -153,10 +152,11 @@ typedef struct _CMD_CHANGE_BBTYPE
 
 /*---------------------  Export Macros -------------------------*/
 
-#define EXCH_WORD(w) ((WORD)((WORD)(w)<<8) | (WORD)((WORD)(w)>>8))
+#define EXCH_WORD(w)        ( (WORD)((WORD)(w)<<8) | (WORD)((WORD)(w)>>8) )
 
 /*---------------------  Export Variables  --------------------------*/
 
 /*---------------------  Export Functions  --------------------------*/
 
-#endif /* _RNDIS_H_ */
+
+#endif // _RNDIS_H_

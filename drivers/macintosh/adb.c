@@ -24,6 +24,7 @@
 #include <linux/fs.h>
 #include <linux/mm.h>
 #include <linux/sched.h>
+#include <linux/smp_lock.h>
 #include <linux/adb.h>
 #include <linux/cuda.h>
 #include <linux/pmu.h>
@@ -54,7 +55,6 @@ extern struct adb_driver adb_iop_driver;
 extern struct adb_driver via_pmu_driver;
 extern struct adb_driver macio_adb_driver;
 
-static DEFINE_MUTEX(adb_mutex);
 static struct adb_driver *adb_driver_list[] = {
 #ifdef CONFIG_ADB_MACII
 	&via_macii_driver,
@@ -83,7 +83,7 @@ static struct adb_driver *adb_controller;
 BLOCKING_NOTIFIER_HEAD(adb_client_list);
 static int adb_got_sleep;
 static int adb_inited;
-static DEFINE_SEMAPHORE(adb_probe_mutex);
+static DECLARE_MUTEX(adb_probe_mutex);
 static int sleepy_trackpad;
 static int autopoll_devs;
 int __adb_probe_sync;
@@ -317,15 +317,13 @@ static int __init adb_init(void)
 			break;
 		}
 	}
-	if (adb_controller != NULL && adb_controller->init &&
-	    adb_controller->init())
-		adb_controller = NULL;
-	if (adb_controller == NULL) {
+	if ((adb_controller == NULL) || adb_controller->init()) {
 		printk(KERN_WARNING "Warning: no ADB interface detected\n");
+		adb_controller = NULL;
 	} else {
 #ifdef CONFIG_PPC
-		if (of_machine_is_compatible("AAPL,PowerBook1998") ||
-			of_machine_is_compatible("PowerBook1,1"))
+		if (machine_is_compatible("AAPL,PowerBook1998") ||
+			machine_is_compatible("PowerBook1,1"))
 			sleepy_trackpad = 1;
 #endif /* CONFIG_PPC */
 
@@ -647,7 +645,7 @@ static int adb_open(struct inode *inode, struct file *file)
 	struct adbdev_state *state;
 	int ret = 0;
 
-	mutex_lock(&adb_mutex);
+	lock_kernel();
 	if (iminor(inode) > 0 || adb_controller == NULL) {
 		ret = -ENXIO;
 		goto out;
@@ -665,7 +663,7 @@ static int adb_open(struct inode *inode, struct file *file)
 	state->inuse = 1;
 
 out:
-	mutex_unlock(&adb_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -674,7 +672,7 @@ static int adb_release(struct inode *inode, struct file *file)
 	struct adbdev_state *state = file->private_data;
 	unsigned long flags;
 
-	mutex_lock(&adb_mutex);
+	lock_kernel();
 	if (state) {
 		file->private_data = NULL;
 		spin_lock_irqsave(&state->lock, flags);
@@ -687,7 +685,7 @@ static int adb_release(struct inode *inode, struct file *file)
 			spin_unlock_irqrestore(&state->lock, flags);
 		}
 	}
-	mutex_unlock(&adb_mutex);
+	unlock_kernel();
 	return 0;
 }
 
@@ -710,7 +708,7 @@ static ssize_t adb_read(struct file *file, char __user *buf,
 	req = NULL;
 	spin_lock_irqsave(&state->lock, flags);
 	add_wait_queue(&state->wait_queue, &wait);
-	set_current_state(TASK_INTERRUPTIBLE);
+	current->state = TASK_INTERRUPTIBLE;
 
 	for (;;) {
 		req = state->completed;
@@ -734,7 +732,7 @@ static ssize_t adb_read(struct file *file, char __user *buf,
 		spin_lock_irqsave(&state->lock, flags);
 	}
 
-	set_current_state(TASK_RUNNING);
+	current->state = TASK_RUNNING;
 	remove_wait_queue(&state->wait_queue, &wait);
 	spin_unlock_irqrestore(&state->lock, flags);
 	

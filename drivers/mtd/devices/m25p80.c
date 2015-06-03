@@ -23,14 +23,12 @@
 #include <linux/interrupt.h>
 #include <linux/mutex.h>
 #include <linux/math64.h>
-#include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/mod_devicetable.h>
 
 #include <linux/mtd/cfi.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
-#include <linux/of_platform.h>
 
 #include <linux/spi/spi.h>
 #include <linux/spi/flash.h>
@@ -71,7 +69,7 @@
 
 /* Define max times to check status register before we give up. */
 #define	MAX_READY_WAIT_JIFFIES	(40 * HZ)	/* M25P16 specs 40s max chip erase */
-#define	MAX_CMD_SIZE		6
+#define	MAX_CMD_SIZE		5
 
 #ifdef CONFIG_M25PXX_USE_FAST_READ
 #define OPCODE_READ 	OPCODE_FAST_READ
@@ -89,6 +87,7 @@ struct m25p {
 	struct spi_device	*spi;
 	struct mutex		lock;
 	struct mtd_info		mtd;
+	unsigned		partitioned:1;
 	u16			page_size;
 	u16			addr_width;
 	u8			erase_opcode;
@@ -209,8 +208,9 @@ static int wait_till_ready(struct m25p *flash)
  */
 static int erase_chip(struct m25p *flash)
 {
-	pr_debug("%s: %s %lldKiB\n", dev_name(&flash->spi->dev), __func__,
-			(long long)(flash->mtd.size >> 10));
+	DEBUG(MTD_DEBUG_LEVEL3, "%s: %s %lldKiB\n",
+	      dev_name(&flash->spi->dev), __func__,
+	      (long long)(flash->mtd.size >> 10));
 
 	/* Wait until finished previous write command. */
 	if (wait_till_ready(flash))
@@ -249,8 +249,9 @@ static int m25p_cmdsz(struct m25p *flash)
  */
 static int erase_sector(struct m25p *flash, u32 offset)
 {
-	pr_debug("%s: %s %dKiB at 0x%08x\n", dev_name(&flash->spi->dev),
-			__func__, flash->mtd.erasesize / 1024, offset);
+	DEBUG(MTD_DEBUG_LEVEL3, "%s: %s %dKiB at 0x%08x\n",
+			dev_name(&flash->spi->dev), __func__,
+			flash->mtd.erasesize / 1024, offset);
 
 	/* Wait until finished previous write command. */
 	if (wait_till_ready(flash))
@@ -284,10 +285,13 @@ static int m25p80_erase(struct mtd_info *mtd, struct erase_info *instr)
 	u32 addr,len;
 	uint32_t rem;
 
-	pr_debug("%s: %s at 0x%llx, len %lld\n", dev_name(&flash->spi->dev),
-			__func__, (long long)instr->addr,
-			(long long)instr->len);
+	DEBUG(MTD_DEBUG_LEVEL2, "%s: %s %s 0x%llx, len %lld\n",
+	      dev_name(&flash->spi->dev), __func__, "at",
+	      (long long)instr->addr, (long long)instr->len);
 
+	/* sanity checks */
+	if (instr->addr + instr->len > flash->mtd.size)
+		return -EINVAL;
 	div_u64_rem(instr->len, mtd->erasesize, &rem);
 	if (rem)
 		return -EINVAL;
@@ -343,8 +347,16 @@ static int m25p80_read(struct mtd_info *mtd, loff_t from, size_t len,
 	struct spi_transfer t[2];
 	struct spi_message m;
 
-	pr_debug("%s: %s from 0x%08x, len %zd\n", dev_name(&flash->spi->dev),
-			__func__, (u32)from, len);
+	DEBUG(MTD_DEBUG_LEVEL2, "%s: %s %s 0x%08x, len %zd\n",
+			dev_name(&flash->spi->dev), __func__, "from",
+			(u32)from, len);
+
+	/* sanity checks */
+	if (!len)
+		return 0;
+
+	if (from + len > flash->mtd.size)
+		return -EINVAL;
 
 	spi_message_init(&m);
 	memset(t, 0, (sizeof t));
@@ -360,6 +372,9 @@ static int m25p80_read(struct mtd_info *mtd, loff_t from, size_t len,
 	t[1].rx_buf = buf;
 	t[1].len = len;
 	spi_message_add_tail(&t[1], &m);
+
+	/* Byte count starts at zero. */
+	*retlen = 0;
 
 	mutex_lock(&flash->lock);
 
@@ -401,8 +416,18 @@ static int m25p80_write(struct mtd_info *mtd, loff_t to, size_t len,
 	struct spi_transfer t[2];
 	struct spi_message m;
 
-	pr_debug("%s: %s to 0x%08x, len %zd\n", dev_name(&flash->spi->dev),
-			__func__, (u32)to, len);
+	DEBUG(MTD_DEBUG_LEVEL2, "%s: %s %s 0x%08x, len %zd\n",
+			dev_name(&flash->spi->dev), __func__, "to",
+			(u32)to, len);
+
+	*retlen = 0;
+
+	/* sanity checks */
+	if (!len)
+		return(0);
+
+	if (to + len > flash->mtd.size)
+		return -EINVAL;
 
 	spi_message_init(&m);
 	memset(t, 0, (sizeof t));
@@ -484,8 +509,18 @@ static int sst_write(struct mtd_info *mtd, loff_t to, size_t len,
 	size_t actual;
 	int cmd_sz, ret;
 
-	pr_debug("%s: %s to 0x%08x, len %zd\n", dev_name(&flash->spi->dev),
-			__func__, (u32)to, len);
+	DEBUG(MTD_DEBUG_LEVEL2, "%s: %s %s 0x%08x, len %zd\n",
+			dev_name(&flash->spi->dev), __func__, "to",
+			(u32)to, len);
+
+	*retlen = 0;
+
+	/* sanity checks */
+	if (!len)
+		return 0;
+
+	if (to + len > flash->mtd.size)
+		return -EINVAL;
 
 	spi_message_init(&m);
 	memset(t, 0, (sizeof t));
@@ -625,7 +660,6 @@ static const struct spi_device_id m25p_ids[] = {
 	{ "at25fs040",  INFO(0x1f6604, 0, 64 * 1024,   8, SECT_4K) },
 
 	{ "at25df041a", INFO(0x1f4401, 0, 64 * 1024,   8, SECT_4K) },
-	{ "at25df321a", INFO(0x1f4701, 0, 64 * 1024,  64, SECT_4K) },
 	{ "at25df641",  INFO(0x1f4800, 0, 64 * 1024, 128, SECT_4K) },
 
 	{ "at26f004",   INFO(0x1f0400, 0, 64 * 1024,  8, SECT_4K) },
@@ -636,7 +670,6 @@ static const struct spi_device_id m25p_ids[] = {
 	/* EON -- en25xxx */
 	{ "en25f32", INFO(0x1c3116, 0, 64 * 1024,  64, SECT_4K) },
 	{ "en25p32", INFO(0x1c2016, 0, 64 * 1024,  64, 0) },
-	{ "en25q32b", INFO(0x1c3016, 0, 64 * 1024,  64, 0) },
 	{ "en25p64", INFO(0x1c2017, 0, 64 * 1024, 128, 0) },
 
 	/* Intel/Numonyx -- xxxs33b */
@@ -650,7 +683,7 @@ static const struct spi_device_id m25p_ids[] = {
 	{ "mx25l1606e",  INFO(0xc22015, 0, 64 * 1024,  32, SECT_4K) },
 	{ "mx25l3205d",  INFO(0xc22016, 0, 64 * 1024,  64, 0) },
 	{ "mx25l6405d",  INFO(0xc22017, 0, 64 * 1024, 128, 0) },
-	{ "mx25l12805d", INFO(0xc22018, 0, 64 * 1024, 256, 0) },
+	{ "mx25l12805d", INFO(0xc22018, 0, 64 * 1024, 256, SECT_4K) },
 	{ "mx25l12855e", INFO(0xc22618, 0, 64 * 1024, 256, 0) },
 	{ "mx25l25635e", INFO(0xc22019, 0, 64 * 1024, 512, 0) },
 	{ "mx25l25655e", INFO(0xc22619, 0, 64 * 1024, 512, 0) },
@@ -754,8 +787,8 @@ static const struct spi_device_id *__devinit jedec_probe(struct spi_device *spi)
 	 */
 	tmp = spi_write_then_read(spi, &code, 1, id, 5);
 	if (tmp < 0) {
-		pr_debug("%s: error %d reading JEDEC ID\n",
-				dev_name(&spi->dev), tmp);
+		DEBUG(MTD_DEBUG_LEVEL0, "%s: error %d reading JEDEC ID\n",
+			dev_name(&spi->dev), tmp);
 		return ERR_PTR(tmp);
 	}
 	jedec = id[0];
@@ -791,12 +824,8 @@ static int __devinit m25p_probe(struct spi_device *spi)
 	struct m25p			*flash;
 	struct flash_info		*info;
 	unsigned			i;
-	struct mtd_part_parser_data	ppdata;
-
-#ifdef CONFIG_MTD_OF_PARTS
-	if (!of_device_is_available(spi->dev.of_node))
-		return -ENODEV;
-#endif
+	struct mtd_partition		*parts = NULL;
+	int				nr_parts = 0;
 
 	/* Platform data helps sort out which chip type we have, as
 	 * well as how this board partitions it.  If we don't have
@@ -843,13 +872,14 @@ static int __devinit m25p_probe(struct spi_device *spi)
 		}
 	}
 
-	flash = devm_kzalloc(&spi->dev, sizeof(*flash), GFP_KERNEL);
+	flash = kzalloc(sizeof *flash, GFP_KERNEL);
 	if (!flash)
 		return -ENOMEM;
-
-	flash->command = devm_kzalloc(&spi->dev, MAX_CMD_SIZE, GFP_KERNEL);
-	if (!flash->command)
+	flash->command = kmalloc(MAX_CMD_SIZE + FAST_READ_DUMMY_BYTE, GFP_KERNEL);
+	if (!flash->command) {
+		kfree(flash);
 		return -ENOMEM;
+	}
 
 	flash->spi = spi;
 	mutex_init(&flash->lock);
@@ -876,14 +906,17 @@ static int __devinit m25p_probe(struct spi_device *spi)
 	flash->mtd.writesize = 1;
 	flash->mtd.flags = MTD_CAP_NORFLASH;
 	flash->mtd.size = info->sector_size * info->n_sectors;
-	flash->mtd._erase = m25p80_erase;
-	flash->mtd._read = m25p80_read;
+	flash->mtd.erase = m25p80_erase;
+	flash->mtd.read = m25p80_read;
 
 	/* sst flash chips use AAI word program */
-	if (JEDEC_MFR(info->jedec_id) == CFI_MFR_SST)
-		flash->mtd._write = sst_write;
-	else
-		flash->mtd._write = m25p80_write;
+	if (JEDEC_MFR(info->jedec_id) == CFI_MFR_SST) {
+		flash->mtd.write = sst_write;
+		flash->mtd.writebufsize = 2; /* Word writes possible */
+	} else {
+		flash->mtd.write = m25p80_write;
+		flash->mtd.writebufsize = 256; /* Page writes, 256 bytes */
+	}
 
 	/* prefer "small sector" erase if possible */
 	if (info->flags & SECT_4K) {
@@ -897,10 +930,8 @@ static int __devinit m25p_probe(struct spi_device *spi)
 	if (info->flags & M25P_NO_ERASE)
 		flash->mtd.flags |= MTD_NO_ERASE;
 
-	ppdata.of_node = spi->dev.of_node;
 	flash->mtd.dev.parent = &spi->dev;
 	flash->page_size = info->page_size;
-	flash->mtd.writebufsize = flash->page_size;
 
 	if (info->addr_width)
 		flash->addr_width = info->addr_width;
@@ -916,7 +947,8 @@ static int __devinit m25p_probe(struct spi_device *spi)
 	dev_info(&spi->dev, "%s (%lld Kbytes)\n", id->name,
 			(long long)flash->mtd.size >> 10);
 
-	pr_debug("mtd .name = %s, .size = 0x%llx (%lldMiB) "
+	DEBUG(MTD_DEBUG_LEVEL2,
+		"mtd .name = %s, .size = 0x%llx (%lldMiB) "
 			".erasesize = 0x%.8x (%uKiB) .numeraseregions = %d\n",
 		flash->mtd.name,
 		(long long)flash->mtd.size, (long long)(flash->mtd.size >> 20),
@@ -925,7 +957,8 @@ static int __devinit m25p_probe(struct spi_device *spi)
 
 	if (flash->mtd.numeraseregions)
 		for (i = 0; i < flash->mtd.numeraseregions; i++)
-			pr_debug("mtd.eraseregions[%d] = { .offset = 0x%llx, "
+			DEBUG(MTD_DEBUG_LEVEL2,
+				"mtd.eraseregions[%d] = { .offset = 0x%llx, "
 				".erasesize = 0x%.8x (%uKiB), "
 				".numblocks = %d }\n",
 				i, (long long)flash->mtd.eraseregions[i].offset,
@@ -937,19 +970,48 @@ static int __devinit m25p_probe(struct spi_device *spi)
 	/* partitions should match sector boundaries; and it may be good to
 	 * use readonly partitions for writeprotected sectors (BP2..BP0).
 	 */
-	return mtd_device_parse_register(&flash->mtd, NULL, &ppdata,
-			data ? data->parts : NULL,
-			data ? data->nr_parts : 0);
+	if (mtd_has_cmdlinepart()) {
+		static const char *part_probes[]
+			= { "cmdlinepart", "RedBoot", NULL, };
+
+		nr_parts = parse_mtd_partitions(&flash->mtd,
+						part_probes, &parts, 0);
+	}
+
+	if (nr_parts <= 0 && data && data->parts) {
+		parts = data->parts;
+		nr_parts = data->nr_parts;
+	}
+
+	if (nr_parts > 0) {
+		for (i = 0; i < nr_parts; i++) {
+			DEBUG(MTD_DEBUG_LEVEL2, "partitions[%d] = "
+			      "{.name = %s, .offset = 0x%llx, "
+			      ".size = 0x%llx (%lldKiB) }\n",
+			      i, parts[i].name,
+			      (long long)parts[i].offset,
+			      (long long)parts[i].size,
+			      (long long)(parts[i].size >> 10));
+		}
+		flash->partitioned = 1;
+	}
+
+	return mtd_device_register(&flash->mtd, parts, nr_parts) == 1 ?
+		-ENODEV : 0;
 }
 
 
 static int __devexit m25p_remove(struct spi_device *spi)
 {
 	struct m25p	*flash = dev_get_drvdata(&spi->dev);
+	int		status;
 
 	/* Clean up MTD stuff. */
-	mtd_device_unregister(&flash->mtd);
-
+	status = mtd_device_unregister(&flash->mtd);
+	if (status == 0) {
+		kfree(flash->command);
+		kfree(flash);
+	}
 	return 0;
 }
 
@@ -957,6 +1019,7 @@ static int __devexit m25p_remove(struct spi_device *spi)
 static struct spi_driver m25p80_driver = {
 	.driver = {
 		.name	= "m25p80",
+		.bus	= &spi_bus_type,
 		.owner	= THIS_MODULE,
 	},
 	.id_table	= m25p_ids,
@@ -969,7 +1032,21 @@ static struct spi_driver m25p80_driver = {
 	 */
 };
 
-module_spi_driver(m25p80_driver);
+
+static int __init m25p80_init(void)
+{
+	return spi_register_driver(&m25p80_driver);
+}
+
+
+static void __exit m25p80_exit(void)
+{
+	spi_unregister_driver(&m25p80_driver);
+}
+
+
+module_init(m25p80_init);
+module_exit(m25p80_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Mike Lavender");

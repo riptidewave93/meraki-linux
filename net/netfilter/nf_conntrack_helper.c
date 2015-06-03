@@ -15,6 +15,7 @@
 #include <linux/skbuff.h>
 #include <linux/vmalloc.h>
 #include <linux/stddef.h>
+#include <linux/slab.h>
 #include <linux/random.h>
 #include <linux/err.h>
 #include <linux/kernel.h>
@@ -33,6 +34,7 @@ static DEFINE_MUTEX(nf_ct_helper_mutex);
 static struct hlist_head *nf_ct_helper_hash __read_mostly;
 static unsigned int nf_ct_helper_hsize __read_mostly;
 static unsigned int nf_ct_helper_count __read_mostly;
+static int nf_ct_helper_vmalloc;
 
 
 /* Stupid hash, but collision free for the default registrations of the
@@ -63,7 +65,7 @@ __nf_ct_helper_find(const struct nf_conntrack_tuple *tuple)
 }
 
 struct nf_conntrack_helper *
-__nf_conntrack_helper_find(const char *name, u16 l3num, u8 protonum)
+__nf_conntrack_helper_find_byname(const char *name)
 {
 	struct nf_conntrack_helper *h;
 	struct hlist_node *n;
@@ -71,34 +73,13 @@ __nf_conntrack_helper_find(const char *name, u16 l3num, u8 protonum)
 
 	for (i = 0; i < nf_ct_helper_hsize; i++) {
 		hlist_for_each_entry_rcu(h, n, &nf_ct_helper_hash[i], hnode) {
-			if (!strcmp(h->name, name) &&
-			    h->tuple.src.l3num == l3num &&
-			    h->tuple.dst.protonum == protonum)
+			if (!strcmp(h->name, name))
 				return h;
 		}
 	}
 	return NULL;
 }
-EXPORT_SYMBOL_GPL(__nf_conntrack_helper_find);
-
-struct nf_conntrack_helper *
-nf_conntrack_helper_try_module_get(const char *name, u16 l3num, u8 protonum)
-{
-	struct nf_conntrack_helper *h;
-
-	h = __nf_conntrack_helper_find(name, l3num, protonum);
-#ifdef CONFIG_MODULES
-	if (h == NULL) {
-		if (request_module("nfct-helper-%s", name) == 0)
-			h = __nf_conntrack_helper_find(name, l3num, protonum);
-	}
-#endif
-	if (h != NULL && !try_module_get(h->me))
-		h = NULL;
-
-	return h;
-}
-EXPORT_SYMBOL_GPL(nf_conntrack_helper_try_module_get);
+EXPORT_SYMBOL_GPL(__nf_conntrack_helper_find_byname);
 
 struct nf_conn_help *nf_ct_helper_ext_add(struct nf_conn *ct, gfp_t gfp)
 {
@@ -113,25 +94,16 @@ struct nf_conn_help *nf_ct_helper_ext_add(struct nf_conn *ct, gfp_t gfp)
 }
 EXPORT_SYMBOL_GPL(nf_ct_helper_ext_add);
 
-int __nf_ct_try_assign_helper(struct nf_conn *ct, struct nf_conn *tmpl,
-			      gfp_t flags)
+int __nf_ct_try_assign_helper(struct nf_conn *ct, gfp_t flags)
 {
-	struct nf_conntrack_helper *helper = NULL;
-	struct nf_conn_help *help;
 	int ret = 0;
+	struct nf_conntrack_helper *helper;
+	struct nf_conn_help *help = nfct_help(ct);
 
-	if (tmpl != NULL) {
-		help = nfct_help(tmpl);
-		if (help != NULL)
-			helper = help->helper;
-	}
-
-	help = nfct_help(ct);
-	if (helper == NULL)
-		helper = __nf_ct_helper_find(&ct->tuplehash[IP_CT_DIR_REPLY].tuple);
+	helper = __nf_ct_helper_find(&ct->tuplehash[IP_CT_DIR_REPLY].tuple);
 	if (helper == NULL) {
 		if (help)
-			RCU_INIT_POINTER(help->helper, NULL);
+			rcu_assign_pointer(help->helper, NULL);
 		goto out;
 	}
 
@@ -157,12 +129,9 @@ static inline int unhelp(struct nf_conntrack_tuple_hash *i,
 	struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(i);
 	struct nf_conn_help *help = nfct_help(ct);
 
-	if (help && rcu_dereference_protected(
-			help->helper,
-			lockdep_is_held(&nf_conntrack_lock)
-			) == me) {
+	if (help && help->helper == me) {
 		nf_conntrack_event(IPCT_HELPER, ct);
-		RCU_INIT_POINTER(help->helper, NULL);
+		rcu_assign_pointer(help->helper, NULL);
 	}
 	return 0;
 }
@@ -180,60 +149,6 @@ void nf_ct_helper_destroy(struct nf_conn *ct)
 		rcu_read_unlock();
 	}
 }
-
-static LIST_HEAD(nf_ct_helper_expectfn_list);
-
-void nf_ct_helper_expectfn_register(struct nf_ct_helper_expectfn *n)
-{
-	spin_lock_bh(&nf_conntrack_lock);
-	list_add_rcu(&n->head, &nf_ct_helper_expectfn_list);
-	spin_unlock_bh(&nf_conntrack_lock);
-}
-EXPORT_SYMBOL_GPL(nf_ct_helper_expectfn_register);
-
-void nf_ct_helper_expectfn_unregister(struct nf_ct_helper_expectfn *n)
-{
-	spin_lock_bh(&nf_conntrack_lock);
-	list_del_rcu(&n->head);
-	spin_unlock_bh(&nf_conntrack_lock);
-}
-EXPORT_SYMBOL_GPL(nf_ct_helper_expectfn_unregister);
-
-struct nf_ct_helper_expectfn *
-nf_ct_helper_expectfn_find_by_name(const char *name)
-{
-	struct nf_ct_helper_expectfn *cur;
-	bool found = false;
-
-	rcu_read_lock();
-	list_for_each_entry_rcu(cur, &nf_ct_helper_expectfn_list, head) {
-		if (!strcmp(cur->name, name)) {
-			found = true;
-			break;
-		}
-	}
-	rcu_read_unlock();
-	return found ? cur : NULL;
-}
-EXPORT_SYMBOL_GPL(nf_ct_helper_expectfn_find_by_name);
-
-struct nf_ct_helper_expectfn *
-nf_ct_helper_expectfn_find_by_symbol(const void *symbol)
-{
-	struct nf_ct_helper_expectfn *cur;
-	bool found = false;
-
-	rcu_read_lock();
-	list_for_each_entry_rcu(cur, &nf_ct_helper_expectfn_list, head) {
-		if (cur->expectfn == symbol) {
-			found = true;
-			break;
-		}
-	}
-	rcu_read_unlock();
-	return found ? cur : NULL;
-}
-EXPORT_SYMBOL_GPL(nf_ct_helper_expectfn_find_by_symbol);
 
 int nf_conntrack_helper_register(struct nf_conntrack_helper *me)
 {
@@ -266,10 +181,7 @@ static void __nf_conntrack_helper_unregister(struct nf_conntrack_helper *me,
 		hlist_for_each_entry_safe(exp, n, next,
 					  &net->ct.expect_hash[i], hnode) {
 			struct nf_conn_help *help = nfct_help(exp->master);
-			if ((rcu_dereference_protected(
-					help->helper,
-					lockdep_is_held(&nf_conntrack_lock)
-					) == me || exp->helper == me) &&
+			if ((help->helper == me || exp->helper == me) &&
 			    del_timer(&exp->timeout)) {
 				nf_ct_unlink_expect(exp);
 				nf_ct_expect_put(exp);
@@ -320,7 +232,8 @@ int nf_conntrack_helper_init(void)
 	int err;
 
 	nf_ct_helper_hsize = 1; /* gets rounded up to use one page */
-	nf_ct_helper_hash = nf_ct_alloc_hashtable(&nf_ct_helper_hsize, 0);
+	nf_ct_helper_hash = nf_ct_alloc_hashtable(&nf_ct_helper_hsize,
+						  &nf_ct_helper_vmalloc, 0);
 	if (!nf_ct_helper_hash)
 		return -ENOMEM;
 
@@ -331,12 +244,14 @@ int nf_conntrack_helper_init(void)
 	return 0;
 
 err1:
-	nf_ct_free_hashtable(nf_ct_helper_hash, nf_ct_helper_hsize);
+	nf_ct_free_hashtable(nf_ct_helper_hash, nf_ct_helper_vmalloc,
+			     nf_ct_helper_hsize);
 	return err;
 }
 
 void nf_conntrack_helper_fini(void)
 {
 	nf_ct_extend_unregister(&helper_extend);
-	nf_ct_free_hashtable(nf_ct_helper_hash, nf_ct_helper_hsize);
+	nf_ct_free_hashtable(nf_ct_helper_hash, nf_ct_helper_vmalloc,
+			     nf_ct_helper_hsize);
 }

@@ -1,4 +1,3 @@
-#include <linux/bug.h>
 #include <linux/kernel.h>
 
 #include "opcode.h"

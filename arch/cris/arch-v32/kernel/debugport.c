@@ -4,6 +4,7 @@
 
 #include <linux/console.h>
 #include <linux/init.h>
+#include <asm/system.h>
 #include <hwregs/reg_rdwr.h>
 #include <hwregs/reg_map.h>
 #include <hwregs/ser_defs.h>

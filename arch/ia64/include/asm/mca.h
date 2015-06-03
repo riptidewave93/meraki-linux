@@ -106,11 +106,6 @@ struct ia64_sal_os_state {
 	unsigned long		os_status;		/* OS status to SAL, enum below */
 	unsigned long		context;		/* 0 if return to same context
 							   1 if return to new context */
-
-	/* I-resources */
-	unsigned long		iip;
-	unsigned long		ipsr;
-	unsigned long		ifs;
 };
 
 enum {
@@ -143,7 +138,6 @@ extern unsigned long __per_cpu_mca[NR_CPUS];
 extern int cpe_vector;
 extern int ia64_cpe_irq;
 extern void ia64_mca_init(void);
-extern void ia64_mca_irq_init(void);
 extern void ia64_mca_cpu_init(void *);
 extern void ia64_os_mca_dispatch(void);
 extern void ia64_os_mca_dispatch_end(void);

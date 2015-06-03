@@ -162,7 +162,7 @@ ready:
 		printk(KERN_INFO "swprobe: padde %x\n", paddr_calc);
 	if (paddr)
 		*paddr = paddr_calc;
-	return pte;
+	return paddrbase;
 }
 
 void leon_flush_icache_all(void)
@@ -226,7 +226,7 @@ void leon3_getCacheRegs(struct leon3_cacheregs *regs)
  * Leon2 and Leon3 differ in their way of telling cache information
  *
  */
-int __init leon_flush_needed(void)
+int leon_flush_needed(void)
 {
 	int flush_needed = -1;
 	unsigned int ssize, sets;

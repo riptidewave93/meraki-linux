@@ -10,9 +10,8 @@
  * we simulate an x86-style page table for the linux mm code
  */
 
+#include <linux/mm.h>		/* for vm_area_struct */
 #include <linux/bitops.h>
-#include <linux/spinlock.h>
-#include <linux/mm_types.h>
 #include <asm/processor.h>
 #include <asm/cache.h>
 
@@ -39,18 +38,9 @@
         do{                                                     \
                 *(pteptr) = (pteval);                           \
         } while(0)
-
-extern void purge_tlb_entries(struct mm_struct *, unsigned long);
-
-#define set_pte_at(mm, addr, ptep, pteval)                      \
-	do {                                                    \
-		set_pte(ptep, pteval);                          \
-		purge_tlb_entries(mm, addr);                    \
-	} while (0)
+#define set_pte_at(mm,addr,ptep,pteval) set_pte(ptep,pteval)
 
 #endif /* !__ASSEMBLY__ */
-
-#include <asm/page.h>
 
 #define pte_ERROR(e) \
 	printk("%s:%d: bad pte %08lx.\n", __FILE__, __LINE__, pte_val(e))
@@ -146,7 +136,8 @@ extern void purge_tlb_entries(struct mm_struct *, unsigned long);
 #define _PAGE_NO_CACHE_BIT 24   /* (0x080) Uncached Page (U bit) */
 #define _PAGE_ACCESSED_BIT 23   /* (0x100) Software: Page Accessed */
 #define _PAGE_PRESENT_BIT  22   /* (0x200) Software: translation valid */
-/* bit 21 was formerly the FLUSH bit but is now unused */
+#define _PAGE_FLUSH_BIT    21   /* (0x400) Software: translation valid */
+				/*             for cache flushing only */
 #define _PAGE_USER_BIT     20   /* (0x800) Software: User accessible page */
 
 /* N.B. The bits are defined in terms of a 32 bit word above, so the */
@@ -180,15 +171,13 @@ extern void purge_tlb_entries(struct mm_struct *, unsigned long);
 #define _PAGE_NO_CACHE (1 << xlate_pabit(_PAGE_NO_CACHE_BIT))
 #define _PAGE_ACCESSED (1 << xlate_pabit(_PAGE_ACCESSED_BIT))
 #define _PAGE_PRESENT  (1 << xlate_pabit(_PAGE_PRESENT_BIT))
+#define _PAGE_FLUSH    (1 << xlate_pabit(_PAGE_FLUSH_BIT))
 #define _PAGE_USER     (1 << xlate_pabit(_PAGE_USER_BIT))
 #define _PAGE_FILE     (1 << xlate_pabit(_PAGE_FILE_BIT))
 
 #define _PAGE_TABLE	(_PAGE_PRESENT | _PAGE_READ | _PAGE_WRITE |  _PAGE_DIRTY | _PAGE_ACCESSED)
 #define _PAGE_CHG_MASK	(PAGE_MASK | _PAGE_ACCESSED | _PAGE_DIRTY)
-#define _PAGE_KERNEL_RO	(_PAGE_PRESENT | _PAGE_READ | _PAGE_DIRTY | _PAGE_ACCESSED)
-#define _PAGE_KERNEL_EXEC	(_PAGE_KERNEL_RO | _PAGE_EXEC)
-#define _PAGE_KERNEL_RWX	(_PAGE_KERNEL_EXEC | _PAGE_WRITE)
-#define _PAGE_KERNEL		(_PAGE_KERNEL_RO | _PAGE_WRITE)
+#define _PAGE_KERNEL	(_PAGE_PRESENT | _PAGE_EXEC | _PAGE_READ | _PAGE_WRITE | _PAGE_DIRTY | _PAGE_ACCESSED)
 
 /* The pgd/pmd contains a ptr (in phys addr space); since all pgds/pmds
  * are page-aligned, we don't care about the PAGE_OFFSET bits, except
@@ -219,11 +208,10 @@ extern void purge_tlb_entries(struct mm_struct *, unsigned long);
 #define PAGE_COPY       PAGE_EXECREAD
 #define PAGE_RWX        __pgprot(_PAGE_PRESENT | _PAGE_USER | _PAGE_READ | _PAGE_WRITE | _PAGE_EXEC |_PAGE_ACCESSED)
 #define PAGE_KERNEL	__pgprot(_PAGE_KERNEL)
-#define PAGE_KERNEL_EXEC	__pgprot(_PAGE_KERNEL_EXEC)
-#define PAGE_KERNEL_RWX	__pgprot(_PAGE_KERNEL_RWX)
-#define PAGE_KERNEL_RO	__pgprot(_PAGE_KERNEL_RO)
+#define PAGE_KERNEL_RO	__pgprot(_PAGE_KERNEL & ~_PAGE_WRITE)
 #define PAGE_KERNEL_UNC	__pgprot(_PAGE_KERNEL | _PAGE_NO_CACHE)
 #define PAGE_GATEWAY    __pgprot(_PAGE_PRESENT | _PAGE_USER | _PAGE_ACCESSED | _PAGE_GATEWAY| _PAGE_READ)
+#define PAGE_FLUSH      __pgprot(_PAGE_FLUSH)
 
 
 /*
@@ -271,7 +259,7 @@ extern unsigned long *empty_zero_page;
 
 #define ZERO_PAGE(vaddr) (virt_to_page(empty_zero_page))
 
-#define pte_none(x)     (pte_val(x) == 0)
+#define pte_none(x)     ((pte_val(x) == 0) || (pte_val(x) & _PAGE_FLUSH))
 #define pte_present(x)	(pte_val(x) & _PAGE_PRESENT)
 #define pte_clear(mm,addr,xp)	do { pte_val(*(xp)) = 0; } while (0)
 
@@ -409,7 +397,9 @@ static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
 #define pte_offset_kernel(pmd, address) \
 	((pte_t *) pmd_page_vaddr(*(pmd)) + pte_index(address))
 #define pte_offset_map(pmd, address) pte_offset_kernel(pmd, address)
+#define pte_offset_map_nested(pmd, address) pte_offset_kernel(pmd, address)
 #define pte_unmap(pte) do { } while (0)
+#define pte_unmap_nested(pte) do { } while (0)
 
 #define pte_unmap(pte)			do { } while (0)
 #define pte_unmap_nested(pte)		do { } while (0)
@@ -420,7 +410,7 @@ extern void paging_init (void);
 
 #define PG_dcache_dirty         PG_arch_1
 
-extern void update_mmu_cache(struct vm_area_struct *, unsigned long, pte_t *);
+extern void update_mmu_cache(struct vm_area_struct *, unsigned long, pte_t);
 
 /* Encode and de-code a swap entry */
 
@@ -454,10 +444,13 @@ struct mm_struct;
 static inline pte_t ptep_get_and_clear(struct mm_struct *mm, unsigned long addr, pte_t *ptep)
 {
 	pte_t old_pte;
+	pte_t pte;
 
 	spin_lock(&pa_dbit_lock);
-	old_pte = *ptep;
-	pte_clear(mm,addr,ptep);
+	pte = old_pte = *ptep;
+	pte_val(pte) &= ~_PAGE_PRESENT;
+	pte_val(pte) |= _PAGE_FLUSH;
+	set_pte_at(mm,addr,ptep,pte);
 	spin_unlock(&pa_dbit_lock);
 
 	return old_pte;
@@ -472,7 +465,6 @@ static inline void ptep_set_wrprotect(struct mm_struct *mm, unsigned long addr, 
 		old = pte_val(*ptep);
 		new = pte_val(pte_wrprotect(__pte (old)));
 	} while (cmpxchg((unsigned long *) ptep, old, new) != old);
-	purge_tlb_entries(mm, addr);
 #else
 	pte_t old_pte = *ptep;
 	set_pte_at(mm, addr, ptep, pte_wrprotect(old_pte));

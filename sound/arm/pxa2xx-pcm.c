@@ -10,7 +10,6 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/module.h>
 #include <sound/core.h>
 #include <sound/pxa2xx-lib.h>
 

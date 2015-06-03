@@ -22,7 +22,6 @@
 #include <linux/fs.h>
 #include <linux/security.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <acpi/acpi.h>
 #include "tpm.h"
 

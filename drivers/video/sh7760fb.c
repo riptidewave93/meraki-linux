@@ -26,7 +26,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 
 #include <asm/sh7760fb.h>
 
@@ -459,14 +458,14 @@ static int __devinit sh7760fb_probe(struct platform_device *pdev)
 	}
 
 	par->ioarea = request_mem_region(res->start,
-					 resource_size(res), pdev->name);
+					 (res->end - res->start), pdev->name);
 	if (!par->ioarea) {
 		dev_err(&pdev->dev, "mmio area busy\n");
 		ret = -EBUSY;
 		goto out_fb;
 	}
 
-	par->base = ioremap_nocache(res->start, resource_size(res));
+	par->base = ioremap_nocache(res->start, res->end - res->start + 1);
 	if (!par->base) {
 		dev_err(&pdev->dev, "cannot remap\n");
 		ret = -ENODEV;
@@ -551,7 +550,8 @@ out_unmap:
 		free_irq(par->irq, &par->vsync);
 	iounmap(par->base);
 out_res:
-	release_mem_region(res->start, resource_size(res));
+	release_resource(par->ioarea);
+	kfree(par->ioarea);
 out_fb:
 	framebuffer_release(info);
 	return ret;
@@ -569,7 +569,8 @@ static int __devexit sh7760fb_remove(struct platform_device *dev)
 	if (par->irq >= 0)
 		free_irq(par->irq, par);
 	iounmap(par->base);
-	release_mem_region(par->ioarea->start, resource_size(par->ioarea));
+	release_resource(par->ioarea);
+	kfree(par->ioarea);
 	framebuffer_release(info);
 	platform_set_drvdata(dev, NULL);
 
@@ -585,7 +586,18 @@ static struct platform_driver sh7760_lcdc_driver = {
 	.remove = __devexit_p(sh7760fb_remove),
 };
 
-module_platform_driver(sh7760_lcdc_driver);
+static int __init sh7760fb_init(void)
+{
+	return platform_driver_register(&sh7760_lcdc_driver);
+}
+
+static void __exit sh7760fb_exit(void)
+{
+	platform_driver_unregister(&sh7760_lcdc_driver);
+}
+
+module_init(sh7760fb_init);
+module_exit(sh7760fb_exit);
 
 MODULE_AUTHOR("Nobuhiro Iwamatsu, Manuel Lauss");
 MODULE_DESCRIPTION("FBdev for SH7760/63 integrated LCD Controller");

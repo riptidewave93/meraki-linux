@@ -3,8 +3,8 @@
  *
  * Copyright (C) 2008 Nokia Corporation
  *
- * Contact: Jarkko Nikula <jarkko.nikula@bitmer.com>
- *          Peter Ujfalusi <peter.ujfalusi@ti.com>
+ * Contact: Jarkko Nikula <jhnikula@gmail.com>
+ *          Peter Ujfalusi <peter.ujfalusi@nokia.com>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -43,22 +43,18 @@ enum omap_mcbsp_div {
 	OMAP_MCBSP_CLKGDV,		/* Sample rate generator divider */
 };
 
-#if defined(CONFIG_SOC_OMAP2420)
+#if defined(CONFIG_ARCH_OMAP2420)
 #define NUM_LINKS	2
 #endif
 #if defined(CONFIG_ARCH_OMAP15XX) || defined(CONFIG_ARCH_OMAP16XX)
 #undef  NUM_LINKS
 #define NUM_LINKS	3
 #endif
-#if defined(CONFIG_ARCH_OMAP4)
-#undef  NUM_LINKS
-#define NUM_LINKS	4
-#endif
-#if defined(CONFIG_ARCH_OMAP3) || defined(CONFIG_SOC_OMAP2430)
+#if defined(CONFIG_ARCH_OMAP2430) || defined(CONFIG_ARCH_OMAP34XX)
 #undef  NUM_LINKS
 #define NUM_LINKS	5
 #endif
 
-int omap_mcbsp_st_add_controls(struct snd_soc_pcm_runtime *rtd);
+extern struct snd_soc_dai omap_mcbsp_dai[NUM_LINKS];
 
 #endif

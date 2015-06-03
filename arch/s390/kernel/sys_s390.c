@@ -33,12 +33,13 @@
 #include "entry.h"
 
 /*
- * Perform the mmap() system call. Linux for S/390 isn't able to handle more
- * than 5 system call parameters, so this system call uses a memory block
- * for parameter passing.
+ * Perform the select(nd, in, out, ex, tv) and mmap() system
+ * calls. Linux for S/390 isn't able to handle more than 5
+ * system call parameters, so these system calls used a memory
+ * block for parameter passing..
  */
 
-struct s390_mmap_arg_struct {
+struct mmap_arg_struct {
 	unsigned long addr;
 	unsigned long len;
 	unsigned long prot;
@@ -47,9 +48,9 @@ struct s390_mmap_arg_struct {
 	unsigned long offset;
 };
 
-SYSCALL_DEFINE1(mmap2, struct s390_mmap_arg_struct __user *, arg)
+SYSCALL_DEFINE1(mmap2, struct mmap_arg_struct __user *, arg)
 {
-	struct s390_mmap_arg_struct a;
+	struct mmap_arg_struct a;
 	int error = -EFAULT;
 
 	if (copy_from_user(&a, arg, sizeof(a)))
@@ -59,29 +60,109 @@ out:
 	return error;
 }
 
+SYSCALL_DEFINE1(s390_old_mmap, struct mmap_arg_struct __user *, arg)
+{
+	struct mmap_arg_struct a;
+	long error = -EFAULT;
+
+	if (copy_from_user(&a, arg, sizeof(a)))
+		goto out;
+
+	error = -EINVAL;
+	if (a.offset & ~PAGE_MASK)
+		goto out;
+
+	error = sys_mmap_pgoff(a.addr, a.len, a.prot, a.flags, a.fd, a.offset >> PAGE_SHIFT);
+out:
+	return error;
+}
+
 /*
- * sys_ipc() is the de-multiplexer for the SysV IPC calls.
+ * sys_ipc() is the de-multiplexer for the SysV IPC calls..
+ *
+ * This is really horribly ugly.
  */
-SYSCALL_DEFINE5(s390_ipc, uint, call, int, first, unsigned long, second,
+SYSCALL_DEFINE5(ipc, uint, call, int, first, unsigned long, second,
 		unsigned long, third, void __user *, ptr)
 {
-	if (call >> 16)
-		return -EINVAL;
-	/* The s390 sys_ipc variant has only five parameters instead of six
-	 * like the generic variant. The only difference is the handling of
-	 * the SEMTIMEDOP subcall where on s390 the third parameter is used
-	 * as a pointer to a struct timespec where the generic variant uses
-	 * the fifth parameter.
-	 * Therefore we can call the generic variant by simply passing the
-	 * third parameter also as fifth parameter.
-	 */
-	return sys_ipc(call, first, second, third, ptr, third);
+        struct ipc_kludge tmp;
+	int ret;
+
+        switch (call) {
+        case SEMOP:
+		return sys_semtimedop(first, (struct sembuf __user *)ptr,
+				       (unsigned)second, NULL);
+	case SEMTIMEDOP:
+		return sys_semtimedop(first, (struct sembuf __user *)ptr,
+				       (unsigned)second,
+				       (const struct timespec __user *) third);
+        case SEMGET:
+                return sys_semget(first, (int)second, third);
+        case SEMCTL: {
+                union semun fourth;
+                if (!ptr)
+                        return -EINVAL;
+                if (get_user(fourth.__pad, (void __user * __user *) ptr))
+                        return -EFAULT;
+                return sys_semctl(first, (int)second, third, fourth);
+        }
+        case MSGSND:
+		return sys_msgsnd (first, (struct msgbuf __user *) ptr,
+                                   (size_t)second, third);
+		break;
+        case MSGRCV:
+                if (!ptr)
+                        return -EINVAL;
+                if (copy_from_user (&tmp, (struct ipc_kludge __user *) ptr,
+                                    sizeof (struct ipc_kludge)))
+                        return -EFAULT;
+                return sys_msgrcv (first, tmp.msgp,
+                                   (size_t)second, tmp.msgtyp, third);
+        case MSGGET:
+                return sys_msgget((key_t)first, (int)second);
+        case MSGCTL:
+                return sys_msgctl(first, (int)second,
+				   (struct msqid_ds __user *)ptr);
+
+	case SHMAT: {
+		ulong raddr;
+		ret = do_shmat(first, (char __user *)ptr,
+				(int)second, &raddr);
+		if (ret)
+			return ret;
+		return put_user (raddr, (ulong __user *) third);
+		break;
+        }
+	case SHMDT:
+		return sys_shmdt ((char __user *)ptr);
+	case SHMGET:
+		return sys_shmget(first, (size_t)second, third);
+	case SHMCTL:
+		return sys_shmctl(first, (int)second,
+                                   (struct shmid_ds __user *) ptr);
+	default:
+		return -ENOSYS;
+
+	}
+
+	return -EINVAL;
 }
 
 #ifdef CONFIG_64BIT
-SYSCALL_DEFINE1(s390_personality, unsigned int, personality)
+SYSCALL_DEFINE1(s390_newuname, struct new_utsname __user *, name)
 {
-	unsigned int ret;
+	int ret = sys_newuname(name);
+
+	if (personality(current->personality) == PER_LINUX32 && !ret) {
+		ret = copy_to_user(name->machine, "s390\0\0\0\0", 8);
+		if (ret) ret = -EFAULT;
+	}
+	return ret;
+}
+
+SYSCALL_DEFINE1(s390_personality, unsigned long, personality)
+{
+	int ret;
 
 	if (current->personality == PER_LINUX32 && personality == PER_LINUX)
 		personality = PER_LINUX32;

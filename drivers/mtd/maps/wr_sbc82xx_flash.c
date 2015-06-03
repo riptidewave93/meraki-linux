@@ -20,6 +20,7 @@
 #include <asm/immap_cpm2.h>
 
 static struct mtd_info *sbcmtd[3];
+static struct mtd_partition *sbcmtd_parts[3];
 
 struct map_info sbc82xx_flash_map[3] = {
 	{.name = "Boot flash"},
@@ -100,7 +101,6 @@ static int __init init_sbc82xx_flash(void)
 	for (i=0; i<3; i++) {
 		int8_t flashcs[3] = { 0, 6, 1 };
 		int nr_parts;
-		struct mtd_partition *defparts;
 
 		printk(KERN_NOTICE "PowerQUICC II %s (%ld MiB on CS%d",
 		       sbc82xx_flash_map[i].name,
@@ -113,8 +113,7 @@ static int __init init_sbc82xx_flash(void)
 		}
 		printk(" at %08lx)\n",  sbc82xx_flash_map[i].phys);
 
-		sbc82xx_flash_map[i].virt = ioremap(sbc82xx_flash_map[i].phys,
-						    sbc82xx_flash_map[i].size);
+		sbc82xx_flash_map[i].virt = ioremap(sbc82xx_flash_map[i].phys, sbc82xx_flash_map[i].size);
 
 		if (!sbc82xx_flash_map[i].virt) {
 			printk("Failed to ioremap\n");
@@ -130,20 +129,24 @@ static int __init init_sbc82xx_flash(void)
 
 		sbcmtd[i]->owner = THIS_MODULE;
 
-		/* No partitioning detected. Use default */
-		if (i == 2) {
-			defparts = NULL;
-			nr_parts = 0;
-		} else if (i == bigflash) {
-			defparts = bigflash_parts;
-			nr_parts = ARRAY_SIZE(bigflash_parts);
-		} else {
-			defparts = smallflash_parts;
-			nr_parts = ARRAY_SIZE(smallflash_parts);
+		nr_parts = parse_mtd_partitions(sbcmtd[i], part_probes,
+						&sbcmtd_parts[i], 0);
+		if (nr_parts > 0) {
+			mtd_device_register(sbcmtd[i], sbcmtd_parts[i],
+					    nr_parts);
+			continue;
 		}
 
-		mtd_device_parse_register(sbcmtd[i], part_probes, NULL,
-					  defparts, nr_parts);
+		/* No partitioning detected. Use default */
+		if (i == 2) {
+			mtd_device_register(sbcmtd[i], NULL, 0);
+		} else if (i == bigflash) {
+			mtd_device_register(sbcmtd[i], bigflash_parts,
+					    ARRAY_SIZE(bigflash_parts));
+		} else {
+			mtd_device_register(sbcmtd[i], smallflash_parts,
+					    ARRAY_SIZE(smallflash_parts));
+		}
 	}
 	return 0;
 }
@@ -156,8 +159,12 @@ static void __exit cleanup_sbc82xx_flash(void)
 		if (!sbcmtd[i])
 			continue;
 
-		mtd_device_unregister(sbcmtd[i]);
+		if (i<2 || sbcmtd_parts[i])
+			mtd_device_unregister(sbcmtd[i]);
+		else
+			mtd_device_unregister(sbcmtd[i]);
 
+		kfree(sbcmtd_parts[i]);
 		map_destroy(sbcmtd[i]);
 
 		iounmap((void *)sbc82xx_flash_map[i].virt);

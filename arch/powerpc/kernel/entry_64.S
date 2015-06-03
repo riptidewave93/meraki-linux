@@ -32,7 +32,6 @@
 #include <asm/ptrace.h>
 #include <asm/irqflags.h>
 #include <asm/ftrace.h>
-#include <asm/hw_irq.h>
 
 /*
  * System calls.
@@ -98,50 +97,38 @@ system_call_common:
 	addi	r9,r1,STACK_FRAME_OVERHEAD
 	ld	r11,exception_marker@toc(r2)
 	std	r11,-16(r9)		/* "regshere" marker */
-#if defined(CONFIG_VIRT_CPU_ACCOUNTING) && defined(CONFIG_PPC_SPLPAR)
-BEGIN_FW_FTR_SECTION
-	beq	33f
-	/* if from user, see if there are any DTL entries to process */
-	ld	r10,PACALPPACAPTR(r13)	/* get ptr to VPA */
-	ld	r11,PACA_DTL_RIDX(r13)	/* get log read index */
-	ld	r10,LPPACA_DTLIDX(r10)	/* get log write index */
-	cmpd	cr1,r11,r10
-	beq+	cr1,33f
-	bl	.accumulate_stolen_time
+#ifdef CONFIG_TRACE_IRQFLAGS
+	bl	.trace_hardirqs_on
 	REST_GPR(0,r1)
 	REST_4GPRS(3,r1)
 	REST_2GPRS(7,r1)
 	addi	r9,r1,STACK_FRAME_OVERHEAD
-33:
-END_FW_FTR_SECTION_IFSET(FW_FEATURE_SPLPAR)
-#endif /* CONFIG_VIRT_CPU_ACCOUNTING && CONFIG_PPC_SPLPAR */
+	ld	r12,_MSR(r1)
+#endif /* CONFIG_TRACE_IRQFLAGS */
+	li	r10,1
+	stb	r10,PACASOFTIRQEN(r13)
+	stb	r10,PACAHARDIRQEN(r13)
+	std	r10,SOFTE(r1)
+#ifdef CONFIG_PPC_ISERIES
+BEGIN_FW_FTR_SECTION
+	/* Hack for handling interrupts when soft-enabling on iSeries */
+	cmpdi	cr1,r0,0x5555		/* syscall 0x5555 */
+	andi.	r10,r12,MSR_PR		/* from kernel */
+	crand	4*cr0+eq,4*cr1+eq,4*cr0+eq
+	bne	2f
+	b	hardware_interrupt_entry
+2:
+END_FW_FTR_SECTION_IFSET(FW_FEATURE_ISERIES)
+#endif /* CONFIG_PPC_ISERIES */
 
-	/*
-	 * A syscall should always be called with interrupts enabled
-	 * so we just unconditionally hard-enable here. When some kind
-	 * of irq tracing is used, we additionally check that condition
-	 * is correct
-	 */
-#if defined(CONFIG_TRACE_IRQFLAGS) && defined(CONFIG_BUG)
-	lbz	r10,PACASOFTIRQEN(r13)
-	xori	r10,r10,1
-1:	tdnei	r10,0
-	EMIT_BUG_ENTRY 1b,__FILE__,__LINE__,BUGFLAG_WARNING
-#endif
-
+	/* Hard enable interrupts */
 #ifdef CONFIG_PPC_BOOK3E
 	wrteei	1
 #else
-	ld	r11,PACAKMSR(r13)
+	mfmsr	r11
 	ori	r11,r11,MSR_EE
 	mtmsrd	r11,1
 #endif /* CONFIG_PPC_BOOK3E */
-
-	/* We do need to set SOFTE in the stack frame or the return
-	 * from interrupt will be painful
-	 */
-	li	r10,1
-	std	r10,SOFTE(r1)
 
 #ifdef SHOW_SYSCALLS
 	bl	.do_show_syscall
@@ -193,14 +180,16 @@ syscall_exit:
 	andi.	r10,r8,MSR_RI
 	beq-	unrecov_restore
 #endif
-	/*
-	 * Disable interrupts so current_thread_info()->flags can't change,
+
+	/* Disable interrupts so current_thread_info()->flags can't change,
 	 * and so that we don't get interrupted after loading SRR0/1.
 	 */
 #ifdef CONFIG_PPC_BOOK3E
 	wrteei	0
 #else
-	ld	r10,PACAKMSR(r13)
+	mfmsr	r10
+	rldicl	r10,r10,48,1
+	rotldi	r10,r10,16
 	mtmsrd	r10,1
 #endif /* CONFIG_PPC_BOOK3E */
 
@@ -213,9 +202,7 @@ syscall_exit:
 	bge-	syscall_error
 syscall_error_cont:
 	ld	r7,_NIP(r1)
-BEGIN_FTR_SECTION
 	stdcx.	r0,0,r1			/* to clear the reservation */
-END_FTR_SECTION_IFCLR(CPU_FTR_STCX_CHECKS_ADDRESS)
 	andi.	r6,r8,MSR_PR
 	ld	r4,_LINK(r1)
 	/*
@@ -312,7 +299,7 @@ syscall_exit_work:
 #ifdef CONFIG_PPC_BOOK3E
 	wrteei	1
 #else
-	ld	r10,PACAKMSR(r13)
+	mfmsr	r10
 	ori	r10,r10,MSR_EE
 	mtmsrd	r10,1
 #endif /* CONFIG_PPC_BOOK3E */
@@ -373,12 +360,6 @@ _GLOBAL(ret_from_fork)
 	li	r3,0
 	b	syscall_exit
 
-	.section	".toc","aw"
-DSCR_DEFAULT:
-	.tc dscr_default[TC],dscr_default
-
-	.section	".text"
-
 /*
  * This routine switches between two different tasks.  The process
  * state of one is saved on its kernel stack.  Then the state
@@ -420,12 +401,6 @@ BEGIN_FTR_SECTION
 	std	r24,THREAD_VRSAVE(r3)
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 #endif /* CONFIG_ALTIVEC */
-#ifdef CONFIG_PPC64
-BEGIN_FTR_SECTION
-	mfspr	r25,SPRN_DSCR
-	std	r25,THREAD_DSCR(r3)
-END_FTR_SECTION_IFSET(CPU_FTR_DSCR)
-#endif
 	and.	r0,r0,r22
 	beq+	1f
 	andc	r22,r22,r0
@@ -444,17 +419,6 @@ END_FTR_SECTION_IFSET(CPU_FTR_DSCR)
 	sync
 #endif /* CONFIG_SMP */
 
-	/*
-	 * If we optimise away the clear of the reservation in system
-	 * calls because we know the CPU tracks the address of the
-	 * reservation, then we need to clear it here to cover the
-	 * case that the kernel context switch path has no larx
-	 * instructions.
-	 */
-BEGIN_FTR_SECTION
-	ldarx	r6,0,r1
-END_FTR_SECTION_IFSET(CPU_FTR_STCX_CHECKS_ADDRESS)
-
 	addi	r6,r4,-THREAD	/* Convert THREAD to 'current' */
 	std	r6,PACACURRENT(r13)	/* Set new 'current' */
 
@@ -467,10 +431,10 @@ BEGIN_FTR_SECTION
   FTR_SECTION_ELSE_NESTED(95)
 	clrrdi	r6,r8,40	/* get its 1T ESID */
 	clrrdi	r9,r1,40	/* get current sp 1T ESID */
-  ALT_MMU_FTR_SECTION_END_NESTED_IFCLR(MMU_FTR_1T_SEGMENT, 95)
+  ALT_FTR_SECTION_END_NESTED_IFCLR(CPU_FTR_1T_SEGMENT, 95)
 FTR_SECTION_ELSE
 	b	2f
-ALT_MMU_FTR_SECTION_END_IFSET(MMU_FTR_SLB)
+ALT_FTR_SECTION_END_IFSET(CPU_FTR_SLB)
 	clrldi.	r0,r6,2		/* is new ESID c00000000? */
 	cmpd	cr1,r6,r9	/* or is new ESID the same as current ESID? */
 	cror	eq,4*cr1+eq,eq
@@ -484,7 +448,7 @@ BEGIN_FTR_SECTION
 	li	r9,MMU_SEGSIZE_1T	/* insert B field */
 	oris	r6,r6,(MMU_SEGSIZE_1T << SLBIE_SSIZE_SHIFT)@h
 	rldimi	r7,r9,SLB_VSID_SSIZE_SHIFT,0
-END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
+END_FTR_SECTION_IFSET(CPU_FTR_1T_SEGMENT)
 
 	/* Update the last bolted SLB.  No write barriers are needed
 	 * here, provided we only update the current CPU's SLB shadow
@@ -496,7 +460,7 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 	std	r7,SLBSHADOW_STACKVSID(r9)  /* Save VSID */
 	std	r0,SLBSHADOW_STACKESID(r9)  /* Save ESID */
 
-	/* No need to check for MMU_FTR_NO_SLBIE_B here, since when
+	/* No need to check for CPU_FTR_NO_SLBIE_B here, since when
 	 * we have 1TB segments, the only CPUs known to have the errata
 	 * only support less than 1TB of system memory and we'll never
 	 * actually hit this code path.
@@ -518,29 +482,15 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_1T_SEGMENT)
 	mr	r1,r8		/* start using new stack pointer */
 	std	r7,PACAKSAVE(r13)
 
+	ld	r6,_CCR(r1)
+	mtcrf	0xFF,r6
+
 #ifdef CONFIG_ALTIVEC
 BEGIN_FTR_SECTION
 	ld	r0,THREAD_VRSAVE(r4)
 	mtspr	SPRN_VRSAVE,r0		/* if G4, restore VRSAVE reg */
 END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 #endif /* CONFIG_ALTIVEC */
-#ifdef CONFIG_PPC64
-BEGIN_FTR_SECTION
-	lwz	r6,THREAD_DSCR_INHERIT(r4)
-	ld	r7,DSCR_DEFAULT@toc(2)
-	ld	r0,THREAD_DSCR(r4)
-	cmpwi	r6,0
-	bne	1f
-	ld	r0,0(r7)
-1:	cmpd	r0,r25
-	beq	2f
-	mtspr	SPRN_DSCR,r0
-2:
-END_FTR_SECTION_IFSET(CPU_FTR_DSCR)
-#endif
-
-	ld	r6,_CCR(r1)
-	mtcrf	0xFF,r6
 
 	/* r3-r13 are destroyed -- Cort */
 	REST_8GPRS(14, r1)
@@ -569,8 +519,10 @@ _GLOBAL(ret_from_except_lite)
 #ifdef CONFIG_PPC_BOOK3E
 	wrteei	0
 #else
-	ld	r10,PACAKMSR(r13) /* Get kernel MSR without EE */
-	mtmsrd	r10,1		  /* Update machine state */
+	mfmsr	r10		/* Get current interrupt state */
+	rldicl	r9,r10,48,1	/* clear MSR_EE */
+	rotldi	r9,r9,16
+	mtmsrd	r9,1		/* Update machine state */
 #endif /* CONFIG_PPC_BOOK3E */
 
 #ifdef CONFIG_PREEMPT
@@ -593,70 +545,25 @@ _GLOBAL(ret_from_except_lite)
 	ld	r4,TI_FLAGS(r9)
 	andi.	r0,r4,_TIF_USER_WORK_MASK
 	bne	do_work
-#endif /* !CONFIG_PREEMPT */
+#endif
 
-	.globl	fast_exc_return_irq
-fast_exc_return_irq:
 restore:
-	/*
-	 * This is the main kernel exit path. First we check if we
-	 * are about to re-enable interrupts
-	 */
+BEGIN_FW_FTR_SECTION
 	ld	r5,SOFTE(r1)
-	lbz	r6,PACASOFTIRQEN(r13)
-	cmpwi	cr0,r5,0
-	beq	restore_irq_off
+FW_FTR_SECTION_ELSE
+	b	iseries_check_pending_irqs
+ALT_FW_FTR_SECTION_END_IFCLR(FW_FEATURE_ISERIES)
+2:
+	TRACE_AND_RESTORE_IRQ(r5);
 
-	/* We are enabling, were we already enabled ? Yes, just return */
-	cmpwi	cr0,r6,1
-	beq	cr0,do_restore
+	/* extract EE bit and use it to restore paca->hard_enabled */
+	ld	r3,_MSR(r1)
+	rldicl	r4,r3,49,63		/* r0 = (r3 >> 15) & 1 */
+	stb	r4,PACAHARDIRQEN(r13)
 
-	/*
-	 * We are about to soft-enable interrupts (we are hard disabled
-	 * at this point). We check if there's anything that needs to
-	 * be replayed first.
-	 */
-	lbz	r0,PACAIRQHAPPENED(r13)
-	cmpwi	cr0,r0,0
-	bne-	restore_check_irq_replay
-
-	/*
-	 * Get here when nothing happened while soft-disabled, just
-	 * soft-enable and move-on. We will hard-enable as a side
-	 * effect of rfi
-	 */
-restore_no_replay:
-	TRACE_ENABLE_INTS
-	li	r0,1
-	stb	r0,PACASOFTIRQEN(r13);
-
-	/*
-	 * Final return path. BookE is handled in a different file
-	 */
-do_restore:
 #ifdef CONFIG_PPC_BOOK3E
 	b	.exception_return_book3e
 #else
-	/*
-	 * Clear the reservation. If we know the CPU tracks the address of
-	 * the reservation then we can potentially save some cycles and use
-	 * a larx. On POWER6 and POWER7 this is significantly faster.
-	 */
-BEGIN_FTR_SECTION
-	stdcx.	r0,0,r1		/* to clear the reservation */
-FTR_SECTION_ELSE
-	ldarx	r4,0,r1
-ALT_FTR_SECTION_END_IFCLR(CPU_FTR_STCX_CHECKS_ADDRESS)
-
-	/*
-	 * Some code path such as load_up_fpu or altivec return directly
-	 * here. They run entirely hard disabled and do not alter the
-	 * interrupt state. They also don't use lwarx/stwcx. and thus
-	 * are known not to leave dangling reservations.
-	 */
-	.globl	fast_exception_return
-fast_exception_return:
-	ld	r3,_MSR(r1)
 	ld	r4,_CTR(r1)
 	ld	r0,_LINK(r1)
 	mtctr	r4
@@ -669,19 +576,20 @@ fast_exception_return:
 	andi.	r0,r3,MSR_RI
 	beq-	unrecov_restore
 
+	stdcx.	r0,0,r1		/* to clear the reservation */
+
 	/*
 	 * Clear RI before restoring r13.  If we are returning to
 	 * userspace and we take an exception after restoring r13,
 	 * we end up corrupting the userspace r13 value.
 	 */
-	ld	r4,PACAKMSR(r13) /* Get kernel MSR without EE */
-	andc	r4,r4,r0	 /* r0 contains MSR_RI here */
+	mfmsr	r4
+	andc	r4,r4,r0	/* r0 contains MSR_RI here */
 	mtmsrd	r4,1
 
 	/*
 	 * r13 is our per cpu area, only restore it if we are returning to
-	 * userspace the value stored in the stack frame may belong to
-	 * another CPU.
+	 * userspace
 	 */
 	andi.	r0,r3,MSR_PR
 	beq	1f
@@ -706,77 +614,30 @@ fast_exception_return:
 
 #endif /* CONFIG_PPC_BOOK3E */
 
-	/*
-	 * We are returning to a context with interrupts soft disabled.
-	 *
-	 * However, we may also about to hard enable, so we need to
-	 * make sure that in this case, we also clear PACA_IRQ_HARD_DIS
-	 * or that bit can get out of sync and bad things will happen
-	 */
-restore_irq_off:
-	ld	r3,_MSR(r1)
-	lbz	r7,PACAIRQHAPPENED(r13)
-	andi.	r0,r3,MSR_EE
-	beq	1f
-	rlwinm	r7,r7,0,~PACA_IRQ_HARD_DIS
-	stb	r7,PACAIRQHAPPENED(r13)
-1:	li	r0,0
-	stb	r0,PACASOFTIRQEN(r13);
-	TRACE_DISABLE_INTS
-	b	do_restore
+iseries_check_pending_irqs:
+#ifdef CONFIG_PPC_ISERIES
+	ld	r5,SOFTE(r1)
+	cmpdi	0,r5,0
+	beq	2b
+	/* Check for pending interrupts (iSeries) */
+	ld	r3,PACALPPACAPTR(r13)
+	ld	r3,LPPACAANYINT(r3)
+	cmpdi	r3,0
+	beq+	2b			/* skip do_IRQ if no interrupts */
 
-	/*
-	 * Something did happen, check if a re-emit is needed
-	 * (this also clears paca->irq_happened)
-	 */
-restore_check_irq_replay:
-	/* XXX: We could implement a fast path here where we check
-	 * for irq_happened being just 0x01, in which case we can
-	 * clear it and return. That means that we would potentially
-	 * miss a decrementer having wrapped all the way around.
-	 *
-	 * Still, this might be useful for things like hash_page
-	 */
-	bl	.__check_irq_replay
-	cmpwi	cr0,r3,0
- 	beq	restore_no_replay
- 
-	/*
-	 * We need to re-emit an interrupt. We do so by re-using our
-	 * existing exception frame. We first change the trap value,
-	 * but we need to ensure we preserve the low nibble of it
-	 */
-	ld	r4,_TRAP(r1)
-	clrldi	r4,r4,60
-	or	r4,r4,r3
-	std	r4,_TRAP(r1)
+	li	r3,0
+	stb	r3,PACASOFTIRQEN(r13)	/* ensure we are soft-disabled */
+#ifdef CONFIG_TRACE_IRQFLAGS
+	bl	.trace_hardirqs_off
+	mfmsr	r10
+#endif
+	ori	r10,r10,MSR_EE
+	mtmsrd	r10			/* hard-enable again */
+	addi	r3,r1,STACK_FRAME_OVERHEAD
+	bl	.do_IRQ
+	b	.ret_from_except_lite		/* loop back and handle more */
+#endif
 
-	/*
-	 * Then find the right handler and call it. Interrupts are
-	 * still soft-disabled and we keep them that way.
-	*/
-	cmpwi	cr0,r3,0x500
-	bne	1f
-	addi	r3,r1,STACK_FRAME_OVERHEAD;
- 	bl	.do_IRQ
-	b	.ret_from_except
-1:	cmpwi	cr0,r3,0x900
-	bne	1f
-	addi	r3,r1,STACK_FRAME_OVERHEAD;
-	bl	.timer_interrupt
-	b	.ret_from_except
-#ifdef CONFIG_PPC_BOOK3E
-1:	cmpwi	cr0,r3,0x280
-	bne	1f
-	addi	r3,r1,STACK_FRAME_OVERHEAD;
-	bl	.doorbell_exception
-	b	.ret_from_except
-#endif /* CONFIG_PPC_BOOK3E */
-1:	b	.ret_from_except /* What else to do here ? */
- 
-
-
-3:
 do_work:
 #ifdef CONFIG_PREEMPT
 	andi.	r0,r3,MSR_PR	/* Returning to user mode? */
@@ -789,12 +650,31 @@ do_work:
 	crandc	eq,cr1*4+eq,eq
 	bne	restore
 
-	/*
-	 * Here we are preempting the current task. We want to make
-	 * sure we are soft-disabled first
+	/* Here we are preempting the current task.
+	 *
+	 * Ensure interrupts are soft-disabled. We also properly mark
+	 * the PACA to reflect the fact that they are hard-disabled
+	 * and trace the change
 	 */
-	SOFT_DISABLE_INTS(r3,r4)
+	li	r0,0
+	stb	r0,PACASOFTIRQEN(r13)
+	stb	r0,PACAHARDIRQEN(r13)
+	TRACE_DISABLE_INTS
+
+	/* Call the scheduler with soft IRQs off */
 1:	bl	.preempt_schedule_irq
+
+	/* Hard-disable interrupts again (and update PACA) */
+#ifdef CONFIG_PPC_BOOK3E
+	wrteei	0
+#else
+	mfmsr	r10
+	rldicl	r10,r10,48,1
+	rotldi	r10,r10,16
+	mtmsrd	r10,1
+#endif /* CONFIG_PPC_BOOK3E */
+	li	r0,0
+	stb	r0,PACAHARDIRQEN(r13)
 
 	/* Re-test flags and eventually loop */
 	clrrdi	r9,r1,THREAD_SHIFT
@@ -806,16 +686,22 @@ do_work:
 user_work:
 #endif /* CONFIG_PREEMPT */
 
+	/* Enable interrupts */
+#ifdef CONFIG_PPC_BOOK3E
+	wrteei	1
+#else
+	ori	r10,r10,MSR_EE
+	mtmsrd	r10,1
+#endif /* CONFIG_PPC_BOOK3E */
+
 	andi.	r0,r4,_TIF_NEED_RESCHED
 	beq	1f
-	bl	.restore_interrupts
 	bl	.schedule
 	b	.ret_from_except_lite
 
 1:	bl	.save_nvgprs
-	bl	.restore_interrupts
 	addi	r3,r1,STACK_FRAME_OVERHEAD
-	bl	.do_notify_resume
+	bl	.do_signal
 	b	.ret_from_except
 
 unrecov_restore:
@@ -896,8 +782,9 @@ _GLOBAL(enter_rtas)
 	
         li      r9,1
         rldicr  r9,r9,MSR_SF_LG,(63-MSR_SF_LG)
-	ori	r9,r9,MSR_IR|MSR_DR|MSR_FE0|MSR_FE1|MSR_FP|MSR_RI
+	ori	r9,r9,MSR_IR|MSR_DR|MSR_FE0|MSR_FE1|MSR_FP
 	andc	r6,r0,r9
+	ori	r6,r6,MSR_RI
 	sync				/* disable interrupts so SRR0/1 */
 	mtmsrd	r0			/* don't get trashed */
 
@@ -912,7 +799,7 @@ _GLOBAL(enter_rtas)
 
 _STATIC(rtas_return_loc)
 	/* relocation is off at this point */
-	GET_PACA(r4)
+	mfspr	r4,SPRN_SPRG_PACA	/* Get PACA */
 	clrldi	r4,r4,2			/* convert to realmode address */
 
 	bcl	20,31,$+4
@@ -943,7 +830,7 @@ _STATIC(rtas_restore_regs)
 	REST_8GPRS(14, r1)		/* Restore the non-volatiles */
 	REST_10GPRS(22, r1)		/* ditto */
 
-	GET_PACA(r13)
+	mfspr	r13,SPRN_SPRG_PACA
 
 	ld	r4,_CCR(r1)
 	mtcr	r4

@@ -38,7 +38,6 @@
 #include <linux/interrupt.h>
 #include <linux/init.h>
 #include <linux/slab.h>
-#include <linux/module.h>
 #include <sound/core.h>
 #include <sound/initval.h>
 #include <sound/pcm.h>
@@ -466,13 +465,13 @@ snd_au1000_pcm_new(struct snd_au1000 *au1000)
 
 	flags = claim_dma_lock();
 	if ((au1000->stream[PLAYBACK]->dma = request_au1000_dma(DMA_ID_AC97C_TX,
-			"AC97 TX", au1000_dma_interrupt, 0,
+			"AC97 TX", au1000_dma_interrupt, IRQF_DISABLED,
 			au1000->stream[PLAYBACK])) < 0) {
 		release_dma_lock(flags);
 		return -EBUSY;
 	}
 	if ((au1000->stream[CAPTURE]->dma = request_au1000_dma(DMA_ID_AC97C_RX,
-			"AC97 RX", au1000_dma_interrupt, 0,
+			"AC97 RX", au1000_dma_interrupt, IRQF_DISABLED,
 			au1000->stream[CAPTURE])) < 0){
 		release_dma_lock(flags);
 		return -EBUSY;
@@ -517,7 +516,6 @@ get the interrupt driven case to work efficiently */
 			break;
 	if (i == 0x5000) {
 		printk(KERN_ERR "au1000 AC97: AC97 command read timeout\n");
-		spin_unlock(&au1000->ac97_lock);
 		return 0;
 	}
 

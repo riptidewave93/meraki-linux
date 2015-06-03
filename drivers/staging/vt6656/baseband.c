@@ -46,6 +46,7 @@
 #include "control.h"
 #include "datarate.h"
 #include "rndis.h"
+#include "control.h"
 
 /*---------------------  Static Definitions -------------------------*/
 static int          msglevel                =MSG_LEVEL_INFO;
@@ -662,11 +663,11 @@ const WORD awcFrameTime[MAX_RATE] =
 
 /*
 static
-unsigned long
+ULONG
 s_ulGetLowSQ3(PSDevice pDevice);
 
 static
-unsigned long
+ULONG
 s_ulGetRatio(PSDevice pDevice);
 
 static
@@ -689,19 +690,19 @@ s_vClearSQ3Value(PSDevice pDevice);
  * Return Value: FrameTime
  *
  */
-unsigned int
+UINT
 BBuGetFrameTime (
-     BYTE byPreambleType,
-     BYTE byPktType,
-     unsigned int cbFrameLength,
-     WORD wRate
+    IN BYTE byPreambleType,
+    IN BYTE byPktType,
+    IN UINT cbFrameLength,
+    IN WORD wRate
     )
 {
-    unsigned int uFrameTime;
-    unsigned int uPreamble;
-    unsigned int uTmp;
-    unsigned int uRateIdx = (unsigned int)wRate;
-    unsigned int uRate = 0;
+    UINT uFrameTime;
+    UINT uPreamble;
+    UINT uTmp;
+    UINT uRateIdx = (UINT)wRate;
+    UINT uRate = 0;
 
 
     if (uRateIdx > RATE_54M) {
@@ -709,7 +710,7 @@ BBuGetFrameTime (
         return 0;
     }
 
-    uRate = (unsigned int)awcFrameTime[uRateIdx];
+    uRate = (UINT)awcFrameTime[uRateIdx];
 
     if (uRateIdx <= 3) {          //CCK mode
 
@@ -756,20 +757,20 @@ BBuGetFrameTime (
  * Return Value: none
  *
  */
-void
+VOID
 BBvCaculateParameter (
-      PSDevice pDevice,
-      unsigned int cbFrameLength,
-      WORD wRate,
-      BYTE byPacketType,
-     PWORD pwPhyLen,
-     PBYTE pbyPhySrv,
-     PBYTE pbyPhySgn
+    IN  PSDevice pDevice,
+    IN  UINT cbFrameLength,
+    IN  WORD wRate,
+    IN  BYTE byPacketType,
+    OUT PWORD pwPhyLen,
+    OUT PBYTE pbyPhySrv,
+    OUT PBYTE pbyPhySgn
     )
 {
-    unsigned int cbBitCount;
-    unsigned int cbUsCount = 0;
-    unsigned int cbTmp;
+    UINT cbBitCount;
+    UINT cbUsCount = 0;
+    UINT cbTmp;
     BOOL bExtBit;
     BYTE byPreambleType = pDevice->byPreambleType;
     BOOL bCCK = pDevice->bCCK;
@@ -929,11 +930,33 @@ BBvCaculateParameter (
  * Return Value: none
  *
  */
-void
+VOID
 BBvSetAntennaMode (PSDevice pDevice, BYTE byAntennaMode)
 {
+    //{{ RobertYu: 20041124, ABG Mode, VC1/VC2 define, make the ANT_A, ANT_B inverted
+    /*if ( (pDevice->byRFType == RF_MAXIM2829) ||
+         (pDevice->byRFType == RF_UW2452) ||
+         (pDevice->byRFType == RF_AIROHA7230) ) { // RobertYu: 20041210, 20050104
+
+        switch (byAntennaMode) {
+            case ANT_TXA:
+                byAntennaMode = ANT_TXB;
+                break;
+            case ANT_TXB:
+                byAntennaMode = ANT_TXA;
+                break;
+            case ANT_RXA:
+                byAntennaMode = ANT_RXB;
+                break;
+            case ANT_RXB:
+                byAntennaMode = ANT_RXA;
+                break;
+        }
+    }*/
+
     switch (byAntennaMode) {
         case ANT_TXA:
+            break;
         case ANT_TXB:
             break;
         case ANT_RXA:
@@ -941,7 +964,7 @@ BBvSetAntennaMode (PSDevice pDevice, BYTE byAntennaMode)
             break;
         case ANT_RXB:
             pDevice->byBBRxConf &= 0xFE;
-            pDevice->byBBRxConf |= 0x02;
+            pDevice->byBBRxConf |= 0x02;;
             break;
     }
 
@@ -967,16 +990,15 @@ BBvSetAntennaMode (PSDevice pDevice, BYTE byAntennaMode)
  * Return Value: none
  *
  */
-
-BOOL BBbVT3184Init(PSDevice pDevice)
+BOOL
+BBbVT3184Init (PSDevice pDevice)
 {
-	int ntStatus;
+    NTSTATUS                ntStatus;
     WORD                    wLength;
     PBYTE                   pbyAddr;
     PBYTE                   pbyAgc;
     WORD                    wLengthAgc;
     BYTE                    abyArray[256];
-	u8 data;
 
     ntStatus = CONTROLnsRequestIn(pDevice,
                                   MESSAGE_TYPE_READ,
@@ -989,9 +1011,11 @@ BOOL BBbVT3184Init(PSDevice pDevice)
     }
 
 
+    //20080215-01,<Add> by Mike Liu
 //    if ((pDevice->abyEEPROM[EEP_OFS_RADIOCTL]&0x06)==0x04)
 //        return FALSE;
 
+//20080804-01,<Add> by Mike Liu
 //zonetype initial
  pDevice->byOriginalZonetype = pDevice->abyEEPROM[EEP_OFS_ZONETYPE];
  if(pDevice->config_file.ZoneType >= 0) {         //read zonetype file ok!
@@ -1017,7 +1041,7 @@ else {
    if(pDevice->config_file.ZoneType !=pDevice->abyEEPROM[EEP_OFS_ZONETYPE])
       printk("zonetype in file[%02x] mismatch with in EEPROM[%02x]\n",pDevice->config_file.ZoneType,pDevice->abyEEPROM[EEP_OFS_ZONETYPE]);
    else
-      printk("Read Zonetype file success,use default zonetype setting[%02x]\n",pDevice->config_file.ZoneType);
+      printk("Read Zonetype file sucess,use default zonetype setting[%02x]\n",pDevice->config_file.ZoneType);
  }
 }
 
@@ -1145,16 +1169,6 @@ else {
     ControlvWriteByte(pDevice,MESSAGE_REQUEST_BBREG,0x0D,0x01);
 
     RFbRFTableDownload(pDevice);
-
-	/* Fix for TX USB resets from vendors driver */
-	CONTROLnsRequestIn(pDevice, MESSAGE_TYPE_READ, USB_REG4,
-		MESSAGE_REQUEST_MEM, sizeof(data), &data);
-
-	data |= 0x2;
-
-	CONTROLnsRequestOut(pDevice, MESSAGE_TYPE_WRITE, USB_REG4,
-		MESSAGE_REQUEST_MEM, sizeof(data), &data);
-
     return TRUE;//ntStatus;
 }
 
@@ -1238,7 +1252,8 @@ void BBvLoopbackOff (PSDevice pDevice)
         // Set the CR33 Bit2 to disable internal Loopback.
         ControlvReadByte (pDevice, MESSAGE_REQUEST_BBREG, 0x21, &byData);//CR33
         ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0x21, (BYTE)(byData & 0xFE));//CR33
-	} else { /* OFDM */
+    }
+    else { // OFDM
         ControlvReadByte (pDevice, MESSAGE_REQUEST_BBREG, 0x9A, &byData);//CR154
         ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0x9A, (BYTE)(byData & 0xFE));//CR154
     }
@@ -1260,35 +1275,40 @@ void BBvLoopbackOff (PSDevice pDevice)
  * Return Value: none
  *
  */
-void
+VOID
 BBvSetShortSlotTime (PSDevice pDevice)
 {
     BYTE byBBVGA=0;
 
-	if (pDevice->bShortSlotTime)
+    if (pDevice->bShortSlotTime) {
         pDevice->byBBRxConf &= 0xDF;//1101 1111
-	else
+    } else {
         pDevice->byBBRxConf |= 0x20;//0010 0000
+    }
 
     ControlvReadByte (pDevice, MESSAGE_REQUEST_BBREG, 0xE7, &byBBVGA);
-	if (byBBVGA == pDevice->abyBBVGA[0])
+    if (byBBVGA == pDevice->abyBBVGA[0]) {
         pDevice->byBBRxConf |= 0x20;//0010 0000
+    }
 
     ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0x0A, pDevice->byBBRxConf);
+
 }
 
 
-void BBvSetVGAGainOffset(PSDevice pDevice, BYTE byData)
+VOID BBvSetVGAGainOffset(PSDevice pDevice, BYTE byData)
 {
 
     ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0xE7, byData);
 
     // patch for 3253B0 Baseband with Cardbus module
-	if (pDevice->bShortSlotTime)
-		pDevice->byBBRxConf &= 0xDF; /* 1101 1111 */
-	else
-		pDevice->byBBRxConf |= 0x20; /* 0010 0000 */
-
+    if (byData == pDevice->abyBBVGA[0]) {
+        pDevice->byBBRxConf |= 0x20;//0010 0000
+    } else if (pDevice->bShortSlotTime) {
+        pDevice->byBBRxConf &= 0xDF;//1101 1111
+    } else {
+        pDevice->byBBRxConf |= 0x20;//0010 0000
+    }
     ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0x0A, pDevice->byBBRxConf);//CR10
 }
 
@@ -1305,7 +1325,7 @@ void BBvSetVGAGainOffset(PSDevice pDevice, BYTE byData)
  * Return Value: none
  *
  */
-void
+VOID
 BBvSoftwareReset (PSDevice pDevice)
 {
     ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0x50, 0x40);
@@ -1326,14 +1346,14 @@ BBvSoftwareReset (PSDevice pDevice)
  * Return Value: none
  *
  */
-void
+VOID
 BBvSetDeepSleep (PSDevice pDevice)
 {
     ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0x0c, 0x17);//CR12
     ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0x0D, 0xB9);//CR13
 }
 
-void
+VOID
 BBvExitDeepSleep (PSDevice pDevice)
 {
     ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0x0C, 0x00);//CR12
@@ -1341,31 +1361,38 @@ BBvExitDeepSleep (PSDevice pDevice)
 }
 
 
-static unsigned long s_ulGetLowSQ3(PSDevice pDevice)
+static
+ULONG
+s_ulGetLowSQ3(PSDevice pDevice)
 {
-	int ii;
-	unsigned long ulSQ3 = 0;
-	unsigned long ulMaxPacket;
+int   ii;
+ULONG ulSQ3 = 0;
+ULONG ulMaxPacket;
 
     ulMaxPacket = pDevice->aulPktNum[RATE_54M];
-	if (pDevice->aulPktNum[RATE_54M] != 0)
+    if ( pDevice->aulPktNum[RATE_54M] != 0 ) {
         ulSQ3 = pDevice->aulSQ3Val[RATE_54M] / pDevice->aulPktNum[RATE_54M];
-
-	for (ii = RATE_48M; ii >= RATE_6M; ii--)
-		if (pDevice->aulPktNum[ii] > ulMaxPacket) {
+    }
+    for ( ii=RATE_48M;ii>=RATE_6M;ii-- ) {
+        if ( pDevice->aulPktNum[ii] > ulMaxPacket ) {
             ulMaxPacket = pDevice->aulPktNum[ii];
             ulSQ3 = pDevice->aulSQ3Val[ii] / pDevice->aulPktNum[ii];
         }
+    }
 
     return ulSQ3;
 }
 
-static unsigned long s_ulGetRatio(PSDevice pDevice)
+
+
+static
+ULONG
+s_ulGetRatio (PSDevice pDevice)
 {
-	int ii, jj;
-	unsigned long ulRatio = 0;
-	unsigned long ulMaxPacket;
-	unsigned long ulPacketNum;
+int     ii,jj;
+ULONG   ulRatio = 0;
+ULONG   ulMaxPacket;
+ULONG   ulPacketNum;
 
     //This is a thousand-ratio
     ulMaxPacket = pDevice->aulPktNum[RATE_54M];
@@ -1374,7 +1401,7 @@ static unsigned long s_ulGetRatio(PSDevice pDevice)
         ulRatio = (ulPacketNum * 1000 / pDevice->uDiversityCnt);
         ulRatio += TOP_RATE_54M;
     }
-	for (ii = RATE_48M; ii >= RATE_1M; ii--)
+    for ( ii=RATE_48M;ii>=RATE_1M;ii-- ) {
         if ( pDevice->aulPktNum[ii] > ulMaxPacket ) {
             ulPacketNum = 0;
             for ( jj=RATE_54M;jj>=ii;jj--)
@@ -1383,6 +1410,8 @@ static unsigned long s_ulGetRatio(PSDevice pDevice)
             ulRatio += TOP_RATE_48M;
             ulMaxPacket = pDevice->aulPktNum[ii];
         }
+
+    }
 
     return ulRatio;
 }
@@ -1417,7 +1446,7 @@ s_vClearSQ3Value (PSDevice pDevice)
  *
  */
 
-void
+VOID
 BBvAntennaDiversity (PSDevice pDevice, BYTE byRxRate, BYTE bySQ3)
 {
 
@@ -1485,9 +1514,7 @@ BBvAntennaDiversity (PSDevice pDevice, BYTE byRxRate, BYTE bySQ3)
                 if ( pDevice->byTMax == 0 )
                     return;
 
-		bScheduleCommand((void *) pDevice,
-				 WLAN_CMD_CHANGE_ANTENNA,
-				 NULL);
+                bScheduleCommand((HANDLE) pDevice, WLAN_CMD_CHANGE_ANTENNA, NULL);
 
                 pDevice->byAntennaState = 1;
 
@@ -1517,9 +1544,7 @@ BBvAntennaDiversity (PSDevice pDevice, BYTE byRxRate, BYTE bySQ3)
                  ((pDevice->ulSQ3_State1 != 0) && (pDevice->ulSQ3_State0 != 0) && (pDevice->ulSQ3_State0 < pDevice->ulSQ3_State1))
                ) {
 
-		bScheduleCommand((void *) pDevice,
-				 WLAN_CMD_CHANGE_ANTENNA,
-				 NULL);
+                bScheduleCommand((HANDLE) pDevice, WLAN_CMD_CHANGE_ANTENNA, NULL);
 
                 pDevice->TimerSQ3Tmax3.expires =  RUN_AT(pDevice->byTMax3 * HZ);
                 pDevice->TimerSQ3Tmax2.expires =  RUN_AT(pDevice->byTMax2 * HZ);
@@ -1552,14 +1577,17 @@ BBvAntennaDiversity (PSDevice pDevice, BYTE byRxRate, BYTE bySQ3)
  *
 -*/
 
-void TimerSQ3CallBack(void *hDeviceContext)
+VOID
+TimerSQ3CallBack (
+    IN  HANDLE      hDeviceContext
+    )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
 
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"TimerSQ3CallBack...");
     spin_lock_irq(&pDevice->lock);
 
-    bScheduleCommand((void *) pDevice, WLAN_CMD_CHANGE_ANTENNA, NULL);
+    bScheduleCommand((HANDLE) pDevice, WLAN_CMD_CHANGE_ANTENNA, NULL);
     pDevice->byAntennaState = 0;
     s_vClearSQ3Value(pDevice);
     pDevice->TimerSQ3Tmax3.expires =  RUN_AT(pDevice->byTMax3 * HZ);
@@ -1569,6 +1597,7 @@ void TimerSQ3CallBack(void *hDeviceContext)
 
 
     spin_unlock_irq(&pDevice->lock);
+    return;
 }
 
 
@@ -1590,7 +1619,10 @@ void TimerSQ3CallBack(void *hDeviceContext)
  *
 -*/
 
-void TimerSQ3Tmax3CallBack(void *hDeviceContext)
+VOID
+TimerSQ3Tmax3CallBack (
+    IN  HANDLE      hDeviceContext
+    )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
 
@@ -1608,7 +1640,7 @@ void TimerSQ3Tmax3CallBack(void *hDeviceContext)
         return;
     }
 
-    bScheduleCommand((void *) pDevice, WLAN_CMD_CHANGE_ANTENNA, NULL);
+    bScheduleCommand((HANDLE) pDevice, WLAN_CMD_CHANGE_ANTENNA, NULL);
     pDevice->byAntennaState = 1;
     del_timer(&pDevice->TimerSQ3Tmax3);
     del_timer(&pDevice->TimerSQ3Tmax2);
@@ -1616,12 +1648,13 @@ void TimerSQ3Tmax3CallBack(void *hDeviceContext)
     add_timer(&pDevice->TimerSQ3Tmax1);
 
     spin_unlock_irq(&pDevice->lock);
+    return;
 }
 
-void
+VOID
 BBvUpdatePreEDThreshold(
-      PSDevice    pDevice,
-      BOOL        bScanning)
+    IN  PSDevice    pDevice,
+    IN  BOOL        bScanning)
 {
 
 
@@ -1634,6 +1667,7 @@ BBvUpdatePreEDThreshold(
 
             if( bScanning )
             {   // need Max sensitivity //RSSI -69, -70,....
+                if(pDevice->byBBPreEDIndex == 0) break;
                 pDevice->byBBPreEDIndex = 0;
                 ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0xC9, 0x00); //CR201(0xC9)
                 ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0xCE, 0x30); //CR206(0xCE)
@@ -1776,6 +1810,7 @@ BBvUpdatePreEDThreshold(
 
             if( bScanning )
             {   // need Max sensitivity  //RSSI -69, -70, ...
+                if(pDevice->byBBPreEDIndex == 0) break;
                 pDevice->byBBPreEDIndex = 0;
                 ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0xC9, 0x00); //CR201(0xC9)
                 ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0xCE, 0x24); //CR206(0xCE)
@@ -1927,6 +1962,7 @@ BBvUpdatePreEDThreshold(
         case RF_VT3342A0: //RobertYu:20060627, testing table
             if( bScanning )
             {   // need Max sensitivity  //RSSI -67, -68, ...
+                if(pDevice->byBBPreEDIndex == 0) break;
                 pDevice->byBBPreEDIndex = 0;
                 ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0xC9, 0x00); //CR201(0xC9)
                 ControlvWriteByte(pDevice, MESSAGE_REQUEST_BBREG, 0xCE, 0x38); //CR206(0xCE)

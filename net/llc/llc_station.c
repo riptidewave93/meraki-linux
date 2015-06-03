@@ -13,7 +13,6 @@
  */
 #include <linux/init.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <net/llc.h>
 #include <net/llc_sap.h>
 #include <net/llc_conn.h>
@@ -689,7 +688,7 @@ static void llc_station_rcv(struct sk_buff *skb)
 
 int __init llc_station_init(void)
 {
-	int rc = -ENOBUFS;
+	u16 rc = -ENOBUFS;
 	struct sk_buff *skb;
 	struct llc_station_state_ev *ev;
 

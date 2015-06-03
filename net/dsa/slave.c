@@ -67,7 +67,7 @@ static int dsa_slave_open(struct net_device *dev)
 		return -ENETDOWN;
 
 	if (compare_ether_addr(dev->dev_addr, master->dev_addr)) {
-		err = dev_uc_add(master, dev->dev_addr);
+		err = dev_unicast_add(master, dev->dev_addr);
 		if (err < 0)
 			goto out;
 	}
@@ -90,7 +90,7 @@ clear_allmulti:
 		dev_set_allmulti(master, -1);
 del_unicast:
 	if (compare_ether_addr(dev->dev_addr, master->dev_addr))
-		dev_uc_del(master, dev->dev_addr);
+		dev_unicast_delete(master, dev->dev_addr);
 out:
 	return err;
 }
@@ -101,14 +101,14 @@ static int dsa_slave_close(struct net_device *dev)
 	struct net_device *master = p->parent->dst->master_netdev;
 
 	dev_mc_unsync(master, dev);
-	dev_uc_unsync(master, dev);
+	dev_unicast_unsync(master, dev);
 	if (dev->flags & IFF_ALLMULTI)
 		dev_set_allmulti(master, -1);
 	if (dev->flags & IFF_PROMISC)
 		dev_set_promiscuity(master, -1);
 
 	if (compare_ether_addr(dev->dev_addr, master->dev_addr))
-		dev_uc_del(master, dev->dev_addr);
+		dev_unicast_delete(master, dev->dev_addr);
 
 	return 0;
 }
@@ -130,7 +130,7 @@ static void dsa_slave_set_rx_mode(struct net_device *dev)
 	struct net_device *master = p->parent->dst->master_netdev;
 
 	dev_mc_sync(master, dev);
-	dev_uc_sync(master, dev);
+	dev_unicast_sync(master, dev);
 }
 
 static int dsa_slave_set_mac_address(struct net_device *dev, void *a)
@@ -147,13 +147,13 @@ static int dsa_slave_set_mac_address(struct net_device *dev, void *a)
 		goto out;
 
 	if (compare_ether_addr(addr->sa_data, master->dev_addr)) {
-		err = dev_uc_add(master, addr->sa_data);
+		err = dev_unicast_add(master, addr->sa_data);
 		if (err < 0)
 			return err;
 	}
 
 	if (compare_ether_addr(dev->dev_addr, master->dev_addr))
-		dev_uc_del(master, dev->dev_addr);
+		dev_unicast_delete(master, dev->dev_addr);
 
 out:
 	memcpy(dev->dev_addr, addr->sa_data, ETH_ALEN);
@@ -164,9 +164,10 @@ out:
 static int dsa_slave_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 {
 	struct dsa_slave_priv *p = netdev_priv(dev);
+	struct mii_ioctl_data *mii_data = if_mii(ifr);
 
 	if (p->phy != NULL)
-		return phy_mii_ioctl(p->phy, ifr, cmd);
+		return phy_mii_ioctl(p->phy, mii_data, cmd);
 
 	return -EOPNOTSUPP;
 }
@@ -288,6 +289,7 @@ static const struct ethtool_ops dsa_slave_ethtool_ops = {
 	.get_drvinfo		= dsa_slave_get_drvinfo,
 	.nway_reset		= dsa_slave_nway_reset,
 	.get_link		= dsa_slave_get_link,
+	.set_sg			= ethtool_op_set_sg,
 	.get_strings		= dsa_slave_get_strings,
 	.get_ethtool_stats	= dsa_slave_get_ethtool_stats,
 	.get_sset_count		= dsa_slave_get_sset_count,
@@ -301,6 +303,7 @@ static const struct net_device_ops dsa_netdev_ops = {
 	.ndo_start_xmit		= dsa_xmit,
 	.ndo_change_rx_flags	= dsa_slave_change_rx_flags,
 	.ndo_set_rx_mode	= dsa_slave_set_rx_mode,
+	.ndo_set_multicast_list = dsa_slave_set_rx_mode,
 	.ndo_set_mac_address	= dsa_slave_set_mac_address,
 	.ndo_do_ioctl		= dsa_slave_ioctl,
 };
@@ -313,6 +316,7 @@ static const struct net_device_ops edsa_netdev_ops = {
 	.ndo_start_xmit		= edsa_xmit,
 	.ndo_change_rx_flags	= dsa_slave_change_rx_flags,
 	.ndo_set_rx_mode	= dsa_slave_set_rx_mode,
+	.ndo_set_multicast_list = dsa_slave_set_rx_mode,
 	.ndo_set_mac_address	= dsa_slave_set_mac_address,
 	.ndo_do_ioctl		= dsa_slave_ioctl,
 };
@@ -325,6 +329,7 @@ static const struct net_device_ops trailer_netdev_ops = {
 	.ndo_start_xmit		= trailer_xmit,
 	.ndo_change_rx_flags	= dsa_slave_change_rx_flags,
 	.ndo_set_rx_mode	= dsa_slave_set_rx_mode,
+	.ndo_set_multicast_list = dsa_slave_set_rx_mode,
 	.ndo_set_mac_address	= dsa_slave_set_mac_address,
 	.ndo_do_ioctl		= dsa_slave_ioctl,
 };

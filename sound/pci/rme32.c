@@ -70,11 +70,11 @@
 
 
 #include <linux/delay.h>
-#include <linux/gfp.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/pci.h>
-#include <linux/module.h>
+#include <linux/slab.h>
+#include <linux/moduleparam.h>
 
 #include <sound/core.h>
 #include <sound/info.h>
@@ -89,8 +89,8 @@
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;	/* Enable this card */
-static bool fullduplex[SNDRV_CARDS]; // = {[0 ... (SNDRV_CARDS - 1)] = 1};
+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;	/* Enable this card */
+static int fullduplex[SNDRV_CARDS]; // = {[0 ... (SNDRV_CARDS - 1)] = 1};
 
 module_param_array(index, int, NULL, 0444);
 MODULE_PARM_DESC(index, "Index value for RME Digi32 soundcard.");
@@ -226,7 +226,7 @@ struct rme32 {
 	struct snd_kcontrol *spdif_ctl;
 };
 
-static DEFINE_PCI_DEVICE_TABLE(snd_rme32_ids) = {
+static struct pci_device_id snd_rme32_ids[] = {
 	{PCI_VDEVICE(XILINX_RME, PCI_DEVICE_ID_RME_DIGI32), 0,},
 	{PCI_VDEVICE(XILINX_RME, PCI_DEVICE_ID_RME_DIGI32_8), 0,},
 	{PCI_VDEVICE(XILINX_RME, PCI_DEVICE_ID_RME_DIGI32_PRO), 0,},
@@ -1017,7 +1017,7 @@ static int snd_rme32_capture_close(struct snd_pcm_substream *substream)
 	spin_lock_irq(&rme32->lock);
 	rme32->capture_substream = NULL;
 	rme32->capture_periodsize = 0;
-	spin_unlock_irq(&rme32->lock);
+	spin_unlock(&rme32->lock);
 	return 0;
 }
 
@@ -1355,7 +1355,7 @@ static int __devinit snd_rme32_create(struct rme32 * rme32)
 	}
 
 	if (request_irq(pci->irq, snd_rme32_interrupt, IRQF_SHARED,
-			KBUILD_MODNAME, rme32)) {
+			"RME32", rme32)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		return -EBUSY;
 	}
@@ -1985,7 +1985,7 @@ static void __devexit snd_rme32_remove(struct pci_dev *pci)
 }
 
 static struct pci_driver driver = {
-	.name =		KBUILD_MODNAME,
+	.name =		"RME Digi32",
 	.id_table =	snd_rme32_ids,
 	.probe =	snd_rme32_probe,
 	.remove =	__devexit_p(snd_rme32_remove),

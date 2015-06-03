@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -168,7 +168,7 @@ acpi_ev_pci_config_region_setup(acpi_handle handle,
 				void *handler_context, void **region_context)
 {
 	acpi_status status = AE_OK;
-	u64 pci_value;
+	acpi_integer pci_value;
 	struct acpi_pci_id *pci_id = *region_context;
 	union acpi_operand_object *handler_obj;
 	struct acpi_namespace_node *parent_node;
@@ -199,7 +199,7 @@ acpi_ev_pci_config_region_setup(acpi_handle handle,
 		return_ACPI_STATUS(status);
 	}
 
-	parent_node = region_obj->region.node->parent;
+	parent_node = acpi_ns_get_parent_node(region_obj->region.node);
 
 	/*
 	 * Get the _SEG and _BBN values from the device upon which the handler
@@ -248,7 +248,7 @@ acpi_ev_pci_config_region_setup(acpi_handle handle,
 				break;
 			}
 
-			pci_root_node = pci_root_node->parent;
+			pci_root_node = acpi_ns_get_parent_node(pci_root_node);
 		}
 
 		/* PCI root bridge not found, use namespace root node */
@@ -280,7 +280,7 @@ acpi_ev_pci_config_region_setup(acpi_handle handle,
 	 */
 	pci_device_node = region_obj->region.node;
 	while (pci_device_node && (pci_device_node->type != ACPI_TYPE_DEVICE)) {
-		pci_device_node = pci_device_node->parent;
+		pci_device_node = acpi_ns_get_parent_node(pci_device_node);
 	}
 
 	if (!pci_device_node) {
@@ -289,8 +289,8 @@ acpi_ev_pci_config_region_setup(acpi_handle handle,
 	}
 
 	/*
-	 * Get the PCI device and function numbers from the _ADR object
-	 * contained in the parent's scope.
+	 * Get the PCI device and function numbers from the _ADR object contained
+	 * in the parent's scope.
 	 */
 	status = acpi_ut_evaluate_numeric_object(METHOD_NAME__ADR,
 						 pci_device_node, &pci_value);
@@ -320,15 +320,9 @@ acpi_ev_pci_config_region_setup(acpi_handle handle,
 		pci_id->bus = ACPI_LOWORD(pci_value);
 	}
 
-	/* Complete/update the PCI ID for this device */
+	/* Complete this device's pci_id */
 
-	status =
-	    acpi_hw_derive_pci_id(pci_id, pci_root_node,
-				  region_obj->region.node);
-	if (ACPI_FAILURE(status)) {
-		ACPI_FREE(pci_id);
-		return_ACPI_STATUS(status);
-	}
+	acpi_os_derive_pci_id(pci_root_node, region_obj->region.node, &pci_id);
 
 	*region_context = pci_id;
 	return_ACPI_STATUS(AE_OK);
@@ -527,7 +521,7 @@ acpi_ev_initialize_region(union acpi_operand_object *region_obj,
 		return_ACPI_STATUS(AE_NOT_EXIST);
 	}
 
-	node = region_obj->region.node->parent;
+	node = acpi_ns_get_parent_node(region_obj->region.node);
 	space_id = region_obj->region.space_id;
 
 	/* Setup defaults */
@@ -581,21 +575,6 @@ acpi_ev_initialize_region(union acpi_operand_object *region_obj,
 				handler_obj = obj_desc->thermal_zone.handler;
 				break;
 
-			case ACPI_TYPE_METHOD:
-				/*
-				 * If we are executing module level code, the original
-				 * Node's object was replaced by this Method object and we
-				 * saved the handler in the method object.
-				 *
-				 * See acpi_ns_exec_module_code
-				 */
-				if (obj_desc->method.
-				    info_flags & ACPI_METHOD_MODULE_LEVEL) {
-					handler_obj =
-					    obj_desc->method.dispatch.handler;
-				}
-				break;
-
 			default:
 				/* Ignore other objects */
 				break;
@@ -637,7 +616,7 @@ acpi_ev_initialize_region(union acpi_operand_object *region_obj,
 
 					status =
 					    acpi_ev_execute_reg_method
-					    (region_obj, ACPI_REG_CONNECT);
+					    (region_obj, 1);
 
 					if (acpi_ns_locked) {
 						status =
@@ -660,7 +639,7 @@ acpi_ev_initialize_region(union acpi_operand_object *region_obj,
 
 		/* This node does not have the handler we need; Pop up one level */
 
-		node = node->parent;
+		node = acpi_ns_get_parent_node(node);
 	}
 
 	/* If we get here, there is no handler for this region */

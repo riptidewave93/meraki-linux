@@ -24,7 +24,7 @@
 #ifndef _VIA_DRM_H_
 #define _VIA_DRM_H_
 
-#include "drm.h"
+#include <linux/types.h>
 
 /* WARNING: These defines must be the same as what the Xserver uses.
  * if you change them, you must change the defines in the Xserver.
@@ -273,9 +273,5 @@ typedef struct drm_via_dmablit {
 
 	drm_via_blitsync_t sync;
 } drm_via_dmablit_t;
-
-struct via_file_private {
-	struct list_head obj_list;
-};
 
 #endif				/* _VIA_DRM_H_ */

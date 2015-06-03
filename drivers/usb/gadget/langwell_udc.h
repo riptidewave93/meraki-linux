@@ -5,9 +5,24 @@
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
  * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+ *
  */
 
 #include <linux/usb/langwell_udc.h>
+
+#if defined(CONFIG_USB_LANGWELL_OTG)
+#include <linux/usb/langwell_otg.h>
+#endif
+
 
 /*-------------------------------------------------------------------------*/
 
@@ -162,7 +177,7 @@ struct langwell_udc {
 	spinlock_t		lock;	/* device lock */
 	struct langwell_ep	*ep;
 	struct usb_gadget_driver	*driver;
-	struct usb_phy		*transceiver;
+	struct otg_transceiver	*transceiver;
 	u8			dev_addr;
 	u32			usb_state;
 	u32			resume_state;
@@ -184,9 +199,7 @@ struct langwell_udc {
 				vbus_active:1,
 				suspended:1,
 				stopped:1,
-				lpm:1,		/* LPM capability */
-				has_sram:1,	/* SRAM caching */
-				got_sram:1;
+				lpm:1;	/* LPM capability */
 
 	/* pci state used to access those endpoints */
 	struct pci_dev		*pdev;
@@ -211,14 +224,5 @@ struct langwell_udc {
 
 	/* make sure release() is done */
 	struct completion	*done;
-
-	/* for private SRAM caching */
-	unsigned int		sram_addr;
-	unsigned int		sram_size;
-
-	/* device status data for get_status request */
-	u16			dev_status;
 };
-
-#define gadget_to_langwell(g)	container_of((g), struct langwell_udc, gadget)
 

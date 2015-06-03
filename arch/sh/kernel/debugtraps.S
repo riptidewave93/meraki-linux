@@ -13,6 +13,7 @@
 #include <linux/linkage.h>
 
 #if !defined(CONFIG_KGDB)
+#define breakpoint_trap_handler		debug_trap_handler
 #define singlestep_trap_handler		debug_trap_handler
 #endif
 

@@ -32,7 +32,7 @@
 
 #include <linux/delay.h>
 #include <linux/init.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/pci.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
@@ -115,14 +115,7 @@ MODULE_SUPPORTED_DEVICE("{{Avance Logic,ALS300},{Avance Logic,ALS300+}}");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
-
-module_param_array(index, int, NULL, 0444);
-MODULE_PARM_DESC(index, "Index value for ALS300 sound card.");
-module_param_array(id, charp, NULL, 0444);
-MODULE_PARM_DESC(id, "ID string for ALS300 sound card.");
-module_param_array(enable, bool, NULL, 0444);
-MODULE_PARM_DESC(enable, "Enable ALS300 sound card.");
+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
 
 struct snd_als300 {
 	unsigned long port;
@@ -152,7 +145,7 @@ struct snd_als300_substream_data {
 	int block_counter_register;
 };
 
-static DEFINE_PCI_DEVICE_TABLE(snd_als300_ids) = {
+static struct pci_device_id snd_als300_ids[] = {
 	{ 0x4005, 0x0300, PCI_ANY_ID, PCI_ANY_ID, 0, 0, DEVICE_ALS300 },
 	{ 0x4005, 0x0308, PCI_ANY_ID, PCI_ANY_ID, 0, 0, DEVICE_ALS300_PLUS },
 	{ 0, }
@@ -729,7 +722,7 @@ static int __devinit snd_als300_create(struct snd_card *card,
 		irq_handler = snd_als300_interrupt;
 
 	if (request_irq(pci->irq, irq_handler, IRQF_SHARED,
-			KBUILD_MODNAME, chip)) {
+			card->shortname, chip)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		snd_als300_free(chip);
 		return -EBUSY;
@@ -853,7 +846,7 @@ static int __devinit snd_als300_probe(struct pci_dev *pci,
 }
 
 static struct pci_driver driver = {
-	.name = KBUILD_MODNAME,
+	.name = "ALS300",
 	.id_table = snd_als300_ids,
 	.probe = snd_als300_probe,
 	.remove = __devexit_p(snd_als300_remove),

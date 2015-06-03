@@ -90,69 +90,69 @@ typedef enum _NDIS_802_11_NETWORK_TYPE
 
 
 typedef struct tagSERPObject {
-    bool bERPExist;
-    unsigned char byERP;
+    BOOL    bERPExist;
+    BYTE    byERP;
 }ERPObject, *PERPObject;
 
 
 typedef struct tagSRSNCapObject {
-    bool bRSNCapExist;
-    unsigned short wRSNCap;
+    BOOL    bRSNCapExist;
+    WORD    wRSNCap;
 }SRSNCapObject, *PSRSNCapObject;
 
 // BSS info(AP)
 #pragma pack(1)
 typedef struct tagKnownBSS {
     // BSS info
-    bool bActive;
-    unsigned char abyBSSID[WLAN_BSSID_LEN];
-    unsigned int	uChannel;
-    unsigned char abySuppRates[WLAN_IEHDR_LEN + WLAN_RATES_MAXLEN + 1];
-    unsigned char abyExtSuppRates[WLAN_IEHDR_LEN + WLAN_RATES_MAXLEN + 1];
-    unsigned int	uRSSI;
-    unsigned char bySQ;
-    unsigned short wBeaconInterval;
-    unsigned short wCapInfo;
-    unsigned char abySSID[WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN + 1];
-    unsigned char byRxRate;
+    BOOL            bActive;
+    BYTE            abyBSSID[WLAN_BSSID_LEN];
+    UINT            uChannel;
+    BYTE            abySuppRates[WLAN_IEHDR_LEN + WLAN_RATES_MAXLEN + 1];
+    BYTE            abyExtSuppRates[WLAN_IEHDR_LEN + WLAN_RATES_MAXLEN + 1];
+    UINT            uRSSI;
+    BYTE            bySQ;
+    WORD            wBeaconInterval;
+    WORD            wCapInfo;
+    BYTE            abySSID[WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN + 1];
+    BYTE            byRxRate;
 
-//    unsigned short wATIMWindow;
-    unsigned char byRSSIStatCnt;
-    long            ldBmMAX;
-    long            ldBmAverage[RSSI_STAT_COUNT];
-    long            ldBmAverRange;
+//    WORD            wATIMWindow;
+    BYTE            byRSSIStatCnt;
+    LONG            ldBmMAX;
+    LONG            ldBmAverage[RSSI_STAT_COUNT];
+    LONG            ldBmAverRange;
     //For any BSSID selection improvment
-    bool bSelected;
+    BOOL            bSelected;
 
     //++ WPA informations
-    bool bWPAValid;
-    unsigned char byGKType;
-    unsigned char abyPKType[4];
-    unsigned short wPKCount;
-    unsigned char abyAuthType[4];
-    unsigned short wAuthCount;
-    unsigned char byDefaultK_as_PK;
-    unsigned char byReplayIdx;
+    BOOL            bWPAValid;
+    BYTE            byGKType;
+    BYTE            abyPKType[4];
+    WORD            wPKCount;
+    BYTE            abyAuthType[4];
+    WORD            wAuthCount;
+    BYTE            byDefaultK_as_PK;
+    BYTE            byReplayIdx;
     //--
 
     //++ WPA2 informations
-    bool bWPA2Valid;
-    unsigned char byCSSGK;
-    unsigned short wCSSPKCount;
-    unsigned char abyCSSPK[4];
-    unsigned short wAKMSSAuthCount;
-    unsigned char abyAKMSSAuthType[4];
+    BOOL            bWPA2Valid;
+    BYTE            byCSSGK;
+    WORD            wCSSPKCount;
+    BYTE            abyCSSPK[4];
+    WORD            wAKMSSAuthCount;
+    BYTE            abyAKMSSAuthType[4];
 
     //++  wpactl
-    unsigned char byWPAIE[MAX_WPA_IE_LEN];
-    unsigned char byRSNIE[MAX_WPA_IE_LEN];
-    unsigned short wWPALen;
-    unsigned short wRSNLen;
+    BYTE            byWPAIE[MAX_WPA_IE_LEN];
+    BYTE            byRSNIE[MAX_WPA_IE_LEN];
+    WORD            wWPALen;
+    WORD            wRSNLen;
 
     // Clear count
-    unsigned int	uClearCount;
-//    unsigned char abyIEs[WLAN_BEACON_FR_MAXLEN];
-    unsigned int	uIELength;
+    UINT            uClearCount;
+//    BYTE            abyIEs[WLAN_BEACON_FR_MAXLEN];
+    UINT            uIELength;
     QWORD           qwBSSTimestamp;
     QWORD           qwLocalTSF;     // local TSF timer
 
@@ -161,7 +161,7 @@ typedef struct tagKnownBSS {
 
     ERPObject       sERP;
     SRSNCapObject   sRSNCapObj;
-    unsigned char abyIEs[1024];   // don't move this field !!
+    BYTE            abyIEs[1024];   // don't move this field !!
 
 }__attribute__ ((__packed__))
 KnownBSS , *PKnownBSS;
@@ -181,59 +181,59 @@ typedef enum tagNODE_STATE {
 // STA node info
 typedef struct tagKnownNodeDB {
     // STA info
-    bool bActive;
-    unsigned char abyMACAddr[WLAN_ADDR_LEN];
-    unsigned char abyCurrSuppRates[WLAN_IEHDR_LEN + WLAN_RATES_MAXLEN];
-    unsigned char abyCurrExtSuppRates[WLAN_IEHDR_LEN + WLAN_RATES_MAXLEN];
-    unsigned short wTxDataRate;
-    bool bShortPreamble;
-    bool bERPExist;
-    bool bShortSlotTime;
-    unsigned int	uInActiveCount;
-    unsigned short wMaxBasicRate;     //Get from byTopOFDMBasicRate or byTopCCKBasicRate which depends on packetTyp.
-    unsigned short wMaxSuppRate;      //Records the highest supported rate getting from SuppRates IE and ExtSuppRates IE in Beacon.
-    unsigned short wSuppRate;
-    unsigned char byTopOFDMBasicRate;//Records the highest basic rate in OFDM mode
-    unsigned char byTopCCKBasicRate; //Records the highest basic rate in CCK mode
+    BOOL            bActive;
+    BYTE            abyMACAddr[WLAN_ADDR_LEN];
+    BYTE            abyCurrSuppRates[WLAN_IEHDR_LEN + WLAN_RATES_MAXLEN];
+    BYTE            abyCurrExtSuppRates[WLAN_IEHDR_LEN + WLAN_RATES_MAXLEN];
+    WORD            wTxDataRate;
+    BOOL            bShortPreamble;
+    BOOL            bERPExist;
+    BOOL            bShortSlotTime;
+    UINT            uInActiveCount;
+    WORD            wMaxBasicRate;     //Get from byTopOFDMBasicRate or byTopCCKBasicRate which depends on packetTyp.
+    WORD            wMaxSuppRate;      //Records the highest supported rate getting from SuppRates IE and ExtSuppRates IE in Beacon.
+    WORD            wSuppRate;
+    BYTE            byTopOFDMBasicRate;//Records the highest basic rate in OFDM mode
+    BYTE            byTopCCKBasicRate; //Records the highest basic rate in CCK mode
 
     // For AP mode
     struct sk_buff_head sTxPSQueue;
-    unsigned short wCapInfo;
-    unsigned short wListenInterval;
-    unsigned short wAID;
+    WORD            wCapInfo;
+    WORD            wListenInterval;
+    WORD            wAID;
     NODE_STATE      eNodeState;
-    bool bPSEnable;
-    bool bRxPSPoll;
-    unsigned char byAuthSequence;
-    unsigned long ulLastRxJiffer;
-    unsigned char bySuppRate;
-    unsigned long dwFlags;
-    unsigned short wEnQueueCnt;
+    BOOL            bPSEnable;
+    BOOL            bRxPSPoll;
+    BYTE            byAuthSequence;
+    ULONG           ulLastRxJiffer;
+    BYTE            bySuppRate;
+    DWORD           dwFlags;
+    WORD            wEnQueueCnt;
 
-    bool bOnFly;
-    unsigned long long       KeyRSC;
-    unsigned char byKeyIndex;
-    unsigned long dwKeyIndex;
-    unsigned char byCipherSuite;
-    unsigned long dwTSC47_16;
-    unsigned short wTSC15_0;
-    unsigned int	uWepKeyLength;
-    unsigned char abyWepKey[WLAN_WEPMAX_KEYLEN];
+    BOOL            bOnFly;
+    ULONGLONG       KeyRSC;
+    BYTE            byKeyIndex;
+    DWORD           dwKeyIndex;
+    BYTE            byCipherSuite;
+    DWORD           dwTSC47_16;
+    WORD            wTSC15_0;
+    UINT            uWepKeyLength;
+    BYTE            abyWepKey[WLAN_WEPMAX_KEYLEN];
     //
     // Auto rate fallback vars
-    bool bIsInFallback;
-    unsigned int	uAverageRSSI;
-    unsigned int	uRateRecoveryTimeout;
-    unsigned int	uRatePollTimeout;
-    unsigned int	uTxFailures;
-    unsigned int	uTxAttempts;
+    BOOL            bIsInFallback;
+    UINT            uAverageRSSI;
+    UINT            uRateRecoveryTimeout;
+    UINT            uRatePollTimeout;
+    UINT            uTxFailures;
+    UINT            uTxAttempts;
 
-    unsigned int	uTxRetry;
-    unsigned int	uFailureRatio;
-    unsigned int	uRetryRatio;
-    unsigned int	uTxOk[MAX_RATE+1];
-    unsigned int	uTxFail[MAX_RATE+1];
-    unsigned int	uTimeCount;
+    UINT            uTxRetry;
+    UINT            uFailureRatio;
+    UINT            uRetryRatio;
+    UINT            uTxOk[MAX_RATE+1];
+    UINT            uTxFail[MAX_RATE+1];
+    UINT            uTimeCount;
 
 } KnownNodeDB, *PKnownNodeDB;
 
@@ -244,122 +244,128 @@ typedef struct tagKnownNodeDB {
 
 PKnownBSS
 BSSpSearchBSSList(
-    void *hDeviceContext,
-    unsigned char *pbyDesireBSSID,
-    unsigned char *pbyDesireSSID,
-    CARD_PHY_TYPE ePhyType
+    IN HANDLE hDeviceContext,
+    IN PBYTE pbyDesireBSSID,
+    IN PBYTE pbyDesireSSID,
+    IN CARD_PHY_TYPE ePhyType
     );
 
 PKnownBSS
 BSSpAddrIsInBSSList(
-    void *hDeviceContext,
-    unsigned char *abyBSSID,
-    PWLAN_IE_SSID pSSID
+    IN HANDLE hDeviceContext,
+    IN PBYTE abyBSSID,
+    IN PWLAN_IE_SSID pSSID
     );
 
-void
+VOID
 BSSvClearBSSList(
-    void *hDeviceContext,
-    bool bKeepCurrBSSID
+    IN HANDLE hDeviceContext,
+    IN BOOL bKeepCurrBSSID
     );
 
-bool
+BOOL
 BSSbInsertToBSSList(
-    void *hDeviceContext,
-    unsigned char *abyBSSIDAddr,
-    QWORD qwTimestamp,
-    unsigned short wBeaconInterval,
-    unsigned short wCapInfo,
-    unsigned char byCurrChannel,
-    PWLAN_IE_SSID pSSID,
-    PWLAN_IE_SUPP_RATES pSuppRates,
-    PWLAN_IE_SUPP_RATES pExtSuppRates,
-    PERPObject psERP,
-    PWLAN_IE_RSN pRSN,
-    PWLAN_IE_RSN_EXT pRSNWPA,
-    PWLAN_IE_COUNTRY pIE_Country,
-    PWLAN_IE_QUIET pIE_Quiet,
-    unsigned int uIELength,
-    unsigned char *pbyIEs,
-    void *pRxPacketContext
+    IN HANDLE hDeviceContext,
+    IN PBYTE abyBSSIDAddr,
+    IN QWORD qwTimestamp,
+    IN WORD wBeaconInterval,
+    IN WORD wCapInfo,
+    IN BYTE byCurrChannel,
+    IN PWLAN_IE_SSID pSSID,
+    IN PWLAN_IE_SUPP_RATES pSuppRates,
+    IN PWLAN_IE_SUPP_RATES pExtSuppRates,
+    IN PERPObject psERP,
+    IN PWLAN_IE_RSN pRSN,
+    IN PWLAN_IE_RSN_EXT pRSNWPA,
+    IN PWLAN_IE_COUNTRY pIE_Country,
+    IN PWLAN_IE_QUIET pIE_Quiet,
+    IN UINT uIELength,
+    IN PBYTE pbyIEs,
+    IN HANDLE pRxPacketContext
     );
 
 
-bool
+BOOL
 BSSbUpdateToBSSList(
-    void *hDeviceContext,
-    QWORD qwTimestamp,
-    unsigned short wBeaconInterval,
-    unsigned short wCapInfo,
-    unsigned char byCurrChannel,
-    bool bChannelHit,
-    PWLAN_IE_SSID pSSID,
-    PWLAN_IE_SUPP_RATES pSuppRates,
-    PWLAN_IE_SUPP_RATES pExtSuppRates,
-    PERPObject psERP,
-    PWLAN_IE_RSN pRSN,
-    PWLAN_IE_RSN_EXT pRSNWPA,
-    PWLAN_IE_COUNTRY pIE_Country,
-    PWLAN_IE_QUIET pIE_Quiet,
-    PKnownBSS pBSSList,
-    unsigned int uIELength,
-    unsigned char *pbyIEs,
-    void *pRxPacketContext
+    IN HANDLE hDeviceContext,
+    IN QWORD qwTimestamp,
+    IN WORD wBeaconInterval,
+    IN WORD wCapInfo,
+    IN BYTE byCurrChannel,
+    IN BOOL bChannelHit,
+    IN PWLAN_IE_SSID pSSID,
+    IN PWLAN_IE_SUPP_RATES pSuppRates,
+    IN PWLAN_IE_SUPP_RATES pExtSuppRates,
+    IN PERPObject psERP,
+    IN PWLAN_IE_RSN pRSN,
+    IN PWLAN_IE_RSN_EXT pRSNWPA,
+    IN PWLAN_IE_COUNTRY pIE_Country,
+    IN PWLAN_IE_QUIET pIE_Quiet,
+    IN PKnownBSS pBSSList,
+    IN UINT uIELength,
+    IN PBYTE pbyIEs,
+    IN HANDLE pRxPacketContext
     );
 
 
-bool
-BSSDBbIsSTAInNodeDB(void *hDeviceContext, unsigned char *abyDstAddr,
-		unsigned int *puNodeIndex);
+BOOL
+BSSDBbIsSTAInNodeDB(
+    IN HANDLE hDeviceContext,
+    IN PBYTE abyDstAddr,
+    OUT PUINT puNodeIndex
+    );
 
-void
-BSSvCreateOneNode(void *hDeviceContext, unsigned int *puNodeIndex);
+VOID
+BSSvCreateOneNode(
+    IN HANDLE hDeviceContext,
+    OUT PUINT puNodeIndex
+    );
 
-void
+VOID
 BSSvUpdateAPNode(
-    void *hDeviceContext,
-    unsigned short *pwCapInfo,
-    PWLAN_IE_SUPP_RATES pItemRates,
-    PWLAN_IE_SUPP_RATES pExtSuppRates
+    IN HANDLE hDeviceContext,
+    IN PWORD pwCapInfo,
+    IN PWLAN_IE_SUPP_RATES pItemRates,
+    IN PWLAN_IE_SUPP_RATES pExtSuppRates
     );
 
 
-void
+VOID
 BSSvSecondCallBack(
-    void *hDeviceContext
+    IN HANDLE hDeviceContext
     );
 
 
-void
+VOID
 BSSvUpdateNodeTxCounter(
-    void *hDeviceContext,
-    unsigned char byTsr0,
-    unsigned char byTsr1,
-    unsigned char *pbyBuffer,
-    unsigned int uFIFOHeaderSize
+    IN HANDLE hDeviceContext,
+    IN BYTE        byTsr0,
+    IN BYTE        byTsr1,
+    IN PBYTE       pbyBuffer,
+    IN UINT        uFIFOHeaderSize
     );
 
-void
+VOID
 BSSvRemoveOneNode(
-    void *hDeviceContext,
-    unsigned int uNodeIndex
+    IN HANDLE hDeviceContext,
+    IN UINT uNodeIndex
     );
 
-void
+VOID
 BSSvAddMulticastNode(
-    void *hDeviceContext
+    IN HANDLE hDeviceContext
     );
 
 
-void
+VOID
 BSSvClearNodeDBTable(
-    void *hDeviceContext,
-    unsigned int uStartIndex
+    IN HANDLE hDeviceContext,
+    IN UINT uStartIndex
     );
 
-void
+VOID
 BSSvClearAnyBSSJoinRecord(
-    void *hDeviceContext
+    IN HANDLE hDeviceContext
     );
 
 #endif //__BSSDB_H__

@@ -19,7 +19,7 @@
 //
 
 #include <linux/kernel.h>
-#include "reiserfs.h"
+#include <linux/reiserfs_fs.h>
 #include <asm/types.h>
 
 #define DELTA 0x9E3779B9

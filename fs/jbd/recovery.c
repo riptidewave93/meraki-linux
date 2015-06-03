@@ -20,7 +20,7 @@
 #include <linux/fs.h>
 #include <linux/jbd.h>
 #include <linux/errno.h>
-#include <linux/blkdev.h>
+#include <linux/slab.h>
 #endif
 
 /*
@@ -264,9 +264,6 @@ int journal_recover(journal_t *journal)
 	err2 = sync_blockdev(journal->j_fs_dev);
 	if (!err)
 		err = err2;
-	/* Flush disk caches to get replayed data on the permanent storage */
-	if (journal->j_flags & JFS_BARRIER)
-		blkdev_issue_flush(journal->j_fs_dev, GFP_KERNEL, NULL);
 
 	return err;
 }
@@ -287,9 +284,12 @@ int journal_recover(journal_t *journal)
 int journal_skip_recovery(journal_t *journal)
 {
 	int			err;
+	journal_superblock_t *	sb;
+
 	struct recovery_info	info;
 
 	memset (&info, 0, sizeof(info));
+	sb = journal->j_superblock;
 
 	err = do_one_pass(journal, &info, PASS_SCAN);
 
@@ -298,12 +298,11 @@ int journal_skip_recovery(journal_t *journal)
 		++journal->j_transaction_sequence;
 	} else {
 #ifdef CONFIG_JBD_DEBUG
-		int dropped = info.end_transaction -
-			      be32_to_cpu(journal->j_superblock->s_sequence);
+		int dropped = info.end_transaction - be32_to_cpu(sb->s_sequence);
+#endif
 		jbd_debug(1,
 			  "JBD: ignoring %d transaction%s from the journal.\n",
 			  dropped, (dropped == 1) ? "" : "s");
-#endif
 		journal->j_transaction_sequence = ++info.end_transaction;
 	}
 
@@ -322,6 +321,11 @@ static int do_one_pass(journal_t *journal,
 	struct buffer_head *	bh;
 	unsigned int		sequence;
 	int			blocktype;
+
+	/* Precompute the maximum metadata descriptors in a descriptor block */
+	int			MAX_BLOCKS_PER_DESC;
+	MAX_BLOCKS_PER_DESC = ((journal->j_blocksize-sizeof(journal_header_t))
+			       / sizeof(journal_block_tag_t));
 
 	/*
 	 * First thing is to establish what we expect to find in the log

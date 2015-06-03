@@ -27,13 +27,15 @@
 #include <linux/errno.h>
 #include <linux/mm.h>
 #include <linux/slab.h>
+#include <linux/quotaops.h>
+#include <linux/smp_lock.h>
 #include <linux/buffer_head.h>
 #include <linux/sched.h>
 #include <linux/crc-itu-t.h>
 #include <linux/exportfs.h>
 
-static inline int udf_match(int len1, const unsigned char *name1, int len2,
-			    const unsigned char *name2)
+static inline int udf_match(int len1, const char *name1, int len2,
+			    const char *name2)
 {
 	if (len1 != len2)
 		return 0;
@@ -140,15 +142,15 @@ int udf_write_fi(struct inode *inode, struct fileIdentDesc *cfi,
 }
 
 static struct fileIdentDesc *udf_find_entry(struct inode *dir,
-					    const struct qstr *child,
+					    struct qstr *child,
 					    struct udf_fileident_bh *fibh,
 					    struct fileIdentDesc *cfi)
 {
 	struct fileIdentDesc *fi = NULL;
 	loff_t f_pos;
 	int block, flen;
-	unsigned char *fname = NULL;
-	unsigned char *nameptr;
+	char *fname = NULL;
+	char *nameptr;
 	uint8_t lfi;
 	uint16_t liu;
 	loff_t size;
@@ -227,8 +229,10 @@ static struct fileIdentDesc *udf_find_entry(struct inode *dir,
 		}
 
 		if ((cfi->fileCharacteristics & FID_FILE_CHAR_PARENT) &&
-		    isdotdot)
-			goto out_ok;
+		    isdotdot) {
+			brelse(epos.bh);
+			return fi;
+		}
 
 		if (!lfi)
 			continue;
@@ -260,6 +264,7 @@ static struct dentry *udf_lookup(struct inode *dir, struct dentry *dentry,
 	if (dentry->d_name.len > UDF_NAME_LEN - 2)
 		return ERR_PTR(-ENAMETOOLONG);
 
+	lock_kernel();
 #ifdef UDF_RECOVERY
 	/* temporary shorthand for specifying files by inode number */
 	if (!strncmp(dentry->d_name.name, ".B=", 3)) {
@@ -271,6 +276,7 @@ static struct dentry *udf_lookup(struct inode *dir, struct dentry *dentry,
 		};
 		inode = udf_iget(dir->i_sb, lb);
 		if (!inode) {
+			unlock_kernel();
 			return ERR_PTR(-EACCES);
 		}
 	} else
@@ -286,9 +292,11 @@ static struct dentry *udf_lookup(struct inode *dir, struct dentry *dentry,
 		loc = lelb_to_cpu(cfi.icb.extLocation);
 		inode = udf_iget(dir->i_sb, &loc);
 		if (!inode) {
+			unlock_kernel();
 			return ERR_PTR(-EACCES);
 		}
 	}
+	unlock_kernel();
 
 	return d_splice_alias(inode, dentry);
 }
@@ -300,7 +308,7 @@ static struct fileIdentDesc *udf_add_entry(struct inode *dir,
 {
 	struct super_block *sb = dir->i_sb;
 	struct fileIdentDesc *fi = NULL;
-	unsigned char *name = NULL;
+	char *name = NULL;
 	int namelen;
 	loff_t f_pos;
 	loff_t size = udf_ext0_offset(dir) + dir->i_size;
@@ -400,6 +408,15 @@ static struct fileIdentDesc *udf_add_entry(struct inode *dir,
 	}
 
 add:
+	/* Is there any extent whose size we need to round up? */
+	if (dinfo->i_alloc_type != ICBTAG_FLAG_AD_IN_ICB && elen) {
+		elen = (elen + sb->s_blocksize - 1) & ~(sb->s_blocksize - 1);
+		if (dinfo->i_alloc_type == ICBTAG_FLAG_AD_SHORT)
+			epos.offset -= sizeof(struct short_ad);
+		else if (dinfo->i_alloc_type == ICBTAG_FLAG_AD_LONG)
+			epos.offset -= sizeof(struct long_ad);
+		udf_write_aext(dir, &epos, &eloc, elen, 1);
+	}
 	f_pos += nfidlen;
 
 	if (dinfo->i_alloc_type == ICBTAG_FLAG_AD_IN_ICB &&
@@ -422,7 +439,6 @@ add:
 		udf_current_aext(dir, &epos, &eloc, &elen, 1);
 	}
 
-	/* Entry fits into current block? */
 	if (sb->s_blocksize - fibh->eoffset >= nfidlen) {
 		fibh->soffset = fibh->eoffset;
 		fibh->eoffset += nfidlen;
@@ -446,16 +462,6 @@ add:
 				(fibh->sbh->b_data + fibh->soffset);
 		}
 	} else {
-		/* Round up last extent in the file */
-		elen = (elen + sb->s_blocksize - 1) & ~(sb->s_blocksize - 1);
-		if (dinfo->i_alloc_type == ICBTAG_FLAG_AD_SHORT)
-			epos.offset -= sizeof(struct short_ad);
-		else if (dinfo->i_alloc_type == ICBTAG_FLAG_AD_LONG)
-			epos.offset -= sizeof(struct long_ad);
-		udf_write_aext(dir, &epos, &eloc, elen, 1);
-		dinfo->i_lenExtents = (dinfo->i_lenExtents + sb->s_blocksize
-					- 1) & ~(sb->s_blocksize - 1);
-
 		fibh->soffset = fibh->eoffset - sb->s_blocksize;
 		fibh->eoffset += nfidlen - sb->s_blocksize;
 		if (fibh->sbh != fibh->ebh) {
@@ -469,19 +475,15 @@ add:
 				f_pos >> dir->i_sb->s_blocksize_bits, 1, err);
 		if (!fibh->ebh)
 			goto out_err;
-		/* Extents could have been merged, invalidate our position */
-		brelse(epos.bh);
-		epos.bh = NULL;
-		epos.block = dinfo->i_location;
-		epos.offset = udf_file_entry_alloc_offset(dir);
 
 		if (!fibh->soffset) {
-			/* Find the freshly allocated block */
-			while (udf_next_aext(dir, &epos, &eloc, &elen, 1) ==
-				(EXT_RECORDED_ALLOCATED >> 30))
-				;
-			block = eloc.logicalBlockNum + ((elen - 1) >>
+			if (udf_next_aext(dir, &epos, &eloc, &elen, 1) ==
+			    (EXT_RECORDED_ALLOCATED >> 30)) {
+				block = eloc.logicalBlockNum + ((elen - 1) >>
 					dir->i_sb->s_blocksize_bits);
+			} else
+				block++;
+
 			brelse(fibh->sbh);
 			fibh->sbh = fibh->ebh;
 			fi = (struct fileIdentDesc *)(fibh->sbh->b_data);
@@ -506,20 +508,6 @@ add:
 		dir->i_size += nfidlen;
 		if (dinfo->i_alloc_type == ICBTAG_FLAG_AD_IN_ICB)
 			dinfo->i_lenAlloc += nfidlen;
-		else {
-			/* Find the last extent and truncate it to proper size */
-			while (udf_next_aext(dir, &epos, &eloc, &elen, 1) ==
-				(EXT_RECORDED_ALLOCATED >> 30))
-				;
-			elen -= dinfo->i_lenExtents - dir->i_size;
-			if (dinfo->i_alloc_type == ICBTAG_FLAG_AD_SHORT)
-				epos.offset -= sizeof(struct short_ad);
-			else if (dinfo->i_alloc_type == ICBTAG_FLAG_AD_LONG)
-				epos.offset -= sizeof(struct long_ad);
-			udf_write_aext(dir, &epos, &eloc, elen, 1);
-			dinfo->i_lenExtents = dir->i_size;
-		}
-
 		mark_inode_dirty(dir);
 		goto out_ok;
 	} else {
@@ -550,7 +538,7 @@ static int udf_delete_entry(struct inode *inode, struct fileIdentDesc *fi,
 	return udf_write_fi(inode, cfi, fi, fibh, NULL, NULL);
 }
 
-static int udf_create(struct inode *dir, struct dentry *dentry, umode_t mode,
+static int udf_create(struct inode *dir, struct dentry *dentry, int mode,
 		      struct nameidata *nd)
 {
 	struct udf_fileident_bh fibh;
@@ -559,8 +547,10 @@ static int udf_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 	int err;
 	struct udf_inode_info *iinfo;
 
+	lock_kernel();
 	inode = udf_new_inode(dir, mode, &err);
 	if (!inode) {
+		unlock_kernel();
 		return err;
 	}
 
@@ -571,12 +561,15 @@ static int udf_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 		inode->i_data.a_ops = &udf_aops;
 	inode->i_op = &udf_file_inode_operations;
 	inode->i_fop = &udf_file_operations;
+	inode->i_mode = mode;
 	mark_inode_dirty(inode);
 
 	fi = udf_add_entry(dir, dentry, &fibh, &cfi, &err);
 	if (!fi) {
-		inode_dec_link_count(inode);
+		inode->i_nlink--;
+		mark_inode_dirty(inode);
 		iput(inode);
+		unlock_kernel();
 		return err;
 	}
 	cfi.icb.extLength = cpu_to_le32(inode->i_sb->s_blocksize);
@@ -589,12 +582,13 @@ static int udf_create(struct inode *dir, struct dentry *dentry, umode_t mode,
 	if (fibh.sbh != fibh.ebh)
 		brelse(fibh.ebh);
 	brelse(fibh.sbh);
+	unlock_kernel();
 	d_instantiate(dentry, inode);
 
 	return 0;
 }
 
-static int udf_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
+static int udf_mknod(struct inode *dir, struct dentry *dentry, int mode,
 		     dev_t rdev)
 {
 	struct inode *inode;
@@ -606,17 +600,21 @@ static int udf_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 	if (!old_valid_dev(rdev))
 		return -EINVAL;
 
+	lock_kernel();
 	err = -EIO;
 	inode = udf_new_inode(dir, mode, &err);
 	if (!inode)
 		goto out;
 
 	iinfo = UDF_I(inode);
+	inode->i_uid = current_fsuid();
 	init_special_inode(inode, mode, rdev);
 	fi = udf_add_entry(dir, dentry, &fibh, &cfi, &err);
 	if (!fi) {
-		inode_dec_link_count(inode);
+		inode->i_nlink--;
+		mark_inode_dirty(inode);
 		iput(inode);
+		unlock_kernel();
 		return err;
 	}
 	cfi.icb.extLength = cpu_to_le32(inode->i_sb->s_blocksize);
@@ -635,10 +633,11 @@ static int udf_mknod(struct inode *dir, struct dentry *dentry, umode_t mode,
 	err = 0;
 
 out:
+	unlock_kernel();
 	return err;
 }
 
-static int udf_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
+static int udf_mkdir(struct inode *dir, struct dentry *dentry, int mode)
 {
 	struct inode *inode;
 	struct udf_fileident_bh fibh;
@@ -647,8 +646,13 @@ static int udf_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	struct udf_inode_info *dinfo = UDF_I(dir);
 	struct udf_inode_info *iinfo;
 
+	lock_kernel();
+	err = -EMLINK;
+	if (dir->i_nlink >= (256 << sizeof(dir->i_nlink)) - 1)
+		goto out;
+
 	err = -EIO;
-	inode = udf_new_inode(dir, S_IFDIR | mode, &err);
+	inode = udf_new_inode(dir, S_IFDIR, &err);
 	if (!inode)
 		goto out;
 
@@ -657,11 +661,12 @@ static int udf_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	inode->i_fop = &udf_dir_operations;
 	fi = udf_add_entry(inode, NULL, &fibh, &cfi, &err);
 	if (!fi) {
-		inode_dec_link_count(inode);
+		inode->i_nlink--;
+		mark_inode_dirty(inode);
 		iput(inode);
 		goto out;
 	}
-	set_nlink(inode, 2);
+	inode->i_nlink = 2;
 	cfi.icb.extLength = cpu_to_le32(inode->i_sb->s_blocksize);
 	cfi.icb.extLocation = cpu_to_lelb(dinfo->i_location);
 	*(__le32 *)((struct allocDescImpUse *)cfi.icb.impUse)->impUse =
@@ -670,11 +675,14 @@ static int udf_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 			FID_FILE_CHAR_DIRECTORY | FID_FILE_CHAR_PARENT;
 	udf_write_fi(inode, &cfi, fi, &fibh, NULL, NULL);
 	brelse(fibh.sbh);
+	inode->i_mode = S_IFDIR | mode;
+	if (dir->i_mode & S_ISGID)
+		inode->i_mode |= S_ISGID;
 	mark_inode_dirty(inode);
 
 	fi = udf_add_entry(dir, dentry, &fibh, &cfi, &err);
 	if (!fi) {
-		clear_nlink(inode);
+		inode->i_nlink = 0;
 		mark_inode_dirty(inode);
 		iput(inode);
 		goto out;
@@ -694,6 +702,7 @@ static int udf_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode)
 	err = 0;
 
 out:
+	unlock_kernel();
 	return err;
 }
 
@@ -775,6 +784,7 @@ static int udf_rmdir(struct inode *dir, struct dentry *dentry)
 	struct kernel_lb_addr tloc;
 
 	retval = -ENOENT;
+	lock_kernel();
 	fi = udf_find_entry(dir, &dentry->d_name, &fibh, &cfi);
 	if (!fi)
 		goto out;
@@ -790,8 +800,9 @@ static int udf_rmdir(struct inode *dir, struct dentry *dentry)
 	if (retval)
 		goto end_rmdir;
 	if (inode->i_nlink != 2)
-		udf_warn(inode->i_sb, "empty directory has nlink != 2 (%d)\n",
-			 inode->i_nlink);
+		udf_warning(inode->i_sb, "udf_rmdir",
+			    "empty directory has nlink != 2 (%d)",
+			    inode->i_nlink);
 	clear_nlink(inode);
 	inode->i_size = 0;
 	inode_dec_link_count(dir);
@@ -805,6 +816,7 @@ end_rmdir:
 	brelse(fibh.sbh);
 
 out:
+	unlock_kernel();
 	return retval;
 }
 
@@ -818,6 +830,7 @@ static int udf_unlink(struct inode *dir, struct dentry *dentry)
 	struct kernel_lb_addr tloc;
 
 	retval = -ENOENT;
+	lock_kernel();
 	fi = udf_find_entry(dir, &dentry->d_name, &fibh, &cfi);
 	if (!fi)
 		goto out;
@@ -830,7 +843,7 @@ static int udf_unlink(struct inode *dir, struct dentry *dentry)
 	if (!inode->i_nlink) {
 		udf_debug("Deleting nonexistent file (%lu), %d\n",
 			  inode->i_ino, inode->i_nlink);
-		set_nlink(inode, 1);
+		inode->i_nlink = 1;
 	}
 	retval = udf_delete_entry(dir, fi, &fibh, &cfi);
 	if (retval)
@@ -847,6 +860,7 @@ end_unlink:
 	brelse(fibh.sbh);
 
 out:
+	unlock_kernel();
 	return retval;
 }
 
@@ -855,40 +869,41 @@ static int udf_symlink(struct inode *dir, struct dentry *dentry,
 {
 	struct inode *inode;
 	struct pathComponent *pc;
-	const char *compstart;
+	char *compstart;
 	struct udf_fileident_bh fibh;
 	struct extent_position epos = {};
 	int eoffset, elen = 0;
 	struct fileIdentDesc *fi;
 	struct fileIdentDesc cfi;
-	uint8_t *ea;
+	char *ea;
 	int err;
 	int block;
-	unsigned char *name = NULL;
+	char *name = NULL;
 	int namelen;
+	struct buffer_head *bh;
 	struct udf_inode_info *iinfo;
-	struct super_block *sb = dir->i_sb;
 
-	inode = udf_new_inode(dir, S_IFLNK | S_IRWXUGO, &err);
+	lock_kernel();
+	inode = udf_new_inode(dir, S_IFLNK, &err);
 	if (!inode)
 		goto out;
 
-	iinfo = UDF_I(inode);
-	down_write(&iinfo->i_data_sem);
 	name = kmalloc(UDF_NAME_LEN, GFP_NOFS);
 	if (!name) {
 		err = -ENOMEM;
 		goto out_no_entry;
 	}
 
+	iinfo = UDF_I(inode);
+	inode->i_mode = S_IFLNK | S_IRWXUGO;
 	inode->i_data.a_ops = &udf_symlink_aops;
-	inode->i_op = &udf_symlink_inode_operations;
+	inode->i_op = &page_symlink_inode_operations;
 
 	if (iinfo->i_alloc_type != ICBTAG_FLAG_AD_IN_ICB) {
 		struct kernel_lb_addr eloc;
 		uint32_t bsize;
 
-		block = udf_new_block(sb, inode,
+		block = udf_new_block(inode->i_sb, inode,
 				iinfo->i_location.partitionReferenceNum,
 				iinfo->i_location.logicalBlockNum, &err);
 		if (!block)
@@ -899,17 +914,17 @@ static int udf_symlink(struct inode *dir, struct dentry *dentry,
 		eloc.logicalBlockNum = block;
 		eloc.partitionReferenceNum =
 				iinfo->i_location.partitionReferenceNum;
-		bsize = sb->s_blocksize;
+		bsize = inode->i_sb->s_blocksize;
 		iinfo->i_lenExtents = bsize;
 		udf_add_aext(inode, &epos, &eloc, bsize, 0);
 		brelse(epos.bh);
 
-		block = udf_get_pblock(sb, block,
+		block = udf_get_pblock(inode->i_sb, block,
 				iinfo->i_location.partitionReferenceNum,
 				0);
-		epos.bh = udf_tgetblk(sb, block);
+		epos.bh = udf_tread(inode->i_sb, block);
 		lock_buffer(epos.bh);
-		memset(epos.bh->b_data, 0x00, bsize);
+		memset(epos.bh->b_data, 0x00, inode->i_sb->s_blocksize);
 		set_buffer_uptodate(epos.bh);
 		unlock_buffer(epos.bh);
 		mark_buffer_dirty_inode(epos.bh, inode);
@@ -917,7 +932,7 @@ static int udf_symlink(struct inode *dir, struct dentry *dentry,
 	} else
 		ea = iinfo->i_ext.i_data + iinfo->i_lenEAttr;
 
-	eoffset = sb->s_blocksize - udf_ext0_offset(inode);
+	eoffset = inode->i_sb->s_blocksize - udf_ext0_offset(inode);
 	pc = (struct pathComponent *)ea;
 
 	if (*symname == '/') {
@@ -939,7 +954,7 @@ static int udf_symlink(struct inode *dir, struct dentry *dentry,
 
 		pc = (struct pathComponent *)(ea + elen);
 
-		compstart = symname;
+		compstart = (char *)symname;
 
 		do {
 			symname++;
@@ -957,7 +972,7 @@ static int udf_symlink(struct inode *dir, struct dentry *dentry,
 		}
 
 		if (pc->componentType == 5) {
-			namelen = udf_put_filename(sb, compstart, name,
+			namelen = udf_put_filename(inode->i_sb, compstart, name,
 						   symname - compstart);
 			if (!namelen)
 				goto out_no_entry;
@@ -984,23 +999,32 @@ static int udf_symlink(struct inode *dir, struct dentry *dentry,
 	inode->i_size = elen;
 	if (iinfo->i_alloc_type == ICBTAG_FLAG_AD_IN_ICB)
 		iinfo->i_lenAlloc = inode->i_size;
-	else
-		udf_truncate_tail_extent(inode);
 	mark_inode_dirty(inode);
 
 	fi = udf_add_entry(dir, dentry, &fibh, &cfi, &err);
 	if (!fi)
 		goto out_no_entry;
-	cfi.icb.extLength = cpu_to_le32(sb->s_blocksize);
+	cfi.icb.extLength = cpu_to_le32(inode->i_sb->s_blocksize);
 	cfi.icb.extLocation = cpu_to_lelb(iinfo->i_location);
-	if (UDF_SB(inode->i_sb)->s_lvid_bh) {
+	bh = UDF_SB(inode->i_sb)->s_lvid_bh;
+	if (bh) {
+		struct logicalVolIntegrityDesc *lvid =
+				(struct logicalVolIntegrityDesc *)bh->b_data;
+		struct logicalVolHeaderDesc *lvhd;
+		uint64_t uniqueID;
+		lvhd = (struct logicalVolHeaderDesc *)
+				lvid->logicalVolContentsUse;
+		uniqueID = le64_to_cpu(lvhd->uniqueID);
 		*(__le32 *)((struct allocDescImpUse *)cfi.icb.impUse)->impUse =
-			cpu_to_le32(lvid_get_unique_id(sb));
+			cpu_to_le32(uniqueID & 0x00000000FFFFFFFFUL);
+		if (!(++uniqueID & 0x00000000FFFFFFFFUL))
+			uniqueID += 16;
+		lvhd->uniqueID = cpu_to_le64(uniqueID);
+		mark_buffer_dirty(bh);
 	}
 	udf_write_fi(dir, &cfi, fi, &fibh, NULL, NULL);
 	if (UDF_I(dir)->i_alloc_type == ICBTAG_FLAG_AD_IN_ICB)
 		mark_inode_dirty(dir);
-	up_write(&iinfo->i_data_sem);
 	if (fibh.sbh != fibh.ebh)
 		brelse(fibh.ebh);
 	brelse(fibh.sbh);
@@ -1009,10 +1033,10 @@ static int udf_symlink(struct inode *dir, struct dentry *dentry,
 
 out:
 	kfree(name);
+	unlock_kernel();
 	return err;
 
 out_no_entry:
-	up_write(&iinfo->i_data_sem);
 	inode_dec_link_count(inode);
 	iput(inode);
 	goto out;
@@ -1025,16 +1049,36 @@ static int udf_link(struct dentry *old_dentry, struct inode *dir,
 	struct udf_fileident_bh fibh;
 	struct fileIdentDesc cfi, *fi;
 	int err;
+	struct buffer_head *bh;
+
+	lock_kernel();
+	if (inode->i_nlink >= (256 << sizeof(inode->i_nlink)) - 1) {
+		unlock_kernel();
+		return -EMLINK;
+	}
 
 	fi = udf_add_entry(dir, dentry, &fibh, &cfi, &err);
 	if (!fi) {
+		unlock_kernel();
 		return err;
 	}
 	cfi.icb.extLength = cpu_to_le32(inode->i_sb->s_blocksize);
 	cfi.icb.extLocation = cpu_to_lelb(UDF_I(inode)->i_location);
-	if (UDF_SB(inode->i_sb)->s_lvid_bh) {
+	bh = UDF_SB(inode->i_sb)->s_lvid_bh;
+	if (bh) {
+		struct logicalVolIntegrityDesc *lvid =
+				(struct logicalVolIntegrityDesc *)bh->b_data;
+		struct logicalVolHeaderDesc *lvhd;
+		uint64_t uniqueID;
+		lvhd = (struct logicalVolHeaderDesc *)
+				(lvid->logicalVolContentsUse);
+		uniqueID = le64_to_cpu(lvhd->uniqueID);
 		*(__le32 *)((struct allocDescImpUse *)cfi.icb.impUse)->impUse =
-			cpu_to_le32(lvid_get_unique_id(inode->i_sb));
+			cpu_to_le32(uniqueID & 0x00000000FFFFFFFFUL);
+		if (!(++uniqueID & 0x00000000FFFFFFFFUL))
+			uniqueID += 16;
+		lvhd->uniqueID = cpu_to_le64(uniqueID);
+		mark_buffer_dirty(bh);
 	}
 	udf_write_fi(dir, &cfi, fi, &fibh, NULL, NULL);
 	if (UDF_I(dir)->i_alloc_type == ICBTAG_FLAG_AD_IN_ICB)
@@ -1046,8 +1090,9 @@ static int udf_link(struct dentry *old_dentry, struct inode *dir,
 	inc_nlink(inode);
 	inode->i_ctime = current_fs_time(inode->i_sb);
 	mark_inode_dirty(inode);
-	ihold(inode);
+	atomic_inc(&inode->i_count);
 	d_instantiate(dentry, inode);
+	unlock_kernel();
 
 	return 0;
 }
@@ -1068,6 +1113,7 @@ static int udf_rename(struct inode *old_dir, struct dentry *old_dentry,
 	struct kernel_lb_addr tloc;
 	struct udf_inode_info *old_iinfo = UDF_I(old_inode);
 
+	lock_kernel();
 	ofi = udf_find_entry(old_dir, &old_dentry->d_name, &ofibh, &ocfi);
 	if (ofi) {
 		if (ofibh.sbh != ofibh.ebh)
@@ -1116,6 +1162,12 @@ static int udf_rename(struct inode *old_dir, struct dentry *old_dentry,
 		tloc = lelb_to_cpu(dir_fi->icb.extLocation);
 		if (udf_get_lb_pblock(old_inode->i_sb, &tloc, 0) !=
 				old_dir->i_ino)
+			goto end_rename;
+
+		retval = -EMLINK;
+		if (!new_inode &&
+			new_dir->i_nlink >=
+				(256 << sizeof(new_dir->i_nlink)) - 1)
 			goto end_rename;
 	}
 	if (!nfi) {
@@ -1185,6 +1237,7 @@ end_rename:
 			brelse(nfibh.ebh);
 		brelse(nfibh.sbh);
 	}
+	unlock_kernel();
 
 	return retval;
 }
@@ -1197,6 +1250,7 @@ static struct dentry *udf_get_parent(struct dentry *child)
 	struct fileIdentDesc cfi;
 	struct udf_fileident_bh fibh;
 
+	lock_kernel();
 	if (!udf_find_entry(child->d_inode, &dotdot, &fibh, &cfi))
 		goto out_unlock;
 
@@ -1208,9 +1262,11 @@ static struct dentry *udf_get_parent(struct dentry *child)
 	inode = udf_iget(child->d_inode->i_sb, &tloc);
 	if (!inode)
 		goto out_unlock;
+	unlock_kernel();
 
 	return d_obtain_alias(inode);
 out_unlock:
+	unlock_kernel();
 	return ERR_PTR(-EACCES);
 }
 
@@ -1269,13 +1325,8 @@ static int udf_encode_fh(struct dentry *de, __u32 *fh, int *lenp,
 	struct fid *fid = (struct fid *)fh;
 	int type = FILEID_UDF_WITHOUT_PARENT;
 
-	if (connectable && (len < 5)) {
-		*lenp = 5;
+	if (len < 3 || (connectable && len < 5))
 		return 255;
-	} else if (len < 3) {
-		*lenp = 3;
-		return 255;
-	}
 
 	*lenp = 3;
 	fid->udf.block = location.logicalBlockNum;
@@ -1315,9 +1366,4 @@ const struct inode_operations udf_dir_inode_operations = {
 	.rmdir				= udf_rmdir,
 	.mknod				= udf_mknod,
 	.rename				= udf_rename,
-};
-const struct inode_operations udf_symlink_inode_operations = {
-	.readlink	= generic_readlink,
-	.follow_link	= page_follow_link_light,
-	.put_link	= page_put_link,
 };

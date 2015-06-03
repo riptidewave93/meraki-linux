@@ -44,6 +44,7 @@
 
 asmlinkage int do_signal(struct pt_regs *regs, sigset_t *oldset, int in_sycall);
 
+
 asmlinkage long
 sys_sigaltstack(const stack_t __user *uss, stack_t __user *uoss,
 		struct pt_regs *regs)
@@ -93,7 +94,7 @@ static int restore_sigcontext(struct pt_regs *regs,
 asmlinkage long sys_rt_sigreturn(struct pt_regs *regs)
 {
 	struct rt_sigframe __user *frame =
-		(struct rt_sigframe __user *)(regs->r1);
+		(struct rt_sigframe __user *)(regs->r1 + STATE_SAVE_ARG_SPACE);
 
 	sigset_t set;
 	int rval;
@@ -175,11 +176,6 @@ static void setup_rt_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
 	struct rt_sigframe __user *frame;
 	int err = 0;
 	int signal;
-	unsigned long address = 0;
-#ifdef CONFIG_MMU
-	pmd_t *pmdp;
-	pte_t *ptep;
-#endif
 
 	frame = get_sigframe(ka, regs, sizeof(*frame));
 
@@ -197,8 +193,8 @@ static void setup_rt_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
 
 	/* Create the ucontext. */
 	err |= __put_user(0, &frame->uc.uc_flags);
-	err |= __put_user(NULL, &frame->uc.uc_link);
-	err |= __put_user((void __user *)current->sas_ss_sp,
+	err |= __put_user(0, &frame->uc.uc_link);
+	err |= __put_user((void *)current->sas_ss_sp,
 			&frame->uc.uc_stack.ss_sp);
 	err |= __put_user(sas_ss_flags(regs->r1),
 			&frame->uc.uc_stack.ss_flags);
@@ -220,34 +216,13 @@ static void setup_rt_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
 	 Negative 8 offset because return is rtsd r15, 8 */
 	regs->r15 = ((unsigned long)frame->tramp)-8;
 
-	address = ((unsigned long)frame->tramp);
-#ifdef CONFIG_MMU
-	pmdp = pmd_offset(pud_offset(
-			pgd_offset(current->mm, address),
-					address), address);
+	__invalidate_cache_sigtramp((unsigned long)frame->tramp);
 
-	preempt_disable();
-	ptep = pte_offset_map(pmdp, address);
-	if (pte_present(*ptep)) {
-		address = (unsigned long) page_address(pte_page(*ptep));
-		/* MS: I need add offset in page */
-		address += ((unsigned long)frame->tramp) & ~PAGE_MASK;
-		/* MS address is virtual */
-		address = virt_to_phys(address);
-		invalidate_icache_range(address, address + 8);
-		flush_dcache_range(address, address + 8);
-	}
-	pte_unmap(ptep);
-	preempt_enable();
-#else
-	flush_icache_range(address, address + 8);
-	flush_dcache_range(address, address + 8);
-#endif
 	if (err)
 		goto give_sigsegv;
 
 	/* Set up registers for signal handler */
-	regs->r1 = (unsigned long) frame;
+	regs->r1 = (unsigned long) frame - STATE_SAVE_ARG_SPACE;
 
 	/* Signal handler args: */
 	regs->r5 = signal; /* arg 0: signum */
@@ -257,10 +232,6 @@ static void setup_rt_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
 	regs->pc = (unsigned long)ka->sa.sa_handler;
 
 	set_fs(USER_DS);
-
-	/* the tracer may want to single-step inside the handler */
-	if (test_thread_flag(TIF_SINGLESTEP))
-		ptrace_notify(SIGTRAP);
 
 #ifdef DEBUG_SIG
 	printk(KERN_INFO "SIG deliver (%s:%d): sp=%p pc=%08lx\n",

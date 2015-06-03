@@ -35,7 +35,7 @@
  *          driver only supports standard serial hardware (8250, 16450, 16550A)
  *
  *          This modem usually draws its supply current out of the otherwise unused
- *          TXD pin of the serial port. Thus a contiguous stream of 0x00-bytes
+ *          TXD pin of the serial port. Thus a contignuous stream of 0x00-bytes
  *          is transmitted to achieve a positive supply voltage.
  *
  *  hsk:    This is a 4800 baud FSK modem, designed for TNC use. It works fine
@@ -76,7 +76,6 @@
 #include <linux/ioport.h>
 #include <linux/string.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/hdlcdrv.h>
 #include <linux/baycom.h>
 #include <linux/jiffies.h>
@@ -93,7 +92,7 @@
 
 static const char bc_drvname[] = "baycom_ser_fdx";
 static const char bc_drvinfo[] = KERN_INFO "baycom_ser_fdx: (C) 1996-2000 Thomas Sailer, HB9JNX/AE4WA\n"
-"baycom_ser_fdx: version 0.10\n";
+"baycom_ser_fdx: version 0.10 compiled " __TIME__ " " __DATE__ "\n";
 
 /* --------------------------------------------------------------------- */
 
@@ -430,7 +429,7 @@ static int ser12_open(struct net_device *dev)
 		return -EINVAL;
 	}
 	if (!request_region(dev->base_addr, SER12_EXTENT, "baycom_ser_fdx")) {
-		printk(KERN_WARNING "BAYCOM_SER_FSX: I/O port 0x%04lx busy\n",
+		printk(KERN_WARNING "BAYCOM_SER_FSX: I/O port 0x%04lx busy \n", 
 		       dev->base_addr);
 		return -EACCES;
 	}

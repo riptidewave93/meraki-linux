@@ -41,16 +41,18 @@ int pci_mmap_page_range(struct pci_dev *dev, struct vm_area_struct *vma,
 	return 0;
 }
 
-resource_size_t
-pcibios_align_resource(void *data, const struct resource *res,
+void
+pcibios_align_resource(void *data, struct resource *res,
 		       resource_size_t size, resource_size_t align)
 {
-	resource_size_t start = res->start;
+	if (res->flags & IORESOURCE_IO) {
+		resource_size_t start = res->start;
 
-	if ((res->flags & IORESOURCE_IO) && (start & 0x300))
-		start = (start + 0x3ff) & ~0x3ff;
-
-	return start;
+		if (start & 0x300) {
+			start = (start + 0x3ff) & ~0x3ff;
+			res->start = start;
+		}
+	}
 }
 
 int pcibios_enable_resources(struct pci_dev *dev, int mask)

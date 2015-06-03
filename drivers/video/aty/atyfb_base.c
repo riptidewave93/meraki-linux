@@ -248,6 +248,10 @@ static int atyfb_sync(struct fb_info *info);
 
 static int aty_init(struct fb_info *info);
 
+#ifdef CONFIG_ATARI
+static int store_video_par(char *videopar, unsigned char m64_num);
+#endif
+
 static void aty_get_crtc(const struct atyfb_par *par, struct crtc *crtc);
 
 static void aty_set_crtc(const struct atyfb_par *par, const struct crtc *crtc);
@@ -301,9 +305,9 @@ static struct fb_ops atyfb_ops = {
 	.fb_sync	= atyfb_sync,
 };
 
-static bool noaccel;
+static int noaccel;
 #ifdef CONFIG_MTRR
-static bool nomtrr;
+static int nomtrr;
 #endif
 static int vram;
 static int pll;
@@ -1816,6 +1820,10 @@ struct atyclk {
 #define ATYIO_FEATW		0x41545903	/* ATY\03 */
 #endif
 
+#ifndef FBIO_WAITFORVSYNC
+#define FBIO_WAITFORVSYNC _IOW('F', 0x20, __u32)
+#endif
+
 static int atyfb_ioctl(struct fb_info *info, u_int cmd, u_long arg)
 {
 	struct atyfb_par *par = (struct atyfb_par *) info->par;
@@ -2065,7 +2073,7 @@ static int atyfb_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 	if (state.event == pdev->dev.power.power_state.event)
 		return 0;
 
-	console_lock();
+	acquire_console_sem();
 
 	fb_set_suspend(info, 1);
 
@@ -2093,14 +2101,14 @@ static int atyfb_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 		par->lock_blank = 0;
 		atyfb_blank(FB_BLANK_UNBLANK, info);
 		fb_set_suspend(info, 0);
-		console_unlock();
+		release_console_sem();
 		return -EIO;
 	}
 #else
 	pci_set_power_state(pdev, pci_choose_state(pdev, state));
 #endif
 
-	console_unlock();
+	release_console_sem();
 
 	pdev->dev.power.power_state = state;
 
@@ -2129,7 +2137,7 @@ static int atyfb_pci_resume(struct pci_dev *pdev)
 	if (pdev->dev.power.power_state.event == PM_EVENT_ON)
 		return 0;
 
-	console_lock();
+	acquire_console_sem();
 
 	/*
 	 * PCI state will have been restored by the core, so
@@ -2157,7 +2165,7 @@ static int atyfb_pci_resume(struct pci_dev *pdev)
 	par->lock_blank = 0;
 	atyfb_blank(FB_BLANK_UNBLANK, info);
 
-	console_unlock();
+	release_console_sem();
 
 	pdev->dev.power.power_state = PMSG_ON;
 
@@ -2217,14 +2225,13 @@ static int aty_bl_get_brightness(struct backlight_device *bd)
 	return bd->props.brightness;
 }
 
-static const struct backlight_ops aty_bl_data = {
+static struct backlight_ops aty_bl_data = {
 	.get_brightness = aty_bl_get_brightness,
 	.update_status	= aty_bl_update_status,
 };
 
 static void aty_bl_init(struct atyfb_par *par)
 {
-	struct backlight_properties props;
 	struct fb_info *info = pci_get_drvdata(par->pdev);
 	struct backlight_device *bd;
 	char name[12];
@@ -2236,11 +2243,7 @@ static void aty_bl_init(struct atyfb_par *par)
 
 	snprintf(name, sizeof(name), "atybl%d", info->node);
 
-	memset(&props, 0, sizeof(struct backlight_properties));
-	props.type = BACKLIGHT_RAW;
-	props.max_brightness = FB_BACKLIGHT_LEVELS - 1;
-	bd = backlight_device_register(name, info->dev, par, &aty_bl_data,
-				       &props);
+	bd = backlight_device_register(name, info->dev, par, &aty_bl_data);
 	if (IS_ERR(bd)) {
 		info->bl_dev = NULL;
 		printk(KERN_WARNING "aty: Backlight registration failed\n");
@@ -2252,6 +2255,7 @@ static void aty_bl_init(struct atyfb_par *par)
 			    0x3F * FB_BACKLIGHT_MAX / MAX_LEVEL,
 			    0xFF * FB_BACKLIGHT_MAX / MAX_LEVEL);
 
+	bd->props.max_brightness = FB_BACKLIGHT_LEVELS - 1;
 	bd->props.brightness = bd->props.max_brightness;
 	bd->props.power = FB_BLANK_UNBLANK;
 	backlight_update_status(bd);
@@ -2264,13 +2268,11 @@ error:
 	return;
 }
 
-#ifdef CONFIG_PCI
 static void aty_bl_exit(struct backlight_device *bd)
 {
 	backlight_device_unregister(bd);
 	printk("aty: Backlight unloaded\n");
 }
-#endif /* CONFIG_PCI */
 
 #endif /* CONFIG_FB_ATY_BACKLIGHT */
 
@@ -2437,7 +2439,7 @@ static int __devinit aty_init(struct fb_info *info)
 	 * The Apple iBook1 uses non-standard memory frequencies.
 	 * We detect it and set the frequency manually.
 	 */
-	if (of_machine_is_compatible("PowerBook2,1")) {
+	if (machine_is_compatible("PowerBook2,1")) {
 		par->pll_limits.mclk = 70;
 		par->pll_limits.xclk = 53;
 	}
@@ -2657,7 +2659,7 @@ static int __devinit aty_init(struct fb_info *info)
 		      FBINFO_HWACCEL_YPAN;
 
 #ifdef CONFIG_PMAC_BACKLIGHT
-	if (M64_HAS(G3_PB_1_1) && of_machine_is_compatible("PowerBook1,1")) {
+	if (M64_HAS(G3_PB_1_1) && machine_is_compatible("PowerBook1,1")) {
 		/*
 		 * these bits let the 101 powerbook
 		 * wake up from sleep -- paulus
@@ -2688,9 +2690,9 @@ static int __devinit aty_init(struct fb_info *info)
 				if (M64_HAS(G3_PB_1024x768))
 					/* G3 PowerBook with 1024x768 LCD */
 					default_vmode = VMODE_1024_768_60;
-				else if (of_machine_is_compatible("iMac"))
+				else if (machine_is_compatible("iMac"))
 					default_vmode = VMODE_1024_768_75;
-				else if (of_machine_is_compatible("PowerBook2,1"))
+				else if (machine_is_compatible("PowerBook2,1"))
 					/* iBook with 800x600 LCD */
 					default_vmode = VMODE_800_600_60;
 				else
@@ -2787,7 +2789,7 @@ aty_init_exit:
 	return ret;
 }
 
-#if defined(CONFIG_ATARI) && !defined(MODULE)
+#ifdef CONFIG_ATARI
 static int __devinit store_video_par(char *video_str, unsigned char m64_num)
 {
 	char *p;
@@ -2816,7 +2818,7 @@ static int __devinit store_video_par(char *video_str, unsigned char m64_num)
 	phys_vmembase[m64_num] = 0;
 	return -1;
 }
-#endif /* CONFIG_ATARI && !MODULE */
+#endif /* CONFIG_ATARI */
 
 /*
  * Blank the display.
@@ -2968,8 +2970,9 @@ static int __devinit atyfb_setup_sparc(struct pci_dev *pdev,
 {
 	struct atyfb_par *par = info->par;
 	struct device_node *dp;
+	char prop[128];
+	int node, len, i, j, ret;
 	u32 mem, chip_id;
-	int i, j, ret;
 
 	/*
 	 * Map memory-mapped registers.
@@ -3085,8 +3088,23 @@ static int __devinit atyfb_setup_sparc(struct pci_dev *pdev,
 		aty_st_le32(MEM_CNTL, mem, par);
 	}
 
+	/*
+	 * If this is the console device, we will set default video
+	 * settings to what the PROM left us with.
+	 */
+	node = prom_getchild(prom_root_node);
+	node = prom_searchsiblings(node, "aliases");
+	if (node) {
+		len = prom_getproperty(node, "screen", prop, sizeof(prop));
+		if (len > 0) {
+			prop[len] = '\0';
+			node = prom_finddevice(prop);
+		} else
+			node = 0;
+	}
+
 	dp = pci_device_to_OF_node(pdev);
-	if (dp == of_console_device) {
+	if (node == dp->node) {
 		struct fb_var_screeninfo *var = &default_var;
 		unsigned int N, P, Q, M, T, R;
 		u32 v_total, h_total;
@@ -3094,9 +3112,9 @@ static int __devinit atyfb_setup_sparc(struct pci_dev *pdev,
 		u8 pll_regs[16];
 		u8 clock_cntl;
 
-		crtc.vxres = of_getintprop_default(dp, "width", 1024);
-		crtc.vyres = of_getintprop_default(dp, "height", 768);
-		var->bits_per_pixel = of_getintprop_default(dp, "depth", 8);
+		crtc.vxres = prom_getintdefault(node, "width", 1024);
+		crtc.vyres = prom_getintdefault(node, "height", 768);
+		var->bits_per_pixel = prom_getintdefault(node, "depth", 8);
 		var->xoffset = var->yoffset = 0;
 		crtc.h_tot_disp = aty_ld_le32(CRTC_H_TOTAL_DISP, par);
 		crtc.h_sync_strt_wid = aty_ld_le32(CRTC_H_SYNC_STRT_WID, par);
@@ -3122,12 +3140,12 @@ static int __devinit atyfb_setup_sparc(struct pci_dev *pdev,
 		M = pll_regs[2];
 
 		/*
-		 * PLL Feedback Divider N (Dependent on CLOCK_CNTL):
+		 * PLL Feedback Divider N (Dependant on CLOCK_CNTL):
 		 */
 		N = pll_regs[7 + (clock_cntl & 3)];
 
 		/*
-		 * PLL Post Divider P (Dependent on CLOCK_CNTL):
+		 * PLL Post Divider P (Dependant on CLOCK_CNTL):
 		 */
 		P = 1 << (pll_regs[6] >> ((clock_cntl & 3) << 1));
 
@@ -3258,7 +3276,7 @@ static void __devinit aty_init_lcd(struct atyfb_par *par, u32 bios_base)
 				txtformat = "24 bit interface";
 				break;
 			default:
-				txtformat = "unknown format";
+				txtformat = "unkown format";
 			}
 		} else {
 			switch (format & 7) {
@@ -3281,7 +3299,7 @@ static void __devinit aty_init_lcd(struct atyfb_par *par, u32 bios_base)
 				txtformat = "262144 colours (FDPI-2 mode)";
 				break;
 			default:
-				txtformat = "unknown format";
+				txtformat = "unkown format";
 			}
 		}
 		PRINTKI("%s%s %s monitor detected: %s\n",
@@ -3458,10 +3476,9 @@ static int __devinit atyfb_setup_generic(struct pci_dev *pdev,
 
 	raddr = addr + 0x7ff000UL;
 	rrp = &pdev->resource[2];
-	if ((rrp->flags & IORESOURCE_MEM) &&
-	    request_mem_region(rrp->start, resource_size(rrp), "atyfb")) {
+	if ((rrp->flags & IORESOURCE_MEM) && request_mem_region(rrp->start, rrp->end - rrp->start + 1, "atyfb")) {
 		par->aux_start = rrp->start;
-		par->aux_size = resource_size(rrp);
+		par->aux_size = rrp->end - rrp->start + 1;
 		raddr = rrp->start;
 		PRINTKI("using auxiliary register aperture\n");
 	}
@@ -3551,7 +3568,7 @@ static int __devinit atyfb_pci_probe(struct pci_dev *pdev,
 
 	/* Reserve space */
 	res_start = rp->start;
-	res_size = resource_size(rp);
+	res_size = rp->end - rp->start + 1;
 	if (!request_mem_region(res_start, res_size, "atyfb"))
 		return -EBUSY;
 

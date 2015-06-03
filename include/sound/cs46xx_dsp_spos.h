@@ -118,11 +118,9 @@ struct dsp_scb_descriptor {
 
 	struct snd_info_entry *proc_info;
 	int ref_count;
+	spinlock_t lock;
 
-	u16 volume[2];
-	unsigned int deleted :1;
-	unsigned int updated :1;
-	unsigned int volume_set :1;
+	int deleted;
 };
 
 struct dsp_task_descriptor {
@@ -147,7 +145,7 @@ struct dsp_pcm_channel_descriptor {
 };
 
 struct dsp_spos_instance {
-	struct dsp_symbol_desc symbol_table; /* currently available loaded symbols in SP */
+	struct dsp_symbol_desc symbol_table; /* currently availble loaded symbols in SP */
 
 	int nmodules;
 	struct dsp_module_desc * modules; /* modules loaded into SP */

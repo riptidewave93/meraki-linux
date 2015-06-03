@@ -52,7 +52,7 @@ static const struct utf8_table utf8_table[] =
 #define SURROGATE_LOW	0x00000400
 #define SURROGATE_BITS	0x000003ff
 
-int utf8_to_utf32(const u8 *s, int inlen, unicode_t *pu)
+int utf8_to_utf32(const u8 *s, int len, unicode_t *pu)
 {
 	unsigned long l;
 	int c0, c, nc;
@@ -71,7 +71,7 @@ int utf8_to_utf32(const u8 *s, int inlen, unicode_t *pu)
 			*pu = (unicode_t) l;
 			return nc;
 		}
-		if (inlen <= nc)
+		if (len <= nc)
 			return -1;
 		s++;
 		c = (*s ^ 0x80) & 0xFF;
@@ -83,7 +83,7 @@ int utf8_to_utf32(const u8 *s, int inlen, unicode_t *pu)
 }
 EXPORT_SYMBOL(utf8_to_utf32);
 
-int utf32_to_utf8(unicode_t u, u8 *s, int maxout)
+int utf32_to_utf8(unicode_t u, u8 *s, int maxlen)
 {
 	unsigned long l;
 	int c, nc;
@@ -97,7 +97,7 @@ int utf32_to_utf8(unicode_t u, u8 *s, int maxout)
 		return -1;
 
 	nc = 0;
-	for (t = utf8_table; t->cmask && maxout; t++, maxout--) {
+	for (t = utf8_table; t->cmask && maxlen; t++, maxlen--) {
 		nc++;
 		if (l <= t->lmask) {
 			c = t->shift;
@@ -129,24 +129,24 @@ static inline void put_utf16(wchar_t *s, unsigned c, enum utf16_endian endian)
 	}
 }
 
-int utf8s_to_utf16s(const u8 *s, int inlen, enum utf16_endian endian,
-		wchar_t *pwcs, int maxout)
+int utf8s_to_utf16s(const u8 *s, int len, enum utf16_endian endian,
+		wchar_t *pwcs, int maxlen)
 {
 	u16 *op;
 	int size;
 	unicode_t u;
 
 	op = pwcs;
-	while (inlen > 0 && maxout > 0 && *s) {
+	while (len > 0 && maxlen > 0 && *s) {
 		if (*s & 0x80) {
-			size = utf8_to_utf32(s, inlen, &u);
+			size = utf8_to_utf32(s, len, &u);
 			if (size < 0)
 				return -EINVAL;
 			s += size;
-			inlen -= size;
+			len -= size;
 
 			if (u >= PLANE_SIZE) {
-				if (maxout < 2)
+				if (maxlen < 2)
 					break;
 				u -= PLANE_SIZE;
 				put_utf16(op++, SURROGATE_PAIR |
@@ -156,15 +156,15 @@ int utf8s_to_utf16s(const u8 *s, int inlen, enum utf16_endian endian,
 						SURROGATE_LOW |
 						(u & SURROGATE_BITS),
 						endian);
-				maxout -= 2;
+				maxlen -= 2;
 			} else {
 				put_utf16(op++, u, endian);
-				maxout--;
+				maxlen--;
 			}
 		} else {
 			put_utf16(op++, *s++, endian);
-			inlen--;
-			maxout--;
+			len--;
+			maxlen--;
 		}
 	}
 	return op - pwcs;
@@ -183,27 +183,27 @@ static inline unsigned long get_utf16(unsigned c, enum utf16_endian endian)
 	}
 }
 
-int utf16s_to_utf8s(const wchar_t *pwcs, int inlen, enum utf16_endian endian,
-		u8 *s, int maxout)
+int utf16s_to_utf8s(const wchar_t *pwcs, int len, enum utf16_endian endian,
+		u8 *s, int maxlen)
 {
 	u8 *op;
 	int size;
 	unsigned long u, v;
 
 	op = s;
-	while (inlen > 0 && maxout > 0) {
+	while (len > 0 && maxlen > 0) {
 		u = get_utf16(*pwcs, endian);
 		if (!u)
 			break;
 		pwcs++;
-		inlen--;
+		len--;
 		if (u > 0x7f) {
 			if ((u & SURROGATE_MASK) == SURROGATE_PAIR) {
 				if (u & SURROGATE_LOW) {
 					/* Ignore character and move on */
 					continue;
 				}
-				if (inlen <= 0)
+				if (len <= 0)
 					break;
 				v = get_utf16(*pwcs, endian);
 				if ((v & SURROGATE_MASK) != SURROGATE_PAIR ||
@@ -214,18 +214,18 @@ int utf16s_to_utf8s(const wchar_t *pwcs, int inlen, enum utf16_endian endian,
 				u = PLANE_SIZE + ((u & SURROGATE_BITS) << 10)
 						+ (v & SURROGATE_BITS);
 				pwcs++;
-				inlen--;
+				len--;
 			}
-			size = utf32_to_utf8(u, op, maxout);
+			size = utf32_to_utf8(u, op, maxlen);
 			if (size == -1) {
 				/* Ignore character and move on */
 			} else {
 				op += size;
-				maxout -= size;
+				maxlen -= size;
 			}
 		} else {
 			*op++ = (u8) u;
-			maxout--;
+			maxlen--;
 		}
 	}
 	return op - s;

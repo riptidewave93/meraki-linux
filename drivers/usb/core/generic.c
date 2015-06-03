@@ -18,8 +18,8 @@
  */
 
 #include <linux/usb.h>
-#include <linux/usb/hcd.h>
 #include "usb.h"
+#include "hcd.h"
 
 static inline const char *plural(int n)
 {
@@ -105,10 +105,8 @@ int usb_choose_configuration(struct usb_device *udev)
 		/* When the first config's first interface is one of Microsoft's
 		 * pet nonstandard Ethernet-over-USB protocols, ignore it unless
 		 * this kernel has enabled the necessary host side driver.
-		 * But: Don't ignore it if it's the only config.
 		 */
-		if (i == 0 && num_configs > 1 && desc &&
-				(is_rndis(desc) || is_activesync(desc))) {
+		if (i == 0 && desc && (is_rndis(desc) || is_activesync(desc))) {
 #if !defined(CONFIG_USB_NET_RNDIS_HOST) && !defined(CONFIG_USB_NET_RNDIS_HOST_MODULE)
 			continue;
 #else
@@ -141,7 +139,7 @@ int usb_choose_configuration(struct usb_device *udev)
 
 	if (best) {
 		i = best->desc.bConfigurationValue;
-		dev_dbg(&udev->dev,
+		dev_info(&udev->dev,
 			"configuration #%d chosen from %d choice%s\n",
 			i, num_configs, plural(num_configs));
 	} else {

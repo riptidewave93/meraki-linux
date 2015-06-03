@@ -1,5 +1,4 @@
 #include <linux/dma-mapping.h>
-#include <linux/export.h>
 
 /* Set this to 1 if there is a HW IOMMU in the system */
 int iommu_detected __read_mostly;

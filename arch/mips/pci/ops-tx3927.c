@@ -38,7 +38,6 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
-#include <linux/irq.h>
 
 #include <asm/addrspace.h>
 #include <asm/txx9irq.h>
@@ -225,7 +224,7 @@ void __init tx3927_setup_pcierr_irq(void)
 {
 	if (request_irq(TXX9_IRQ_BASE + TX3927_IR_PCI,
 			tx3927_pcierr_interrupt,
-			0, "PCI error",
+			IRQF_DISABLED, "PCI error",
 			(void *)TX3927_PCIC_REG))
 		printk(KERN_WARNING "Failed to request irq for PCIERR\n");
 }

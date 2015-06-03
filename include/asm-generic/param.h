@@ -1,6 +1,12 @@
 #ifndef __ASM_GENERIC_PARAM_H
 #define __ASM_GENERIC_PARAM_H
 
+#ifdef __KERNEL__
+# define HZ		CONFIG_HZ	/* Internal kernel timer frequency */
+# define USER_HZ	100		/* some user interfaces are */
+# define CLOCKS_PER_SEC	(USER_HZ)       /* in "ticks" like times() */
+#endif
+
 #ifndef HZ
 #define HZ 100
 #endif
@@ -14,12 +20,5 @@
 #endif
 
 #define MAXHOSTNAMELEN	64	/* max length of hostname */
-
-#ifdef __KERNEL__
-# undef HZ
-# define HZ		CONFIG_HZ	/* Internal kernel timer frequency */
-# define USER_HZ	100		/* some user interfaces are */
-# define CLOCKS_PER_SEC	(USER_HZ)       /* in "ticks" like times() */
-#endif
 
 #endif /* __ASM_GENERIC_PARAM_H */

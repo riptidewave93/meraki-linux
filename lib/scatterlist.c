@@ -6,11 +6,9 @@
  * This source code is licensed under the GNU General Public License,
  * Version 2. See the file COPYING for more details.
  */
-#include <linux/export.h>
-#include <linux/slab.h>
+#include <linux/module.h>
 #include <linux/scatterlist.h>
 #include <linux/highmem.h>
-#include <linux/kmemleak.h>
 
 /**
  * sg_next - return the next scatterlist entry in a list
@@ -116,29 +114,17 @@ EXPORT_SYMBOL(sg_init_one);
  */
 static struct scatterlist *sg_kmalloc(unsigned int nents, gfp_t gfp_mask)
 {
-	if (nents == SG_MAX_SINGLE_ALLOC) {
-		/*
-		 * Kmemleak doesn't track page allocations as they are not
-		 * commonly used (in a raw form) for kernel data structures.
-		 * As we chain together a list of pages and then a normal
-		 * kmalloc (tracked by kmemleak), in order to for that last
-		 * allocation not to become decoupled (and thus a
-		 * false-positive) we need to inform kmemleak of all the
-		 * intermediate allocations.
-		 */
-		void *ptr = (void *) __get_free_page(gfp_mask);
-		kmemleak_alloc(ptr, PAGE_SIZE, 1, gfp_mask);
-		return ptr;
-	} else
+	if (nents == SG_MAX_SINGLE_ALLOC)
+		return (struct scatterlist *) __get_free_page(gfp_mask);
+	else
 		return kmalloc(nents * sizeof(struct scatterlist), gfp_mask);
 }
 
 static void sg_kfree(struct scatterlist *sg, unsigned int nents)
 {
-	if (nents == SG_MAX_SINGLE_ALLOC) {
-		kmemleak_free(sg);
+	if (nents == SG_MAX_SINGLE_ALLOC)
 		free_page((unsigned long) sg);
-	} else
+	else
 		kfree(sg);
 }
 
@@ -248,18 +234,8 @@ int __sg_alloc_table(struct sg_table *table, unsigned int nents,
 		left -= sg_size;
 
 		sg = alloc_fn(alloc_size, gfp_mask);
-		if (unlikely(!sg)) {
-			/*
-			 * Adjust entry count to reflect that the last
-			 * entry of the previous table won't be used for
-			 * linkage.  Without this, sg_kfree() may get
-			 * confused.
-			 */
-			if (prv)
-				table->nents = ++table->orig_nents;
-
- 			return -ENOMEM;
-		}
+		if (unlikely(!sg))
+			return -ENOMEM;
 
 		sg_init_table(sg, alloc_size);
 		table->nents = table->orig_nents += sg_size;
@@ -390,7 +366,7 @@ bool sg_miter_next(struct sg_mapping_iter *miter)
 	miter->consumed = miter->length;
 
 	if (miter->__flags & SG_MITER_ATOMIC)
-		miter->addr = kmap_atomic(miter->page) + off;
+		miter->addr = kmap_atomic(miter->page, KM_BIO_SRC_IRQ) + off;
 	else
 		miter->addr = kmap(miter->page) + off;
 
@@ -419,13 +395,12 @@ void sg_miter_stop(struct sg_mapping_iter *miter)
 	if (miter->addr) {
 		miter->__offset += miter->consumed;
 
-		if ((miter->__flags & SG_MITER_TO_SG) &&
-		    !PageSlab(miter->page))
+		if (miter->__flags & SG_MITER_TO_SG)
 			flush_kernel_dcache_page(miter->page);
 
 		if (miter->__flags & SG_MITER_ATOMIC) {
 			WARN_ON(!irqs_disabled());
-			kunmap_atomic(miter->addr);
+			kunmap_atomic(miter->addr, KM_BIO_SRC_IRQ);
 		} else
 			kunmap(miter->page);
 

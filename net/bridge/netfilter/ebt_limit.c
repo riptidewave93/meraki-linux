@@ -10,7 +10,6 @@
  *  September, 2003
  *
  */
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include <linux/module.h>
 #include <linux/netdevice.h>
 #include <linux/spinlock.h>
@@ -32,7 +31,7 @@ static DEFINE_SPINLOCK(limit_lock);
 #define CREDITS_PER_JIFFY POW2_BELOW32(MAX_CPJ)
 
 static bool
-ebt_limit_mt(const struct sk_buff *skb, struct xt_action_param *par)
+ebt_limit_mt(const struct sk_buff *skb, const struct xt_match_param *par)
 {
 	struct ebt_limit_info *info = (void *)par->matchinfo;
 	unsigned long now = jiffies;
@@ -65,16 +64,16 @@ user2credits(u_int32_t user)
 	return (user * HZ * CREDITS_PER_JIFFY) / EBT_LIMIT_SCALE;
 }
 
-static int ebt_limit_mt_check(const struct xt_mtchk_param *par)
+static bool ebt_limit_mt_check(const struct xt_mtchk_param *par)
 {
 	struct ebt_limit_info *info = par->matchinfo;
 
 	/* Check for overflow. */
 	if (info->burst == 0 ||
 	    user2credits(info->avg * info->burst) < user2credits(info->avg)) {
-		pr_info("overflow, try lower: %u/%u\n",
+		printk("Overflow in ebt_limit, try lower: %u/%u\n",
 			info->avg, info->burst);
-		return -EINVAL;
+		return false;
 	}
 
 	/* User avg in seconds * EBT_LIMIT_SCALE: convert to jiffies * 128. */
@@ -82,21 +81,8 @@ static int ebt_limit_mt_check(const struct xt_mtchk_param *par)
 	info->credit = user2credits(info->avg * info->burst);
 	info->credit_cap = user2credits(info->avg * info->burst);
 	info->cost = user2credits(info->avg);
-	return 0;
+	return true;
 }
-
-
-#ifdef CONFIG_COMPAT
-/*
- * no conversion function needed --
- * only avg/burst have meaningful values in userspace.
- */
-struct ebt_compat_limit_info {
-	compat_uint_t avg, burst;
-	compat_ulong_t prev;
-	compat_uint_t credit, credit_cap, cost;
-};
-#endif
 
 static struct xt_match ebt_limit_mt_reg __read_mostly = {
 	.name		= "limit",
@@ -104,10 +90,7 @@ static struct xt_match ebt_limit_mt_reg __read_mostly = {
 	.family		= NFPROTO_BRIDGE,
 	.match		= ebt_limit_mt,
 	.checkentry	= ebt_limit_mt_check,
-	.matchsize	= sizeof(struct ebt_limit_info),
-#ifdef CONFIG_COMPAT
-	.compatsize	= sizeof(struct ebt_compat_limit_info),
-#endif
+	.matchsize	= XT_ALIGN(sizeof(struct ebt_limit_info)),
 	.me		= THIS_MODULE,
 };
 

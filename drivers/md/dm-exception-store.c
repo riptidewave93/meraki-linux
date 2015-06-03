@@ -11,7 +11,6 @@
 #include <linux/mm.h>
 #include <linux/pagemap.h>
 #include <linux/vmalloc.h>
-#include <linux/module.h>
 #include <linux/slab.h>
 
 #define DM_MSG_PREFIX "snapshot exception stores"
@@ -173,10 +172,7 @@ int dm_exception_store_set_chunk_size(struct dm_exception_store *store,
 	}
 
 	/* Validate the chunk size against the device block size */
-	if (chunk_size %
-	    (bdev_logical_block_size(dm_snap_cow(store->snap)->bdev) >> 9) ||
-	    chunk_size %
-	    (bdev_logical_block_size(dm_snap_origin(store->snap)->bdev) >> 9)) {
+	if (chunk_size % (bdev_logical_block_size(store->cow->bdev) >> 9)) {
 		*error = "Chunk size is not a multiple of device blocksize";
 		return -EINVAL;
 	}
@@ -194,7 +190,6 @@ int dm_exception_store_set_chunk_size(struct dm_exception_store *store,
 }
 
 int dm_exception_store_create(struct dm_target *ti, int argc, char **argv,
-			      struct dm_snapshot *snap,
 			      unsigned *args_used,
 			      struct dm_exception_store **store)
 {
@@ -203,7 +198,7 @@ int dm_exception_store_create(struct dm_target *ti, int argc, char **argv,
 	struct dm_exception_store *tmp_store;
 	char persistent;
 
-	if (argc < 2) {
+	if (argc < 3) {
 		ti->error = "Insufficient exception store arguments";
 		return -EINVAL;
 	}
@@ -214,7 +209,7 @@ int dm_exception_store_create(struct dm_target *ti, int argc, char **argv,
 		return -ENOMEM;
 	}
 
-	persistent = toupper(*argv[0]);
+	persistent = toupper(*argv[1]);
 	if (persistent == 'P')
 		type = get_type("P");
 	else if (persistent == 'N')
@@ -232,23 +227,32 @@ int dm_exception_store_create(struct dm_target *ti, int argc, char **argv,
 	}
 
 	tmp_store->type = type;
-	tmp_store->snap = snap;
+	tmp_store->ti = ti;
 
-	r = set_chunk_size(tmp_store, argv[1], &ti->error);
+	r = dm_get_device(ti, argv[0], 0, 0,
+			  FMODE_READ | FMODE_WRITE, &tmp_store->cow);
+	if (r) {
+		ti->error = "Cannot get COW device";
+		goto bad_cow;
+	}
+
+	r = set_chunk_size(tmp_store, argv[2], &ti->error);
 	if (r)
-		goto bad;
+		goto bad_ctr;
 
 	r = type->ctr(tmp_store, 0, NULL);
 	if (r) {
 		ti->error = "Exception store type constructor failed";
-		goto bad;
+		goto bad_ctr;
 	}
 
-	*args_used = 2;
+	*args_used = 3;
 	*store = tmp_store;
 	return 0;
 
-bad:
+bad_ctr:
+	dm_put_device(ti, tmp_store->cow);
+bad_cow:
 	put_type(type);
 bad_type:
 	kfree(tmp_store);
@@ -259,6 +263,7 @@ EXPORT_SYMBOL(dm_exception_store_create);
 void dm_exception_store_destroy(struct dm_exception_store *store)
 {
 	store->type->dtr(store);
+	dm_put_device(store->ti, store->cow);
 	put_type(store->type);
 	kfree(store);
 }
@@ -283,7 +288,7 @@ int dm_exception_store_init(void)
 	return 0;
 
 persistent_fail:
-	dm_transient_snapshot_exit();
+	dm_persistent_snapshot_exit();
 transient_fail:
 	return r;
 }

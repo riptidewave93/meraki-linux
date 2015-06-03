@@ -68,7 +68,6 @@ struct nbd_device {
 	u64 bytesize;
 	pid_t pid; /* pid of nbd-client, if attached */
 	int xmit_timeout;
-	int disconnect; /* a disconnect has been requested by user */
 };
 
 #endif
@@ -89,7 +88,7 @@ struct nbd_request {
 	char handle[8];
 	__be64 from;
 	__be32 len;
-} __attribute__((packed));
+} __attribute__ ((packed));
 
 /*
  * This is the reply packet that nbd-server sends back to the client after

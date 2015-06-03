@@ -1,3 +1,6 @@
+# sound/Config.in
+#
+
 menuconfig SOUND
 	tristate "Sound card support"
 	depends on HAS_IOMEM
@@ -55,11 +58,11 @@ config SOUND_OSS_CORE_PRECLAIM
 	  Please read Documentation/feature-removal-schedule.txt for
 	  details.
 
-	  If unsure, say Y.
+	  If unusre, say Y.
 
 source "sound/oss/dmasound/Kconfig"
 
-if !M68K && !UML
+if !M68K
 
 menuconfig SND
 	tristate "Advanced Linux Sound Architecture"
@@ -97,8 +100,6 @@ source "sound/sh/Kconfig"
 # here assuming USB is defined before ALSA
 source "sound/usb/Kconfig"
 
-source "sound/firewire/Kconfig"
-
 # the following will depend on the order of config.
 # here assuming PCMCIA is defined before ALSA
 source "sound/pcmcia/Kconfig"
@@ -135,3 +136,4 @@ config AC97_BUS
 	  sound subsystem and other function drivers completely unrelated to
 	  sound although they're sharing the AC97 bus. Concerned drivers
 	  should "select" this.
+

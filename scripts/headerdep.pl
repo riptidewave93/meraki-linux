@@ -80,7 +80,8 @@ sub search {
 		my $path = "$i/$filename";
 		return $path if -f $path;
 	}
-	return;
+
+	return undef;
 }
 
 sub parse_all {

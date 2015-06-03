@@ -2,7 +2,7 @@
  * Driver for Digigram VXpocket V2/440 soundcards
  *
  * Copyright (c) 2002 by Takashi Iwai <tiwai@suse.de>
-
+ *
  *   This program is free software; you can redistribute it and/or modify
  *   it under the terms of the GNU General Public License as published by
  *   the Free Software Foundation; either version 2 of the License, or
@@ -20,8 +20,7 @@
 
 
 #include <linux/init.h>
-#include <linux/module.h>
-#include <linux/slab.h>
+#include <linux/moduleparam.h>
 #include <sound/core.h>
 #include "vxpocket.h"
 #include <pcmcia/ciscode.h>
@@ -39,7 +38,7 @@ MODULE_SUPPORTED_DEVICE("{{Digigram,VXPocket},{Digigram,VXPocket440}}");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;	/* Enable switches */
+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;	/* Enable switches */
 static int ibl[SNDRV_CARDS];
 
 module_param_array(index, int, NULL, 0444);
@@ -159,12 +158,19 @@ static int snd_vxpocket_new(struct snd_card *card, int ibl,
 	vxp->p_dev = link;
 	link->priv = chip;
 
-	link->resource[0]->flags |= IO_DATA_PATH_WIDTH_AUTO;
-	link->resource[0]->end = 16;
+	link->io.Attributes1 = IO_DATA_PATH_WIDTH_AUTO;
+	link->io.NumPorts1 = 16;
 
-	link->config_flags |= CONF_ENABLE_IRQ;
-	link->config_index = 1;
-	link->config_regs = PRESENT_OPTION;
+	link->irq.Attributes = IRQ_TYPE_EXCLUSIVE | IRQ_HANDLE_PRESENT;
+
+	link->irq.IRQInfo1 = IRQ_LEVEL_ID;
+	link->irq.Handler = &snd_vx_irq_handler;
+	link->irq.Instance = chip;
+
+	link->conf.Attributes = CONF_ENABLE_IRQ;
+	link->conf.IntType = INT_MEMORY_AND_IO;
+	link->conf.ConfigIndex = 1;
+	link->conf.Present = PRESENT_OPTION;
 
 	*chip_ret = vxp;
 	return 0;
@@ -210,6 +216,7 @@ static int snd_vxpocket_assign_resources(struct vx_core *chip, int port, int irq
 static int vxpocket_config(struct pcmcia_device *link)
 {
 	struct vx_core *chip = link->priv;
+	struct snd_vxpocket *vxp = (struct snd_vxpocket *)chip;
 	int ret;
 
 	snd_printdd(KERN_DEBUG "vxpocket_config called\n");
@@ -225,25 +232,25 @@ static int vxpocket_config(struct pcmcia_device *link)
 		strcpy(chip->card->driver, vxp440_hw.name);
 	}
 
-	ret = pcmcia_request_io(link);
+	ret = pcmcia_request_io(link, &link->io);
 	if (ret)
 		goto failed;
 
-	ret = pcmcia_request_irq(link, snd_vx_irq_handler);
+	ret = pcmcia_request_irq(link, &link->irq);
 	if (ret)
 		goto failed;
 
-	ret = pcmcia_enable_device(link);
+	ret = pcmcia_request_configuration(link, &link->conf);
 	if (ret)
 		goto failed;
 
-	chip->dev = &link->dev;
+	chip->dev = &handle_to_dev(link);
 	snd_card_set_dev(chip->card, chip->dev);
 
-	if (snd_vxpocket_assign_resources(chip, link->resource[0]->start,
-						link->irq) < 0)
+	if (snd_vxpocket_assign_resources(chip, link->io.BasePort1, link->irq.AssignedIRQ) < 0)
 		goto failed;
 
+	link->dev_node = &vxp->node;
 	return 0;
 
 failed:
@@ -350,7 +357,7 @@ static void vxpocket_detach(struct pcmcia_device *link)
  * Module entry points
  */
 
-static const struct pcmcia_device_id vxp_ids[] = {
+static struct pcmcia_device_id vxp_ids[] = {
 	PCMCIA_DEVICE_MANF_CARD(0x01f1, 0x0100),
 	PCMCIA_DEVICE_NULL
 };
@@ -358,7 +365,9 @@ MODULE_DEVICE_TABLE(pcmcia, vxp_ids);
 
 static struct pcmcia_driver vxp_cs_driver = {
 	.owner		= THIS_MODULE,
-	.name		= "snd-vxpocket",
+	.drv		= {
+		.name	= "snd-vxpocket",
+	},
 	.probe		= vxpocket_probe,
 	.remove		= vxpocket_detach,
 	.id_table	= vxp_ids,

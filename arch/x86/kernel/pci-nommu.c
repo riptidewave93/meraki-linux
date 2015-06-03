@@ -4,7 +4,6 @@
 #include <linux/scatterlist.h>
 #include <linux/string.h>
 #include <linux/init.h>
-#include <linux/gfp.h>
 #include <linux/pci.h>
 #include <linux/mm.h>
 
@@ -34,7 +33,7 @@ static dma_addr_t nommu_map_page(struct device *dev, struct page *page,
 	dma_addr_t bus = page_to_phys(page) + offset;
 	WARN_ON(size == 0);
 	if (!check_addr("map_single", dev, bus, size))
-		return DMA_ERROR_CODE;
+		return bad_dma_address;
 	flush_write_buffers();
 	return bus;
 }
@@ -75,7 +74,7 @@ static int nommu_map_sg(struct device *hwdev, struct scatterlist *sg,
 }
 
 static void nommu_free_coherent(struct device *dev, size_t size, void *vaddr,
-				dma_addr_t dma_addr, struct dma_attrs *attrs)
+				dma_addr_t dma_addr)
 {
 	free_pages((unsigned long)vaddr, get_order(size));
 }
@@ -96,11 +95,20 @@ static void nommu_sync_sg_for_device(struct device *dev,
 }
 
 struct dma_map_ops nommu_dma_ops = {
-	.alloc			= dma_generic_alloc_coherent,
-	.free			= nommu_free_coherent,
+	.alloc_coherent		= dma_generic_alloc_coherent,
+	.free_coherent		= nommu_free_coherent,
 	.map_sg			= nommu_map_sg,
 	.map_page		= nommu_map_page,
 	.sync_single_for_device = nommu_sync_single_for_device,
 	.sync_sg_for_device	= nommu_sync_sg_for_device,
 	.is_phys		= 1,
 };
+
+void __init no_iommu_init(void)
+{
+	if (dma_ops)
+		return;
+
+	force_iommu = 0; /* no HW IOMMU */
+	dma_ops = &nommu_dma_ops;
+}

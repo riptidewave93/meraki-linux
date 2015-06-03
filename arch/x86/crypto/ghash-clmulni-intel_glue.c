@@ -20,7 +20,6 @@
 #include <crypto/gf128mul.h>
 #include <crypto/internal/hash.h>
 #include <asm/i387.h>
-#include <asm/cpu_device_id.h>
 
 #define GHASH_BLOCK_SIZE	16
 #define GHASH_DIGEST_SIZE	16
@@ -29,6 +28,8 @@ void clmul_ghash_mul(char *dst, const be128 *shash);
 
 void clmul_ghash_update(char *dst, const char *src, unsigned int srclen,
 			const be128 *shash);
+
+void clmul_ghash_setkey(be128 *shash, const u8 *key);
 
 struct ghash_async_ctx {
 	struct cryptd_ahash *cryptd_tfm;
@@ -56,23 +57,13 @@ static int ghash_setkey(struct crypto_shash *tfm,
 			const u8 *key, unsigned int keylen)
 {
 	struct ghash_ctx *ctx = crypto_shash_ctx(tfm);
-	be128 *x = (be128 *)key;
-	u64 a, b;
 
 	if (keylen != GHASH_BLOCK_SIZE) {
 		crypto_shash_set_flags(tfm, CRYPTO_TFM_RES_BAD_KEY_LEN);
 		return -EINVAL;
 	}
 
-	/* perform multiplication by 'x' in GF(2^128) */
-	a = be64_to_cpu(x->a);
-	b = be64_to_cpu(x->b);
-
-	ctx->shash.a = (__be64)((b << 1) | (a >> 63));
-	ctx->shash.b = (__be64)((a << 1) | (b >> 63));
-
-	if (a >> 63)
-		ctx->shash.b ^= cpu_to_be64(0xc2);
+	clmul_ghash_setkey(&ctx->shash, key);
 
 	return 0;
 }
@@ -303,18 +294,15 @@ static struct ahash_alg ghash_async_alg = {
 	},
 };
 
-static const struct x86_cpu_id pcmul_cpu_id[] = {
-	X86_FEATURE_MATCH(X86_FEATURE_PCLMULQDQ), /* Pickle-Mickle-Duck */
-	{}
-};
-MODULE_DEVICE_TABLE(x86cpu, pcmul_cpu_id);
-
 static int __init ghash_pclmulqdqni_mod_init(void)
 {
 	int err;
 
-	if (!x86_match_cpu(pcmul_cpu_id))
+	if (!cpu_has_pclmulqdq) {
+		printk(KERN_INFO "Intel PCLMULQDQ-NI instructions are not"
+		       " detected.\n");
 		return -ENODEV;
+	}
 
 	err = crypto_register_shash(&ghash_alg);
 	if (err)

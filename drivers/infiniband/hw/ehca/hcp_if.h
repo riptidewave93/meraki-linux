@@ -49,7 +49,7 @@
 #include "hipz_hw.h"
 
 /*
- * hipz_h_alloc_resource_eq allocates EQ resources in HW and FW, initialize
+ * hipz_h_alloc_resource_eq allocates EQ resources in HW and FW, initalize
  * resources, create the empty EQPT (ring).
  */
 u64 hipz_h_alloc_resource_eq(const struct ipz_adapter_handle adapter_handle,

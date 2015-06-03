@@ -4,7 +4,7 @@
 
   Copyright (c) 2005 Martin Langer <martin-langer@gmx.de>,
 		     Stefano Brivio <stefano.brivio@polimi.it>
-		     Michael Buesch <m@bues.ch>
+		     Michael Buesch <mbuesch@freenet.de>
 		     Danny van Dyk <kugelfang@gentoo.org>
      Andreas Jaggi <andreas.jaggi@waterwave.ch>
   Copyright (c) 2007 Larry Finger <Larry.Finger@lwfinger.net>
@@ -32,7 +32,6 @@
 #include <linux/delay.h>
 #include <linux/pci.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/types.h>
 
 #include "b43legacy.h"
@@ -153,7 +152,7 @@ void b43legacy_phy_calibrate(struct b43legacy_wldev *dev)
 	phy->calibrated = 1;
 }
 
-/* initialize B PHY power control
+/* intialize B PHY power control
  * as described in http://bcm-specs.sipsolutions.net/InitPowerControl
  */
 static void b43legacy_phy_init_pctl(struct b43legacy_wldev *dev)
@@ -1860,7 +1859,7 @@ void b43legacy_phy_xmitpower(struct b43legacy_wldev *dev)
 	 * which accounts for the factor of 4 */
 #define REG_MAX_PWR 20
 	max_pwr = min(REG_MAX_PWR * 4
-		      - dev->dev->bus->sprom.antenna_gain.a0
+		      - dev->dev->bus->sprom.antenna_gain.ghz24.a0
 		      - 0x6, max_pwr);
 
 	/* find the desired power in Q5.2 - power_level is in dBm

@@ -21,16 +21,7 @@
 /* Default mapping in classifier to work with default
  * queue setup.
  */
-const int ieee802_1d_to_ac[8] = {
-	IEEE80211_AC_BE,
-	IEEE80211_AC_BK,
-	IEEE80211_AC_BK,
-	IEEE80211_AC_BE,
-	IEEE80211_AC_VI,
-	IEEE80211_AC_VI,
-	IEEE80211_AC_VO,
-	IEEE80211_AC_VO
-};
+const int ieee802_1d_to_ac[8] = { 2, 3, 3, 2, 1, 1, 0, 0 };
 
 static int wme_downgrade_ac(struct sk_buff *skb)
 {
@@ -52,30 +43,6 @@ static int wme_downgrade_ac(struct sk_buff *skb)
 	}
 }
 
-/* Indicate which queue to use for this fully formed 802.11 frame */
-u16 ieee80211_select_queue_80211(struct ieee80211_local *local,
-				 struct sk_buff *skb,
-				 struct ieee80211_hdr *hdr)
-{
-	u8 *p;
-
-	if (local->hw.queues < 4)
-		return 0;
-
-	if (!ieee80211_is_data(hdr->frame_control)) {
-		skb->priority = 7;
-		return ieee802_1d_to_ac[skb->priority];
-	}
-	if (!ieee80211_is_data_qos(hdr->frame_control)) {
-		skb->priority = 0;
-		return ieee802_1d_to_ac[skb->priority];
-	}
-
-	p = ieee80211_get_qos_ctl(hdr);
-	skb->priority = *p & IEEE80211_QOS_CTL_TAG1D_MASK;
-
-	return ieee80211_downgrade_queue(local, skb);
-}
 
 /* Indicate which queue to use. */
 u16 ieee80211_select_queue(struct ieee80211_sub_if_data *sdata,
@@ -83,22 +50,19 @@ u16 ieee80211_select_queue(struct ieee80211_sub_if_data *sdata,
 {
 	struct ieee80211_local *local = sdata->local;
 	struct sta_info *sta = NULL;
+	u32 sta_flags = 0;
 	const u8 *ra = NULL;
 	bool qos = false;
 
 	if (local->hw.queues < 4 || skb->len < 6) {
 		skb->priority = 0; /* required for correct WPA/11i MIC */
-		return min_t(u16, local->hw.queues - 1, IEEE80211_AC_BE);
+		return min_t(u16, local->hw.queues - 1,
+			     ieee802_1d_to_ac[skb->priority]);
 	}
 
 	rcu_read_lock();
 	switch (sdata->vif.type) {
 	case NL80211_IFTYPE_AP_VLAN:
-		sta = rcu_dereference(sdata->u.vlan.sta);
-		if (sta) {
-			qos = test_sta_flag(sta, WLAN_STA_WME);
-			break;
-		}
 	case NL80211_IFTYPE_AP:
 		ra = skb->data;
 		break;
@@ -107,7 +71,11 @@ u16 ieee80211_select_queue(struct ieee80211_sub_if_data *sdata,
 		break;
 #ifdef CONFIG_MAC80211_MESH
 	case NL80211_IFTYPE_MESH_POINT:
-		qos = true;
+		/*
+		 * XXX: This is clearly broken ... but already was before,
+		 * because ieee80211_fill_mesh_addresses() would clear A1
+		 * except for multicast addresses.
+		 */
 		break;
 #endif
 	case NL80211_IFTYPE_STATION:
@@ -121,15 +89,19 @@ u16 ieee80211_select_queue(struct ieee80211_sub_if_data *sdata,
 	}
 
 	if (!sta && ra && !is_multicast_ether_addr(ra)) {
-		sta = sta_info_get(sdata, ra);
+		sta = sta_info_get(local, ra);
 		if (sta)
-			qos = test_sta_flag(sta, WLAN_STA_WME);
+			sta_flags = get_sta_flags(sta);
 	}
+
+	if (sta_flags & WLAN_STA_WME)
+		qos = true;
+
 	rcu_read_unlock();
 
 	if (!qos) {
 		skb->priority = 0; /* required for correct WPA/11i MIC */
-		return IEEE80211_AC_BE;
+		return ieee802_1d_to_ac[skb->priority];
 	}
 
 	/* use the data classifier to determine what 802.1d tag the
@@ -159,31 +131,22 @@ u16 ieee80211_downgrade_queue(struct ieee80211_local *local,
 	return ieee802_1d_to_ac[skb->priority];
 }
 
-void ieee80211_set_qos_hdr(struct ieee80211_sub_if_data *sdata,
-			   struct sk_buff *skb)
+void ieee80211_set_qos_hdr(struct ieee80211_local *local, struct sk_buff *skb)
 {
 	struct ieee80211_hdr *hdr = (void *)skb->data;
-	struct ieee80211_tx_info *info = IEEE80211_SKB_CB(skb);
 
 	/* Fill in the QoS header if there is one. */
 	if (ieee80211_is_data_qos(hdr->frame_control)) {
 		u8 *p = ieee80211_get_qos_ctl(hdr);
-		u8 ack_policy, tid;
+		u8 ack_policy = 0, tid;
 
 		tid = skb->priority & IEEE80211_QOS_CTL_TAG1D_MASK;
 
-		/* preserve EOSP bit */
-		ack_policy = *p & IEEE80211_QOS_CTL_EOSP;
-
-		if (is_multicast_ether_addr(hdr->addr1) ||
-		    sdata->noack_map & BIT(tid)) {
-			ack_policy |= IEEE80211_QOS_CTL_ACK_POLICY_NOACK;
-			info->flags |= IEEE80211_TX_CTL_NO_ACK;
-		}
-
-		/* qos header is 2 bytes */
+		if (unlikely(local->wifi_wme_noack_test))
+			ack_policy |= QOS_CONTROL_ACK_POLICY_NOACK <<
+					QOS_CONTROL_ACK_POLICY_SHIFT;
+		/* qos header is 2 bytes, second reserved */
 		*p++ = ack_policy | tid;
-		*p = ieee80211_vif_is_mesh(&sdata->vif) ?
-			(IEEE80211_QOS_CTL_MESH_CONTROL_PRESENT >> 8) : 0;
+		*p = 0;
 	}
 }

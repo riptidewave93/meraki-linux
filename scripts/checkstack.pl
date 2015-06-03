@@ -12,7 +12,7 @@
 #	sh64 port by Paul Mundt
 #	Random bits by Matt Mackall <mpm@selenic.com>
 #	M68k port by Geert Uytterhoeven and Andreas Schwab
-#	AVR32 port by Haavard Skinnemoen (Atmel)
+#	AVR32 port by Haavard Skinnemoen <hskinnemoen@atmel.com>
 #	PARISC port by Kyle McMartin <kyle@parisc-linux.org>
 #	sparc port by Martin Habets <errandir_news@mph.eclipse.co.uk>
 #
@@ -20,8 +20,6 @@
 #	objdump -d vmlinux | scripts/checkstack.pl [arch]
 #
 #	TODO :	Port to all architectures (one regex per arch)
-
-use strict;
 
 # check for arch
 #
@@ -106,11 +104,19 @@ my (@stack, $re, $dre, $x, $xs);
 	}
 }
 
+sub bysize($) {
+	my ($asize, $bsize);
+	($asize = $a) =~ s/.*:	*(.*)$/$1/;
+	($bsize = $b) =~ s/.*:	*(.*)$/$1/;
+	$bsize <=> $asize
+}
+
 #
 # main()
 #
 my $funcre = qr/^$x* <(.*)>:$/;
-my ($func, $file, $lastslash);
+my $func;
+my $file, $lastslash;
 
 while (my $line = <STDIN>) {
 	if ($line =~ m/$funcre/) {
@@ -167,6 +173,4 @@ while (my $line = <STDIN>) {
 	}
 }
 
-# Sort output by size (last field)
-print sort { ($b =~ /:\t*(\d+)$/)[0] <=> ($a =~ /:\t*(\d+)$/)[0] } @stack;
-
+print sort bysize @stack;

@@ -1,5 +1,5 @@
 /*
- * Copyright 2007-2010 Analog Devices Inc.
+ * Copyright 2007-2008 Analog Devices Inc.
  *
  * Licensed under the ADI BSD license or the GPL-2 (or later)
  */
@@ -7,8 +7,15 @@
 #ifndef _DEF_BF525_H
 #define _DEF_BF525_H
 
-/* BF525 is BF522 + USB */
-#include "defBF522.h"
+/* Include all Core registers and bit definitions */
+#include <asm/def_LPBlackfin.h>
+
+/* SYSTEM & MMR ADDRESS DEFINITIONS FOR ADSP-BF525 */
+
+/* Include defBF52x_base.h for the set of #defines that are common to all ADSP-BF52x processors */
+#include "defBF52x_base.h"
+
+/* The following are the #defines needed by ADSP-BF525 that are not in the common header */
 
 /* USB Control Registers */
 
@@ -185,8 +192,8 @@
 #define                USB_EP_NI7_TXTYPE  0xffc03bd4   /* Sets the transaction protocol and peripheral endpoint number for the Host Tx endpoint7 */
 #define            USB_EP_NI7_TXINTERVAL  0xffc03bd8   /* Sets the NAK response timeout on Endpoint7 */
 #define                USB_EP_NI7_RXTYPE  0xffc03bdc   /* Sets the transaction protocol and peripheral endpoint number for the Host Rx endpoint7 */
-#define            USB_EP_NI7_RXINTERVAL  0xffc03be0   /* Sets the polling interval for Interrupt/Isochronous transfers or the NAK response timeout on Bulk transfers for Host Rx endpoint7 */
-#define               USB_EP_NI7_TXCOUNT  0xffc03be8   /* Number of bytes to be written to the endpoint7 Tx FIFO */
+#define            USB_EP_NI7_RXINTERVAL  0xffc03bf0   /* Sets the polling interval for Interrupt/Isochronous transfers or the NAK response timeout on Bulk transfers for Host Rx endpoint7 */
+#define               USB_EP_NI7_TXCOUNT  0xffc03bf8   /* Number of bytes to be written to the endpoint7 Tx FIFO */
 
 #define                USB_DMA_INTERRUPT  0xffc03c00   /* Indicates pending interrupts for the DMA channels */
 

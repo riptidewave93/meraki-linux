@@ -3,6 +3,7 @@
 
 #include "kern_util.h"
 #include "os.h"
+#include "user.h"
 #include "um_malloc.h"
 
 static inline void *cow_malloc(int size)

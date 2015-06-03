@@ -31,13 +31,13 @@ const int kretprobe_blacklist_size = ARRAY_SIZE(kretprobe_blacklist);
 #define KPROBE_HIT_ACTIVE	0x00000001
 #define KPROBE_HIT_SS		0x00000002
 
-static struct kprobe *cur_kprobe;
-static unsigned long cur_kprobe_orig_pc;
-static unsigned long cur_kprobe_next_pc;
-static int cur_kprobe_ss_flags;
+static struct kprobe *current_kprobe;
+static unsigned long current_kprobe_orig_pc;
+static unsigned long current_kprobe_next_pc;
+static int current_kprobe_ss_flags;
 static unsigned long kprobe_status;
-static kprobe_opcode_t cur_kprobe_ss_buf[MAX_INSN_SIZE + 2];
-static unsigned long cur_kprobe_bp_addr;
+static kprobe_opcode_t current_kprobe_ss_buf[MAX_INSN_SIZE + 2];
+static unsigned long current_kprobe_bp_addr;
 
 DEFINE_PER_CPU(struct kprobe *, current_kprobe) = NULL;
 
@@ -377,10 +377,8 @@ void __kprobes arch_arm_kprobe(struct kprobe *p)
 
 void __kprobes arch_disarm_kprobe(struct kprobe *p)
 {
-#ifndef CONFIG_MN10300_CACHE_SNOOP
 	mn10300_dcache_flush();
 	mn10300_icache_inv();
-#endif
 }
 
 void arch_remove_kprobe(struct kprobe *p)
@@ -392,10 +390,8 @@ void __kprobes disarm_kprobe(struct kprobe *p, struct pt_regs *regs)
 {
 	*p->addr = p->opcode;
 	regs->pc = (unsigned long) p->addr;
-#ifndef CONFIG_MN10300_CACHE_SNOOP
 	mn10300_dcache_flush();
 	mn10300_icache_inv();
-#endif
 }
 
 static inline
@@ -403,25 +399,26 @@ void __kprobes prepare_singlestep(struct kprobe *p, struct pt_regs *regs)
 {
 	unsigned long nextpc;
 
-	cur_kprobe_orig_pc = regs->pc;
-	memcpy(cur_kprobe_ss_buf, &p->ainsn.insn[0], MAX_INSN_SIZE);
-	regs->pc = (unsigned long) cur_kprobe_ss_buf;
+	current_kprobe_orig_pc = regs->pc;
+	memcpy(current_kprobe_ss_buf, &p->ainsn.insn[0], MAX_INSN_SIZE);
+	regs->pc = (unsigned long) current_kprobe_ss_buf;
 
-	nextpc = find_nextpc(regs, &cur_kprobe_ss_flags);
-	if (cur_kprobe_ss_flags & SINGLESTEP_PCREL)
-		cur_kprobe_next_pc = cur_kprobe_orig_pc + (nextpc - regs->pc);
+	nextpc = find_nextpc(regs, &current_kprobe_ss_flags);
+	if (current_kprobe_ss_flags & SINGLESTEP_PCREL)
+		current_kprobe_next_pc =
+			current_kprobe_orig_pc + (nextpc - regs->pc);
 	else
-		cur_kprobe_next_pc = nextpc;
+		current_kprobe_next_pc = nextpc;
 
 	/* branching instructions need special handling */
-	if (cur_kprobe_ss_flags & SINGLESTEP_BRANCH)
+	if (current_kprobe_ss_flags & SINGLESTEP_BRANCH)
 		nextpc = singlestep_branch_setup(regs);
 
-	cur_kprobe_bp_addr = nextpc;
+	current_kprobe_bp_addr = nextpc;
 
 	*(u8 *) nextpc = BREAKPOINT_INSTRUCTION;
-	mn10300_dcache_flush_range2((unsigned) cur_kprobe_ss_buf,
-				    sizeof(cur_kprobe_ss_buf));
+	mn10300_dcache_flush_range2((unsigned) current_kprobe_ss_buf,
+				    sizeof(current_kprobe_ss_buf));
 	mn10300_icache_inv();
 }
 
@@ -443,7 +440,7 @@ static inline int __kprobes kprobe_handler(struct pt_regs *regs)
 			disarm_kprobe(p, regs);
 			ret = 1;
 		} else {
-			p = cur_kprobe;
+			p = current_kprobe;
 			if (p->break_handler && p->break_handler(p, regs))
 				goto ss_probe;
 		}
@@ -467,7 +464,7 @@ static inline int __kprobes kprobe_handler(struct pt_regs *regs)
 	}
 
 	kprobe_status = KPROBE_HIT_ACTIVE;
-	cur_kprobe = p;
+	current_kprobe = p;
 	if (p->pre_handler(p, regs)) {
 		/* handler has already set things up, so skip ss setup */
 		return 1;
@@ -494,8 +491,8 @@ no_kprobe:
 static void __kprobes resume_execution(struct kprobe *p, struct pt_regs *regs)
 {
 	/* we may need to fixup regs/stack after singlestepping a call insn */
-	if (cur_kprobe_ss_flags & SINGLESTEP_BRANCH) {
-		regs->pc = cur_kprobe_orig_pc;
+	if (current_kprobe_ss_flags & SINGLESTEP_BRANCH) {
+		regs->pc = current_kprobe_orig_pc;
 		switch (p->ainsn.insn[0]) {
 		case 0xcd:	/* CALL (d16,PC) */
 			*(unsigned *) regs->sp = regs->mdr = regs->pc + 5;
@@ -526,8 +523,8 @@ static void __kprobes resume_execution(struct kprobe *p, struct pt_regs *regs)
 		}
 	}
 
-	regs->pc = cur_kprobe_next_pc;
-	cur_kprobe_bp_addr = 0;
+	regs->pc = current_kprobe_next_pc;
+	current_kprobe_bp_addr = 0;
 }
 
 static inline int __kprobes post_kprobe_handler(struct pt_regs *regs)
@@ -535,10 +532,10 @@ static inline int __kprobes post_kprobe_handler(struct pt_regs *regs)
 	if (!kprobe_running())
 		return 0;
 
-	if (cur_kprobe->post_handler)
-		cur_kprobe->post_handler(cur_kprobe, regs, 0);
+	if (current_kprobe->post_handler)
+		current_kprobe->post_handler(current_kprobe, regs, 0);
 
-	resume_execution(cur_kprobe, regs);
+	resume_execution(current_kprobe, regs);
 	reset_current_kprobe();
 	preempt_enable_no_resched();
 	return 1;
@@ -548,12 +545,12 @@ static inline int __kprobes post_kprobe_handler(struct pt_regs *regs)
 static inline
 int __kprobes kprobe_fault_handler(struct pt_regs *regs, int trapnr)
 {
-	if (cur_kprobe->fault_handler &&
-	    cur_kprobe->fault_handler(cur_kprobe, regs, trapnr))
+	if (current_kprobe->fault_handler &&
+	    current_kprobe->fault_handler(current_kprobe, regs, trapnr))
 		return 1;
 
 	if (kprobe_status & KPROBE_HIT_SS) {
-		resume_execution(cur_kprobe, regs);
+		resume_execution(current_kprobe, regs);
 		reset_current_kprobe();
 		preempt_enable_no_resched();
 	}
@@ -570,7 +567,7 @@ int __kprobes kprobe_exceptions_notify(struct notifier_block *self,
 
 	switch (val) {
 	case DIE_BREAKPOINT:
-		if (cur_kprobe_bp_addr != args->regs->pc) {
+		if (current_kprobe_bp_addr != args->regs->pc) {
 			if (kprobe_handler(args->regs))
 				return NOTIFY_STOP;
 		} else {

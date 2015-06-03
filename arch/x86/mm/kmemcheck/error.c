@@ -106,25 +106,26 @@ void kmemcheck_error_recall(void)
 
 	switch (e->type) {
 	case KMEMCHECK_ERROR_INVALID_ACCESS:
-		printk(KERN_WARNING "WARNING: kmemcheck: Caught %d-bit read from %s memory (%p)\n",
+		printk(KERN_ERR  "WARNING: kmemcheck: Caught %d-bit read "
+			"from %s memory (%p)\n",
 			8 * e->size, e->state < ARRAY_SIZE(desc) ?
 				desc[e->state] : "(invalid shadow state)",
 			(void *) e->address);
 
-		printk(KERN_WARNING);
+		printk(KERN_INFO);
 		for (i = 0; i < SHADOW_COPY_SIZE; ++i)
-			printk(KERN_CONT "%02x", e->memory_copy[i]);
-		printk(KERN_CONT "\n");
+			printk("%02x", e->memory_copy[i]);
+		printk("\n");
 
-		printk(KERN_WARNING);
+		printk(KERN_INFO);
 		for (i = 0; i < SHADOW_COPY_SIZE; ++i) {
 			if (e->shadow_copy[i] < ARRAY_SIZE(short_desc))
-				printk(KERN_CONT " %c", short_desc[e->shadow_copy[i]]);
+				printk(" %c", short_desc[e->shadow_copy[i]]);
 			else
-				printk(KERN_CONT " ?");
+				printk(" ?");
 		}
-		printk(KERN_CONT "\n");
-		printk(KERN_WARNING "%*c\n", 2 + 2
+		printk("\n");
+		printk(KERN_INFO "%*c\n", 2 + 2
 			* (int) (e->address & (SHADOW_COPY_SIZE - 1)), '^');
 		break;
 	case KMEMCHECK_ERROR_BUG:
@@ -185,7 +186,7 @@ void kmemcheck_error_save(enum kmemcheck_shadow state,
 	e->trace.entries = e->trace_entries;
 	e->trace.max_entries = ARRAY_SIZE(e->trace_entries);
 	e->trace.skip = 0;
-	save_stack_trace_regs(regs, &e->trace);
+	save_stack_trace_bp(&e->trace, regs->bp);
 
 	/* Round address down to nearest 16 bytes */
 	shadow_copy = kmemcheck_shadow_lookup(address

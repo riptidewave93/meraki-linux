@@ -21,6 +21,7 @@
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
+#include <linux/autoconf.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -44,7 +45,7 @@ MODULE_LICENSE("GPL");
  */
 
 /* Emit various sounds */
-static bool sound;
+static int sound;
 module_param(sound, bool, 0);
 MODULE_PARM_DESC(sound, "emit sounds");
 
@@ -244,13 +245,16 @@ static int keyboard_notifier_call(struct notifier_block *blk,
 
 			switch (val) {
 			case KVAL(K_CAPS):
-				on_off = vt_get_leds(fg_console, VC_CAPSLOCK);
+				on_off = vc_kbd_led(kbd_table + fg_console,
+						VC_CAPSLOCK);
 				break;
 			case KVAL(K_NUM):
-				on_off = vt_get_leds(fg_console, VC_NUMLOCK);
+				on_off = vc_kbd_led(kbd_table + fg_console,
+						VC_NUMLOCK);
 				break;
 			case KVAL(K_HOLD):
-				on_off = vt_get_leds(fg_console, VC_SCROLLOCK);
+				on_off = vc_kbd_led(kbd_table + fg_console,
+						VC_SCROLLOCK);
 				break;
 			}
 			if (on_off == 1)

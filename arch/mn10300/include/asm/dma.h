@@ -11,6 +11,7 @@
 #ifndef _ASM_DMA_H
 #define _ASM_DMA_H
 
+#include <asm/system.h>
 #include <linux/spinlock.h>
 #include <asm/io.h>
 #include <linux/delay.h>

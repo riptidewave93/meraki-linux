@@ -16,6 +16,7 @@
 #include <linux/rtc.h>
 #include <linux/io.h>
 #include <linux/bcd.h>
+#include <asm/rtc.h>
 
 #define DRV_NAME	"rtc-ds1302"
 #define DRV_VERSION	"0.1.1"
@@ -33,55 +34,14 @@
 #define	RTC_ADDR_MIN	0x01		/* Address of minute register */
 #define	RTC_ADDR_SEC	0x00		/* Address of second register */
 
-#ifdef CONFIG_SH_SECUREEDGE5410
-#include <asm/rtc.h>
-#include <mach/secureedge5410.h>
-
 #define	RTC_RESET	0x1000
 #define	RTC_IODATA	0x0800
 #define	RTC_SCLK	0x0400
 
+#ifdef CONFIG_SH_SECUREEDGE5410
+#include <mach/snapgear.h>
 #define set_dp(x)	SECUREEDGE_WRITE_IOPORT(x, 0x1c00)
 #define get_dp()	SECUREEDGE_READ_IOPORT()
-#define ds1302_set_tx()
-#define ds1302_set_rx()
-
-static inline int ds1302_hw_init(void)
-{
-	return 0;
-}
-
-static inline void ds1302_reset(void)
-{
-	set_dp(get_dp() & ~(RTC_RESET | RTC_IODATA | RTC_SCLK));
-}
-
-static inline void ds1302_clock(void)
-{
-	set_dp(get_dp() | RTC_SCLK);	/* clock high */
-	set_dp(get_dp() & ~RTC_SCLK);	/* clock low */
-}
-
-static inline void ds1302_start(void)
-{
-	set_dp(get_dp() | RTC_RESET);
-}
-
-static inline void ds1302_stop(void)
-{
-	set_dp(get_dp() & ~RTC_RESET);
-}
-
-static inline void ds1302_txbit(int bit)
-{
-	set_dp((get_dp() & ~RTC_IODATA) | (bit ? RTC_IODATA : 0));
-}
-
-static inline int ds1302_rxbit(void)
-{
-	return !!(get_dp() & RTC_IODATA);
-}
-
 #else
 #error "Add support for your platform"
 #endif
@@ -90,11 +50,11 @@ static void ds1302_sendbits(unsigned int val)
 {
 	int i;
 
-	ds1302_set_tx();
-
 	for (i = 8; (i); i--, val >>= 1) {
-		ds1302_txbit(val & 0x1);
-		ds1302_clock();
+		set_dp((get_dp() & ~RTC_IODATA) | ((val & 0x1) ?
+			RTC_IODATA : 0));
+		set_dp(get_dp() | RTC_SCLK);	/* clock high */
+		set_dp(get_dp() & ~RTC_SCLK);	/* clock low */
 	}
 }
 
@@ -103,11 +63,10 @@ static unsigned int ds1302_recvbits(void)
 	unsigned int val;
 	int i;
 
-	ds1302_set_rx();
-
 	for (i = 0, val = 0; (i < 8); i++) {
-		val |= (ds1302_rxbit() << i);
-		ds1302_clock();
+		val |= (((get_dp() & RTC_IODATA) ? 1 : 0) << i);
+		set_dp(get_dp() | RTC_SCLK);	/* clock high */
+		set_dp(get_dp() & ~RTC_SCLK);	/* clock low */
 	}
 
 	return val;
@@ -117,24 +76,23 @@ static unsigned int ds1302_readbyte(unsigned int addr)
 {
 	unsigned int val;
 
-	ds1302_reset();
+	set_dp(get_dp() & ~(RTC_RESET | RTC_IODATA | RTC_SCLK));
 
-	ds1302_start();
+	set_dp(get_dp() | RTC_RESET);
 	ds1302_sendbits(((addr & 0x3f) << 1) | RTC_CMD_READ);
 	val = ds1302_recvbits();
-	ds1302_stop();
+	set_dp(get_dp() & ~RTC_RESET);
 
 	return val;
 }
 
 static void ds1302_writebyte(unsigned int addr, unsigned int val)
 {
-	ds1302_reset();
-
-	ds1302_start();
+	set_dp(get_dp() & ~(RTC_RESET | RTC_IODATA | RTC_SCLK));
+	set_dp(get_dp() | RTC_RESET);
 	ds1302_sendbits(((addr & 0x3f) << 1) | RTC_CMD_WRITE);
 	ds1302_sendbits(val);
-	ds1302_stop();
+	set_dp(get_dp() & ~RTC_RESET);
 }
 
 static int ds1302_rtc_read_time(struct device *dev, struct rtc_time *tm)
@@ -185,6 +143,7 @@ static int ds1302_rtc_ioctl(struct device *dev, unsigned int cmd,
 #ifdef RTC_SET_CHARGE
 	case RTC_SET_CHARGE:
 	{
+		struct ds1302_rtc *rtc = dev_get_drvdata(dev);
 		int tcs_val;
 
 		if (copy_from_user(&tcs_val, (int __user *)arg, sizeof(int)))
@@ -209,20 +168,13 @@ static int __init ds1302_rtc_probe(struct platform_device *pdev)
 {
 	struct rtc_device *rtc;
 
-	if (ds1302_hw_init()) {
-		dev_err(&pdev->dev, "Failed to init communication channel");
-		return -EINVAL;
-	}
-
 	/* Reset */
-	ds1302_reset();
+	set_dp(get_dp() & ~(RTC_RESET | RTC_IODATA | RTC_SCLK));
 
 	/* Write a magic value to the DS1302 RAM, and see if it sticks. */
 	ds1302_writebyte(RTC_ADDR_RAM0, 0x42);
-	if (ds1302_readbyte(RTC_ADDR_RAM0) != 0x42) {
-		dev_err(&pdev->dev, "Failed to probe");
+	if (ds1302_readbyte(RTC_ADDR_RAM0) != 0x42)
 		return -ENODEV;
-	}
 
 	rtc = rtc_device_register("ds1302", &pdev->dev,
 					   &ds1302_rtc_ops, THIS_MODULE);
@@ -249,7 +201,7 @@ static struct platform_driver ds1302_platform_driver = {
 		.name	= DRV_NAME,
 		.owner	= THIS_MODULE,
 	},
-	.remove		= __devexit_p(ds1302_rtc_remove),
+	.remove		= __exit_p(ds1302_rtc_remove),
 };
 
 static int __init ds1302_rtc_init(void)

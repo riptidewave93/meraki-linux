@@ -5,7 +5,7 @@
  * mapping is maintained as part of the normal policy but a fast cache is
  * needed to reduce the lookup overhead.
  *
- * Author: Paul Moore <paul@paul-moore.com>
+ * Author: Paul Moore <paul.moore@hp.com>
  *
  * This code is heavily based on the "netif" concept originally developed by
  * James Morris <jmorris@redhat.com>
@@ -30,7 +30,6 @@
 #include <linux/types.h>
 #include <linux/rcupdate.h>
 #include <linux/list.h>
-#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/in.h>
 #include <linux/in6.h>
@@ -66,6 +65,22 @@ struct sel_netport {
 static LIST_HEAD(sel_netport_list);
 static DEFINE_SPINLOCK(sel_netport_lock);
 static struct sel_netport_bkt sel_netport_hash[SEL_NETPORT_HASH_SIZE];
+
+/**
+ * sel_netport_free - Frees a port entry
+ * @p: the entry's RCU field
+ *
+ * Description:
+ * This function is designed to be used as a callback to the call_rcu()
+ * function so that memory allocated to a hash table port entry can be
+ * released safely.
+ *
+ */
+static void sel_netport_free(struct rcu_head *p)
+{
+	struct sel_netport *port = container_of(p, struct sel_netport, rcu);
+	kfree(port);
+}
 
 /**
  * sel_netport_hashfn - Hashing function for the port table
@@ -123,12 +138,10 @@ static void sel_netport_insert(struct sel_netport *port)
 	if (sel_netport_hash[idx].size == SEL_NETPORT_HASH_BKT_LIMIT) {
 		struct sel_netport *tail;
 		tail = list_entry(
-			rcu_dereference_protected(
-				sel_netport_hash[idx].list.prev,
-				lockdep_is_held(&sel_netport_lock)),
+			rcu_dereference(sel_netport_hash[idx].list.prev),
 			struct sel_netport, list);
 		list_del_rcu(&tail->list);
-		kfree_rcu(tail, rcu);
+		call_rcu(&tail->rcu, sel_netport_free);
 	} else
 		sel_netport_hash[idx].size++;
 }
@@ -227,7 +240,7 @@ static void sel_netport_flush(void)
 		list_for_each_entry_safe(port, port_tmp,
 					 &sel_netport_hash[idx].list, list) {
 			list_del_rcu(&port->list);
-			kfree_rcu(port, rcu);
+			call_rcu(&port->rcu, sel_netport_free);
 		}
 		sel_netport_hash[idx].size = 0;
 	}

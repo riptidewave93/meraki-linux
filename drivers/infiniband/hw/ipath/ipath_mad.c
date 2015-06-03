@@ -32,7 +32,6 @@
  */
 
 #include <rdma/ib_smi.h>
-#include <rdma/ib_pma.h>
 
 #include "ipath_kernel.h"
 #include "ipath_verbs.h"
@@ -790,18 +789,151 @@ static int recv_subn_set_pkeytable(struct ib_smp *smp,
 	return recv_subn_get_pkeytable(smp, ibdev);
 }
 
-static int recv_pma_get_classportinfo(struct ib_pma_mad *pmp)
+#define IB_PMA_CLASS_PORT_INFO		cpu_to_be16(0x0001)
+#define IB_PMA_PORT_SAMPLES_CONTROL	cpu_to_be16(0x0010)
+#define IB_PMA_PORT_SAMPLES_RESULT	cpu_to_be16(0x0011)
+#define IB_PMA_PORT_COUNTERS		cpu_to_be16(0x0012)
+#define IB_PMA_PORT_COUNTERS_EXT	cpu_to_be16(0x001D)
+#define IB_PMA_PORT_SAMPLES_RESULT_EXT	cpu_to_be16(0x001E)
+
+struct ib_perf {
+	u8 base_version;
+	u8 mgmt_class;
+	u8 class_version;
+	u8 method;
+	__be16 status;
+	__be16 unused;
+	__be64 tid;
+	__be16 attr_id;
+	__be16 resv;
+	__be32 attr_mod;
+	u8 reserved[40];
+	u8 data[192];
+} __attribute__ ((packed));
+
+struct ib_pma_classportinfo {
+	u8 base_version;
+	u8 class_version;
+	__be16 cap_mask;
+	u8 reserved[3];
+	u8 resp_time_value;	/* only lower 5 bits */
+	union ib_gid redirect_gid;
+	__be32 redirect_tc_sl_fl;	/* 8, 4, 20 bits respectively */
+	__be16 redirect_lid;
+	__be16 redirect_pkey;
+	__be32 redirect_qp;	/* only lower 24 bits */
+	__be32 redirect_qkey;
+	union ib_gid trap_gid;
+	__be32 trap_tc_sl_fl;	/* 8, 4, 20 bits respectively */
+	__be16 trap_lid;
+	__be16 trap_pkey;
+	__be32 trap_hl_qp;	/* 8, 24 bits respectively */
+	__be32 trap_qkey;
+} __attribute__ ((packed));
+
+struct ib_pma_portsamplescontrol {
+	u8 opcode;
+	u8 port_select;
+	u8 tick;
+	u8 counter_width;	/* only lower 3 bits */
+	__be32 counter_mask0_9;	/* 2, 10 * 3, bits */
+	__be16 counter_mask10_14;	/* 1, 5 * 3, bits */
+	u8 sample_mechanisms;
+	u8 sample_status;	/* only lower 2 bits */
+	__be64 option_mask;
+	__be64 vendor_mask;
+	__be32 sample_start;
+	__be32 sample_interval;
+	__be16 tag;
+	__be16 counter_select[15];
+} __attribute__ ((packed));
+
+struct ib_pma_portsamplesresult {
+	__be16 tag;
+	__be16 sample_status;	/* only lower 2 bits */
+	__be32 counter[15];
+} __attribute__ ((packed));
+
+struct ib_pma_portsamplesresult_ext {
+	__be16 tag;
+	__be16 sample_status;	/* only lower 2 bits */
+	__be32 extended_width;	/* only upper 2 bits */
+	__be64 counter[15];
+} __attribute__ ((packed));
+
+struct ib_pma_portcounters {
+	u8 reserved;
+	u8 port_select;
+	__be16 counter_select;
+	__be16 symbol_error_counter;
+	u8 link_error_recovery_counter;
+	u8 link_downed_counter;
+	__be16 port_rcv_errors;
+	__be16 port_rcv_remphys_errors;
+	__be16 port_rcv_switch_relay_errors;
+	__be16 port_xmit_discards;
+	u8 port_xmit_constraint_errors;
+	u8 port_rcv_constraint_errors;
+	u8 reserved1;
+	u8 lli_ebor_errors;	/* 4, 4, bits */
+	__be16 reserved2;
+	__be16 vl15_dropped;
+	__be32 port_xmit_data;
+	__be32 port_rcv_data;
+	__be32 port_xmit_packets;
+	__be32 port_rcv_packets;
+} __attribute__ ((packed));
+
+#define IB_PMA_SEL_SYMBOL_ERROR			cpu_to_be16(0x0001)
+#define IB_PMA_SEL_LINK_ERROR_RECOVERY		cpu_to_be16(0x0002)
+#define IB_PMA_SEL_LINK_DOWNED			cpu_to_be16(0x0004)
+#define IB_PMA_SEL_PORT_RCV_ERRORS		cpu_to_be16(0x0008)
+#define IB_PMA_SEL_PORT_RCV_REMPHYS_ERRORS	cpu_to_be16(0x0010)
+#define IB_PMA_SEL_PORT_XMIT_DISCARDS		cpu_to_be16(0x0040)
+#define IB_PMA_SEL_LOCAL_LINK_INTEGRITY_ERRORS	cpu_to_be16(0x0200)
+#define IB_PMA_SEL_EXCESSIVE_BUFFER_OVERRUNS	cpu_to_be16(0x0400)
+#define IB_PMA_SEL_PORT_VL15_DROPPED		cpu_to_be16(0x0800)
+#define IB_PMA_SEL_PORT_XMIT_DATA		cpu_to_be16(0x1000)
+#define IB_PMA_SEL_PORT_RCV_DATA		cpu_to_be16(0x2000)
+#define IB_PMA_SEL_PORT_XMIT_PACKETS		cpu_to_be16(0x4000)
+#define IB_PMA_SEL_PORT_RCV_PACKETS		cpu_to_be16(0x8000)
+
+struct ib_pma_portcounters_ext {
+	u8 reserved;
+	u8 port_select;
+	__be16 counter_select;
+	__be32 reserved1;
+	__be64 port_xmit_data;
+	__be64 port_rcv_data;
+	__be64 port_xmit_packets;
+	__be64 port_rcv_packets;
+	__be64 port_unicast_xmit_packets;
+	__be64 port_unicast_rcv_packets;
+	__be64 port_multicast_xmit_packets;
+	__be64 port_multicast_rcv_packets;
+} __attribute__ ((packed));
+
+#define IB_PMA_SELX_PORT_XMIT_DATA		cpu_to_be16(0x0001)
+#define IB_PMA_SELX_PORT_RCV_DATA		cpu_to_be16(0x0002)
+#define IB_PMA_SELX_PORT_XMIT_PACKETS		cpu_to_be16(0x0004)
+#define IB_PMA_SELX_PORT_RCV_PACKETS		cpu_to_be16(0x0008)
+#define IB_PMA_SELX_PORT_UNI_XMIT_PACKETS	cpu_to_be16(0x0010)
+#define IB_PMA_SELX_PORT_UNI_RCV_PACKETS	cpu_to_be16(0x0020)
+#define IB_PMA_SELX_PORT_MULTI_XMIT_PACKETS	cpu_to_be16(0x0040)
+#define IB_PMA_SELX_PORT_MULTI_RCV_PACKETS	cpu_to_be16(0x0080)
+
+static int recv_pma_get_classportinfo(struct ib_perf *pmp)
 {
-	struct ib_class_port_info *p =
-		(struct ib_class_port_info *)pmp->data;
+	struct ib_pma_classportinfo *p =
+		(struct ib_pma_classportinfo *)pmp->data;
 
 	memset(pmp->data, 0, sizeof(pmp->data));
 
-	if (pmp->mad_hdr.attr_mod != 0)
-		pmp->mad_hdr.status |= IB_SMP_INVALID_FIELD;
+	if (pmp->attr_mod != 0)
+		pmp->status |= IB_SMP_INVALID_FIELD;
 
 	/* Indicate AllPortSelect is valid (only one port anyway) */
-	p->capability_mask = cpu_to_be16(1 << 8);
+	p->cap_mask = cpu_to_be16(1 << 8);
 	p->base_version = 1;
 	p->class_version = 1;
 	/*
@@ -825,7 +957,7 @@ static int recv_pma_get_classportinfo(struct ib_pma_mad *pmp)
 				    COUNTER_MASK(1, 3) | \
 				    COUNTER_MASK(1, 4))
 
-static int recv_pma_get_portsamplescontrol(struct ib_pma_mad *pmp,
+static int recv_pma_get_portsamplescontrol(struct ib_perf *pmp,
 					   struct ib_device *ibdev, u8 port)
 {
 	struct ib_pma_portsamplescontrol *p =
@@ -838,9 +970,9 @@ static int recv_pma_get_portsamplescontrol(struct ib_pma_mad *pmp,
 	memset(pmp->data, 0, sizeof(pmp->data));
 
 	p->port_select = port_select;
-	if (pmp->mad_hdr.attr_mod != 0 ||
+	if (pmp->attr_mod != 0 ||
 	    (port_select != port && port_select != 0xFF))
-		pmp->mad_hdr.status |= IB_SMP_INVALID_FIELD;
+		pmp->status |= IB_SMP_INVALID_FIELD;
 	/*
 	 * Ticks are 10x the link transfer period which for 2.5Gbs is 4
 	 * nsec.  0 == 4 nsec., 1 == 8 nsec., ..., 255 == 1020 nsec.  Sample
@@ -874,7 +1006,7 @@ static int recv_pma_get_portsamplescontrol(struct ib_pma_mad *pmp,
 	return reply((struct ib_smp *) pmp);
 }
 
-static int recv_pma_set_portsamplescontrol(struct ib_pma_mad *pmp,
+static int recv_pma_set_portsamplescontrol(struct ib_perf *pmp,
 					   struct ib_device *ibdev, u8 port)
 {
 	struct ib_pma_portsamplescontrol *p =
@@ -885,9 +1017,9 @@ static int recv_pma_set_portsamplescontrol(struct ib_pma_mad *pmp,
 	u8 status;
 	int ret;
 
-	if (pmp->mad_hdr.attr_mod != 0 ||
+	if (pmp->attr_mod != 0 ||
 	    (p->port_select != port && p->port_select != 0xFF)) {
-		pmp->mad_hdr.status |= IB_SMP_INVALID_FIELD;
+		pmp->status |= IB_SMP_INVALID_FIELD;
 		ret = reply((struct ib_smp *) pmp);
 		goto bail;
 	}
@@ -961,7 +1093,7 @@ static u64 get_counter(struct ipath_ibdev *dev,
 	return ret;
 }
 
-static int recv_pma_get_portsamplesresult(struct ib_pma_mad *pmp,
+static int recv_pma_get_portsamplesresult(struct ib_perf *pmp,
 					  struct ib_device *ibdev)
 {
 	struct ib_pma_portsamplesresult *p =
@@ -986,7 +1118,7 @@ static int recv_pma_get_portsamplesresult(struct ib_pma_mad *pmp,
 	return reply((struct ib_smp *) pmp);
 }
 
-static int recv_pma_get_portsamplesresult_ext(struct ib_pma_mad *pmp,
+static int recv_pma_get_portsamplesresult_ext(struct ib_perf *pmp,
 					      struct ib_device *ibdev)
 {
 	struct ib_pma_portsamplesresult_ext *p =
@@ -1013,7 +1145,7 @@ static int recv_pma_get_portsamplesresult_ext(struct ib_pma_mad *pmp,
 	return reply((struct ib_smp *) pmp);
 }
 
-static int recv_pma_get_portcounters(struct ib_pma_mad *pmp,
+static int recv_pma_get_portcounters(struct ib_perf *pmp,
 				     struct ib_device *ibdev, u8 port)
 {
 	struct ib_pma_portcounters *p = (struct ib_pma_portcounters *)
@@ -1047,9 +1179,9 @@ static int recv_pma_get_portcounters(struct ib_pma_mad *pmp,
 	memset(pmp->data, 0, sizeof(pmp->data));
 
 	p->port_select = port_select;
-	if (pmp->mad_hdr.attr_mod != 0 ||
+	if (pmp->attr_mod != 0 ||
 	    (port_select != port && port_select != 0xFF))
-		pmp->mad_hdr.status |= IB_SMP_INVALID_FIELD;
+		pmp->status |= IB_SMP_INVALID_FIELD;
 
 	if (cntrs.symbol_error_counter > 0xFFFFUL)
 		p->symbol_error_counter = cpu_to_be16(0xFFFF);
@@ -1084,7 +1216,7 @@ static int recv_pma_get_portcounters(struct ib_pma_mad *pmp,
 		cntrs.local_link_integrity_errors = 0xFUL;
 	if (cntrs.excessive_buffer_overrun_errors > 0xFUL)
 		cntrs.excessive_buffer_overrun_errors = 0xFUL;
-	p->link_overrun_errors = (cntrs.local_link_integrity_errors << 4) |
+	p->lli_ebor_errors = (cntrs.local_link_integrity_errors << 4) |
 		cntrs.excessive_buffer_overrun_errors;
 	if (cntrs.vl15_dropped > 0xFFFFUL)
 		p->vl15_dropped = cpu_to_be16(0xFFFF);
@@ -1112,7 +1244,7 @@ static int recv_pma_get_portcounters(struct ib_pma_mad *pmp,
 	return reply((struct ib_smp *) pmp);
 }
 
-static int recv_pma_get_portcounters_ext(struct ib_pma_mad *pmp,
+static int recv_pma_get_portcounters_ext(struct ib_perf *pmp,
 					 struct ib_device *ibdev, u8 port)
 {
 	struct ib_pma_portcounters_ext *p =
@@ -1133,9 +1265,9 @@ static int recv_pma_get_portcounters_ext(struct ib_pma_mad *pmp,
 	memset(pmp->data, 0, sizeof(pmp->data));
 
 	p->port_select = port_select;
-	if (pmp->mad_hdr.attr_mod != 0 ||
+	if (pmp->attr_mod != 0 ||
 	    (port_select != port && port_select != 0xFF))
-		pmp->mad_hdr.status |= IB_SMP_INVALID_FIELD;
+		pmp->status |= IB_SMP_INVALID_FIELD;
 
 	p->port_xmit_data = cpu_to_be64(swords);
 	p->port_rcv_data = cpu_to_be64(rwords);
@@ -1149,7 +1281,7 @@ static int recv_pma_get_portcounters_ext(struct ib_pma_mad *pmp,
 	return reply((struct ib_smp *) pmp);
 }
 
-static int recv_pma_set_portcounters(struct ib_pma_mad *pmp,
+static int recv_pma_set_portcounters(struct ib_perf *pmp,
 				     struct ib_device *ibdev, u8 port)
 {
 	struct ib_pma_portcounters *p = (struct ib_pma_portcounters *)
@@ -1212,7 +1344,7 @@ static int recv_pma_set_portcounters(struct ib_pma_mad *pmp,
 	return recv_pma_get_portcounters(pmp, ibdev, port);
 }
 
-static int recv_pma_set_portcounters_ext(struct ib_pma_mad *pmp,
+static int recv_pma_set_portcounters_ext(struct ib_perf *pmp,
 					 struct ib_device *ibdev, u8 port)
 {
 	struct ib_pma_portcounters *p = (struct ib_pma_portcounters *)
@@ -1386,19 +1518,19 @@ static int process_perf(struct ib_device *ibdev, u8 port_num,
 			struct ib_mad *in_mad,
 			struct ib_mad *out_mad)
 {
-	struct ib_pma_mad *pmp = (struct ib_pma_mad *)out_mad;
+	struct ib_perf *pmp = (struct ib_perf *)out_mad;
 	int ret;
 
 	*out_mad = *in_mad;
-	if (pmp->mad_hdr.class_version != 1) {
-		pmp->mad_hdr.status |= IB_SMP_UNSUP_VERSION;
+	if (pmp->class_version != 1) {
+		pmp->status |= IB_SMP_UNSUP_VERSION;
 		ret = reply((struct ib_smp *) pmp);
 		goto bail;
 	}
 
-	switch (pmp->mad_hdr.method) {
+	switch (pmp->method) {
 	case IB_MGMT_METHOD_GET:
-		switch (pmp->mad_hdr.attr_id) {
+		switch (pmp->attr_id) {
 		case IB_PMA_CLASS_PORT_INFO:
 			ret = recv_pma_get_classportinfo(pmp);
 			goto bail;
@@ -1422,13 +1554,13 @@ static int process_perf(struct ib_device *ibdev, u8 port_num,
 							    port_num);
 			goto bail;
 		default:
-			pmp->mad_hdr.status |= IB_SMP_UNSUP_METH_ATTR;
+			pmp->status |= IB_SMP_UNSUP_METH_ATTR;
 			ret = reply((struct ib_smp *) pmp);
 			goto bail;
 		}
 
 	case IB_MGMT_METHOD_SET:
-		switch (pmp->mad_hdr.attr_id) {
+		switch (pmp->attr_id) {
 		case IB_PMA_PORT_SAMPLES_CONTROL:
 			ret = recv_pma_set_portsamplescontrol(pmp, ibdev,
 							      port_num);
@@ -1442,7 +1574,7 @@ static int process_perf(struct ib_device *ibdev, u8 port_num,
 							    port_num);
 			goto bail;
 		default:
-			pmp->mad_hdr.status |= IB_SMP_UNSUP_METH_ATTR;
+			pmp->status |= IB_SMP_UNSUP_METH_ATTR;
 			ret = reply((struct ib_smp *) pmp);
 			goto bail;
 		}
@@ -1456,7 +1588,7 @@ static int process_perf(struct ib_device *ibdev, u8 port_num,
 		ret = IB_MAD_RESULT_SUCCESS;
 		goto bail;
 	default:
-		pmp->mad_hdr.status |= IB_SMP_UNSUP_METHOD;
+		pmp->status |= IB_SMP_UNSUP_METHOD;
 		ret = reply((struct ib_smp *) pmp);
 	}
 

@@ -151,13 +151,13 @@ typedef struct sigaltstack {
 #ifdef __KERNEL__
 #include <asm/sigcontext.h>
 
-#ifndef CONFIG_CPU_HAS_NO_BITFIELDS
+#ifndef __uClinux__
 #define __HAVE_ARCH_SIG_BITOPS
 
 static inline void sigaddset(sigset_t *set, int _sig)
 {
 	asm ("bfset %0{%1,#1}"
-		: "+o" (*set)
+		: "+od" (*set)
 		: "id" ((_sig - 1) ^ 31)
 		: "cc");
 }
@@ -165,7 +165,7 @@ static inline void sigaddset(sigset_t *set, int _sig)
 static inline void sigdelset(sigset_t *set, int _sig)
 {
 	asm ("bfclr %0{%1,#1}"
-		: "+o" (*set)
+		: "+od" (*set)
 		: "id" ((_sig - 1) ^ 31)
 		: "cc");
 }
@@ -181,7 +181,7 @@ static inline int __gen_sigismember(sigset_t *set, int _sig)
 	int ret;
 	asm ("bfextu %1{%2,#1},%0"
 		: "=d" (ret)
-		: "o" (*set), "id" ((_sig-1) ^ 31)
+		: "od" (*set), "id" ((_sig-1) ^ 31)
 		: "cc");
 	return ret;
 }
@@ -200,14 +200,15 @@ static inline int sigfindinword(unsigned long word)
 	return word ^ 31;
 }
 
-#endif /* !CONFIG_CPU_HAS_NO_BITFIELDS */
-
-#ifdef __uClinux__
-#define ptrace_signal_deliver(regs, cookie) do { } while (0)
-#else
 struct pt_regs;
 extern void ptrace_signal_deliver(struct pt_regs *regs, void *cookie);
-#endif /* __uClinux__ */
 
+#else
+
+#undef __HAVE_ARCH_SIG_BITOPS
+#define ptrace_signal_deliver(regs, cookie) do { } while (0)
+
+#endif /* __uClinux__ */
 #endif /* __KERNEL__ */
+
 #endif /* _M68K_SIGNAL_H */

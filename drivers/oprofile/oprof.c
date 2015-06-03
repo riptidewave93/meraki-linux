@@ -14,7 +14,7 @@
 #include <linux/moduleparam.h>
 #include <linux/workqueue.h>
 #include <linux/time.h>
-#include <linux/mutex.h>
+#include <asm/mutex.h>
 
 #include "oprof.h"
 #include "event_buffer.h"
@@ -225,53 +225,52 @@ post_sync:
 	mutex_unlock(&start_mutex);
 }
 
-int oprofile_set_ulong(unsigned long *addr, unsigned long val)
+int oprofile_set_backtrace(unsigned long val)
 {
-	int err = -EBUSY;
+	int err = 0;
 
 	mutex_lock(&start_mutex);
-	if (!oprofile_started) {
-		*addr = val;
-		err = 0;
-	}
-	mutex_unlock(&start_mutex);
 
+	if (oprofile_started) {
+		err = -EBUSY;
+		goto out;
+	}
+
+	if (!oprofile_ops.backtrace) {
+		err = -EINVAL;
+		goto out;
+	}
+
+	oprofile_backtrace_depth = val;
+
+out:
+	mutex_unlock(&start_mutex);
 	return err;
 }
-
-static int timer_mode;
 
 static int __init oprofile_init(void)
 {
 	int err;
 
-	/* always init architecture to setup backtrace support */
-	timer_mode = 0;
 	err = oprofile_arch_init(&oprofile_ops);
-	if (!err) {
-		if (!timer && !oprofilefs_register())
-			return 0;
+
+	if (err < 0 || timer) {
+		printk(KERN_INFO "oprofile: using timer interrupt.\n");
+		oprofile_timer_init(&oprofile_ops);
+	}
+
+	err = oprofilefs_register();
+	if (err)
 		oprofile_arch_exit();
-	}
 
-	/* setup timer mode: */
-	timer_mode = 1;
-	/* no nmi timer mode if oprofile.timer is set */
-	if (timer || op_nmi_timer_init(&oprofile_ops)) {
-		err = oprofile_timer_init(&oprofile_ops);
-		if (err)
-			return err;
-	}
-
-	return oprofilefs_register();
+	return err;
 }
 
 
 static void __exit oprofile_exit(void)
 {
 	oprofilefs_unregister();
-	if (!timer_mode)
-		oprofile_arch_exit();
+	oprofile_arch_exit();
 }
 
 

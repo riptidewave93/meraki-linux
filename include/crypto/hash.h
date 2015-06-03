@@ -63,6 +63,7 @@ struct shash_alg {
 	int (*update)(struct shash_desc *desc, const u8 *data,
 		      unsigned int len);
 	int (*final)(struct shash_desc *desc, u8 *out);
+	int (*partial)(struct shash_desc *desc, u8 *out);
 	int (*finup)(struct shash_desc *desc, const u8 *data,
 		     unsigned int len, u8 *out);
 	int (*digest)(struct shash_desc *desc, const u8 *data,
@@ -73,6 +74,7 @@ struct shash_alg {
 		      unsigned int keylen);
 
 	unsigned int descsize;
+	unsigned int partialsize;
 
 	/* These fields must match hash_alg_common. */
 	unsigned int digestsize
@@ -216,7 +218,7 @@ static inline struct ahash_request *ahash_request_alloc(
 {
 	struct ahash_request *req;
 
-	req = kmalloc(sizeof(struct ahash_request) +
+	req = (struct ahash_request *)kmalloc(sizeof(struct ahash_request) +
 		      crypto_ahash_reqsize(tfm), gfp);
 
 	if (likely(req))

@@ -17,6 +17,10 @@
 
 #ifdef __KERNEL__
 
+#ifdef CONFIG_MN10300_WD_TIMER
+#define ARCH_HAS_NMI_WATCHDOG		/* See include/linux/nmi.h */
+#endif
+
 /*
  * watchdog timer registers
  */
@@ -46,7 +50,7 @@ static inline void mn10300_proc_hard_reset(void)
 	RSTCTR |= RSTCTR_CHIPRST;
 }
 
-extern unsigned int watchdog_alert_counter[];
+extern unsigned int watchdog_alert_counter;
 
 extern void watchdog_go(void);
 extern asmlinkage void watchdog_handler(void);

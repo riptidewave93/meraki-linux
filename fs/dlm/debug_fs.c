@@ -15,7 +15,6 @@
 #include <linux/module.h>
 #include <linux/ctype.h>
 #include <linux/debugfs.h>
-#include <linux/slab.h>
 
 #include "dlm_internal.h"
 #include "lock.h"
@@ -257,12 +256,12 @@ static int print_format3_lock(struct seq_file *s, struct dlm_lkb *lkb,
 			lkb->lkb_status,
 			lkb->lkb_grmode,
 			lkb->lkb_rqmode,
-			lkb->lkb_last_bast.mode,
+			lkb->lkb_highbast,
 			rsb_lookup,
 			lkb->lkb_wait_type,
 			lkb->lkb_lvbseq,
 			(unsigned long long)ktime_to_ns(lkb->lkb_timestamp),
-			(unsigned long long)ktime_to_ns(lkb->lkb_last_bast_time));
+			(unsigned long long)ktime_to_ns(lkb->lkb_time_bast));
 	return rv;
 }
 
@@ -393,7 +392,6 @@ static const struct seq_operations format3_seq_ops;
 
 static void *table_seq_start(struct seq_file *seq, loff_t *pos)
 {
-	struct rb_node *node;
 	struct dlm_ls *ls = seq->private;
 	struct rsbtbl_iter *ri;
 	struct dlm_rsb *r;
@@ -419,10 +417,9 @@ static void *table_seq_start(struct seq_file *seq, loff_t *pos)
 		ri->format = 3;
 
 	spin_lock(&ls->ls_rsbtbl[bucket].lock);
-	if (!RB_EMPTY_ROOT(&ls->ls_rsbtbl[bucket].keep)) {
-		for (node = rb_first(&ls->ls_rsbtbl[bucket].keep); node;
-		     node = rb_next(node)) {
-			r = rb_entry(node, struct dlm_rsb, res_hashnode);
+	if (!list_empty(&ls->ls_rsbtbl[bucket].list)) {
+		list_for_each_entry(r, &ls->ls_rsbtbl[bucket].list,
+				    res_hashchain) {
 			if (!entry--) {
 				dlm_hold_rsb(r);
 				ri->rsb = r;
@@ -451,9 +448,9 @@ static void *table_seq_start(struct seq_file *seq, loff_t *pos)
 		}
 
 		spin_lock(&ls->ls_rsbtbl[bucket].lock);
-		if (!RB_EMPTY_ROOT(&ls->ls_rsbtbl[bucket].keep)) {
-			node = rb_first(&ls->ls_rsbtbl[bucket].keep);
-			r = rb_entry(node, struct dlm_rsb, res_hashnode);
+		if (!list_empty(&ls->ls_rsbtbl[bucket].list)) {
+			r = list_first_entry(&ls->ls_rsbtbl[bucket].list,
+					     struct dlm_rsb, res_hashchain);
 			dlm_hold_rsb(r);
 			ri->rsb = r;
 			ri->bucket = bucket;
@@ -469,7 +466,7 @@ static void *table_seq_next(struct seq_file *seq, void *iter_ptr, loff_t *pos)
 {
 	struct dlm_ls *ls = seq->private;
 	struct rsbtbl_iter *ri = iter_ptr;
-	struct rb_node *next;
+	struct list_head *next;
 	struct dlm_rsb *r, *rp;
 	loff_t n = *pos;
 	unsigned bucket;
@@ -482,10 +479,10 @@ static void *table_seq_next(struct seq_file *seq, void *iter_ptr, loff_t *pos)
 
 	spin_lock(&ls->ls_rsbtbl[bucket].lock);
 	rp = ri->rsb;
-	next = rb_next(&rp->res_hashnode);
+	next = rp->res_hashchain.next;
 
-	if (next) {
-		r = rb_entry(next, struct dlm_rsb, res_hashnode);
+	if (next != &ls->ls_rsbtbl[bucket].list) {
+		r = list_entry(next, struct dlm_rsb, res_hashchain);
 		dlm_hold_rsb(r);
 		ri->rsb = r;
 		spin_unlock(&ls->ls_rsbtbl[bucket].lock);
@@ -513,9 +510,9 @@ static void *table_seq_next(struct seq_file *seq, void *iter_ptr, loff_t *pos)
 		}
 
 		spin_lock(&ls->ls_rsbtbl[bucket].lock);
-		if (!RB_EMPTY_ROOT(&ls->ls_rsbtbl[bucket].keep)) {
-			next = rb_first(&ls->ls_rsbtbl[bucket].keep);
-			r = rb_entry(next, struct dlm_rsb, res_hashnode);
+		if (!list_empty(&ls->ls_rsbtbl[bucket].list)) {
+			r = list_first_entry(&ls->ls_rsbtbl[bucket].list,
+					     struct dlm_rsb, res_hashchain);
 			dlm_hold_rsb(r);
 			ri->rsb = r;
 			ri->bucket = bucket;
@@ -609,6 +606,13 @@ static const struct file_operations format3_fops = {
 /*
  * dump lkb's on the ls_waiters list
  */
+
+static int waiters_open(struct inode *inode, struct file *file)
+{
+	file->private_data = inode->i_private;
+	return 0;
+}
+
 static ssize_t waiters_read(struct file *file, char __user *userbuf,
 			    size_t count, loff_t *ppos)
 {
@@ -637,9 +641,8 @@ static ssize_t waiters_read(struct file *file, char __user *userbuf,
 
 static const struct file_operations waiters_fops = {
 	.owner   = THIS_MODULE,
-	.open    = simple_open,
-	.read    = waiters_read,
-	.llseek  = default_llseek,
+	.open    = waiters_open,
+	.read    = waiters_read
 };
 
 void dlm_delete_debug_file(struct dlm_ls *ls)

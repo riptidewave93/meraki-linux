@@ -37,9 +37,8 @@
  */
 
 #include <linux/delay.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/pci.h>
-#include <linux/slab.h>
 #include <sound/core.h>
 #include <sound/sb.h>
 #include <sound/initval.h>
@@ -50,14 +49,7 @@ MODULE_LICENSE("GPL");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
-
-module_param_array(index, int, NULL, 0444);
-MODULE_PARM_DESC(index, "Index value for CS5530 Audio driver.");
-module_param_array(id, charp, NULL, 0444);
-MODULE_PARM_DESC(id, "ID string for CS5530 Audio driver.");
-module_param_array(enable, bool, NULL, 0444);
-MODULE_PARM_DESC(enable, "Enable CS5530 Audio driver.");
+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
 
 struct snd_cs5530 {
 	struct snd_card *card;
@@ -66,7 +58,7 @@ struct snd_cs5530 {
 	unsigned long pci_base;
 };
 
-static DEFINE_PCI_DEVICE_TABLE(snd_cs5530_ids) = {
+static struct pci_device_id snd_cs5530_ids[] = {
 	{PCI_VENDOR_ID_CYRIX, PCI_DEVICE_ID_CYRIX_5530_AUDIO, PCI_ANY_ID,
 							PCI_ANY_ID, 0, 0},
 	{0,}
@@ -292,7 +284,7 @@ static int __devinit snd_cs5530_probe(struct pci_dev *pci,
 }
 
 static struct pci_driver driver = {
-	.name = KBUILD_MODNAME,
+	.name = "CS5530_Audio",
 	.id_table = snd_cs5530_ids,
 	.probe = snd_cs5530_probe,
 	.remove = __devexit_p(snd_cs5530_remove),

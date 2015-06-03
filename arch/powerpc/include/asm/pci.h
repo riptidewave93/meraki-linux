@@ -44,7 +44,12 @@ struct pci_dev;
  * bus numbers (don't do that on ppc64 yet !)
  */
 #define pcibios_assign_all_busses() \
-	(pci_has_flag(PCI_REASSIGN_ALL_BUS))
+	(ppc_pci_has_flag(PPC_PCI_REASSIGN_ALL_BUS))
+
+static inline void pcibios_set_master(struct pci_dev *dev)
+{
+	/* No special bus mastering setup handling */
+}
 
 static inline void pcibios_penalize_isa_irq(int irq, int active)
 {
@@ -136,6 +141,38 @@ extern int pci_mmap_legacy_page_range(struct pci_bus *bus,
 
 #define HAVE_PCI_LEGACY	1
 
+#if defined(CONFIG_PPC64) || defined(CONFIG_NOT_COHERENT_CACHE)
+/*
+ * For 64-bit kernels, pci_unmap_{single,page} is not a nop.
+ * For 32-bit non-coherent kernels, pci_dma_sync_single_for_cpu() and
+ * so on are not nops.
+ * and thus...
+ */
+#define DECLARE_PCI_UNMAP_ADDR(ADDR_NAME)	\
+	dma_addr_t ADDR_NAME;
+#define DECLARE_PCI_UNMAP_LEN(LEN_NAME)		\
+	__u32 LEN_NAME;
+#define pci_unmap_addr(PTR, ADDR_NAME)			\
+	((PTR)->ADDR_NAME)
+#define pci_unmap_addr_set(PTR, ADDR_NAME, VAL)		\
+	(((PTR)->ADDR_NAME) = (VAL))
+#define pci_unmap_len(PTR, LEN_NAME)			\
+	((PTR)->LEN_NAME)
+#define pci_unmap_len_set(PTR, LEN_NAME, VAL)		\
+	(((PTR)->LEN_NAME) = (VAL))
+
+#else /* 32-bit && coherent */
+
+/* pci_unmap_{page,single} is a nop so... */
+#define DECLARE_PCI_UNMAP_ADDR(ADDR_NAME)
+#define DECLARE_PCI_UNMAP_LEN(LEN_NAME)
+#define pci_unmap_addr(PTR, ADDR_NAME)		(0)
+#define pci_unmap_addr_set(PTR, ADDR_NAME, VAL)	do { } while (0)
+#define pci_unmap_len(PTR, LEN_NAME)		(0)
+#define pci_unmap_len_set(PTR, LEN_NAME, VAL)	do { } while (0)
+
+#endif /* CONFIG_PPC64 || CONFIG_NOT_COHERENT_CACHE */
+
 #ifdef CONFIG_PPC64
 
 /* The PCI address space does not equal the physical memory address
@@ -154,6 +191,14 @@ extern int pci_mmap_legacy_page_range(struct pci_bus *bus,
 
 #endif /* CONFIG_PPC64 */
 
+extern void pcibios_resource_to_bus(struct pci_dev *dev,
+			struct pci_bus_region *region,
+			struct resource *res);
+
+extern void pcibios_bus_to_resource(struct pci_dev *dev,
+			struct resource *res,
+			struct pci_bus_region *region);
+
 extern void pcibios_claim_one_bus(struct pci_bus *b);
 
 extern void pcibios_finish_adding_to_bus(struct pci_bus *bus);
@@ -166,10 +211,13 @@ extern int remove_phb_dynamic(struct pci_controller *phb);
 extern struct pci_dev *of_create_pci_dev(struct device_node *node,
 					struct pci_bus *bus, int devfn);
 
-extern void of_scan_pci_bridge(struct pci_dev *dev);
+extern void of_scan_pci_bridge(struct device_node *node,
+				struct pci_dev *dev);
 
 extern void of_scan_bus(struct device_node *node, struct pci_bus *bus);
 extern void of_rescan_bus(struct device_node *node, struct pci_bus *bus);
+
+extern int pci_read_irq_line(struct pci_dev *dev);
 
 struct file;
 extern pgprot_t	pci_phys_mem_access_prot(struct file *file,
@@ -182,11 +230,10 @@ extern void pci_resource_to_user(const struct pci_dev *dev, int bar,
 				 const struct resource *rsrc,
 				 resource_size_t *start, resource_size_t *end);
 
-extern resource_size_t pcibios_io_space_offset(struct pci_controller *hose);
 extern void pcibios_setup_bus_devices(struct pci_bus *bus);
 extern void pcibios_setup_bus_self(struct pci_bus *bus);
 extern void pcibios_setup_phb_io_space(struct pci_controller *hose);
-extern void pcibios_scan_phb(struct pci_controller *hose);
+extern void pcibios_scan_phb(struct pci_controller *hose, void *sysdata);
 
 #endif	/* __KERNEL__ */
 #endif /* __ASM_POWERPC_PCI_H */

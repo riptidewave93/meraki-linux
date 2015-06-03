@@ -6,7 +6,7 @@
  ******************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -42,7 +42,6 @@
  * POSSIBILITY OF SUCH DAMAGES.
  */
 
-#include <linux/export.h>
 #include <acpi/acpi.h>
 #include "accommon.h"
 #include "acnamesp.h"
@@ -191,7 +190,7 @@ acpi_evaluate_object(acpi_handle handle,
 
 	/* Convert and validate the device handle */
 
-	info->prefix_node = acpi_ns_validate_handle(handle);
+	info->prefix_node = acpi_ns_map_handle_to_node(handle);
 	if (!info->prefix_node) {
 		status = AE_BAD_PARAMETER;
 		goto cleanup;
@@ -434,11 +433,8 @@ static void acpi_ns_resolve_references(struct acpi_evaluate_info *info)
  * PARAMETERS:  Type                - acpi_object_type to search for
  *              start_object        - Handle in namespace where search begins
  *              max_depth           - Depth to which search is to reach
- *              pre_order_visit     - Called during tree pre-order visit
- *                                    when an object of "Type" is found
- *              post_order_visit    - Called during tree post-order visit
- *                                    when an object of "Type" is found
- *              Context             - Passed to user function(s) above
+ *              user_function       - Called when an object of "Type" is found
+ *              Context             - Passed to user function
  *              return_value        - Location where return value of
  *                                    user_function is put if terminated early
  *
@@ -447,16 +443,16 @@ static void acpi_ns_resolve_references(struct acpi_evaluate_info *info)
  *
  * DESCRIPTION: Performs a modified depth-first walk of the namespace tree,
  *              starting (and ending) at the object specified by start_handle.
- *              The callback function is called whenever an object that matches
- *              the type parameter is found. If the callback function returns
+ *              The user_function is called whenever an object that matches
+ *              the type parameter is found.  If the user function returns
  *              a non-zero value, the search is terminated immediately and this
  *              value is returned to the caller.
  *
  *              The point of this procedure is to provide a generic namespace
  *              walk routine that can be called from multiple places to
- *              provide multiple services; the callback function(s) can be
- *              tailored to each task, whether it is a print function,
- *              a compare function, etc.
+ *              provide multiple services;  the User Function can be tailored
+ *              to each task, whether it is a print function, a compare
+ *              function, etc.
  *
  ******************************************************************************/
 
@@ -464,8 +460,7 @@ acpi_status
 acpi_walk_namespace(acpi_object_type type,
 		    acpi_handle start_object,
 		    u32 max_depth,
-		    acpi_walk_callback pre_order_visit,
-		    acpi_walk_callback post_order_visit,
+		    acpi_walk_callback user_function,
 		    void *context, void **return_value)
 {
 	acpi_status status;
@@ -474,8 +469,7 @@ acpi_walk_namespace(acpi_object_type type,
 
 	/* Parameter validation */
 
-	if ((type > ACPI_TYPE_LOCAL_MAX) ||
-	    (!max_depth) || (!pre_order_visit && !post_order_visit)) {
+	if ((type > ACPI_TYPE_LOCAL_MAX) || (!max_depth) || (!user_function)) {
 		return_ACPI_STATUS(AE_BAD_PARAMETER);
 	}
 
@@ -507,9 +501,8 @@ acpi_walk_namespace(acpi_object_type type,
 	}
 
 	status = acpi_ns_walk_namespace(type, start_object, max_depth,
-					ACPI_NS_WALK_UNLOCK, pre_order_visit,
-					post_order_visit, context,
-					return_value);
+					ACPI_NS_WALK_UNLOCK, user_function,
+					context, return_value);
 
 	(void)acpi_ut_release_mutex(ACPI_MTX_NAMESPACE);
 
@@ -553,7 +546,7 @@ acpi_ns_get_device_callback(acpi_handle obj_handle,
 		return (status);
 	}
 
-	node = acpi_ns_validate_handle(obj_handle);
+	node = acpi_ns_map_handle_to_node(obj_handle);
 	status = acpi_ut_release_mutex(ACPI_MTX_NAMESPACE);
 	if (ACPI_FAILURE(status)) {
 		return (status);
@@ -563,20 +556,25 @@ acpi_ns_get_device_callback(acpi_handle obj_handle,
 		return (AE_BAD_PARAMETER);
 	}
 
-	/*
-	 * First, filter based on the device HID and CID.
-	 *
-	 * 01/2010: For this case where a specific HID is requested, we don't
-	 * want to run _STA until we have an actual HID match. Thus, we will
-	 * not unnecessarily execute _STA on devices for which the caller
-	 * doesn't care about. Previously, _STA was executed unconditionally
-	 * on all devices found here.
-	 *
-	 * A side-effect of this change is that now we will continue to search
-	 * for a matching HID even under device trees where the parent device
-	 * would have returned a _STA that indicates it is not present or
-	 * not functioning (thus aborting the search on that branch).
-	 */
+	/* Run _STA to determine if device is present */
+
+	status = acpi_ut_execute_STA(node, &flags);
+	if (ACPI_FAILURE(status)) {
+		return (AE_CTRL_DEPTH);
+	}
+
+	if (!(flags & ACPI_STA_DEVICE_PRESENT) &&
+	    !(flags & ACPI_STA_DEVICE_FUNCTIONING)) {
+		/*
+		 * Don't examine the children of the device only when the
+		 * device is neither present nor functional. See ACPI spec,
+		 * description of _STA for more information.
+		 */
+		return (AE_CTRL_DEPTH);
+	}
+
+	/* Filter based on device HID & CID */
+
 	if (info->hid != NULL) {
 		status = acpi_ut_execute_HID(node, &hid);
 		if (status == AE_NOT_FOUND) {
@@ -615,25 +613,6 @@ acpi_ns_get_device_callback(acpi_handle obj_handle,
 				return (AE_OK);
 		}
 	}
-
-	/* Run _STA to determine if device is present */
-
-	status = acpi_ut_execute_STA(node, &flags);
-	if (ACPI_FAILURE(status)) {
-		return (AE_CTRL_DEPTH);
-	}
-
-	if (!(flags & ACPI_STA_DEVICE_PRESENT) &&
-	    !(flags & ACPI_STA_DEVICE_FUNCTIONING)) {
-		/*
-		 * Don't examine the children of the device only when the
-		 * device is neither present nor functional. See ACPI spec,
-		 * description of _STA for more information.
-		 */
-		return (AE_CTRL_DEPTH);
-	}
-
-	/* We have a valid device, invoke the user function */
 
 	status = info->user_function(obj_handle, nesting_level, info->context,
 				     return_value);
@@ -702,8 +681,8 @@ acpi_get_devices(const char *HID,
 
 	status = acpi_ns_walk_namespace(ACPI_TYPE_DEVICE, ACPI_ROOT_OBJECT,
 					ACPI_UINT32_MAX, ACPI_NS_WALK_UNLOCK,
-					acpi_ns_get_device_callback, NULL,
-					&info, return_value);
+					acpi_ns_get_device_callback, &info,
+					return_value);
 
 	(void)acpi_ut_release_mutex(ACPI_MTX_NAMESPACE);
 	return_ACPI_STATUS(status);
@@ -744,7 +723,7 @@ acpi_attach_data(acpi_handle obj_handle,
 
 	/* Convert and validate the handle */
 
-	node = acpi_ns_validate_handle(obj_handle);
+	node = acpi_ns_map_handle_to_node(obj_handle);
 	if (!node) {
 		status = AE_BAD_PARAMETER;
 		goto unlock_and_exit;
@@ -790,7 +769,7 @@ acpi_detach_data(acpi_handle obj_handle, acpi_object_handler handler)
 
 	/* Convert and validate the handle */
 
-	node = acpi_ns_validate_handle(obj_handle);
+	node = acpi_ns_map_handle_to_node(obj_handle);
 	if (!node) {
 		status = AE_BAD_PARAMETER;
 		goto unlock_and_exit;
@@ -837,7 +816,7 @@ acpi_get_data(acpi_handle obj_handle, acpi_object_handler handler, void **data)
 
 	/* Convert and validate the handle */
 
-	node = acpi_ns_validate_handle(obj_handle);
+	node = acpi_ns_map_handle_to_node(obj_handle);
 	if (!node) {
 		status = AE_BAD_PARAMETER;
 		goto unlock_and_exit;

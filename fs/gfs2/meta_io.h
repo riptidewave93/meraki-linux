@@ -37,16 +37,8 @@ static inline void gfs2_buffer_copy_tail(struct buffer_head *to_bh,
 	       0, from_head - to_head);
 }
 
-extern const struct address_space_operations gfs2_meta_aops;
-
-static inline struct gfs2_sbd *gfs2_mapping2sbd(struct address_space *mapping)
-{
-	struct inode *inode = mapping->host;
-	if (mapping->a_ops == &gfs2_meta_aops)
-		return (((struct gfs2_glock *)mapping) - 1)->gl_sbd;
-	else
-		return inode->i_sb->s_fs_info;
-}
+struct inode *gfs2_aspace_get(struct gfs2_sbd *sdp);
+void gfs2_aspace_put(struct inode *aspace);
 
 void gfs2_meta_sync(struct gfs2_glock *gl);
 
@@ -77,6 +69,8 @@ struct buffer_head *gfs2_meta_ra(struct gfs2_glock *gl, u64 dblock, u32 extlen);
 
 #define buffer_busy(bh) \
 ((bh)->b_state & ((1ul << BH_Dirty) | (1ul << BH_Lock) | (1ul << BH_Pinned)))
+#define buffer_in_io(bh) \
+((bh)->b_state & ((1ul << BH_Dirty) | (1ul << BH_Lock)))
 
 #endif /* __DIO_DOT_H__ */
 

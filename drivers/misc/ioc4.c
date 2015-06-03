@@ -30,7 +30,6 @@
 #include <linux/pci.h>
 #include <linux/ioc4.h>
 #include <linux/ktime.h>
-#include <linux/slab.h>
 #include <linux/mutex.h>
 #include <linux/time.h>
 #include <asm/io.h>
@@ -139,7 +138,7 @@ ioc4_unregister_submodule(struct ioc4_submodule *is)
  * even though the following code utilizes external interrupt registers
  * to perform the speed calculation.
  */
-static void __devinit
+static void
 ioc4_clock_calibrate(struct ioc4_driver_data *idd)
 {
 	union ioc4_int_out int_out;
@@ -231,7 +230,7 @@ ioc4_clock_calibrate(struct ioc4_driver_data *idd)
  * on the same PCI bus at slot number 3 to differentiate IO9 from IO10.
  * If neither is present, it's a PCI-RT.
  */
-static unsigned int __devinit
+static unsigned int
 ioc4_variant(struct ioc4_driver_data *idd)
 {
 	struct pci_dev *pdev = NULL;
@@ -273,13 +272,15 @@ ioc4_variant(struct ioc4_driver_data *idd)
 static void
 ioc4_load_modules(struct work_struct *work)
 {
+	/* arg just has to be freed */
+
 	request_module("sgiioc4");
+
+	kfree(work);
 }
 
-static DECLARE_WORK(ioc4_load_modules_work, ioc4_load_modules);
-
 /* Adds a new instance of an IOC4 card */
-static int __devinit
+static int
 ioc4_probe(struct pci_dev *pdev, const struct pci_device_id *pci_id)
 {
 	struct ioc4_driver_data *idd;
@@ -394,12 +395,21 @@ ioc4_probe(struct pci_dev *pdev, const struct pci_device_id *pci_id)
 	 * PCI device.
 	 */
 	if (idd->idd_variant != IOC4_VARIANT_PCI_RT) {
-		/* Request the module from a work procedure as the modprobe
-		 * goes out to a userland helper and that will hang if done
-		 * directly from ioc4_probe().
-		 */
-		printk(KERN_INFO "IOC4 loading sgiioc4 submodule\n");
-		schedule_work(&ioc4_load_modules_work);
+		struct work_struct *work;
+		work = kzalloc(sizeof(struct work_struct), GFP_KERNEL);
+		if (!work) {
+			printk(KERN_WARNING
+			       "%s: IOC4 unable to allocate memory for "
+			       "load of sub-modules.\n", __func__);
+		} else {
+			/* Request the module from a work procedure as the
+			 * modprobe goes out to a userland helper and that
+			 * will hang if done directly from ioc4_probe().
+			 */
+			printk(KERN_INFO "IOC4 loading sgiioc4 submodule\n");
+			INIT_WORK(work, ioc4_load_modules);
+			schedule_work(work);
+		}
 	}
 
 	return 0;
@@ -415,7 +425,7 @@ out:
 }
 
 /* Removes a particular instance of an IOC4 card. */
-static void __devexit
+static void
 ioc4_remove(struct pci_dev *pdev)
 {
 	struct ioc4_submodule *is;
@@ -466,7 +476,7 @@ static struct pci_driver ioc4_driver = {
 	.name = "IOC4",
 	.id_table = ioc4_id_table,
 	.probe = ioc4_probe,
-	.remove = __devexit_p(ioc4_remove),
+	.remove = ioc4_remove,
 };
 
 MODULE_DEVICE_TABLE(pci, ioc4_id_table);
@@ -476,18 +486,18 @@ MODULE_DEVICE_TABLE(pci, ioc4_id_table);
  *********************/
 
 /* Module load */
-static int __init
+static int __devinit
 ioc4_init(void)
 {
 	return pci_register_driver(&ioc4_driver);
 }
 
 /* Module unload */
-static void __exit
+static void __devexit
 ioc4_exit(void)
 {
 	/* Ensure ioc4_load_modules() has completed before exiting */
-	flush_work_sync(&ioc4_load_modules_work);
+	flush_scheduled_work();
 	pci_unregister_driver(&ioc4_driver);
 }
 

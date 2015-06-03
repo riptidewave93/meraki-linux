@@ -18,18 +18,21 @@ struct compat_timespec;
 struct restart_block {
 	long (*fn)(struct restart_block *);
 	union {
+		struct {
+			unsigned long arg0, arg1, arg2, arg3;
+		};
 		/* For futex_wait and futex_wait_requeue_pi */
 		struct {
-			u32 __user *uaddr;
+			u32 *uaddr;
 			u32 val;
 			u32 flags;
 			u32 bitset;
 			u64 time;
-			u32 __user *uaddr2;
+			u32 *uaddr2;
 		} futex;
 		/* For nanosleep */
 		struct {
-			clockid_t clockid;
+			clockid_t index;
 			struct timespec __user *rmtp;
 #ifdef CONFIG_COMPAT
 			struct compat_timespec __user *compat_rmtp;
@@ -53,12 +56,6 @@ extern long do_no_restart_syscall(struct restart_block *parm);
 #include <asm/thread_info.h>
 
 #ifdef __KERNEL__
-
-#ifdef CONFIG_DEBUG_STACK_USAGE
-# define THREADINFO_GFP		(GFP_KERNEL | __GFP_NOTRACK | __GFP_ZERO)
-#else
-# define THREADINFO_GFP		(GFP_KERNEL | __GFP_NOTRACK)
-#endif
 
 /*
  * flag set/clear/test wrappers

@@ -14,6 +14,7 @@
 #include <linux/sched.h>
 #include <linux/mm.h>
 #include <asm/ptrace.h>
+#include <asm/system.h>
 
 /*
  * For IA64 we need to perform a complex little dance to get both
@@ -28,7 +29,7 @@ typedef struct
 	unsigned int depth;
 	struct pt_regs *regs;
 	struct unw_frame_info frame;
-	unsigned long *prev_pfs_loc;	/* state for WAR for old spinlock ool code */
+	u64 *prev_pfs_loc;	/* state for WAR for old spinlock ool code */
 } ia64_backtrace_t;
 
 /* Returns non-zero if the PC is in the Interrupt Vector Table */

@@ -4,4 +4,4 @@
 
 obj-$(CONFIG_WAN_ROUTER) += wanrouter.o
 
-wanrouter-y :=  wanproc.o wanmain.o
+wanrouter-objs :=  wanproc.o wanmain.o

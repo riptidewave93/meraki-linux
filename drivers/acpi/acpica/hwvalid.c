@@ -6,7 +6,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2009, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -134,8 +134,6 @@ acpi_hw_validate_io_request(acpi_io_address address, u32 bit_width)
 	/* Supported widths are 8/16/32 */
 
 	if ((bit_width != 8) && (bit_width != 16) && (bit_width != 32)) {
-		ACPI_ERROR((AE_INFO,
-			    "Bad BitWidth parameter: %8.8X", bit_width));
 		return AE_BAD_PARAMETER;
 	}
 
@@ -152,7 +150,7 @@ acpi_hw_validate_io_request(acpi_io_address address, u32 bit_width)
 
 	if (last_address > ACPI_UINT16_MAX) {
 		ACPI_ERROR((AE_INFO,
-			    "Illegal I/O port address/length above 64K: %p/0x%X",
+			    "Illegal I/O port address/length above 64K: 0x%p/%X",
 			    ACPI_CAST_PTR(void, address), byte_width));
 		return_ACPI_STATUS(AE_LIMIT);
 	}
@@ -224,12 +222,6 @@ acpi_status acpi_hw_read_port(acpi_io_address address, u32 *value, u32 width)
 	u32 one_byte;
 	u32 i;
 
-	/* Truncate address to 16 bits if requested */
-
-	if (acpi_gbl_truncate_io_addresses) {
-		address &= ACPI_UINT16_MAX;
-	}
-
 	/* Validate the entire request and perform the I/O */
 
 	status = acpi_hw_validate_io_request(address, width);
@@ -286,12 +278,6 @@ acpi_status acpi_hw_write_port(acpi_io_address address, u32 value, u32 width)
 {
 	acpi_status status;
 	u32 i;
-
-	/* Truncate address to 16 bits if requested */
-
-	if (acpi_gbl_truncate_io_addresses) {
-		address &= ACPI_UINT16_MAX;
-	}
 
 	/* Validate the entire request and perform the I/O */
 

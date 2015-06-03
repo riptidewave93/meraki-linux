@@ -5,7 +5,6 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include <linux/module.h>
 #include <linux/skbuff.h>
 #include <linux/jhash.h>
@@ -86,7 +85,7 @@ xt_cluster_is_multicast_addr(const struct sk_buff *skb, u_int8_t family)
 }
 
 static bool
-xt_cluster_mt(const struct sk_buff *skb, struct xt_action_param *par)
+xt_cluster_mt(const struct sk_buff *skb, const struct xt_match_param *par)
 {
 	struct sk_buff *pskb = (struct sk_buff *)skb;
 	const struct xt_cluster_match_info *info = par->matchinfo;
@@ -120,7 +119,7 @@ xt_cluster_mt(const struct sk_buff *skb, struct xt_action_param *par)
 	if (ct == NULL)
 		return false;
 
-	if (nf_ct_is_untracked(ct))
+	if (ct == &nf_conntrack_untracked)
 		return false;
 
 	if (ct->master)
@@ -132,22 +131,22 @@ xt_cluster_mt(const struct sk_buff *skb, struct xt_action_param *par)
 	       !!(info->flags & XT_CLUSTER_F_INV);
 }
 
-static int xt_cluster_mt_checkentry(const struct xt_mtchk_param *par)
+static bool xt_cluster_mt_checkentry(const struct xt_mtchk_param *par)
 {
 	struct xt_cluster_match_info *info = par->matchinfo;
 
 	if (info->total_nodes > XT_CLUSTER_NODES_MAX) {
-		pr_info("you have exceeded the maximum "
-			"number of cluster nodes (%u > %u)\n",
-			info->total_nodes, XT_CLUSTER_NODES_MAX);
-		return -EINVAL;
+		printk(KERN_ERR "xt_cluster: you have exceeded the maximum "
+				"number of cluster nodes (%u > %u)\n",
+				info->total_nodes, XT_CLUSTER_NODES_MAX);
+		return false;
 	}
 	if (info->node_mask >= (1ULL << info->total_nodes)) {
-		pr_info("this node mask cannot be "
-			"higher than the total number of nodes\n");
-		return -EDOM;
+		printk(KERN_ERR "xt_cluster: this node mask cannot be "
+				"higher than the total number of nodes\n");
+		return false;
 	}
-	return 0;
+	return true;
 }
 
 static struct xt_match xt_cluster_match __read_mostly = {

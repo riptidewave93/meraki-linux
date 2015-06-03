@@ -23,6 +23,7 @@
 #include <asm/asm-offsets.h>
 #include <asm/setup.h>
 #include <asm/fpu.h>
+#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
 #include <asm/siginfo.h>

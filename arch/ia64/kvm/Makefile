@@ -45,11 +45,11 @@ FORCE : $(obj)/$(offsets-file)
 # Makefile for Kernel-based Virtual Machine module
 #
 
-ccflags-y := -Ivirt/kvm -Iarch/ia64/kvm/
-asflags-y := -Ivirt/kvm -Iarch/ia64/kvm/
+EXTRA_CFLAGS += -Ivirt/kvm -Iarch/ia64/kvm/
+EXTRA_AFLAGS += -Ivirt/kvm -Iarch/ia64/kvm/
 
 common-objs = $(addprefix ../../../virt/kvm/, kvm_main.o ioapic.o \
-		coalesced_mmio.o irq_comm.o assigned-dev.o)
+		coalesced_mmio.o irq_comm.o)
 
 ifeq ($(CONFIG_IOMMU_API),y)
 common-objs += $(addprefix ../../../virt/kvm/, iommu.o)

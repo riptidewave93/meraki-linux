@@ -43,152 +43,84 @@ static struct severity {
 	unsigned char covered;
 	char *msg;
 } severities[] = {
-#define MCESEV(s, m, c...) { .sev = MCE_ ## s ## _SEVERITY, .msg = m, ## c }
-#define  KERNEL		.context = IN_KERNEL
-#define  USER		.context = IN_USER
-#define  SER		.ser = SER_REQUIRED
-#define  NOSER		.ser = NO_SER
-#define  BITCLR(x)	.mask = x, .result = 0
-#define  BITSET(x)	.mask = x, .result = x
-#define  MCGMASK(x, y)	.mcgmask = x, .mcgres = y
-#define  MASK(x, y)	.mask = x, .result = y
+#define KERNEL .context = IN_KERNEL
+#define USER .context = IN_USER
+#define SER .ser = SER_REQUIRED
+#define NOSER .ser = NO_SER
+#define SEV(s) .sev = MCE_ ## s ## _SEVERITY
+#define BITCLR(x, s, m, r...) { .mask = x, .result = 0, SEV(s), .msg = m, ## r }
+#define BITSET(x, s, m, r...) { .mask = x, .result = x, SEV(s), .msg = m, ## r }
+#define MCGMASK(x, res, s, m, r...) \
+	{ .mcgmask = x, .mcgres = res, SEV(s), .msg = m, ## r }
+#define MASK(x, y, s, m, r...) \
+	{ .mask = x, .result = y, SEV(s), .msg = m, ## r }
 #define MCI_UC_S (MCI_STATUS_UC|MCI_STATUS_S)
 #define MCI_UC_SAR (MCI_STATUS_UC|MCI_STATUS_S|MCI_STATUS_AR)
-#define	MCI_ADDR (MCI_STATUS_ADDRV|MCI_STATUS_MISCV)
 #define MCACOD 0xffff
-/* Architecturally defined codes from SDM Vol. 3B Chapter 15 */
-#define MCACOD_SCRUB	0x00C0	/* 0xC0-0xCF Memory Scrubbing */
-#define MCACOD_SCRUBMSK	0xfff0
-#define MCACOD_L3WB	0x017A	/* L3 Explicit Writeback */
-#define MCACOD_DATA	0x0134	/* Data Load */
-#define MCACOD_INSTR	0x0150	/* Instruction Fetch */
 
-	MCESEV(
-		NO, "Invalid",
-		BITCLR(MCI_STATUS_VAL)
-		),
-	MCESEV(
-		NO, "Not enabled",
-		BITCLR(MCI_STATUS_EN)
-		),
-	MCESEV(
-		PANIC, "Processor context corrupt",
-		BITSET(MCI_STATUS_PCC)
-		),
+	BITCLR(MCI_STATUS_VAL, NO, "Invalid"),
+	BITCLR(MCI_STATUS_EN, NO, "Not enabled"),
+	BITSET(MCI_STATUS_PCC, PANIC, "Processor context corrupt"),
 	/* When MCIP is not set something is very confused */
-	MCESEV(
-		PANIC, "MCIP not set in MCA handler",
-		MCGMASK(MCG_STATUS_MCIP, 0)
-		),
+	MCGMASK(MCG_STATUS_MCIP, 0, PANIC, "MCIP not set in MCA handler"),
 	/* Neither return not error IP -- no chance to recover -> PANIC */
-	MCESEV(
-		PANIC, "Neither restart nor error IP",
-		MCGMASK(MCG_STATUS_RIPV|MCG_STATUS_EIPV, 0)
-		),
-	MCESEV(
-		PANIC, "In kernel and no restart IP",
-		KERNEL, MCGMASK(MCG_STATUS_RIPV, 0)
-		),
-	MCESEV(
-		KEEP, "Corrected error",
-		NOSER, BITCLR(MCI_STATUS_UC)
-		),
+	MCGMASK(MCG_STATUS_RIPV|MCG_STATUS_EIPV, 0, PANIC,
+		"Neither restart nor error IP"),
+	MCGMASK(MCG_STATUS_RIPV, 0, PANIC, "In kernel and no restart IP",
+		KERNEL),
+	BITCLR(MCI_STATUS_UC, KEEP, "Corrected error", NOSER),
+	MASK(MCI_STATUS_OVER|MCI_STATUS_UC|MCI_STATUS_EN, MCI_STATUS_UC, SOME,
+	     "Spurious not enabled", SER),
 
 	/* ignore OVER for UCNA */
-	MCESEV(
-		KEEP, "Uncorrected no action required",
-		SER, MASK(MCI_UC_SAR, MCI_STATUS_UC)
-		),
-	MCESEV(
-		PANIC, "Illegal combination (UCNA with AR=1)",
-		SER,
-		MASK(MCI_STATUS_OVER|MCI_UC_SAR, MCI_STATUS_UC|MCI_STATUS_AR)
-		),
-	MCESEV(
-		KEEP, "Non signalled machine check",
-		SER, BITCLR(MCI_STATUS_S)
-		),
+	MASK(MCI_UC_SAR, MCI_STATUS_UC, KEEP,
+	     "Uncorrected no action required", SER),
+	MASK(MCI_STATUS_OVER|MCI_UC_SAR, MCI_STATUS_UC|MCI_STATUS_AR, PANIC,
+	     "Illegal combination (UCNA with AR=1)", SER),
+	MASK(MCI_STATUS_S, 0, KEEP, "Non signalled machine check", SER),
 
-	MCESEV(
-		PANIC, "Action required with lost events",
-		SER, BITSET(MCI_STATUS_OVER|MCI_UC_SAR)
-		),
-
-	/* known AR MCACODs: */
-#ifdef	CONFIG_MEMORY_FAILURE
-	MCESEV(
-		KEEP, "HT thread notices Action required: data load error",
-		SER, MASK(MCI_STATUS_OVER|MCI_UC_SAR|MCI_ADDR|MCACOD, MCI_UC_SAR|MCI_ADDR|MCACOD_DATA),
-		MCGMASK(MCG_STATUS_EIPV, 0)
-		),
-	MCESEV(
-		AR, "Action required: data load error",
-		SER, MASK(MCI_STATUS_OVER|MCI_UC_SAR|MCI_ADDR|MCACOD, MCI_UC_SAR|MCI_ADDR|MCACOD_DATA),
-		USER
-		),
-#endif
-	MCESEV(
-		PANIC, "Action required: unknown MCACOD",
-		SER, MASK(MCI_STATUS_OVER|MCI_UC_SAR, MCI_UC_SAR)
-		),
+	/* AR add known MCACODs here */
+	MASK(MCI_STATUS_OVER|MCI_UC_SAR, MCI_STATUS_OVER|MCI_UC_SAR, PANIC,
+	     "Action required with lost events", SER),
+	MASK(MCI_STATUS_OVER|MCI_UC_SAR|MCACOD, MCI_UC_SAR, PANIC,
+	     "Action required; unknown MCACOD", SER),
 
 	/* known AO MCACODs: */
-	MCESEV(
-		AO, "Action optional: memory scrubbing error",
-		SER, MASK(MCI_STATUS_OVER|MCI_UC_SAR|MCACOD_SCRUBMSK, MCI_UC_S|MCACOD_SCRUB)
-		),
-	MCESEV(
-		AO, "Action optional: last level cache writeback error",
-		SER, MASK(MCI_STATUS_OVER|MCI_UC_SAR|MCACOD, MCI_UC_S|MCACOD_L3WB)
-		),
-	MCESEV(
-		SOME, "Action optional: unknown MCACOD",
-		SER, MASK(MCI_STATUS_OVER|MCI_UC_SAR, MCI_UC_S)
-		),
-	MCESEV(
-		SOME, "Action optional with lost events",
-		SER, MASK(MCI_STATUS_OVER|MCI_UC_SAR, MCI_STATUS_OVER|MCI_UC_S)
-		),
+	MASK(MCI_UC_SAR|MCI_STATUS_OVER|0xfff0, MCI_UC_S|0xc0, AO,
+	     "Action optional: memory scrubbing error", SER),
+	MASK(MCI_UC_SAR|MCI_STATUS_OVER|MCACOD, MCI_UC_S|0x17a, AO,
+	     "Action optional: last level cache writeback error", SER),
 
-	MCESEV(
-		PANIC, "Overflowed uncorrected",
-		BITSET(MCI_STATUS_OVER|MCI_STATUS_UC)
-		),
-	MCESEV(
-		UC, "Uncorrected",
-		BITSET(MCI_STATUS_UC)
-		),
-	MCESEV(
-		SOME, "No match",
-		BITSET(0)
-		)	/* always matches. keep at end */
+	MASK(MCI_STATUS_OVER|MCI_UC_SAR, MCI_UC_S, SOME,
+	     "Action optional unknown MCACOD", SER),
+	MASK(MCI_STATUS_OVER|MCI_UC_SAR, MCI_UC_S|MCI_STATUS_OVER, SOME,
+	     "Action optional with lost events", SER),
+	BITSET(MCI_STATUS_UC|MCI_STATUS_OVER, PANIC, "Overflowed uncorrected"),
+	BITSET(MCI_STATUS_UC, UC, "Uncorrected"),
+	BITSET(0, SOME, "No match")	/* always matches. keep at end */
 };
 
 /*
- * If mcgstatus indicated that ip/cs on the stack were
- * no good, then "m->cs" will be zero and we will have
- * to assume the worst case (IN_KERNEL) as we actually
- * have no idea what we were executing when the machine
- * check hit.
- * If we do have a good "m->cs" (or a faked one in the
- * case we were executing in VM86 mode) we can use it to
- * distinguish an exception taken in user from from one
- * taken in the kernel.
+ * If the EIPV bit is set, it means the saved IP is the
+ * instruction which caused the MCE.
  */
 static int error_context(struct mce *m)
 {
-	return ((m->cs & 3) == 3) ? IN_USER : IN_KERNEL;
+	if (m->mcgstatus & MCG_STATUS_EIPV)
+		return (m->ip && (m->cs & 3) == 3) ? IN_USER : IN_KERNEL;
+	/* Unknown, assume kernel */
+	return IN_KERNEL;
 }
 
-int mce_severity(struct mce *m, int tolerant, char **msg)
+int mce_severity(struct mce *a, int tolerant, char **msg)
 {
-	enum context ctx = error_context(m);
+	enum context ctx = error_context(a);
 	struct severity *s;
 
 	for (s = severities;; s++) {
-		if ((m->status & s->mask) != s->result)
+		if ((a->status & s->mask) != s->result)
 			continue;
-		if ((m->mcgstatus & s->mcgmask) != s->mcgres)
+		if ((a->mcgstatus & s->mcgmask) != s->mcgres)
 			continue;
 		if (s->ser == SER_REQUIRED && !mce_ser)
 			continue;
@@ -260,20 +192,19 @@ static const struct file_operations severities_coverage_fops = {
 	.release	= seq_release,
 	.read		= seq_read,
 	.write		= severities_coverage_write,
-	.llseek		= seq_lseek,
 };
 
 static int __init severities_debugfs_init(void)
 {
-	struct dentry *dmce, *fsev;
+	struct dentry *dmce = NULL, *fseverities_coverage = NULL;
 
 	dmce = mce_get_debugfs_dir();
-	if (!dmce)
+	if (dmce == NULL)
 		goto err_out;
-
-	fsev = debugfs_create_file("severities-coverage", 0444, dmce, NULL,
-				   &severities_coverage_fops);
-	if (!fsev)
+	fseverities_coverage = debugfs_create_file("severities-coverage",
+						   0444, dmce, NULL,
+						   &severities_coverage_fops);
+	if (fseverities_coverage == NULL)
 		goto err_out;
 
 	return 0;
@@ -282,4 +213,4 @@ err_out:
 	return -ENOMEM;
 }
 late_initcall(severities_debugfs_init);
-#endif /* CONFIG_DEBUG_FS */
+#endif

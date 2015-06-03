@@ -38,6 +38,7 @@
 #define NVRAM_VERSION	"1.3"
 
 #include <linux/module.h>
+#include <linux/smp_lock.h>
 #include <linux/nvram.h>
 
 #define PC		1
@@ -94,12 +95,13 @@
 /* Note that *all* calls to CMOS_READ and CMOS_WRITE must be done with
  * rtc_lock held. Due to the index-port/data-port design of the RTC, we
  * don't want two different things trying to get to it at once. (e.g. the
- * periodic 11 min sync from kernel/time/ntp.c vs. this driver.)
+ * periodic 11 min sync from time.c vs. this driver.)
  */
 
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/miscdevice.h>
+#include <linux/slab.h>
 #include <linux/ioport.h>
 #include <linux/fcntl.h>
 #include <linux/mc146818rtc.h>
@@ -109,10 +111,9 @@
 #include <linux/spinlock.h>
 #include <linux/io.h>
 #include <linux/uaccess.h>
-#include <linux/mutex.h>
 
+#include <asm/system.h>
 
-static DEFINE_MUTEX(nvram_mutex);
 static DEFINE_SPINLOCK(nvram_state_lock);
 static int nvram_open_cnt;	/* #times opened */
 static int nvram_open_mode;	/* special open modes */
@@ -213,6 +214,7 @@ void nvram_set_checksum(void)
 
 static loff_t nvram_llseek(struct file *file, loff_t offset, int origin)
 {
+	lock_kernel();
 	switch (origin) {
 	case 0:
 		/* nothing to do */
@@ -223,10 +225,8 @@ static loff_t nvram_llseek(struct file *file, loff_t offset, int origin)
 	case 2:
 		offset += NVRAM_BYTES;
 		break;
-	default:
-		return -EINVAL;
 	}
-
+	unlock_kernel();
 	return (offset >= 0) ? (file->f_pos = offset) : -EINVAL;
 }
 
@@ -298,8 +298,8 @@ checksum_err:
 	return -EIO;
 }
 
-static long nvram_ioctl(struct file *file, unsigned int cmd,
-			unsigned long arg)
+static int nvram_ioctl(struct inode *inode, struct file *file,
+					unsigned int cmd, unsigned long arg)
 {
 	int i;
 
@@ -310,7 +310,6 @@ static long nvram_ioctl(struct file *file, unsigned int cmd,
 		if (!capable(CAP_SYS_ADMIN))
 			return -EACCES;
 
-		mutex_lock(&nvram_mutex);
 		spin_lock_irq(&rtc_lock);
 
 		for (i = 0; i < NVRAM_BYTES; ++i)
@@ -318,7 +317,6 @@ static long nvram_ioctl(struct file *file, unsigned int cmd,
 		__nvram_set_checksum();
 
 		spin_unlock_irq(&rtc_lock);
-		mutex_unlock(&nvram_mutex);
 		return 0;
 
 	case NVRAM_SETCKS:
@@ -327,11 +325,9 @@ static long nvram_ioctl(struct file *file, unsigned int cmd,
 		if (!capable(CAP_SYS_ADMIN))
 			return -EACCES;
 
-		mutex_lock(&nvram_mutex);
 		spin_lock_irq(&rtc_lock);
 		__nvram_set_checksum();
 		spin_unlock_irq(&rtc_lock);
-		mutex_unlock(&nvram_mutex);
 		return 0;
 
 	default:
@@ -341,12 +337,14 @@ static long nvram_ioctl(struct file *file, unsigned int cmd,
 
 static int nvram_open(struct inode *inode, struct file *file)
 {
+	lock_kernel();
 	spin_lock(&nvram_state_lock);
 
 	if ((nvram_open_cnt && (file->f_flags & O_EXCL)) ||
 	    (nvram_open_mode & NVRAM_EXCL) ||
 	    ((file->f_mode & FMODE_WRITE) && (nvram_open_mode & NVRAM_WRITE))) {
 		spin_unlock(&nvram_state_lock);
+		unlock_kernel();
 		return -EBUSY;
 	}
 
@@ -357,6 +355,7 @@ static int nvram_open(struct inode *inode, struct file *file)
 	nvram_open_cnt++;
 
 	spin_unlock(&nvram_state_lock);
+	unlock_kernel();
 
 	return 0;
 }
@@ -428,7 +427,7 @@ static const struct file_operations nvram_fops = {
 	.llseek		= nvram_llseek,
 	.read		= nvram_read,
 	.write		= nvram_write,
-	.unlocked_ioctl	= nvram_ioctl,
+	.ioctl		= nvram_ioctl,
 	.open		= nvram_open,
 	.release	= nvram_release,
 };

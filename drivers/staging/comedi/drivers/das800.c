@@ -296,47 +296,47 @@ static int das800_probe(struct comedi_device *dev)
 	switch (id_bits) {
 	case 0x0:
 		if (board == das800) {
-			dev_dbg(dev->hw_dev, "Board model: DAS-800\n");
+			printk(" Board model: DAS-800\n");
 			return board;
 		}
 		if (board == ciodas800) {
-			dev_dbg(dev->hw_dev, "Board model: CIO-DAS800\n");
+			printk(" Board model: CIO-DAS800\n");
 			return board;
 		}
-		dev_dbg(dev->hw_dev, "Board model (probed): DAS-800\n");
+		printk(" Board model (probed): DAS-800\n");
 		return das800;
 		break;
 	case 0x2:
 		if (board == das801) {
-			dev_dbg(dev->hw_dev, "Board model: DAS-801\n");
+			printk(" Board model: DAS-801\n");
 			return board;
 		}
 		if (board == ciodas801) {
-			dev_dbg(dev->hw_dev, "Board model: CIO-DAS801\n");
+			printk(" Board model: CIO-DAS801\n");
 			return board;
 		}
-		dev_dbg(dev->hw_dev, "Board model (probed): DAS-801\n");
+		printk(" Board model (probed): DAS-801\n");
 		return das801;
 		break;
 	case 0x3:
 		if (board == das802) {
-			dev_dbg(dev->hw_dev, "Board model: DAS-802\n");
+			printk(" Board model: DAS-802\n");
 			return board;
 		}
 		if (board == ciodas802) {
-			dev_dbg(dev->hw_dev, "Board model: CIO-DAS802\n");
+			printk(" Board model: CIO-DAS802\n");
 			return board;
 		}
 		if (board == ciodas80216) {
-			dev_dbg(dev->hw_dev, "Board model: CIO-DAS802/16\n");
+			printk(" Board model: CIO-DAS802/16\n");
 			return board;
 		}
-		dev_dbg(dev->hw_dev, "Board model (probed): DAS-802\n");
+		printk(" Board model (probed): DAS-802\n");
 		return das802;
 		break;
 	default:
-		dev_dbg(dev->hw_dev, "Board model: probe returned 0x%x (unknown)\n",
-			id_bits);
+		printk(" Board model: probe returned 0x%x (unknown)\n",
+		       id_bits);
 		return board;
 		break;
 	}
@@ -347,18 +347,7 @@ static int das800_probe(struct comedi_device *dev)
  * A convenient macro that defines init_module() and cleanup_module(),
  * as necessary.
  */
-static int __init driver_das800_init_module(void)
-{
-	return comedi_driver_register(&driver_das800);
-}
-
-static void __exit driver_das800_cleanup_module(void)
-{
-	comedi_driver_unregister(&driver_das800);
-}
-
-module_init(driver_das800_init_module);
-module_exit(driver_das800_cleanup_module);
+COMEDI_INITCLEANUP(driver_das800);
 
 /* interrupt service routine */
 static irqreturn_t das800_interrupt(int irq, void *d)
@@ -391,7 +380,7 @@ static irqreturn_t das800_interrupt(int irq, void *d)
 	spin_lock_irqsave(&dev->spinlock, irq_flags);
 	outb(CONTROL1, dev->iobase + DAS800_GAIN);	/* select base address + 7 to be STATUS2 register */
 	status = inb(dev->iobase + DAS800_STATUS2) & STATUS2_HCEN;
-	/* don't release spinlock yet since we want to make sure no one else disables hardware conversions */
+	/* don't release spinlock yet since we want to make sure noone else disables hardware conversions */
 	if (status == 0) {
 		spin_unlock_irqrestore(&dev->spinlock, irq_flags);
 		return IRQ_HANDLED;
@@ -410,8 +399,9 @@ static irqreturn_t das800_interrupt(int irq, void *d)
 		} else {
 			fifo_empty = 0;	/*  cio-das802/16 has no fifo empty status bit */
 		}
-		if (fifo_empty)
+		if (fifo_empty) {
 			break;
+		}
 		/* strip off extraneous bits for 12 bit cards */
 		if (thisboard->resolution == 12)
 			dataPoint = (dataPoint >> 4) & 0xfff;
@@ -466,43 +456,43 @@ static int das800_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	unsigned long irq_flags;
 	int board;
 
-	dev_info(dev->hw_dev, "comedi%d: das800: io 0x%lx\n", dev->minor,
-		 iobase);
-	if (irq)
-		dev_dbg(dev->hw_dev, "irq %u\n", irq);
+	printk("comedi%d: das800: io 0x%lx", dev->minor, iobase);
+	if (irq) {
+		printk(", irq %u", irq);
+	}
+	printk("\n");
 
 	/* allocate and initialize dev->private */
 	if (alloc_private(dev, sizeof(struct das800_private)) < 0)
 		return -ENOMEM;
 
 	if (iobase == 0) {
-		dev_err(dev->hw_dev, "io base address required for das800\n");
+		printk("io base address required for das800\n");
 		return -EINVAL;
 	}
 
 	/* check if io addresses are available */
 	if (!request_region(iobase, DAS800_SIZE, "das800")) {
-		dev_err(dev->hw_dev, "I/O port conflict\n");
+		printk("I/O port conflict\n");
 		return -EIO;
 	}
 	dev->iobase = iobase;
 
 	board = das800_probe(dev);
 	if (board < 0) {
-		dev_dbg(dev->hw_dev, "unable to determine board type\n");
+		printk("unable to determine board type\n");
 		return -ENODEV;
 	}
 	dev->board_ptr = das800_boards + board;
 
 	/* grab our IRQ */
 	if (irq == 1 || irq > 7) {
-		dev_err(dev->hw_dev, "irq out of range\n");
+		printk("irq out of range\n");
 		return -EINVAL;
 	}
 	if (irq) {
 		if (request_irq(irq, das800_interrupt, 0, "das800", dev)) {
-			dev_err(dev->hw_dev, "unable to allocate irq %u\n",
-				irq);
+			printk("unable to allocate irq %u\n", irq);
 			return -EINVAL;
 		}
 	}
@@ -558,7 +548,7 @@ static int das800_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 
 static int das800_detach(struct comedi_device *dev)
 {
-	dev_info(dev->hw_dev, "comedi%d: das800: remove\n", dev->minor);
+	printk("comedi%d: das800: remove\n", dev->minor);
 
 	/* only free stuff if it has been allocated by _attach */
 	if (dev->iobase)
@@ -917,7 +907,3 @@ static int das800_set_frequency(struct comedi_device *dev)
 
 	return 0;
 }
-
-MODULE_AUTHOR("Comedi http://www.comedi.org");
-MODULE_DESCRIPTION("Comedi low-level driver");
-MODULE_LICENSE("GPL");

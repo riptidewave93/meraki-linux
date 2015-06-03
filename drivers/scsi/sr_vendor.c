@@ -39,7 +39,6 @@
 #include <linux/string.h>
 #include <linux/bcd.h>
 #include <linux/blkdev.h>
-#include <linux/slab.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>

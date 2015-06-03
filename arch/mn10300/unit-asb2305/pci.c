@@ -27,28 +27,6 @@ struct pci_bus *pci_root_bus;
 struct pci_ops *pci_root_ops;
 
 /*
- * The accessible PCI window does not cover the entire CPU address space, but
- * there are devices we want to access outside of that window, so we need to
- * insert specific PCI bus resources instead of using the platform-level bus
- * resources directly for the PCI root bus.
- *
- * These are configured and inserted by pcibios_init().
- */
-static struct resource pci_ioport_resource = {
-	.name	= "PCI IO",
-	.start	= 0xbe000000,
-	.end	= 0xbe03ffff,
-	.flags	= IORESOURCE_IO,
-};
-
-static struct resource pci_iomem_resource = {
-	.name	= "PCI mem",
-	.start	= 0xb8000000,
-	.end	= 0xbbffffff,
-	.flags	= IORESOURCE_MEM,
-};
-
-/*
  * Functions for accessing PCI configuration space
  */
 
@@ -75,6 +53,52 @@ static inline int __query(const struct pci_bus *bus, unsigned int devfn)
 #endif
 	return 1;
 }
+
+/*
+ * translate Linuxcentric addresses to PCI bus addresses
+ */
+void pcibios_resource_to_bus(struct pci_dev *dev, struct pci_bus_region *region,
+			     struct resource *res)
+{
+	if (res->flags & IORESOURCE_IO) {
+		region->start = (res->start & 0x00ffffff);
+		region->end   = (res->end   & 0x00ffffff);
+	}
+
+	if (res->flags & IORESOURCE_MEM) {
+		region->start = (res->start & 0x03ffffff) | MEM_PAGING_REG;
+		region->end   = (res->end   & 0x03ffffff) | MEM_PAGING_REG;
+	}
+
+#if 0
+	printk(KERN_DEBUG "RES->BUS: %lx-%lx => %lx-%lx\n",
+	       res->start, res->end, region->start, region->end);
+#endif
+}
+EXPORT_SYMBOL(pcibios_resource_to_bus);
+
+/*
+ * translate PCI bus addresses to Linuxcentric addresses
+ */
+void pcibios_bus_to_resource(struct pci_dev *dev, struct resource *res,
+			     struct pci_bus_region *region)
+{
+	if (res->flags & IORESOURCE_IO) {
+		res->start = (region->start & 0x00ffffff) | 0xbe000000;
+		res->end   = (region->end   & 0x00ffffff) | 0xbe000000;
+	}
+
+	if (res->flags & IORESOURCE_MEM) {
+		res->start = (region->start & 0x03ffffff) | 0xb8000000;
+		res->end   = (region->end   & 0x03ffffff) | 0xb8000000;
+	}
+
+#if 0
+	printk(KERN_INFO "BUS->RES: %lx-%lx => %lx-%lx\n",
+	       region->start, region->end, res->start, res->end);
+#endif
+}
+EXPORT_SYMBOL(pcibios_bus_to_resource);
 
 /*
  *
@@ -255,7 +279,7 @@ static int __init pci_sanity_check(struct pci_ops *o)
 	     (x == PCI_VENDOR_ID_INTEL || x == PCI_VENDOR_ID_COMPAQ)))
 		return 1;
 
-	printk(KERN_ERR "PCI: Sanity check failed\n");
+	printk(KERN_ERROR "PCI: Sanity check failed\n");
 	return 0;
 }
 
@@ -273,7 +297,6 @@ static int __init pci_check_direct(void)
 		printk(KERN_INFO "PCI: Using configuration ampci\n");
 		request_mem_region(0xBE040000, 256, "AMPCI bridge");
 		request_mem_region(0xBFFFFFF4, 12, "PCI ampci");
-		request_mem_region(0xBC000000, 32 * 1024 * 1024, "PCI SRAM");
 		return 0;
 	}
 
@@ -284,10 +307,12 @@ static int __init pci_check_direct(void)
 static int __devinit is_valid_resource(struct pci_dev *dev, int idx)
 {
 	unsigned int i, type_mask = IORESOURCE_IO | IORESOURCE_MEM;
-	struct resource *devr = &dev->resource[idx], *busr;
+	struct resource *devr = &dev->resource[idx];
 
 	if (dev->bus) {
-		pci_bus_for_each_resource(dev->bus, busr, i) {
+		for (i = 0; i < PCI_BUS_NUM_RESOURCES; i++) {
+			struct resource *busr = dev->bus->resource[i];
+
 			if (!busr || (busr->flags ^ devr->flags) & type_mask)
 				continue;
 
@@ -317,6 +342,9 @@ static void __devinit pcibios_fixup_device_resources(struct pci_dev *dev)
 		if (!dev->resource[i].flags)
 			continue;
 
+		region.start = dev->resource[i].start;
+		region.end = dev->resource[i].end;
+		pcibios_bus_to_resource(dev, &dev->resource[i], &region);
 		if (is_valid_resource(dev, i))
 			pci_claim_resource(dev, i);
 	}
@@ -347,18 +375,10 @@ void __devinit pcibios_fixup_bus(struct pci_bus *bus)
  */
 static int __init pcibios_init(void)
 {
-	resource_size_t io_offset, mem_offset;
-	LIST_HEAD(resources);
-
 	ioport_resource.start	= 0xA0000000;
 	ioport_resource.end	= 0xDFFFFFFF;
 	iomem_resource.start	= 0xA0000000;
 	iomem_resource.end	= 0xDFFFFFFF;
-
-	if (insert_resource(&iomem_resource, &pci_iomem_resource) < 0)
-		panic("Unable to insert PCI IOMEM resource\n");
-	if (insert_resource(&ioport_resource, &pci_ioport_resource) < 0)
-		panic("Unable to insert PCI IOPORT resource\n");
 
 	if (!pci_probe)
 		return 0;
@@ -371,19 +391,32 @@ static int __init pcibios_init(void)
 	printk(KERN_INFO "PCI: Probing PCI hardware [mempage %08x]\n",
 	       MEM_PAGING_REG);
 
-	io_offset = pci_ioport_resource.start -
-	    (pci_ioport_resource.start & 0x00ffffff);
-	mem_offset = pci_iomem_resource.start -
-	    ((pci_iomem_resource.start & 0x03ffffff) | MEM_PAGING_REG);
+	{
+#if 0
+		static struct pci_bus am33_root_bus = {
+			.children  = LIST_HEAD_INIT(am33_root_bus.children),
+			.devices   = LIST_HEAD_INIT(am33_root_bus.devices),
+			.number    = 0,
+			.secondary = 0,
+			.resource = { &ioport_resource, &iomem_resource },
+		};
 
-	pci_add_resource_offset(&resources, &pci_ioport_resource, io_offset);
-	pci_add_resource_offset(&resources, &pci_iomem_resource, mem_offset);
-	pci_root_bus = pci_scan_root_bus(NULL, 0, &pci_direct_ampci, NULL,
-					 &resources);
+		am33_root_bus.ops = pci_root_ops;
+		list_add_tail(&am33_root_bus.node, &pci_root_buses);
+
+		am33_root_bus.subordinate = pci_do_scan_bus(0);
+
+		pci_root_bus = &am33_root_bus;
+#else
+		pci_root_bus = pci_scan_bus(0, &pci_direct_ampci, NULL);
+#endif
+	}
 
 	pcibios_irq_init();
 	pcibios_fixup_irqs();
+#if 0
 	pcibios_resource_survey();
+#endif
 	return 0;
 }
 
@@ -407,7 +440,7 @@ int pcibios_enable_device(struct pci_dev *dev, int mask)
 {
 	int err;
 
-	err = pci_enable_resources(dev, mask);
+	err = pcibios_enable_resources(dev, mask);
 	if (err == 0)
 		pcibios_enable_irq(dev);
 	return err;
@@ -422,7 +455,6 @@ static void __init unit_disable_pcnet(struct pci_bus *bus, struct pci_ops *o)
 
 	bus->number = 0;
 
-	o->read (bus, PCI_DEVFN(2, 0), PCI_VENDOR_ID,		4, &x);
 	o->read (bus, PCI_DEVFN(2, 0), PCI_COMMAND,		2, &x);
 	x |= PCI_COMMAND_MASTER |
 		PCI_COMMAND_IO | PCI_COMMAND_MEMORY |
@@ -459,7 +491,7 @@ asmlinkage void __init unit_pci_init(void)
 	struct pci_ops *o = &pci_direct_ampci;
 	u32 x;
 
-	set_intr_level(XIRQ1, NUM2GxICR_LEVEL(CONFIG_PCI_IRQ_LEVEL));
+	set_intr_level(XIRQ1, GxICR_LEVEL_3);
 
 	memset(&bus, 0, sizeof(bus));
 

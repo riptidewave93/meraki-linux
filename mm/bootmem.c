@@ -10,12 +10,9 @@
  */
 #include <linux/init.h>
 #include <linux/pfn.h>
-#include <linux/slab.h>
 #include <linux/bootmem.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/kmemleak.h>
-#include <linux/range.h>
-#include <linux/memblock.h>
 
 #include <asm/bug.h>
 #include <asm/io.h>
@@ -23,16 +20,17 @@
 
 #include "internal.h"
 
-#ifndef CONFIG_NEED_MULTIPLE_NODES
-struct pglist_data __refdata contig_page_data = {
-	.bdata = &bootmem_node_data[0]
-};
-EXPORT_SYMBOL(contig_page_data);
-#endif
-
 unsigned long max_low_pfn;
 unsigned long min_low_pfn;
 unsigned long max_pfn;
+
+#ifdef CONFIG_CRASH_DUMP
+/*
+ * If we have booted due to a crash, max_pfn will be a very low value. We need
+ * to know the amount of memory that the previous kernel used.
+ */
+unsigned long saved_max_pfn;
+#endif
 
 bootmem_data_t bootmem_node_data[MAX_NUMNODES] __initdata;
 
@@ -56,7 +54,7 @@ early_param("bootmem_debug", bootmem_debug_setup);
 
 static unsigned long __init bootmap_bytes(unsigned long pages)
 {
-	unsigned long bytes = DIV_ROUND_UP(pages, 8);
+	unsigned long bytes = (pages + 7) / 8;
 
 	return ALIGN(bytes, sizeof(long));
 }
@@ -145,32 +143,9 @@ unsigned long __init init_bootmem(unsigned long start, unsigned long pages)
 	return init_bootmem_core(NODE_DATA(0)->bdata, start, 0, pages);
 }
 
-/*
- * free_bootmem_late - free bootmem pages directly to page allocator
- * @addr: starting address of the range
- * @size: size of the range in bytes
- *
- * This is only useful when the bootmem allocator has already been torn
- * down, but we are still initializing the system.  Pages are given directly
- * to the page allocator, no bootmem metadata is updated because it is gone.
- */
-void __init free_bootmem_late(unsigned long addr, unsigned long size)
-{
-	unsigned long cursor, end;
-
-	kmemleak_free_part(__va(addr), size);
-
-	cursor = PFN_UP(addr);
-	end = PFN_DOWN(addr + size);
-
-	for (; cursor < end; cursor++) {
-		__free_pages_bootmem(pfn_to_page(cursor), 0);
-		totalram_pages++;
-	}
-}
-
 static unsigned long __init free_all_bootmem_core(bootmem_data_t *bdata)
 {
+	int aligned;
 	struct page *page;
 	unsigned long start, end, pages, count = 0;
 
@@ -180,8 +155,14 @@ static unsigned long __init free_all_bootmem_core(bootmem_data_t *bdata)
 	start = bdata->node_min_pfn;
 	end = bdata->node_low_pfn;
 
-	bdebug("nid=%td start=%lx end=%lx\n",
-		bdata - bootmem_node_data, start, end);
+	/*
+	 * If the start is aligned to the machines wordsize, we might
+	 * be able to free pages in bulks of that order.
+	 */
+	aligned = !(start & (BITS_PER_LONG - 1));
+
+	bdebug("nid=%td start=%lx end=%lx aligned=%d\n",
+		bdata - bootmem_node_data, start, end, aligned);
 
 	while (start < end) {
 		unsigned long *map, idx, vec;
@@ -189,17 +170,12 @@ static unsigned long __init free_all_bootmem_core(bootmem_data_t *bdata)
 		map = bdata->node_bootmem_map;
 		idx = start - bdata->node_min_pfn;
 		vec = ~map[idx / BITS_PER_LONG];
-		/*
-		 * If we have a properly aligned and fully unreserved
-		 * BITS_PER_LONG block of pages in front of us, free
-		 * it in one go.
-		 */
-		if (IS_ALIGNED(start, BITS_PER_LONG) && vec == ~0UL) {
+
+		if (aligned && vec == ~0UL && start + BITS_PER_LONG < end) {
 			int order = ilog2(BITS_PER_LONG);
 
 			__free_pages_bootmem(pfn_to_page(start), order);
 			count += BITS_PER_LONG;
-			start += BITS_PER_LONG;
 		} else {
 			unsigned long off = 0;
 
@@ -212,8 +188,8 @@ static unsigned long __init free_all_bootmem_core(bootmem_data_t *bdata)
 				vec >>= 1;
 				off++;
 			}
-			start = ALIGN(start + 1, BITS_PER_LONG);
 		}
+		start += BITS_PER_LONG;
 	}
 
 	page = virt_to_page(bdata->node_bootmem_map);
@@ -247,13 +223,7 @@ unsigned long __init free_all_bootmem_node(pg_data_t *pgdat)
  */
 unsigned long __init free_all_bootmem(void)
 {
-	unsigned long total_pages = 0;
-	bootmem_data_t *bdata;
-
-	list_for_each_entry(bdata, &bdata_list, list)
-		total_pages += free_all_bootmem_core(bdata);
-
-	return total_pages;
+	return free_all_bootmem_core(NODE_DATA(0)->bdata);
 }
 
 static void __init __free(bootmem_data_t *bdata,
@@ -438,14 +408,8 @@ int __init reserve_bootmem(unsigned long addr, unsigned long size,
 	return mark_bootmem(start, end, 1, flags);
 }
 
-int __weak __init reserve_bootmem_generic(unsigned long phys, unsigned long len,
-				   int flags)
-{
-	return reserve_bootmem(phys, len, flags);
-}
-
-static unsigned long __init align_idx(struct bootmem_data *bdata,
-				      unsigned long idx, unsigned long step)
+static unsigned long align_idx(struct bootmem_data *bdata, unsigned long idx,
+			unsigned long step)
 {
 	unsigned long base = bdata->node_min_pfn;
 
@@ -457,8 +421,8 @@ static unsigned long __init align_idx(struct bootmem_data *bdata,
 	return ALIGN(base + idx, step) - base;
 }
 
-static unsigned long __init align_off(struct bootmem_data *bdata,
-				      unsigned long off, unsigned long align)
+static unsigned long align_off(struct bootmem_data *bdata, unsigned long off,
+			unsigned long align)
 {
 	unsigned long base = PFN_PHYS(bdata->node_min_pfn);
 
@@ -643,9 +607,7 @@ restart:
 void * __init __alloc_bootmem_nopanic(unsigned long size, unsigned long align,
 					unsigned long goal)
 {
-	unsigned long limit = 0;
-
-	return ___alloc_bootmem_nopanic(size, align, goal, limit);
+	return ___alloc_bootmem_nopanic(size, align, goal, 0);
 }
 
 static void * __init ___alloc_bootmem(unsigned long size, unsigned long align,
@@ -679,9 +641,7 @@ static void * __init ___alloc_bootmem(unsigned long size, unsigned long align,
 void * __init __alloc_bootmem(unsigned long size, unsigned long align,
 			      unsigned long goal)
 {
-	unsigned long limit = 0;
-
-	return ___alloc_bootmem(size, align, goal, limit);
+	return ___alloc_bootmem(size, align, goal, 0);
 }
 
 static void * __init ___alloc_bootmem_node(bootmem_data_t *bdata,
@@ -722,36 +682,7 @@ void * __init __alloc_bootmem_node(pg_data_t *pgdat, unsigned long size,
 	if (WARN_ON_ONCE(slab_is_available()))
 		return kzalloc_node(size, GFP_NOWAIT, pgdat->node_id);
 
-	return  ___alloc_bootmem_node(pgdat->bdata, size, align, goal, 0);
-}
-
-void * __init __alloc_bootmem_node_high(pg_data_t *pgdat, unsigned long size,
-				   unsigned long align, unsigned long goal)
-{
-#ifdef MAX_DMA32_PFN
-	unsigned long end_pfn;
-
-	if (WARN_ON_ONCE(slab_is_available()))
-		return kzalloc_node(size, GFP_NOWAIT, pgdat->node_id);
-
-	/* update goal according ...MAX_DMA32_PFN */
-	end_pfn = pgdat->node_start_pfn + pgdat->node_spanned_pages;
-
-	if (end_pfn > MAX_DMA32_PFN + (128 >> (20 - PAGE_SHIFT)) &&
-	    (goal >> PAGE_SHIFT) < MAX_DMA32_PFN) {
-		void *ptr;
-		unsigned long new_goal;
-
-		new_goal = MAX_DMA32_PFN << PAGE_SHIFT;
-		ptr = alloc_bootmem_core(pgdat->bdata, size, align,
-						 new_goal, 0);
-		if (ptr)
-			return ptr;
-	}
-#endif
-
-	return __alloc_bootmem_node(pgdat, size, align, goal);
-
+	return ___alloc_bootmem_node(pgdat->bdata, size, align, goal, 0);
 }
 
 #ifdef CONFIG_SPARSEMEM
@@ -772,9 +703,6 @@ void * __init alloc_bootmem_section(unsigned long size,
 	goal = pfn << PAGE_SHIFT;
 	limit = section_nr_to_pfn(section_nr + 1) << PAGE_SHIFT;
 	bdata = &bootmem_node_data[early_pfn_to_nid(pfn)];
-
-	if (goal + size > limit)
-		limit = 0;
 
 	return alloc_bootmem_core(bdata, size, SMP_CACHE_BYTES, goal, limit);
 }

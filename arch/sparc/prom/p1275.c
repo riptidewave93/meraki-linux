@@ -13,6 +13,7 @@
 
 #include <asm/openprom.h>
 #include <asm/oplib.h>
+#include <asm/system.h>
 #include <asm/spitfire.h>
 #include <asm/pstate.h>
 #include <asm/ldc.h>
@@ -31,21 +32,21 @@ extern void prom_cif_callback(void);
 /*
  * This provides SMP safety on the p1275buf.
  */
-DEFINE_RAW_SPINLOCK(prom_entry_lock);
+DEFINE_SPINLOCK(prom_entry_lock);
 
 void p1275_cmd_direct(unsigned long *args)
 {
 	unsigned long flags;
 
 	raw_local_save_flags(flags);
-	raw_local_irq_restore((unsigned long)PIL_NMI);
-	raw_spin_lock(&prom_entry_lock);
+	raw_local_irq_restore(PIL_NMI);
+	spin_lock(&prom_entry_lock);
 
 	prom_world(1);
 	prom_cif_direct(args);
 	prom_world(0);
 
-	raw_spin_unlock(&prom_entry_lock);
+	spin_unlock(&prom_entry_lock);
 	raw_local_irq_restore(flags);
 }
 

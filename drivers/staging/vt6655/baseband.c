@@ -79,7 +79,7 @@ static int          msglevel                =MSG_LEVEL_INFO;
 
 
 #define CB_VT3253_INIT_FOR_RFMD 446
-unsigned char byVT3253InitTab_RFMD[CB_VT3253_INIT_FOR_RFMD][2] = {
+BYTE byVT3253InitTab_RFMD[CB_VT3253_INIT_FOR_RFMD][2] = {
     {0x00, 0x30},
     {0x01, 0x00},
     {0x02, 0x00},
@@ -529,7 +529,7 @@ unsigned char byVT3253InitTab_RFMD[CB_VT3253_INIT_FOR_RFMD][2] = {
 };
 
 #define CB_VT3253B0_INIT_FOR_RFMD 256
-unsigned char byVT3253B0_RFMD[CB_VT3253B0_INIT_FOR_RFMD][2] = {
+BYTE byVT3253B0_RFMD[CB_VT3253B0_INIT_FOR_RFMD][2] = {
     {0x00, 0x31},
     {0x01, 0x00},
     {0x02, 0x00},
@@ -790,7 +790,7 @@ unsigned char byVT3253B0_RFMD[CB_VT3253B0_INIT_FOR_RFMD][2] = {
 
 #define CB_VT3253B0_AGC_FOR_RFMD2959 195
 // For RFMD2959
-unsigned char byVT3253B0_AGC4_RFMD2959[CB_VT3253B0_AGC_FOR_RFMD2959][2] = {
+BYTE byVT3253B0_AGC4_RFMD2959[CB_VT3253B0_AGC_FOR_RFMD2959][2] = {
     {0xF0, 0x00},
     {0xF1, 0x3E},
     {0xF0, 0x80},
@@ -990,7 +990,7 @@ unsigned char byVT3253B0_AGC4_RFMD2959[CB_VT3253B0_AGC_FOR_RFMD2959][2] = {
 
 #define CB_VT3253B0_INIT_FOR_AIROHA2230 256
 // For AIROHA
-unsigned char byVT3253B0_AIROHA2230[CB_VT3253B0_INIT_FOR_AIROHA2230][2] = {
+BYTE byVT3253B0_AIROHA2230[CB_VT3253B0_INIT_FOR_AIROHA2230][2] = {
     {0x00, 0x31},
     {0x01, 0x00},
     {0x02, 0x00},
@@ -1254,7 +1254,7 @@ unsigned char byVT3253B0_AIROHA2230[CB_VT3253B0_INIT_FOR_AIROHA2230][2] = {
 
 #define CB_VT3253B0_INIT_FOR_UW2451 256
 //For UW2451
-unsigned char byVT3253B0_UW2451[CB_VT3253B0_INIT_FOR_UW2451][2] = {
+BYTE byVT3253B0_UW2451[CB_VT3253B0_INIT_FOR_UW2451][2] = {
     {0x00, 0x31},
     {0x01, 0x00},
     {0x02, 0x00},
@@ -1516,7 +1516,7 @@ unsigned char byVT3253B0_UW2451[CB_VT3253B0_INIT_FOR_UW2451][2] = {
 
 #define CB_VT3253B0_AGC 193
 // For AIROHA
-unsigned char byVT3253B0_AGC[CB_VT3253B0_AGC][2] = {
+BYTE byVT3253B0_AGC[CB_VT3253B0_AGC][2] = {
     {0xF0, 0x00},
     {0xF1, 0x00},
     {0xF0, 0x80},
@@ -1712,26 +1712,26 @@ unsigned char byVT3253B0_AGC[CB_VT3253B0_AGC][2] = {
     {0xF0, 0x00},
 };
 
-const unsigned short awcFrameTime[MAX_RATE] =
+const WORD awcFrameTime[MAX_RATE] =
 {10, 20, 55, 110, 24, 36, 48, 72, 96, 144, 192, 216};
 
 
 /*---------------------  Static Functions  --------------------------*/
 
 static
-unsigned long
+ULONG
 s_ulGetRatio(PSDevice pDevice);
 
 static
-void
+VOID
 s_vChangeAntenna(
-    PSDevice pDevice
+    IN PSDevice pDevice
     );
 
 static
-void
+VOID
 s_vChangeAntenna (
-    PSDevice pDevice
+    IN PSDevice pDevice
     )
 {
 
@@ -1740,13 +1740,13 @@ s_vChangeAntenna (
 #endif
     if ( pDevice->dwRxAntennaSel == 0) {
         pDevice->dwRxAntennaSel=1;
-        if (pDevice->bTxRxAntInv == true)
+        if (pDevice->bTxRxAntInv == TRUE)
             BBvSetRxAntennaMode(pDevice->PortOffset, ANT_A);
         else
             BBvSetRxAntennaMode(pDevice->PortOffset, ANT_B);
     } else {
         pDevice->dwRxAntennaSel=0;
-        if (pDevice->bTxRxAntInv == true)
+        if (pDevice->bTxRxAntInv == TRUE)
             BBvSetRxAntennaMode(pDevice->PortOffset, ANT_B);
         else
             BBvSetRxAntennaMode(pDevice->PortOffset, ANT_A);
@@ -1776,19 +1776,19 @@ s_vChangeAntenna (
  * Return Value: FrameTime
  *
  */
-unsigned int
+UINT
 BBuGetFrameTime (
-    unsigned char byPreambleType,
-    unsigned char byPktType,
-    unsigned int cbFrameLength,
-    unsigned short wRate
+    IN BYTE byPreambleType,
+    IN BYTE byPktType,
+    IN UINT cbFrameLength,
+    IN WORD wRate
     )
 {
-    unsigned int uFrameTime;
-    unsigned int uPreamble;
-    unsigned int uTmp;
-    unsigned int uRateIdx = (unsigned int) wRate;
-    unsigned int uRate = 0;
+    UINT uFrameTime;
+    UINT uPreamble;
+    UINT uTmp;
+    UINT uRateIdx = (UINT)wRate;
+    UINT uRate = 0;
 
 
     if (uRateIdx > RATE_54M) {
@@ -1796,7 +1796,7 @@ BBuGetFrameTime (
         return 0;
     }
 
-    uRate = (unsigned int) awcFrameTime[uRateIdx];
+    uRate = (UINT)awcFrameTime[uRateIdx];
 
     if (uRateIdx <= 3) {          //CCK mode
 
@@ -1843,26 +1843,26 @@ BBuGetFrameTime (
  * Return Value: none
  *
  */
-void
+VOID
 BBvCaculateParameter (
-    PSDevice pDevice,
-    unsigned int cbFrameLength,
-    unsigned short wRate,
-    unsigned char byPacketType,
-    unsigned short *pwPhyLen,
-    unsigned char *pbyPhySrv,
-    unsigned char *pbyPhySgn
+    IN  PSDevice pDevice,
+    IN  UINT cbFrameLength,
+    IN  WORD wRate,
+    IN  BYTE byPacketType,
+    OUT PWORD pwPhyLen,
+    OUT PBYTE pbyPhySrv,
+    OUT PBYTE pbyPhySgn
     )
 {
-    unsigned int cbBitCount;
-    unsigned int cbUsCount = 0;
-    unsigned int cbTmp;
-    bool bExtBit;
-    unsigned char byPreambleType = pDevice->byPreambleType;
-    bool bCCK = pDevice->bCCK;
+    UINT cbBitCount;
+    UINT cbUsCount = 0;
+    UINT cbTmp;
+    BOOL bExtBit;
+    BYTE byPreambleType = pDevice->byPreambleType;
+    BOOL bCCK = pDevice->bCCK;
 
     cbBitCount = cbFrameLength * 8;
-    bExtBit = false;
+    bExtBit = FALSE;
 
     switch (wRate) {
     case RATE_1M :
@@ -1879,7 +1879,7 @@ BBvCaculateParameter (
         break;
 
     case RATE_5M :
-        if (bCCK == false)
+        if (bCCK == FALSE)
             cbBitCount ++;
         cbUsCount = (cbBitCount * 10) / 55;
         cbTmp = (cbUsCount * 55) / 10;
@@ -1893,14 +1893,14 @@ BBvCaculateParameter (
 
     case RATE_11M :
 
-        if (bCCK == false)
+        if (bCCK == FALSE)
             cbBitCount ++;
         cbUsCount = cbBitCount / 11;
         cbTmp = cbUsCount * 11;
         if (cbTmp != cbBitCount) {
             cbUsCount ++;
             if ((cbBitCount - cbTmp) <= 3)
-                bExtBit = true;
+                bExtBit = TRUE;
         }
         if (byPreambleType == 1)
             *pbyPhySgn = 0x0b;
@@ -1994,11 +1994,11 @@ BBvCaculateParameter (
         *pbyPhySrv = 0x00;
         if (bExtBit)
             *pbyPhySrv = *pbyPhySrv | 0x80;
-        *pwPhyLen = (unsigned short)cbUsCount;
+        *pwPhyLen = (WORD)cbUsCount;
     }
     else {
         *pbyPhySrv = 0x00;
-        *pwPhyLen = (unsigned short)cbFrameLength;
+        *pwPhyLen = (WORD)cbFrameLength;
     }
 }
 
@@ -2012,13 +2012,13 @@ BBvCaculateParameter (
  *  Out:
  *      pbyData     - data read
  *
- * Return Value: true if succeeded; false if failed.
+ * Return Value: TRUE if succeeded; FALSE if failed.
  *
  */
-bool BBbReadEmbeded (unsigned long dwIoBase, unsigned char byBBAddr, unsigned char *pbyData)
+BOOL BBbReadEmbeded (DWORD_PTR dwIoBase, BYTE byBBAddr, PBYTE pbyData)
 {
-    unsigned short ww;
-    unsigned char byValue;
+    WORD    ww;
+    BYTE    byValue;
 
     // BB reg offset
     VNSvOutPortB(dwIoBase + MAC_REG_BBREGADR, byBBAddr);
@@ -2038,9 +2038,9 @@ bool BBbReadEmbeded (unsigned long dwIoBase, unsigned char byBBAddr, unsigned ch
     if (ww == W_MAX_TIMEOUT) {
         DBG_PORT80(0x30);
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO" DBG_PORT80(0x30)\n");
-        return false;
+        return FALSE;
     }
-    return true;
+    return TRUE;
 }
 
 
@@ -2055,13 +2055,13 @@ bool BBbReadEmbeded (unsigned long dwIoBase, unsigned char byBBAddr, unsigned ch
  *  Out:
  *      none
  *
- * Return Value: true if succeeded; false if failed.
+ * Return Value: TRUE if succeeded; FALSE if failed.
  *
  */
-bool BBbWriteEmbeded (unsigned long dwIoBase, unsigned char byBBAddr, unsigned char byData)
+BOOL BBbWriteEmbeded (DWORD_PTR dwIoBase, BYTE byBBAddr, BYTE byData)
 {
-    unsigned short ww;
-    unsigned char byValue;
+    WORD    ww;
+    BYTE    byValue;
 
     // BB reg offset
     VNSvOutPortB(dwIoBase + MAC_REG_BBREGADR, byBBAddr);
@@ -2080,9 +2080,9 @@ bool BBbWriteEmbeded (unsigned long dwIoBase, unsigned char byBBAddr, unsigned c
     if (ww == W_MAX_TIMEOUT) {
         DBG_PORT80(0x31);
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO" DBG_PORT80(0x31)\n");
-        return false;
+        return FALSE;
     }
-    return true;
+    return TRUE;
 }
 
 
@@ -2097,12 +2097,12 @@ bool BBbWriteEmbeded (unsigned long dwIoBase, unsigned char byBBAddr, unsigned c
  *  Out:
  *      none
  *
- * Return Value: true if all TestBits are set; false otherwise.
+ * Return Value: TRUE if all TestBits are set; FALSE otherwise.
  *
  */
-bool BBbIsRegBitsOn (unsigned long dwIoBase, unsigned char byBBAddr, unsigned char byTestBits)
+BOOL BBbIsRegBitsOn (DWORD_PTR dwIoBase, BYTE byBBAddr, BYTE byTestBits)
 {
-    unsigned char byOrgData;
+    BYTE byOrgData;
 
     BBbReadEmbeded(dwIoBase, byBBAddr, &byOrgData);
     return (byOrgData & byTestBits) == byTestBits;
@@ -2120,12 +2120,12 @@ bool BBbIsRegBitsOn (unsigned long dwIoBase, unsigned char byBBAddr, unsigned ch
  *  Out:
  *      none
  *
- * Return Value: true if all TestBits are clear; false otherwise.
+ * Return Value: TRUE if all TestBits are clear; FALSE otherwise.
  *
  */
-bool BBbIsRegBitsOff (unsigned long dwIoBase, unsigned char byBBAddr, unsigned char byTestBits)
+BOOL BBbIsRegBitsOff (DWORD_PTR dwIoBase, BYTE byBBAddr, BYTE byTestBits)
 {
-    unsigned char byOrgData;
+    BYTE byOrgData;
 
     BBbReadEmbeded(dwIoBase, byBBAddr, &byOrgData);
     return (byOrgData & byTestBits) == 0;
@@ -2142,17 +2142,17 @@ bool BBbIsRegBitsOff (unsigned long dwIoBase, unsigned char byBBAddr, unsigned c
  *  Out:
  *      none
  *
- * Return Value: true if succeeded; false if failed.
+ * Return Value: TRUE if succeeded; FALSE if failed.
  *
  */
 
-bool BBbVT3253Init (PSDevice pDevice)
+BOOL BBbVT3253Init (PSDevice pDevice)
 {
-    bool bResult = true;
+    BOOL       bResult = TRUE;
     int        ii;
-    unsigned long dwIoBase = pDevice->PortOffset;
-    unsigned char byRFType = pDevice->byRFType;
-    unsigned char byLocalID = pDevice->byLocalID;
+    DWORD_PTR  dwIoBase = pDevice->PortOffset;
+    BYTE       byRFType = pDevice->byRFType;
+    BYTE       byLocalID = pDevice->byLocalID;
 
     if (byRFType == RF_RFMD2959) {
         if (byLocalID <= REV_ID_VT3253_A1) {
@@ -2294,7 +2294,7 @@ bool BBbVT3253Init (PSDevice pDevice)
     //}} RobertYu
     } else {
     	// No VGA Table now
-    	pDevice->bUpdateBBVGA = false;
+    	pDevice->bUpdateBBVGA = FALSE;
         pDevice->abyBBVGA[0] = 0x1C;
     }
 
@@ -2321,12 +2321,12 @@ bool BBbVT3253Init (PSDevice pDevice)
  * Return Value: none
  *
  */
-void BBvReadAllRegs (unsigned long dwIoBase, unsigned char *pbyBBRegs)
+VOID BBvReadAllRegs (DWORD_PTR dwIoBase, PBYTE pbyBBRegs)
 {
     int  ii;
-    unsigned char byBase = 1;
+    BYTE byBase = 1;
     for (ii = 0; ii < BB_MAX_CONTEXT_SIZE; ii++) {
-        BBbReadEmbeded(dwIoBase, (unsigned char)(ii*byBase), pbyBBRegs);
+        BBbReadEmbeded(dwIoBase, (BYTE)(ii*byBase), pbyBBRegs);
         pbyBBRegs += byBase;
     }
 }
@@ -2348,8 +2348,8 @@ void BBvReadAllRegs (unsigned long dwIoBase, unsigned char *pbyBBRegs)
 
 void BBvLoopbackOn (PSDevice pDevice)
 {
-    unsigned char byData;
-    unsigned long dwIoBase = pDevice->PortOffset;
+    BYTE      byData;
+    DWORD_PTR dwIoBase = pDevice->PortOffset;
 
     //CR C9 = 0x00
     BBbReadEmbeded(dwIoBase, 0xC9, &pDevice->byBBCRc9);//CR201
@@ -2363,7 +2363,7 @@ void BBvLoopbackOn (PSDevice pDevice)
     if (pDevice->uConnectionRate <= RATE_11M) { //CCK
         // Enable internal digital loopback: CR33 |= 0000 0001
         BBbReadEmbeded(dwIoBase, 0x21, &byData);//CR33
-        BBbWriteEmbeded(dwIoBase, 0x21, (unsigned char)(byData | 0x01));//CR33
+        BBbWriteEmbeded(dwIoBase, 0x21, (BYTE)(byData | 0x01));//CR33
         // CR154 = 0x00
         BBbWriteEmbeded(dwIoBase, 0x9A, 0);   //CR154
 
@@ -2372,7 +2372,7 @@ void BBvLoopbackOn (PSDevice pDevice)
     else { //OFDM
         // Enable internal digital loopback:CR154 |= 0000 0001
         BBbReadEmbeded(dwIoBase, 0x9A, &byData);//CR154
-        BBbWriteEmbeded(dwIoBase, 0x9A, (unsigned char)(byData | 0x01));//CR154
+        BBbWriteEmbeded(dwIoBase, 0x9A, (BYTE)(byData | 0x01));//CR154
         // CR33 = 0x00
         BBbWriteEmbeded(dwIoBase, 0x21, 0);   //CR33
 
@@ -2384,7 +2384,7 @@ void BBvLoopbackOn (PSDevice pDevice)
 
     // Disable TX_IQUN
     BBbReadEmbeded(pDevice->PortOffset, 0x09, &pDevice->byBBCR09);
-    BBbWriteEmbeded(pDevice->PortOffset, 0x09, (unsigned char)(pDevice->byBBCR09 & 0xDE));
+    BBbWriteEmbeded(pDevice->PortOffset, 0x09, (BYTE)(pDevice->byBBCR09 & 0xDE));
 }
 
 /*
@@ -2402,8 +2402,8 @@ void BBvLoopbackOn (PSDevice pDevice)
  */
 void BBvLoopbackOff (PSDevice pDevice)
 {
-    unsigned char byData;
-    unsigned long dwIoBase = pDevice->PortOffset;
+    BYTE      byData;
+    DWORD_PTR dwIoBase = pDevice->PortOffset;
 
     BBbWriteEmbeded(dwIoBase, 0xC9, pDevice->byBBCRc9);//CR201
     BBbWriteEmbeded(dwIoBase, 0x88, pDevice->byBBCR88);//CR136
@@ -2413,14 +2413,14 @@ void BBvLoopbackOff (PSDevice pDevice)
     if (pDevice->uConnectionRate <= RATE_11M) { // CCK
         // Set the CR33 Bit2 to disable internal Loopback.
         BBbReadEmbeded(dwIoBase, 0x21, &byData);//CR33
-        BBbWriteEmbeded(dwIoBase, 0x21, (unsigned char)(byData & 0xFE));//CR33
+        BBbWriteEmbeded(dwIoBase, 0x21, (BYTE)(byData & 0xFE));//CR33
     }
     else { // OFDM
         BBbReadEmbeded(dwIoBase, 0x9A, &byData);//CR154
-        BBbWriteEmbeded(dwIoBase, 0x9A, (unsigned char)(byData & 0xFE));//CR154
+        BBbWriteEmbeded(dwIoBase, 0x9A, (BYTE)(byData & 0xFE));//CR154
     }
     BBbReadEmbeded(dwIoBase, 0x0E, &byData);//CR14
-    BBbWriteEmbeded(dwIoBase, 0x0E, (unsigned char)(byData | 0x80));//CR14
+    BBbWriteEmbeded(dwIoBase, 0x0E, (BYTE)(byData | 0x80));//CR14
 
 }
 
@@ -2438,11 +2438,11 @@ void BBvLoopbackOff (PSDevice pDevice)
  * Return Value: none
  *
  */
-void
+VOID
 BBvSetShortSlotTime (PSDevice pDevice)
 {
-    unsigned char byBBRxConf=0;
-    unsigned char byBBVGA=0;
+    BYTE byBBRxConf=0;
+    BYTE byBBVGA=0;
 
     BBbReadEmbeded(pDevice->PortOffset, 0x0A, &byBBRxConf);//CR10
 
@@ -2462,9 +2462,9 @@ BBvSetShortSlotTime (PSDevice pDevice)
 
 }
 
-void BBvSetVGAGainOffset(PSDevice pDevice, unsigned char byData)
+VOID BBvSetVGAGainOffset(PSDevice pDevice, BYTE byData)
 {
-    unsigned char byBBRxConf=0;
+    BYTE byBBRxConf=0;
 
     BBbWriteEmbeded(pDevice->PortOffset, 0xE7, byData);
 
@@ -2494,8 +2494,8 @@ void BBvSetVGAGainOffset(PSDevice pDevice, unsigned char byData)
  * Return Value: none
  *
  */
-void
-BBvSoftwareReset (unsigned long dwIoBase)
+VOID
+BBvSoftwareReset (DWORD_PTR dwIoBase)
 {
     BBbWriteEmbeded(dwIoBase, 0x50, 0x40);
     BBbWriteEmbeded(dwIoBase, 0x50, 0);
@@ -2515,10 +2515,10 @@ BBvSoftwareReset (unsigned long dwIoBase)
  * Return Value: none
  *
  */
-void
-BBvPowerSaveModeON (unsigned long dwIoBase)
+VOID
+BBvPowerSaveModeON (DWORD_PTR dwIoBase)
 {
-    unsigned char byOrgData;
+    BYTE byOrgData;
 
     BBbReadEmbeded(dwIoBase, 0x0D, &byOrgData);
     byOrgData |= BIT0;
@@ -2537,10 +2537,10 @@ BBvPowerSaveModeON (unsigned long dwIoBase)
  * Return Value: none
  *
  */
-void
-BBvPowerSaveModeOFF (unsigned long dwIoBase)
+VOID
+BBvPowerSaveModeOFF (DWORD_PTR dwIoBase)
 {
-    unsigned char byOrgData;
+    BYTE byOrgData;
 
     BBbReadEmbeded(dwIoBase, 0x0D, &byOrgData);
     byOrgData &= ~(BIT0);
@@ -2561,10 +2561,10 @@ BBvPowerSaveModeOFF (unsigned long dwIoBase)
  *
  */
 
-void
-BBvSetTxAntennaMode (unsigned long dwIoBase, unsigned char byAntennaMode)
+VOID
+BBvSetTxAntennaMode (DWORD_PTR dwIoBase, BYTE byAntennaMode)
 {
-    unsigned char byBBTxConf;
+    BYTE byBBTxConf;
 
 #ifdef	PLICE_DEBUG
 	//printk("Enter BBvSetTxAntennaMode\n");
@@ -2603,10 +2603,10 @@ BBvSetTxAntennaMode (unsigned long dwIoBase, unsigned char byAntennaMode)
  *
  */
 
-void
-BBvSetRxAntennaMode (unsigned long dwIoBase, unsigned char byAntennaMode)
+VOID
+BBvSetRxAntennaMode (DWORD_PTR dwIoBase, BYTE byAntennaMode)
 {
-    unsigned char byBBRxConf;
+    BYTE byBBRxConf;
 
     BBbReadEmbeded(dwIoBase, 0x0A, &byBBRxConf);//CR10
     if (byAntennaMode == ANT_DIVERSITY) {
@@ -2634,15 +2634,15 @@ BBvSetRxAntennaMode (unsigned long dwIoBase, unsigned char byAntennaMode)
  * Return Value: none
  *
  */
-void
-BBvSetDeepSleep (unsigned long dwIoBase, unsigned char byLocalID)
+VOID
+BBvSetDeepSleep (DWORD_PTR dwIoBase, BYTE byLocalID)
 {
     BBbWriteEmbeded(dwIoBase, 0x0C, 0x17);//CR12
     BBbWriteEmbeded(dwIoBase, 0x0D, 0xB9);//CR13
 }
 
-void
-BBvExitDeepSleep (unsigned long dwIoBase, unsigned char byLocalID)
+VOID
+BBvExitDeepSleep (DWORD_PTR dwIoBase, BYTE byLocalID)
 {
     BBbWriteEmbeded(dwIoBase, 0x0C, 0x00);//CR12
     BBbWriteEmbeded(dwIoBase, 0x0D, 0x01);//CR13
@@ -2651,12 +2651,12 @@ BBvExitDeepSleep (unsigned long dwIoBase, unsigned char byLocalID)
 
 
 static
-unsigned long
+ULONG
 s_ulGetRatio (PSDevice pDevice)
 {
-unsigned long ulRatio = 0;
-unsigned long ulMaxPacket;
-unsigned long ulPacketNum;
+ULONG   ulRatio = 0;
+ULONG   ulMaxPacket;
+ULONG   ulPacketNum;
 
     //This is a thousand-ratio
     ulMaxPacket = pDevice->uNumSQ3[RATE_54M];
@@ -2759,10 +2759,10 @@ unsigned long ulPacketNum;
 }
 
 
-void
+VOID
 BBvClearAntDivSQ3Value (PSDevice pDevice)
 {
-    unsigned int ii;
+    UINT    ii;
 
     pDevice->uDiversityCnt = 0;
     for (ii = 0; ii < MAX_RATE; ii++) {
@@ -2786,8 +2786,8 @@ BBvClearAntDivSQ3Value (PSDevice pDevice)
  *
  */
 
-void
-BBvAntennaDiversity (PSDevice pDevice, unsigned char byRxRate, unsigned char bySQ3)
+VOID
+BBvAntennaDiversity (PSDevice pDevice, BYTE byRxRate, BYTE bySQ3)
 {
 
     if ((byRxRate >= MAX_RATE) || (pDevice->wAntDiversityMaxRate >= MAX_RATE)) {
@@ -2876,9 +2876,9 @@ BBvAntennaDiversity (PSDevice pDevice, unsigned char byRxRate, unsigned char byS
  *
 -*/
 
-void
+VOID
 TimerSQ3CallBack (
-    void *hDeviceContext
+    IN  HANDLE      hDeviceContext
     )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;
@@ -2924,9 +2924,9 @@ TimerSQ3CallBack (
  *
 -*/
 
-void
+VOID
 TimerState1CallBack (
-    void *hDeviceContext
+    IN  HANDLE      hDeviceContext
     )
 {
     PSDevice        pDevice = (PSDevice)hDeviceContext;

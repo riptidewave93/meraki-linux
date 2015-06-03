@@ -3,8 +3,7 @@
 
 
 struct us122l {
-	struct usb_device	*dev;
-	int			card_index;
+	struct snd_usb_audio 	chip;
 	int			stride;
 	struct usb_stream_kernel sk;
 
@@ -13,7 +12,6 @@ struct us122l {
 	unsigned		second_periods_polled;
 	struct file		*master;
 	struct file		*slave;
-	struct list_head	midi_list;
 
 	atomic_t		mmap_count;
 };
@@ -25,7 +23,5 @@ struct us122l {
 
 #define USB_ID_US122L 0x800E
 #define USB_ID_US144 0x800F
-#define USB_ID_US122MKII 0x8021
-#define USB_ID_US144MKII 0x8020
 
 #endif

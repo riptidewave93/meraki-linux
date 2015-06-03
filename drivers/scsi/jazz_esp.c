@@ -1,10 +1,9 @@
 /* jazz_esp.c: ESP front-end for MIPS JAZZ systems.
  *
- * Copyright (C) 2007 Thomas BogendÃ¶rfer (tsbogend@alpha.frankende)
+ * Copyright (C) 2007 Thomas Bogendörfer (tsbogend@alpha.frankende)
  */
 
 #include <linux/kernel.h>
-#include <linux/gfp.h>
 #include <linux/types.h>
 #include <linux/module.h>
 #include <linux/init.h>

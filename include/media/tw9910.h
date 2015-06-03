@@ -30,8 +30,9 @@ enum tw9910_mpout_pin {
 };
 
 struct tw9910_video_info {
-	unsigned long		buswidth;
-	enum tw9910_mpout_pin	mpout;
+	unsigned long          buswidth;
+	enum tw9910_mpout_pin  mpout;
+	struct soc_camera_link link;
 };
 
 

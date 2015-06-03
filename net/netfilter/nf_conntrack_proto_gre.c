@@ -31,7 +31,6 @@
 #include <linux/in.h>
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
-#include <linux/slab.h>
 #include <net/dst.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
@@ -41,18 +40,10 @@
 #include <linux/netfilter/nf_conntrack_proto_gre.h>
 #include <linux/netfilter/nf_conntrack_pptp.h>
 
-enum grep_conntrack {
-	GRE_CT_UNREPLIED,
-	GRE_CT_REPLIED,
-	GRE_CT_MAX
-};
+#define GRE_TIMEOUT		(30 * HZ)
+#define GRE_STREAM_TIMEOUT	(180 * HZ)
 
-static unsigned int gre_timeouts[GRE_CT_MAX] = {
-	[GRE_CT_UNREPLIED]	= 30*HZ,
-	[GRE_CT_REPLIED]	= 180*HZ,
-};
-
-static int proto_gre_net_id __read_mostly;
+static int proto_gre_net_id;
 struct netns_proto_gre {
 	rwlock_t		keymap_lock;
 	struct list_head	keymap_list;
@@ -235,19 +226,13 @@ static int gre_print_conntrack(struct seq_file *s, struct nf_conn *ct)
 			  (ct->proto.gre.stream_timeout / HZ));
 }
 
-static unsigned int *gre_get_timeouts(struct net *net)
-{
-	return gre_timeouts;
-}
-
 /* Returns verdict for packet, and may modify conntrack */
 static int gre_packet(struct nf_conn *ct,
 		      const struct sk_buff *skb,
 		      unsigned int dataoff,
 		      enum ip_conntrack_info ctinfo,
 		      u_int8_t pf,
-		      unsigned int hooknum,
-		      unsigned int *timeouts)
+		      unsigned int hooknum)
 {
 	/* If we've seen traffic both ways, this is a GRE connection.
 	 * Extend timeout. */
@@ -255,8 +240,8 @@ static int gre_packet(struct nf_conn *ct,
 		nf_ct_refresh_acct(ct, ctinfo, skb,
 				   ct->proto.gre.stream_timeout);
 		/* Also, more likely to be important, and not a probe. */
-		if (!test_and_set_bit(IPS_ASSURED_BIT, &ct->status))
-			nf_conntrack_event_cache(IPCT_ASSURED, ct);
+		set_bit(IPS_ASSURED_BIT, &ct->status);
+		nf_conntrack_event_cache(IPCT_STATUS, ct);
 	} else
 		nf_ct_refresh_acct(ct, ctinfo, skb,
 				   ct->proto.gre.timeout);
@@ -266,15 +251,15 @@ static int gre_packet(struct nf_conn *ct,
 
 /* Called when a new connection for this protocol found. */
 static bool gre_new(struct nf_conn *ct, const struct sk_buff *skb,
-		    unsigned int dataoff, unsigned int *timeouts)
+		    unsigned int dataoff)
 {
 	pr_debug(": ");
 	nf_ct_dump_tuple(&ct->tuplehash[IP_CT_DIR_ORIGINAL].tuple);
 
 	/* initialize to sane value.  Ideally a conntrack helper
 	 * (e.g. in case of pptp) is increasing them */
-	ct->proto.gre.stream_timeout = timeouts[GRE_CT_REPLIED];
-	ct->proto.gre.timeout = timeouts[GRE_CT_UNREPLIED];
+	ct->proto.gre.stream_timeout = GRE_STREAM_TIMEOUT;
+	ct->proto.gre.timeout = GRE_TIMEOUT;
 
 	return true;
 }
@@ -292,52 +277,6 @@ static void gre_destroy(struct nf_conn *ct)
 		nf_ct_gre_keymap_destroy(master);
 }
 
-#if IS_ENABLED(CONFIG_NF_CT_NETLINK_TIMEOUT)
-
-#include <linux/netfilter/nfnetlink.h>
-#include <linux/netfilter/nfnetlink_cttimeout.h>
-
-static int gre_timeout_nlattr_to_obj(struct nlattr *tb[], void *data)
-{
-	unsigned int *timeouts = data;
-
-	/* set default timeouts for GRE. */
-	timeouts[GRE_CT_UNREPLIED] = gre_timeouts[GRE_CT_UNREPLIED];
-	timeouts[GRE_CT_REPLIED] = gre_timeouts[GRE_CT_REPLIED];
-
-	if (tb[CTA_TIMEOUT_GRE_UNREPLIED]) {
-		timeouts[GRE_CT_UNREPLIED] =
-			ntohl(nla_get_be32(tb[CTA_TIMEOUT_GRE_UNREPLIED])) * HZ;
-	}
-	if (tb[CTA_TIMEOUT_GRE_REPLIED]) {
-		timeouts[GRE_CT_REPLIED] =
-			ntohl(nla_get_be32(tb[CTA_TIMEOUT_GRE_REPLIED])) * HZ;
-	}
-	return 0;
-}
-
-static int
-gre_timeout_obj_to_nlattr(struct sk_buff *skb, const void *data)
-{
-	const unsigned int *timeouts = data;
-
-	NLA_PUT_BE32(skb, CTA_TIMEOUT_GRE_UNREPLIED,
-			htonl(timeouts[GRE_CT_UNREPLIED] / HZ));
-	NLA_PUT_BE32(skb, CTA_TIMEOUT_GRE_REPLIED,
-			htonl(timeouts[GRE_CT_REPLIED] / HZ));
-	return 0;
-
-nla_put_failure:
-	return -ENOSPC;
-}
-
-static const struct nla_policy
-gre_timeout_nla_policy[CTA_TIMEOUT_GRE_MAX+1] = {
-	[CTA_TIMEOUT_GRE_UNREPLIED]	= { .type = NLA_U32 },
-	[CTA_TIMEOUT_GRE_REPLIED]	= { .type = NLA_U32 },
-};
-#endif /* CONFIG_NF_CT_NETLINK_TIMEOUT */
-
 /* protocol helper struct */
 static struct nf_conntrack_l4proto nf_conntrack_l4proto_gre4 __read_mostly = {
 	.l3proto	 = AF_INET,
@@ -347,48 +286,46 @@ static struct nf_conntrack_l4proto nf_conntrack_l4proto_gre4 __read_mostly = {
 	.invert_tuple	 = gre_invert_tuple,
 	.print_tuple	 = gre_print_tuple,
 	.print_conntrack = gre_print_conntrack,
-	.get_timeouts    = gre_get_timeouts,
 	.packet		 = gre_packet,
 	.new		 = gre_new,
 	.destroy	 = gre_destroy,
 	.me 		 = THIS_MODULE,
-#if IS_ENABLED(CONFIG_NF_CT_NETLINK)
+#if defined(CONFIG_NF_CT_NETLINK) || defined(CONFIG_NF_CT_NETLINK_MODULE)
 	.tuple_to_nlattr = nf_ct_port_tuple_to_nlattr,
 	.nlattr_tuple_size = nf_ct_port_nlattr_tuple_size,
 	.nlattr_to_tuple = nf_ct_port_nlattr_to_tuple,
 	.nla_policy	 = nf_ct_port_nla_policy,
 #endif
-#if IS_ENABLED(CONFIG_NF_CT_NETLINK_TIMEOUT)
-	.ctnl_timeout    = {
-		.nlattr_to_obj	= gre_timeout_nlattr_to_obj,
-		.obj_to_nlattr	= gre_timeout_obj_to_nlattr,
-		.nlattr_max	= CTA_TIMEOUT_GRE_MAX,
-		.obj_size	= sizeof(unsigned int) * GRE_CT_MAX,
-		.nla_policy	= gre_timeout_nla_policy,
-	},
-#endif /* CONFIG_NF_CT_NETLINK_TIMEOUT */
 };
 
 static int proto_gre_net_init(struct net *net)
 {
-	struct netns_proto_gre *net_gre = net_generic(net, proto_gre_net_id);
+	struct netns_proto_gre *net_gre;
+	int rv;
 
+	net_gre = kmalloc(sizeof(struct netns_proto_gre), GFP_KERNEL);
+	if (!net_gre)
+		return -ENOMEM;
 	rwlock_init(&net_gre->keymap_lock);
 	INIT_LIST_HEAD(&net_gre->keymap_list);
 
-	return 0;
+	rv = net_assign_generic(net, proto_gre_net_id, net_gre);
+	if (rv < 0)
+		kfree(net_gre);
+	return rv;
 }
 
 static void proto_gre_net_exit(struct net *net)
 {
+	struct netns_proto_gre *net_gre = net_generic(net, proto_gre_net_id);
+
 	nf_ct_gre_keymap_flush(net);
+	kfree(net_gre);
 }
 
 static struct pernet_operations proto_gre_net_ops = {
 	.init = proto_gre_net_init,
 	.exit = proto_gre_net_exit,
-	.id   = &proto_gre_net_id,
-	.size = sizeof(struct netns_proto_gre),
 };
 
 static int __init nf_ct_proto_gre_init(void)
@@ -398,7 +335,7 @@ static int __init nf_ct_proto_gre_init(void)
 	rv = nf_conntrack_l4proto_register(&nf_conntrack_l4proto_gre4);
 	if (rv < 0)
 		return rv;
-	rv = register_pernet_subsys(&proto_gre_net_ops);
+	rv = register_pernet_gen_subsys(&proto_gre_net_id, &proto_gre_net_ops);
 	if (rv < 0)
 		nf_conntrack_l4proto_unregister(&nf_conntrack_l4proto_gre4);
 	return rv;
@@ -407,7 +344,7 @@ static int __init nf_ct_proto_gre_init(void)
 static void __exit nf_ct_proto_gre_fini(void)
 {
 	nf_conntrack_l4proto_unregister(&nf_conntrack_l4proto_gre4);
-	unregister_pernet_subsys(&proto_gre_net_ops);
+	unregister_pernet_gen_subsys(proto_gre_net_id, &proto_gre_net_ops);
 }
 
 module_init(nf_ct_proto_gre_init);

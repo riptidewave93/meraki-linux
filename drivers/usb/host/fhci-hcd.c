@@ -25,12 +25,11 @@
 #include <linux/interrupt.h>
 #include <linux/io.h>
 #include <linux/usb.h>
-#include <linux/usb/hcd.h>
 #include <linux/of_platform.h>
 #include <linux/of_gpio.h>
-#include <linux/slab.h>
 #include <asm/qe.h>
 #include <asm/fsl_gtm.h>
+#include "../core/hcd.h"
 #include "fhci.h"
 
 void fhci_start_sof_timer(struct fhci_hcd *fhci)
@@ -98,13 +97,13 @@ void fhci_usb_enable_interrupt(struct fhci_usb *usb)
 	usb->intr_nesting_cnt--;
 }
 
-/* disable the usb interrupt */
+/* diable the usb interrupt */
 void fhci_usb_disable_interrupt(struct fhci_usb *usb)
 {
 	struct fhci_hcd *fhci = usb->fhci;
 
 	if (usb->intr_nesting_cnt == 0) {
-		/* disable the timer interrupt */
+		/* diable the timer interrupt */
 		disable_irq_nosync(fhci->timer->irq);
 
 		/* disable the usb interrupt */
@@ -243,10 +242,9 @@ err:
 static void fhci_usb_free(void *lld)
 {
 	struct fhci_usb *usb = lld;
-	struct fhci_hcd *fhci;
+	struct fhci_hcd *fhci = usb->fhci;
 
 	if (usb) {
-		fhci = usb->fhci;
 		fhci_config_transceiver(fhci, FHCI_PORT_POWER_OFF);
 		fhci_ep0_free(usb);
 		kfree(usb->actual_frame);
@@ -401,7 +399,7 @@ static int fhci_urb_enqueue(struct usb_hcd *hcd, struct urb *urb,
 		/* 1 td fro setup,1 for ack */
 		size = 2;
 	case PIPE_BULK:
-		/* one td for every 4096 bytes(can be up to 8k) */
+		/* one td for every 4096 bytes(can be upto 8k) */
 		size += urb->transfer_buffer_length / 4096;
 		/* ...add for any remaining bytes... */
 		if ((urb->transfer_buffer_length % 4096) != 0)
@@ -434,7 +432,7 @@ static int fhci_urb_enqueue(struct usb_hcd *hcd, struct urb *urb,
 		return -ENOMEM;
 
 	/* allocate the private part of the URB */
-	urb_priv->tds = kcalloc(size, sizeof(*urb_priv->tds), mem_flags);
+	urb_priv->tds = kzalloc(size * sizeof(struct td), mem_flags);
 	if (!urb_priv->tds) {
 		kfree(urb_priv);
 		return -ENOMEM;
@@ -561,10 +559,11 @@ static const struct hc_driver fhci_driver = {
 	.hub_control = fhci_hub_control,
 };
 
-static int __devinit of_fhci_probe(struct platform_device *ofdev)
+static int __devinit of_fhci_probe(struct of_device *ofdev,
+				   const struct of_device_id *ofid)
 {
 	struct device *dev = &ofdev->dev;
-	struct device_node *node = dev->of_node;
+	struct device_node *node = ofdev->node;
 	struct usb_hcd *hcd;
 	struct fhci_hcd *fhci;
 	struct resource usb_regs;
@@ -605,7 +604,7 @@ static int __devinit of_fhci_probe(struct platform_device *ofdev)
 		goto err_regs;
 	}
 
-	hcd->regs = ioremap(usb_regs.start, resource_size(&usb_regs));
+	hcd->regs = ioremap(usb_regs.start, usb_regs.end - usb_regs.start + 1);
 	if (!hcd->regs) {
 		dev_err(dev, "could not ioremap regs\n");
 		ret = -ENOMEM;
@@ -621,15 +620,12 @@ static int __devinit of_fhci_probe(struct platform_device *ofdev)
 		goto err_pram;
 	}
 
-	pram_addr = cpm_muram_alloc(FHCI_PRAM_SIZE, 64);
+	pram_addr = cpm_muram_alloc_fixed(iprop[2], FHCI_PRAM_SIZE);
 	if (IS_ERR_VALUE(pram_addr)) {
 		dev_err(dev, "failed to allocate usb pram\n");
 		ret = -ENOMEM;
 		goto err_pram;
 	}
-
-	qe_issue_cmd(QE_ASSIGN_PAGE_TO_DEVICE, QE_CR_SUBBLOCK_USB,
-		     QE_CR_PROTOCOL_UNSPECIFIED, pram_addr);
 	fhci->pram = cpm_muram_addr(pram_addr);
 
 	/* GPIOs and pins */
@@ -672,7 +668,7 @@ static int __devinit of_fhci_probe(struct platform_device *ofdev)
 	}
 
 	for (j = 0; j < NUM_PINS; j++) {
-		fhci->pins[j] = qe_pin_request(node, j);
+		fhci->pins[j] = qe_pin_request(ofdev->node, j);
 		if (IS_ERR(fhci->pins[j])) {
 			ret = PTR_ERR(fhci->pins[j]);
 			dev_err(dev, "can't get pin %d: %d\n", j, ret);
@@ -689,7 +685,7 @@ static int __devinit of_fhci_probe(struct platform_device *ofdev)
 	}
 
 	ret = request_irq(fhci->timer->irq, fhci_frame_limit_timer_irq,
-			  0, "qe timer (usb)", hcd);
+			  IRQF_DISABLED, "qe timer (usb)", hcd);
 	if (ret) {
 		dev_err(dev, "failed to request timer irq");
 		goto err_timer_irq;
@@ -748,7 +744,7 @@ static int __devinit of_fhci_probe(struct platform_device *ofdev)
 	out_be16(&fhci->regs->usb_event, 0xffff);
 	out_be16(&fhci->regs->usb_mask, 0);
 
-	ret = usb_add_hcd(hcd, usb_irq, 0);
+	ret = usb_add_hcd(hcd, usb_irq, IRQF_DISABLED);
 	if (ret < 0)
 		goto err_add_hcd;
 
@@ -803,28 +799,35 @@ static int __devexit fhci_remove(struct device *dev)
 	return 0;
 }
 
-static int __devexit of_fhci_remove(struct platform_device *ofdev)
+static int __devexit of_fhci_remove(struct of_device *ofdev)
 {
 	return fhci_remove(&ofdev->dev);
 }
 
-static const struct of_device_id of_fhci_match[] = {
+static struct of_device_id of_fhci_match[] = {
 	{ .compatible = "fsl,mpc8323-qe-usb", },
 	{},
 };
 MODULE_DEVICE_TABLE(of, of_fhci_match);
 
-static struct platform_driver of_fhci_driver = {
-	.driver = {
-		.name = "fsl,usb-fhci",
-		.owner = THIS_MODULE,
-		.of_match_table = of_fhci_match,
-	},
+static struct of_platform_driver of_fhci_driver = {
+	.name		= "fsl,usb-fhci",
+	.match_table	= of_fhci_match,
 	.probe		= of_fhci_probe,
 	.remove		= __devexit_p(of_fhci_remove),
 };
 
-module_platform_driver(of_fhci_driver);
+static int __init fhci_module_init(void)
+{
+	return of_register_platform_driver(&of_fhci_driver);
+}
+module_init(fhci_module_init);
+
+static void __exit fhci_module_exit(void)
+{
+	of_unregister_platform_driver(&of_fhci_driver);
+}
+module_exit(fhci_module_exit);
 
 MODULE_DESCRIPTION("USB Freescale Host Controller Interface Driver");
 MODULE_AUTHOR("Shlomi Gridish <gridish@freescale.com>, "

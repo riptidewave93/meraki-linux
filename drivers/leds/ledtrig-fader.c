@@ -117,6 +117,7 @@ static void fade_activate(struct led_classdev *led_cdev)
 
 static void fade_deactivate(struct led_classdev *led_cdev)
 {
+	int needs_rotation = 0;
 	struct led_classdev **kept_p= NULL, **removed_p = NULL;
 	down_write(&fader.lock);
 

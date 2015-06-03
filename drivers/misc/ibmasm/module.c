@@ -18,7 +18,7 @@
  *
  * Copyright (C) IBM Corporation, 2004
  *
- * Author: Max AsbÃ¶ck <amax@us.ibm.com>
+ * Author: Max Asböck <amax@us.ibm.com>
  *
  * This driver is based on code originally written by Pete Reynolds
  * and others.
@@ -52,7 +52,6 @@
 
 #include <linux/pci.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include "ibmasm.h"
 #include "lowlevel.h"
 #include "remote.h"
@@ -211,17 +210,18 @@ static void __exit ibmasm_exit (void)
 
 static int __init ibmasm_init(void)
 {
-	int result = pci_register_driver(&ibmasm_driver);
-	if (result)
-		return result;
+	int result;
 
 	result = ibmasmfs_register();
 	if (result) {
-		pci_unregister_driver(&ibmasm_driver);
 		err("Failed to register ibmasmfs file system");
 		return result;
 	}
-
+	result = pci_register_driver(&ibmasm_driver);
+	if (result) {
+		ibmasmfs_unregister();
+		return result;
+	}
 	ibmasm_register_panic_notifier();
 	info(DRIVER_DESC " version " DRIVER_VERSION " loaded");
 	return 0;

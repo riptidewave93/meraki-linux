@@ -25,15 +25,16 @@
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
 
-struct regmap;
-
 #define WM8400_REGISTER_COUNT 0x55
 
 struct wm8400 {
 	struct device *dev;
 
+	int (*read_dev)(void *data, char reg, int count, u16 *dst);
+	int (*write_dev)(void *data, char reg, int count, const u16 *src);
+
 	struct mutex io_lock;
-	struct regmap *regmap;
+	void *io_data;
 
 	u16 reg_cache[WM8400_REGISTER_COUNT];
 

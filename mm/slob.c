@@ -63,14 +63,12 @@
 #include <linux/swap.h> /* struct reclaim_state */
 #include <linux/cache.h>
 #include <linux/init.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/rcupdate.h>
 #include <linux/list.h>
+#include <linux/kmemtrace.h>
 #include <linux/kmemleak.h>
-
-#include <trace/events/kmem.h>
-
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 /*
  * slob_block has a field 'units', which indicates size of block if +ve,
@@ -396,7 +394,6 @@ static void slob_free(void *block, int size)
 	slob_t *prev, *next, *b = (slob_t *)block;
 	slobidx_t units;
 	unsigned long flags;
-	struct list_head *slob_list;
 
 	if (unlikely(ZERO_OR_NULL_PTR(block)))
 		return;
@@ -425,13 +422,7 @@ static void slob_free(void *block, int size)
 		set_slob(b, units,
 			(void *)((unsigned long)(b +
 					SLOB_UNITS(PAGE_SIZE)) & PAGE_MASK));
-		if (size < SLOB_BREAK1)
-			slob_list = &free_slob_small;
-		else if (size < SLOB_BREAK2)
-			slob_list = &free_slob_medium;
-		else
-			slob_list = &free_slob_large;
-		set_slob_page_free(sp, slob_list);
+		set_slob_page_free(sp, &free_slob_small);
 		goto out;
 	}
 
@@ -476,13 +467,19 @@ out:
  * End of slob allocator proper. Begin kmem_cache_alloc and kmalloc frontend.
  */
 
+#ifndef ARCH_KMALLOC_MINALIGN
+#define ARCH_KMALLOC_MINALIGN __alignof__(unsigned long)
+#endif
+
+#ifndef ARCH_SLAB_MINALIGN
+#define ARCH_SLAB_MINALIGN __alignof__(unsigned long)
+#endif
+
 void *__kmalloc_node(size_t size, gfp_t gfp, int node)
 {
 	unsigned int *m;
 	int align = max(ARCH_KMALLOC_MINALIGN, ARCH_SLAB_MINALIGN);
 	void *ret;
-
-	gfp &= gfp_allowed_mask;
 
 	lockdep_trace_alloc(gfp);
 
@@ -502,9 +499,7 @@ void *__kmalloc_node(size_t size, gfp_t gfp, int node)
 	} else {
 		unsigned int order = get_order(size);
 
-		if (likely(order))
-			gfp |= __GFP_COMP;
-		ret = slob_new_pages(gfp, order, node);
+		ret = slob_new_pages(gfp | __GFP_COMP, get_order(size), node);
 		if (ret) {
 			struct page *page;
 			page = virt_to_page(ret);
@@ -610,10 +605,6 @@ void *kmem_cache_alloc_node(struct kmem_cache *c, gfp_t flags, int node)
 {
 	void *b;
 
-	flags &= gfp_allowed_mask;
-
-	lockdep_trace_alloc(flags);
-
 	if (c->size < PAGE_SIZE) {
 		b = slob_alloc(c->size, flags, c->align, node);
 		trace_kmem_cache_alloc_node(_RET_IP_, b, c->size,
@@ -656,6 +647,7 @@ void kmem_cache_free(struct kmem_cache *c, void *b)
 	if (unlikely(c->flags & SLAB_DESTROY_BY_RCU)) {
 		struct slob_rcu *slob_rcu;
 		slob_rcu = b + (c->size - sizeof(struct slob_rcu));
+		INIT_RCU_HEAD(&slob_rcu->head);
 		slob_rcu->size = c->size;
 		call_rcu(&slob_rcu->head, kmem_rcu_free);
 	} else {
@@ -672,11 +664,22 @@ unsigned int kmem_cache_size(struct kmem_cache *c)
 }
 EXPORT_SYMBOL(kmem_cache_size);
 
+const char *kmem_cache_name(struct kmem_cache *c)
+{
+	return c->name;
+}
+EXPORT_SYMBOL(kmem_cache_name);
+
 int kmem_cache_shrink(struct kmem_cache *d)
 {
 	return 0;
 }
 EXPORT_SYMBOL(kmem_cache_shrink);
+
+int kmem_ptr_validate(struct kmem_cache *a, const void *b)
+{
+	return 0;
+}
 
 static unsigned int slob_ready __read_mostly;
 

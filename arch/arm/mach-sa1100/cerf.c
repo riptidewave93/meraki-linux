@@ -18,6 +18,7 @@
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
 
+#include <asm/irq.h>
 #include <mach/hardware.h>
 #include <asm/setup.h>
 
@@ -29,11 +30,14 @@
 
 #include <mach/cerf.h>
 #include <mach/mcp.h>
-#include <mach/irqs.h>
 #include "generic.h"
 
 static struct resource cerfuart2_resources[] = {
-	[0] = DEFINE_RES_MEM(0x80030000, SZ_64K),
+	[0] = {
+		.start	= 0x80030000,
+		.end	= 0x8003ffff,
+		.flags	= IORESOURCE_MEM,
+	},
 };
 
 static struct platform_device cerfuart2_device = {
@@ -83,13 +87,16 @@ static struct flash_platform_data cerf_flash_data = {
 	.nr_parts	= ARRAY_SIZE(cerf_partitions),
 };
 
-static struct resource cerf_flash_resource =
-	DEFINE_RES_MEM(SA1100_CS0_PHYS, SZ_32M);
+static struct resource cerf_flash_resource = {
+	.start		= SA1100_CS0_PHYS,
+	.end		= SA1100_CS0_PHYS + SZ_32M - 1,
+	.flags		= IORESOURCE_MEM,
+};
 
 static void __init cerf_init_irq(void)
 {
 	sa1100_init_irq();
-	irq_set_irq_type(CERF_ETH_IRQ, IRQ_TYPE_EDGE_RISING);
+	set_irq_type(CERF_ETH_IRQ, IRQ_TYPE_EDGE_RISING);
 }
 
 static struct map_desc cerf_io_desc[] __initdata = {
@@ -121,18 +128,17 @@ static struct mcp_plat_data cerf_mcp_data = {
 
 static void __init cerf_init(void)
 {
-	sa11x0_ppc_configure_mcp();
 	platform_add_devices(cerf_devices, ARRAY_SIZE(cerf_devices));
-	sa11x0_register_mtd(&cerf_flash_data, &cerf_flash_resource, 1);
-	sa11x0_register_mcp(&cerf_mcp_data);
+	sa11x0_set_flash_data(&cerf_flash_data, &cerf_flash_resource, 1);
+	sa11x0_set_mcp_data(&cerf_mcp_data);
 }
 
 MACHINE_START(CERF, "Intrinsyc CerfBoard/CerfCube")
 	/* Maintainer: support@intrinsyc.com */
+	.phys_io	= 0x80000000,
+	.io_pg_offst	= ((0xf8000000) >> 18) & 0xfffc,
 	.map_io		= cerf_map_io,
-	.nr_irqs	= SA1100_NR_IRQS,
 	.init_irq	= cerf_init_irq,
 	.timer		= &sa1100_timer,
 	.init_machine	= cerf_init,
-	.restart	= sa11x0_restart,
 MACHINE_END

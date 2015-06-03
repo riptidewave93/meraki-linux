@@ -33,13 +33,7 @@ ffff0000	ffff0fff	CPU vector page.
 
 fffe0000	fffeffff	XScale cache flush area.  This is used
 				in proc-xscale.S to flush the whole data
-				cache. (XScale does not have TCM.)
-
-fffe8000	fffeffff	DTCM mapping area for platforms with
-				DTCM mounted inside the CPU.
-
-fffe0000	fffe7fff	ITCM mapping area for platforms with
-				ITCM mounted inside the CPU.
+				cache.  Free for other usage on non-XScale.
 
 fff00000	fffdffff	Fixmap mapping region.  Addresses provided
 				by fix_to_virt() will be located here.
@@ -51,24 +45,21 @@ ffc00000	ffefffff	DMA memory mapping region.  Memory returned
 ff000000	ffbfffff	Reserved for future expansion of DMA
 				mapping region.
 
+VMALLOC_END	feffffff	Free for platform use, recommended.
+				VMALLOC_END must be aligned to a 2MB
+				boundary.
+
 VMALLOC_START	VMALLOC_END-1	vmalloc() / ioremap() space.
 				Memory returned by vmalloc/ioremap will
 				be dynamically placed in this region.
-				Machine specific static mappings are also
-				located here through iotable_init().
-				VMALLOC_START is based upon the value
-				of the high_memory variable, and VMALLOC_END
-				is equal to 0xff000000.
+				VMALLOC_START may be based upon the value
+				of the high_memory variable.
 
 PAGE_OFFSET	high_memory-1	Kernel direct-mapped RAM region.
 				This maps the platforms RAM, and typically
 				maps all platform RAM in a 1:1 relationship.
 
-PKMAP_BASE	PAGE_OFFSET-1	Permanent kernel mappings
-				One way of mapping HIGHMEM pages into kernel
-				space.
-
-MODULES_VADDR	MODULES_END-1	Kernel module space
+TASK_SIZE	PAGE_OFFSET-1	Kernel module space
 				Kernel modules inserted via insmod are
 				placed here using dynamic mappings.
 

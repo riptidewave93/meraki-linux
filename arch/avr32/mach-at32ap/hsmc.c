@@ -12,7 +12,6 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 
 #include <asm/io.h>
 #include <mach/smc.h>
@@ -245,7 +244,7 @@ static int hsmc_probe(struct platform_device *pdev)
 
 	hsmc->pclk = pclk;
 	hsmc->mck = mck;
-	hsmc->regs = ioremap(regs->start, resource_size(regs));
+	hsmc->regs = ioremap(regs->start, regs->end - regs->start + 1);
 	if (!hsmc->regs)
 		goto out_disable_clocks;
 

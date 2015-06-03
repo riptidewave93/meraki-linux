@@ -21,6 +21,7 @@
 #include <linux/pm.h>
 
 #include <asm/reboot.h>
+#include <asm/system.h>
 #include <asm/lasat/lasat.h>
 
 #include "picvue.h"

@@ -24,6 +24,7 @@
 #include <asm/irq_regs.h>
 #include <asm/processor.h>
 #include <asm/ptrace.h>
+#include <asm/system.h>
 #include <asm/traps.h>
 
 #include <asm/dec/ecc.h>

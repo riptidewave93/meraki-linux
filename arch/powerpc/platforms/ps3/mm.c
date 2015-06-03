@@ -19,24 +19,22 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/memory_hotplug.h>
-#include <linux/memblock.h>
-#include <linux/slab.h>
+#include <linux/lmb.h>
 
 #include <asm/cell-regs.h>
 #include <asm/firmware.h>
 #include <asm/prom.h>
 #include <asm/udbg.h>
 #include <asm/lv1call.h>
-#include <asm/setup.h>
 
 #include "platform.h"
 
 #if defined(DEBUG)
 #define DBG udbg_printf
 #else
-#define DBG pr_devel
+#define DBG pr_debug
 #endif
 
 enum {
@@ -319,7 +317,8 @@ static int __init ps3_mm_add_memory(void)
 		return result;
 	}
 
-	memblock_add(start_addr, map.r1.size);
+	lmb_add(start_addr, map.r1.size);
+	lmb_analyze();
 
 	result = online_pages(start_pfn, nr_pages);
 

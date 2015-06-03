@@ -10,6 +10,7 @@
 
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/pagemap.h>
 #include <linux/init.h>
@@ -19,7 +20,6 @@
 #include <linux/seq_file.h>
 #include <linux/kdebug.h>
 #include <linux/log2.h>
-#include <linux/gfp.h>
 
 #include <asm/bitext.h>
 #include <asm/page.h>
@@ -650,7 +650,7 @@ static void srmmu_unmapiorange(unsigned long virt_addr, unsigned int len)
  * mappings on the kernel stack without any special code as we did
  * need on the sun4c.
  */
-static struct thread_info *srmmu_alloc_thread_info_node(int node)
+static struct thread_info *srmmu_alloc_thread_info(void)
 {
 	struct thread_info *ret;
 
@@ -694,7 +694,7 @@ extern void tsunami_setup_blockops(void);
  * The following code is a deadwood that may be necessary when
  * we start to make precise page flushes again. --zaitcev
  */
-static void swift_update_mmu_cache(struct vm_area_struct * vma, unsigned long address, pte_t *ptep)
+static void swift_update_mmu_cache(struct vm_area_struct * vma, unsigned long address, pte_t pte)
 {
 #if 0
 	static unsigned long last;
@@ -703,10 +703,10 @@ static void swift_update_mmu_cache(struct vm_area_struct * vma, unsigned long ad
 
 	if (address == last) {
 		val = srmmu_hwprobe(address);
-		if (val != 0 && pte_val(*ptep) != val) {
+		if (val != 0 && pte_val(pte) != val) {
 			printk("swift_update_mmu_cache: "
 			    "addr %lx put %08x probed %08x from %p\n",
-			    address, pte_val(*ptep), val,
+			    address, pte_val(pte), val,
 			    __builtin_return_address(0));
 			srmmu_flush_whole_tlb();
 		}
@@ -1262,8 +1262,7 @@ extern unsigned long bootmem_init(unsigned long *pages_avail);
 
 void __init srmmu_paging_init(void)
 {
-	int i;
-	phandle cpunode;
+	int i, cpunode;
 	char node_str[128];
 	pgd_t *pgd;
 	pmd_t *pmd;
@@ -1399,8 +1398,7 @@ static void __init srmmu_is_bad(void)
 
 static void __init init_vac_layout(void)
 {
-	phandle nd;
-	int cache_lines;
+	int nd, cache_lines;
 	char node_str[128];
 #ifdef CONFIG_SMP
 	int cpu = 0;
@@ -1665,7 +1663,7 @@ static void __init init_swift(void)
 	default:
 		srmmu_modtype = Swift_ok;
 		break;
-	}
+	};
 
 	BTFIXUPSET_CALL(flush_cache_all, swift_flush_cache_all, BTFIXUPCALL_NORM);
 	BTFIXUPSET_CALL(flush_cache_mm, swift_flush_cache_mm, BTFIXUPCALL_NORM);
@@ -1992,7 +1990,7 @@ void __init poke_leonsparc(void)
 void __init init_leon(void)
 {
 
-	srmmu_name = "LEON";
+	srmmu_name = "Leon";
 
 	BTFIXUPSET_CALL(flush_cache_all, leon_flush_cache_all,
 			BTFIXUPCALL_NORM);
@@ -2039,6 +2037,8 @@ static void __init get_srmmu_type(void)
 
 	/* First, check for sparc-leon. */
 	if (sparc_cpu_model == sparc_leon) {
+		psr_typ = 0xf;	/* hardcoded ids for older models/simulators */
+		psr_vers = 2;
 		init_leon();
 		return;
 	}
@@ -2069,7 +2069,7 @@ static void __init get_srmmu_type(void)
 			/* Some other Cypress revision, assume a 605. */
 			init_cypress_605(mod_rev);
 			break;
-		}
+		};
 		return;
 	}
 	
@@ -2084,7 +2084,7 @@ static void __init get_srmmu_type(void)
 
 	/* Next check for Fujitsu Swift. */
 	if(psr_typ == 0 && psr_vers == 4) {
-		phandle cpunode;
+		int cpunode;
 		char node_str[128];
 
 		/* Look if it is not a TurboSparc emulating Swift... */
@@ -2217,6 +2217,8 @@ void __init ld_mmu_srmmu(void)
 	BTFIXUPSET_CALL(pmd_page, srmmu_pmd_page, BTFIXUPCALL_NORM);
 	BTFIXUPSET_CALL(pgd_page_vaddr, srmmu_pgd_page, BTFIXUPCALL_NORM);
 
+	BTFIXUPSET_SETHI(none_mask, 0xF0000000);
+
 	BTFIXUPSET_CALL(pte_present, srmmu_pte_present, BTFIXUPCALL_NORM);
 	BTFIXUPSET_CALL(pte_clear, srmmu_pte_clear, BTFIXUPCALL_SWAPO0G0);
 
@@ -2271,7 +2273,7 @@ void __init ld_mmu_srmmu(void)
 
 	BTFIXUPSET_CALL(mmu_info, srmmu_mmu_info, BTFIXUPCALL_NORM);
 
-	BTFIXUPSET_CALL(alloc_thread_info_node, srmmu_alloc_thread_info_node, BTFIXUPCALL_NORM);
+	BTFIXUPSET_CALL(alloc_thread_info, srmmu_alloc_thread_info, BTFIXUPCALL_NORM);
 	BTFIXUPSET_CALL(free_thread_info, srmmu_free_thread_info, BTFIXUPCALL_NORM);
 
 	BTFIXUPSET_CALL(pte_to_pgoff, srmmu_pte_to_pgoff, BTFIXUPCALL_NORM);
@@ -2299,8 +2301,7 @@ void __init ld_mmu_srmmu(void)
 	BTFIXUPSET_CALL(flush_cache_mm, smp_flush_cache_mm, BTFIXUPCALL_NORM);
 	BTFIXUPSET_CALL(flush_cache_range, smp_flush_cache_range, BTFIXUPCALL_NORM);
 	BTFIXUPSET_CALL(flush_cache_page, smp_flush_cache_page, BTFIXUPCALL_NORM);
-	if (sparc_cpu_model != sun4d &&
-	    sparc_cpu_model != sparc_leon) {
+	if (sparc_cpu_model != sun4d) {
 		BTFIXUPSET_CALL(flush_tlb_all, smp_flush_tlb_all, BTFIXUPCALL_NORM);
 		BTFIXUPSET_CALL(flush_tlb_mm, smp_flush_tlb_mm, BTFIXUPCALL_NORM);
 		BTFIXUPSET_CALL(flush_tlb_range, smp_flush_tlb_range, BTFIXUPCALL_NORM);
@@ -2329,8 +2330,6 @@ void __init ld_mmu_srmmu(void)
 #ifdef CONFIG_SMP
 	if (sparc_cpu_model == sun4d)
 		sun4d_init_smp();
-	else if (sparc_cpu_model == sparc_leon)
-		leon_init_smp();
 	else
 		sun4m_init_smp();
 #endif

@@ -4,7 +4,6 @@
  * published by the Free Software Foundation.
  */
 
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/dma-mapping.h>
 
@@ -140,9 +139,6 @@ int __pxa2xx_pcm_prepare(struct snd_pcm_substream *substream)
 	if (!prtd || !prtd->params)
 		return 0;
 
-	if (prtd->dma_ch == -1)
-		return -EINVAL;
-
 	DCSR(prtd->dma_ch) &= ~DCSR_RUN;
 	DCSR(prtd->dma_ch) = 0;
 	DCMD(prtd->dma_ch) = 0;
@@ -166,9 +162,7 @@ void pxa2xx_pcm_dma_irq(int dma_ch, void *dev_id)
 	} else {
 		printk(KERN_ERR "%s: DMA error on channel %d (DCSR=%#x)\n",
 			rtd->params->name, dma_ch, dcsr);
-		snd_pcm_stream_lock(substream);
 		snd_pcm_stop(substream, SNDRV_PCM_STATE_XRUN);
-		snd_pcm_stream_unlock(substream);
 	}
 }
 EXPORT_SYMBOL(pxa2xx_pcm_dma_irq);
@@ -211,7 +205,6 @@ int __pxa2xx_pcm_open(struct snd_pcm_substream *substream)
 	if (!rtd->dma_desc_array)
 		goto err1;
 
-	rtd->dma_ch = -1;
 	runtime->private_data = rtd;
 	return 0;
 

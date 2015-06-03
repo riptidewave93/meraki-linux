@@ -10,16 +10,16 @@ static int show_softirqs(struct seq_file *p, void *v)
 {
 	int i, j;
 
-	seq_puts(p, "                    ");
+	seq_printf(p, "                ");
 	for_each_possible_cpu(i)
 		seq_printf(p, "CPU%-8d", i);
-	seq_putc(p, '\n');
+	seq_printf(p, "\n");
 
 	for (i = 0; i < NR_SOFTIRQS; i++) {
-		seq_printf(p, "%12s:", softirq_to_name[i]);
+		seq_printf(p, "%8s:", softirq_to_name[i]);
 		for_each_possible_cpu(j)
 			seq_printf(p, " %10u", kstat_softirqs_cpu(i, j));
-		seq_putc(p, '\n');
+		seq_printf(p, "\n");
 	}
 	return 0;
 }

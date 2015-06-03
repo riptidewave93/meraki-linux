@@ -25,10 +25,10 @@
 #include <asm/cputable.h>
 #include <asm/thread_info.h>
 #include <asm/kexec.h>
-#include <asm/ptrace.h>
 
 	.text
 
+#ifdef CONFIG_IRQSTACKS
 _GLOBAL(call_do_softirq)
 	mflr	r0
 	std	r0,16(r1)
@@ -52,6 +52,7 @@ _GLOBAL(call_handle_irq)
 	ld	r0,16(r1)
 	mtlr	r0
 	blr
+#endif /* CONFIG_IRQSTACKS */
 
 	.section	".toc","aw"
 PPC64_CACHES:
@@ -339,7 +340,7 @@ _GLOBAL(real_205_writeb)
 #endif /* CONFIG_PPC_PASEMI */
 
 
-#if defined(CONFIG_CPU_FREQ_PMAC64) || defined(CONFIG_CPU_FREQ_MAPLE)
+#ifdef CONFIG_CPU_FREQ_PMAC64
 /*
  * SCOM access functions for 970 (FX only for now)
  *
@@ -408,7 +409,7 @@ _GLOBAL(scom970_write)
 	/* restore interrupts */
 	mtmsrd	r5,1
 	blr
-#endif /* CONFIG_CPU_FREQ_PMAC64 || CONFIG_CPU_FREQ_MAPLE */
+#endif /* CONFIG_CPU_FREQ_PMAC64 */
 
 
 /*

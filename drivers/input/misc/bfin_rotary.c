@@ -6,13 +6,13 @@
  */
 
 #include <linux/module.h>
+#include <linux/version.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
 #include <linux/pm.h>
 #include <linux/platform_device.h>
 #include <linux/input.h>
-#include <linux/slab.h>
 
 #include <asm/portmux.h>
 #include <asm/bfin_rotary.h>
@@ -247,7 +247,7 @@ static int bfin_rotary_resume(struct device *dev)
 	return 0;
 }
 
-static const struct dev_pm_ops bfin_rotary_pm_ops = {
+static struct dev_pm_ops bfin_rotary_pm_ops = {
 	.suspend	= bfin_rotary_suspend,
 	.resume		= bfin_rotary_resume,
 };
@@ -264,7 +264,18 @@ static struct platform_driver bfin_rotary_device_driver = {
 #endif
 	},
 };
-module_platform_driver(bfin_rotary_device_driver);
+
+static int __init bfin_rotary_init(void)
+{
+	return platform_driver_register(&bfin_rotary_device_driver);
+}
+module_init(bfin_rotary_init);
+
+static void __exit bfin_rotary_exit(void)
+{
+	platform_driver_unregister(&bfin_rotary_device_driver);
+}
+module_exit(bfin_rotary_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Michael Hennerich <hennerich@blackfin.uclinux.org>");

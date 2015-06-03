@@ -12,11 +12,10 @@
  */
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <linux/export.h>
 #include <net/snmp.h>
 #include <net/xfrm.h>
 
-static const struct snmp_mib xfrm_mib_list[] = {
+static struct snmp_mib xfrm_mib_list[] = {
 	SNMP_MIB_ITEM("XfrmInError", LINUX_MIB_XFRMINERROR),
 	SNMP_MIB_ITEM("XfrmInBufferError", LINUX_MIB_XFRMINBUFFERERROR),
 	SNMP_MIB_ITEM("XfrmInHdrError", LINUX_MIB_XFRMINHDRERROR),
@@ -42,7 +41,6 @@ static const struct snmp_mib xfrm_mib_list[] = {
 	SNMP_MIB_ITEM("XfrmOutPolBlock", LINUX_MIB_XFRMOUTPOLBLOCK),
 	SNMP_MIB_ITEM("XfrmOutPolDead", LINUX_MIB_XFRMOUTPOLDEAD),
 	SNMP_MIB_ITEM("XfrmOutPolError", LINUX_MIB_XFRMOUTPOLERROR),
-	SNMP_MIB_ITEM("XfrmFwdHdrError", LINUX_MIB_XFRMFWDHDRERROR),
 	SNMP_MIB_SENTINEL
 };
 
@@ -52,8 +50,7 @@ static int xfrm_statistics_seq_show(struct seq_file *seq, void *v)
 	int i;
 	for (i=0; xfrm_mib_list[i].name; i++)
 		seq_printf(seq, "%-24s\t%lu\n", xfrm_mib_list[i].name,
-			   snmp_fold_field((void __percpu **)
-					   net->mib.xfrm_statistics,
+			   snmp_fold_field((void **)net->mib.xfrm_statistics,
 					   xfrm_mib_list[i].entry));
 	return 0;
 }

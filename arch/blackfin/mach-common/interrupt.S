@@ -88,13 +88,6 @@ __common_int_entry:
 #else
 	cli r1;
 #endif
-#ifdef CONFIG_TRACE_IRQFLAGS
-	[--sp] = r0;
-	sp += -12;
-	call _trace_hardirqs_off;
-	sp += 12;
-	r0 = [sp++];
-#endif
 	[--sp] = RETI;  /* orig_pc */
 	/* Clear all L registers.  */
 	r1 = 0 (x);
@@ -116,27 +109,10 @@ __common_int_entry:
 	cc = r0 == 0;
 	if cc jump .Lcommon_restore_context;
 #else /* CONFIG_IPIPE */
-
-#ifdef CONFIG_PREEMPT
-	r7 = sp;
-	r4.l = lo(ALIGN_PAGE_MASK);
-	r4.h = hi(ALIGN_PAGE_MASK);
-	r7 = r7 & r4;
-	p5 = r7;
-	r7 = [p5 + TI_PREEMPT]; /* get preempt count */
-	r7 += 1;                /* increment it */
-	[p5 + TI_PREEMPT] = r7;
-#endif
-	pseudo_long_call _do_irq, p2;
-
-#ifdef CONFIG_PREEMPT
-	r7 += -1;
-	[p5 + TI_PREEMPT] = r7; /* restore preempt count */
-#endif
-
+	call _do_irq;
 	SP += 12;
 #endif /* CONFIG_IPIPE */
-	pseudo_long_call _return_from_int, p2;
+	call _return_from_int;
 .Lcommon_restore_context:
 	RESTORE_CONTEXT
 	rti;
@@ -192,7 +168,7 @@ ENTRY(_evt_ivhw)
 
 	r0 = sp;        /* stack frame pt_regs pointer argument ==> r0 */
 	SP += -12;
-	pseudo_long_call _trap_c, p5;
+	call _trap_c;
 	SP += 12;
 
 #ifdef EBIU_ERRMST
@@ -203,7 +179,7 @@ ENTRY(_evt_ivhw)
 	w[p0] = r0.l;
 #endif
 
-	pseudo_long_call _ret_from_exception, p2;
+	call _ret_from_exception;
 
 .Lcommon_restore_all_sys:
 	RESTORE_ALL_SYS
@@ -211,28 +187,12 @@ ENTRY(_evt_ivhw)
 ENDPROC(_evt_ivhw)
 
 /* Interrupt routine for evt2 (NMI).
+ * We don't actually use this, so just return.
  * For inner circle type details, please see:
  * http://docs.blackfin.uclinux.org/doku.php?id=linux-kernel:nmi
  */
 ENTRY(_evt_nmi)
-#ifndef CONFIG_NMI_WATCHDOG
 .weak _evt_nmi
-#else
-	/* Not take account of CPLBs, this handler will not return */
-	SAVE_ALL_SYS
-	r0 = sp;
-	r1 = retn;
-	[sp + PT_PC] = r1;
-	trace_buffer_save(p4,r5);
-
-	ANOMALY_283_315_WORKAROUND(p4, r5)
-
-	SP += -12;
-	call _do_nmi;
-	SP += 12;
-1:
-	jump 1b;
-#endif
 	rtn;
 ENDPROC(_evt_nmi)
 
@@ -263,7 +223,7 @@ ENTRY(_evt_system_call)
 #ifdef CONFIG_FRAME_POINTER
 	fp = 0;
 #endif
-	pseudo_long_call _system_call, p2;
+	call _system_call;
 	jump .Lcommon_restore_context;
 ENDPROC(_evt_system_call)
 
@@ -274,16 +234,16 @@ ENDPROC(_evt_system_call)
  * level to EVT14 to prepare the caller for a normal interrupt
  * return through RTI.
  *
- * We currently use this feature in two occasions:
+ * We currently use this facility in two occasions:
  *
- * - before branching to __ipipe_irq_tail_hook as requested by a high
+ * - to branch to __ipipe_irq_tail_hook as requested by a high
  *   priority domain after the pipeline delivered an interrupt,
  *   e.g. such as Xenomai, in order to start its rescheduling
  *   procedure, since we may not switch tasks when IRQ levels are
  *   nested on the Blackfin, so we have to fake an interrupt return
  *   so that we may reschedule immediately.
  *
- * - before branching to __ipipe_sync_root(), in order to play any interrupt
+ * - to branch to sync_root_irqs, in order to play any interrupt
  *   pending for the root domain (i.e. the Linux kernel). This lowers
  *   the core priority level enough so that Linux IRQ handlers may
  *   never delay interrupts handled by high priority domains; we defer

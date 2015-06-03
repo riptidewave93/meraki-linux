@@ -29,7 +29,7 @@
 	prefetchw(x)	- prefetches the cacheline at "x" for write
 	spin_lock_prefetch(x) - prefetches the spinlock *x for taking
 	
-	there is also PREFETCH_STRIDE which is the architecure-preferred 
+	there is also PREFETCH_STRIDE which is the architecure-prefered 
 	"lookahead" size for prefetching streamed operations.
 	
 */
@@ -47,20 +47,16 @@
 #endif
 
 #ifndef PREFETCH_STRIDE
-#ifdef CONFIG_BCM_IPROC_CA9_PREFETCH
-#define PREFETCH_STRIDE (32)
-#else
 #define PREFETCH_STRIDE (4*L1_CACHE_BYTES)
-#endif
 #endif
 
 static inline void prefetch_range(void *addr, size_t len)
 {
 #ifdef ARCH_HAS_PREFETCH
 	char *cp;
-	char *end = addr + len;
+	char *end = (char *)addr + len;
 
-	for (cp = addr; cp < end; cp += PREFETCH_STRIDE)
+	for (cp = (char *)addr; cp < end; cp += PREFETCH_STRIDE)
 		prefetch(cp);
 #endif
 }

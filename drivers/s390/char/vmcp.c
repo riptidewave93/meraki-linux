@@ -1,28 +1,33 @@
 /*
- * Copyright IBM Corp. 2004,2010
+ * Copyright IBM Corp. 2004,2007
  * Interface implementation for communication with the z/VM control program
- *
  * Author(s): Christian Borntraeger <borntraeger@de.ibm.com>
+ *
  *
  * z/VMs CP offers the possibility to issue commands via the diagnose code 8
  * this driver implements a character device that issues these commands and
  * returns the answer of CP.
- *
+
  * The idea of this driver is based on cpint from Neale Ferguson and #CP in CMS
  */
+
+#define KMSG_COMPONENT "vmcp"
+#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/compat.h>
 #include <linux/kernel.h>
 #include <linux/miscdevice.h>
-#include <linux/slab.h>
-#include <linux/export.h>
-#include <asm/compat.h>
+#include <linux/module.h>
 #include <asm/cpcmd.h>
 #include <asm/debug.h>
 #include <asm/uaccess.h>
 #include "vmcp.h"
+
+MODULE_LICENSE("GPL");
+MODULE_AUTHOR("Christian Borntraeger <borntraeger@de.ibm.com>");
+MODULE_DESCRIPTION("z/VM CP interface");
 
 static debug_info_t *vmcp_debug;
 
@@ -49,7 +54,7 @@ static int vmcp_release(struct inode *inode, struct file *file)
 {
 	struct vmcp_session *session;
 
-	session = file->private_data;
+	session = (struct vmcp_session *)file->private_data;
 	file->private_data = NULL;
 	free_pages((unsigned long)session->response, get_order(session->bufsize));
 	kfree(session);
@@ -96,7 +101,7 @@ vmcp_write(struct file *file, const char __user *buff, size_t count,
 		return -EFAULT;
 	}
 	cmd[count] = '\0';
-	session = file->private_data;
+	session = (struct vmcp_session *)file->private_data;
 	if (mutex_lock_interruptible(&session->mutex)) {
 		kfree(cmd);
 		return -ERESTARTSYS;
@@ -135,26 +140,21 @@ vmcp_write(struct file *file, const char __user *buff, size_t count,
 static long vmcp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	struct vmcp_session *session;
-	int __user *argp;
 	int temp;
 
-	session = file->private_data;
-	if (is_compat_task())
-		argp = compat_ptr(arg);
-	else
-		argp = (int __user *)arg;
+	session = (struct vmcp_session *)file->private_data;
 	if (mutex_lock_interruptible(&session->mutex))
 		return -ERESTARTSYS;
 	switch (cmd) {
 	case VMCP_GETCODE:
 		temp = session->resp_code;
 		mutex_unlock(&session->mutex);
-		return put_user(temp, argp);
+		return put_user(temp, (int __user *)arg);
 	case VMCP_SETBUF:
 		free_pages((unsigned long)session->response,
 				get_order(session->bufsize));
 		session->response=NULL;
-		temp = get_user(session->bufsize, argp);
+		temp = get_user(session->bufsize, (int __user *)arg);
 		if (get_order(session->bufsize) > 8) {
 			session->bufsize = PAGE_SIZE;
 			temp = -EINVAL;
@@ -164,7 +164,7 @@ static long vmcp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	case VMCP_GETSIZE:
 		temp = session->resp_size;
 		mutex_unlock(&session->mutex);
-		return put_user(temp, argp);
+		return put_user(temp, (int __user *)arg);
 	default:
 		mutex_unlock(&session->mutex);
 		return -ENOIOCTLCMD;
@@ -179,7 +179,6 @@ static const struct file_operations vmcp_fops = {
 	.write		= vmcp_write,
 	.unlocked_ioctl	= vmcp_ioctl,
 	.compat_ioctl	= vmcp_ioctl,
-	.llseek		= no_llseek,
 };
 
 static struct miscdevice vmcp_dev = {
@@ -192,8 +191,11 @@ static int __init vmcp_init(void)
 {
 	int ret;
 
-	if (!MACHINE_IS_VM)
-		return 0;
+	if (!MACHINE_IS_VM) {
+		pr_warning("The z/VM CP interface device driver cannot be "
+			   "loaded without z/VM\n");
+		return -ENODEV;
+	}
 
 	vmcp_debug = debug_register("vmcp", 1, 1, 240);
 	if (!vmcp_debug)
@@ -206,8 +208,19 @@ static int __init vmcp_init(void)
 	}
 
 	ret = misc_register(&vmcp_dev);
-	if (ret)
+	if (ret) {
 		debug_unregister(vmcp_debug);
-	return ret;
+		return ret;
+	}
+
+	return 0;
 }
-device_initcall(vmcp_init);
+
+static void __exit vmcp_exit(void)
+{
+	misc_deregister(&vmcp_dev);
+	debug_unregister(vmcp_debug);
+}
+
+module_init(vmcp_init);
+module_exit(vmcp_exit);

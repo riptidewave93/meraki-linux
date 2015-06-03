@@ -2,10 +2,10 @@
  *  ATI Mach64 CT/VT/GT/LT Cursor Support
  */
 
+#include <linux/slab.h>
 #include <linux/fb.h>
 #include <linux/init.h>
 #include <linux/string.h>
-#include "../fb_draw.h"
 
 #include <asm/io.h>
 
@@ -52,7 +52,7 @@
  * to a larger number and saturate CUR_HORZ_POSN to zero.
  *
  * if Y becomes negative, CUR_VERT_OFFSET must be adjusted to a larger number,
- * CUR_OFFSET must be adjusted to a point to the appropriate line in the cursor
+ * CUR_OFFSET must be adjusted to a point to the appropraite line in the cursor
  * definitation and CUR_VERT_POSN must be saturated to zero.
  */
 
@@ -158,33 +158,24 @@ static int atyfb_cursor(struct fb_info *info, struct fb_cursor *cursor)
 
 	    for (i = 0; i < height; i++) {
 		for (j = 0; j < width; j++) {
-			u16 l = 0xaaaa;
 			b = *src++;
 			m = *msk++;
 			switch (cursor->rop) {
 			case ROP_XOR:
 			    // Upper 4 bits of mask data
-			    l = cursor_bits_lookup[(b ^ m) >> 4] |
+			    fb_writeb(cursor_bits_lookup[(b ^ m) >> 4], dst++);
 			    // Lower 4 bits of mask
-				    (cursor_bits_lookup[(b ^ m) & 0x0f] << 8);
+			    fb_writeb(cursor_bits_lookup[(b ^ m) & 0x0f],
+				      dst++);
 			    break;
 			case ROP_COPY:
 			    // Upper 4 bits of mask data
-			    l = cursor_bits_lookup[(b & m) >> 4] |
+			    fb_writeb(cursor_bits_lookup[(b & m) >> 4], dst++);
 			    // Lower 4 bits of mask
-				    (cursor_bits_lookup[(b & m) & 0x0f] << 8);
+			    fb_writeb(cursor_bits_lookup[(b & m) & 0x0f],
+				      dst++);
 			    break;
 			}
-			/*
-			 * If cursor size is not a multiple of 8 characters
-			 * we must pad it with transparent pattern (0xaaaa).
-			 */
-			if ((j + 1) * 8 > cursor->image.width) {
-				l = comp(l, 0xaaaa,
-				    (1 << ((cursor->image.width & 7) * 2)) - 1);
-			}
-			fb_writeb(l & 0xff, dst++);
-			fb_writeb(l >> 8, dst++);
 		}
 		dst += offset;
 	    }

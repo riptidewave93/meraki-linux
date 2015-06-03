@@ -15,6 +15,7 @@
 
 #include <asm/irq.h>
 #include <asm/io.h>
+#include <asm/system.h>
 #include <asm/traps.h>
 #include <asm/sun3x.h>
 #include <asm/sun3ints.h>

@@ -13,7 +13,8 @@
 #include <linux/vmalloc.h>
 #include <linux/string.h>
 #include <linux/errno.h>
-#include "reiserfs.h"
+#include <linux/reiserfs_fs.h>
+#include <linux/reiserfs_fs_sb.h>
 #include <linux/buffer_head.h>
 
 int reiserfs_resize(struct super_block *s, unsigned long block_count_new)
@@ -110,13 +111,15 @@ int reiserfs_resize(struct super_block *s, unsigned long block_count_new)
 		/* allocate additional bitmap blocks, reallocate array of bitmap
 		 * block pointers */
 		bitmap =
-		    vzalloc(sizeof(struct reiserfs_bitmap_info) * bmap_nr_new);
+		    vmalloc(sizeof(struct reiserfs_bitmap_info) * bmap_nr_new);
 		if (!bitmap) {
 			/* Journal bitmaps are still supersized, but the memory isn't
 			 * leaked, so I guess it's ok */
 			printk("reiserfs_resize: unable to allocate memory.\n");
 			return -ENOMEM;
 		}
+		memset(bitmap, 0,
+		       sizeof(struct reiserfs_bitmap_info) * bmap_nr_new);
 		for (i = 0; i < bmap_nr; i++)
 			bitmap[i] = old_bitmap[i];
 
@@ -133,14 +136,12 @@ int reiserfs_resize(struct super_block *s, unsigned long block_count_new)
 				return -EIO;
 			}
 			memset(bh->b_data, 0, sb_blocksize(sb));
-			reiserfs_set_le_bit(0, bh->b_data);
+			reiserfs_test_and_set_le_bit(0, bh->b_data);
 			reiserfs_cache_bitmap_metadata(s, bh, bitmap + i);
 
 			set_buffer_uptodate(bh);
 			mark_buffer_dirty(bh);
-			reiserfs_write_unlock(s);
 			sync_dirty_buffer(bh);
-			reiserfs_write_lock(s);
 			// update bitmap_info stuff
 			bitmap[i].free_count = sb_blocksize(sb) * 8 - 1;
 			brelse(bh);
@@ -169,7 +170,7 @@ int reiserfs_resize(struct super_block *s, unsigned long block_count_new)
 
 	reiserfs_prepare_for_journal(s, bh, 1);
 	for (i = block_r; i < s->s_blocksize * 8; i++)
-		reiserfs_clear_le_bit(i, bh->b_data);
+		reiserfs_test_and_clear_le_bit(i, bh->b_data);
 	info->free_count += s->s_blocksize * 8 - block_r;
 
 	journal_mark_dirty(&th, s, bh);
@@ -187,7 +188,7 @@ int reiserfs_resize(struct super_block *s, unsigned long block_count_new)
 
 	reiserfs_prepare_for_journal(s, bh, 1);
 	for (i = block_r_new; i < s->s_blocksize * 8; i++)
-		reiserfs_set_le_bit(i, bh->b_data);
+		reiserfs_test_and_set_le_bit(i, bh->b_data);
 	journal_mark_dirty(&th, s, bh);
 	brelse(bh);
 

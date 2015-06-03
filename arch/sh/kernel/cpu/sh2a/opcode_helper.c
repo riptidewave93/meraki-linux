@@ -10,6 +10,7 @@
  * for more details.
  */
 #include <linux/kernel.h>
+#include <asm/system.h>
 
 /*
  * Instructions on SH are generally fixed at 16-bits, however, SH-2A

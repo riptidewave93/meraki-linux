@@ -10,8 +10,6 @@
  * your option) any later version.
  */
 
-#define pr_fmt(fmt) "ep93xx " KBUILD_MODNAME ": " fmt
-
 #include <linux/kernel.h>
 #include <linux/clk.h>
 #include <linux/err.h>
@@ -19,13 +17,12 @@
 #include <linux/string.h>
 #include <linux/io.h>
 #include <linux/spinlock.h>
-#include <linux/clkdev.h>
 
 #include <mach/hardware.h>
 
+#include <asm/clkdev.h>
 #include <asm/div64.h>
 
-#include "soc.h"
 
 struct clk {
 	struct clk	*parent;
@@ -44,8 +41,7 @@ static unsigned long get_uart_rate(struct clk *clk);
 
 static int set_keytchclk_rate(struct clk *clk, unsigned long rate);
 static int set_div_rate(struct clk *clk, unsigned long rate);
-static int set_i2s_sclk_rate(struct clk *clk, unsigned long rate);
-static int set_i2s_lrclk_rate(struct clk *clk, unsigned long rate);
+
 
 static struct clk clk_xtali = {
 	.rate		= EP93XX_EXT_CLK_RATE,
@@ -98,10 +94,6 @@ static struct clk clk_keypad = {
 	.enable_mask	= EP93XX_SYSCON_KEYTCHCLKDIV_KEN,
 	.set_rate	= set_keytchclk_rate,
 };
-static struct clk clk_spi = {
-	.parent		= &clk_xtali,
-	.rate		= EP93XX_EXT_CLK_RATE,
-};
 static struct clk clk_pwm = {
 	.parent		= &clk_xtali,
 	.rate		= EP93XX_EXT_CLK_RATE,
@@ -112,29 +104,6 @@ static struct clk clk_video = {
 	.enable_reg     = EP93XX_SYSCON_VIDCLKDIV,
 	.enable_mask    = EP93XX_SYSCON_CLKDIV_ENABLE,
 	.set_rate	= set_div_rate,
-};
-
-static struct clk clk_i2s_mclk = {
-	.sw_locked	= 1,
-	.enable_reg	= EP93XX_SYSCON_I2SCLKDIV,
-	.enable_mask	= EP93XX_SYSCON_CLKDIV_ENABLE,
-	.set_rate	= set_div_rate,
-};
-
-static struct clk clk_i2s_sclk = {
-	.sw_locked	= 1,
-	.parent		= &clk_i2s_mclk,
-	.enable_reg	= EP93XX_SYSCON_I2SCLKDIV,
-	.enable_mask	= EP93XX_SYSCON_I2SCLKDIV_SENA,
-	.set_rate	= set_i2s_sclk_rate,
-};
-
-static struct clk clk_i2s_lrclk = {
-	.sw_locked	= 1,
-	.parent		= &clk_i2s_sclk,
-	.enable_reg	= EP93XX_SYSCON_I2SCLKDIV,
-	.enable_mask	= EP93XX_SYSCON_I2SCLKDIV_SENA,
-	.set_rate	= set_i2s_lrclk_rate,
 };
 
 /* DMA Clocks */
@@ -210,15 +179,11 @@ static struct clk_lookup clocks[] = {
 	INIT_CK(NULL,			"pll1",		&clk_pll1),
 	INIT_CK(NULL,			"fclk",		&clk_f),
 	INIT_CK(NULL,			"hclk",		&clk_h),
-	INIT_CK(NULL,			"apb_pclk",	&clk_p),
+	INIT_CK(NULL,			"pclk",		&clk_p),
 	INIT_CK(NULL,			"pll2",		&clk_pll2),
 	INIT_CK("ep93xx-ohci",		NULL,		&clk_usb_host),
 	INIT_CK("ep93xx-keypad",	NULL,		&clk_keypad),
 	INIT_CK("ep93xx-fb",		NULL,		&clk_video),
-	INIT_CK("ep93xx-spi.0",		NULL,		&clk_spi),
-	INIT_CK("ep93xx-i2s",		"mclk",		&clk_i2s_mclk),
-	INIT_CK("ep93xx-i2s",		"sclk",		&clk_i2s_sclk),
-	INIT_CK("ep93xx-i2s",		"lrclk",	&clk_i2s_lrclk),
 	INIT_CK(NULL,			"pwm_clk",	&clk_pwm),
 	INIT_CK(NULL,			"m2p0",		&clk_m2p0),
 	INIT_CK(NULL,			"m2p1",		&clk_m2p1),
@@ -359,7 +324,8 @@ static int calc_clk_div(struct clk *clk, unsigned long rate,
 	int i, found = 0, __div = 0, __pdiv = 0;
 
 	/* Don't exceed the maximum rate */
-	max_rate = max3(clk_pll1.rate / 4, clk_pll2.rate / 4, clk_xtali.rate / 4);
+	max_rate = max(max(clk_pll1.rate / 4, clk_pll2.rate / 4),
+		       clk_xtali.rate / 4);
 	rate = min(rate, max_rate);
 
 	/*
@@ -428,44 +394,6 @@ static int set_div_rate(struct clk *clk, unsigned long rate)
 	return 0;
 }
 
-static int set_i2s_sclk_rate(struct clk *clk, unsigned long rate)
-{
-	unsigned val = __raw_readl(clk->enable_reg);
-
-	if (rate == clk_i2s_mclk.rate / 2)
-		ep93xx_syscon_swlocked_write(val & ~EP93XX_I2SCLKDIV_SDIV, 
-					     clk->enable_reg);
-	else if (rate == clk_i2s_mclk.rate / 4)
-		ep93xx_syscon_swlocked_write(val | EP93XX_I2SCLKDIV_SDIV, 
-					     clk->enable_reg);
-	else
-		return -EINVAL;
-
-	clk_i2s_sclk.rate = rate;
-	return 0;
-}
-
-static int set_i2s_lrclk_rate(struct clk *clk, unsigned long rate)
-{
-	unsigned val = __raw_readl(clk->enable_reg) & 
-		~EP93XX_I2SCLKDIV_LRDIV_MASK;
-	
-	if (rate == clk_i2s_sclk.rate / 32)
-		ep93xx_syscon_swlocked_write(val | EP93XX_I2SCLKDIV_LRDIV32,
-					     clk->enable_reg);
-	else if (rate == clk_i2s_sclk.rate / 64)
-		ep93xx_syscon_swlocked_write(val | EP93XX_I2SCLKDIV_LRDIV64,
-					     clk->enable_reg);
-	else if (rate == clk_i2s_sclk.rate / 128)
-		ep93xx_syscon_swlocked_write(val | EP93XX_I2SCLKDIV_LRDIV128,
-					     clk->enable_reg);
-	else
-		return -EINVAL;
-
-	clk_i2s_lrclk.rate = rate;
-	return 0;
-}
-
 int clk_set_rate(struct clk *clk, unsigned long rate)
 {
 	if (clk->set_rate)
@@ -517,47 +445,37 @@ static void __init ep93xx_dma_clock_init(void)
 static int __init ep93xx_clock_init(void)
 {
 	u32 value;
+	int i;
 
-	/* Determine the bootloader configured pll1 rate */
-	value = __raw_readl(EP93XX_SYSCON_CLKSET1);
-	if (!(value & EP93XX_SYSCON_CLKSET1_NBYP1))
+	value = __raw_readl(EP93XX_SYSCON_CLOCK_SET1);
+	if (!(value & 0x00800000)) {			/* PLL1 bypassed?  */
 		clk_pll1.rate = clk_xtali.rate;
-	else
+	} else {
 		clk_pll1.rate = calc_pll_rate(value);
-
-	/* Initialize the pll1 derived clocks */
+	}
 	clk_f.rate = clk_pll1.rate / fclk_divisors[(value >> 25) & 0x7];
 	clk_h.rate = clk_pll1.rate / hclk_divisors[(value >> 20) & 0x7];
 	clk_p.rate = clk_h.rate / pclk_divisors[(value >> 18) & 0x3];
 	ep93xx_dma_clock_init();
 
-	/* Determine the bootloader configured pll2 rate */
-	value = __raw_readl(EP93XX_SYSCON_CLKSET2);
-	if (!(value & EP93XX_SYSCON_CLKSET2_NBYP2))
+	value = __raw_readl(EP93XX_SYSCON_CLOCK_SET2);
+	if (!(value & 0x00080000)) {			/* PLL2 bypassed?  */
 		clk_pll2.rate = clk_xtali.rate;
-	else if (value & EP93XX_SYSCON_CLKSET2_PLL2_EN)
+	} else if (value & 0x00040000) {		/* PLL2 enabled?  */
 		clk_pll2.rate = calc_pll_rate(value);
-	else
+	} else {
 		clk_pll2.rate = 0;
-
-	/* Initialize the pll2 derived clocks */
+	}
 	clk_usb_host.rate = clk_pll2.rate / (((value >> 28) & 0xf) + 1);
 
-	/*
-	 * EP93xx SSP clock rate was doubled in version E2. For more information
-	 * see:
-	 *     http://www.cirrus.com/en/pubs/appNote/AN273REV4.pdf
-	 */
-	if (ep93xx_chip_revision() < EP93XX_CHIP_REV_E2)
-		clk_spi.rate /= 2;
-
-	pr_info("PLL1 running at %ld MHz, PLL2 at %ld MHz\n",
+	printk(KERN_INFO "ep93xx: PLL1 running at %ld MHz, PLL2 at %ld MHz\n",
 		clk_pll1.rate / 1000000, clk_pll2.rate / 1000000);
-	pr_info("FCLK %ld MHz, HCLK %ld MHz, PCLK %ld MHz\n",
+	printk(KERN_INFO "ep93xx: FCLK %ld MHz, HCLK %ld MHz, PCLK %ld MHz\n",
 		clk_f.rate / 1000000, clk_h.rate / 1000000,
 		clk_p.rate / 1000000);
 
-	clkdev_add_table(clocks, ARRAY_SIZE(clocks));
+	for (i = 0; i < ARRAY_SIZE(clocks); i++)
+		clkdev_add(&clocks[i]);
 	return 0;
 }
-postcore_initcall(ep93xx_clock_init);
+arch_initcall(ep93xx_clock_init);

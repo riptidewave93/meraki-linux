@@ -3,7 +3,7 @@
  *
  * This file provides system snapshot/restore functionality for swsusp.
  *
- * Copyright (C) 1998-2005 Pavel Machek <pavel@ucw.cz>
+ * Copyright (C) 1998-2005 Pavel Machek <pavel@suse.cz>
  * Copyright (C) 2006 Rafael J. Wysocki <rjw@sisk.pl>
  *
  * This file is released under the GPLv2.
@@ -26,7 +26,6 @@
 #include <linux/console.h>
 #include <linux/highmem.h>
 #include <linux/list.h>
-#include <linux/slab.h>
 
 #include <asm/uaccess.h>
 #include <asm/mmu_context.h>
@@ -41,29 +40,12 @@ static void swsusp_set_page_forbidden(struct page *);
 static void swsusp_unset_page_forbidden(struct page *);
 
 /*
- * Number of bytes to reserve for memory allocations made by device drivers
- * from their ->freeze() and ->freeze_noirq() callbacks so that they don't
- * cause image creation to fail (tunable via /sys/power/reserved_size).
- */
-unsigned long reserved_size;
-
-void __init hibernate_reserved_size_init(void)
-{
-	reserved_size = SPARE_PAGES * PAGE_SIZE;
-}
-
-/*
  * Preferred image size in bytes (tunable via /sys/power/image_size).
  * When it is set to N, swsusp will do its best to ensure the image
  * size will not exceed N bytes, but if that is impossible, it will
  * try to create the smallest image possible.
  */
-unsigned long image_size;
-
-void __init hibernate_image_size_init(void)
-{
-	image_size = ((totalram_pages * 2) / 5) * PAGE_SIZE;
-}
+unsigned long image_size = 500 * 1024 * 1024;
 
 /* List of PBEs needed for restoring the pages that were allocated before
  * the suspend and included in the suspend image, but have also been
@@ -711,10 +693,9 @@ static void mark_nosave_pages(struct memory_bitmap *bm)
 	list_for_each_entry(region, &nosave_regions, list) {
 		unsigned long pfn;
 
-		pr_debug("PM: Marking nosave pages: [mem %#010llx-%#010llx]\n",
-			 (unsigned long long) region->start_pfn << PAGE_SHIFT,
-			 ((unsigned long long) region->end_pfn << PAGE_SHIFT)
-				- 1);
+		pr_debug("PM: Marking nosave pages: %016lx - %016lx\n",
+				region->start_pfn << PAGE_SHIFT,
+				region->end_pfn << PAGE_SHIFT);
 
 		for (pfn = region->start_pfn; pfn < region->end_pfn; pfn++)
 			if (pfn_valid(pfn)) {
@@ -813,8 +794,7 @@ unsigned int snapshot_additional_pages(struct zone *zone)
 	unsigned int res;
 
 	res = DIV_ROUND_UP(zone->spanned_pages, BM_BITS_PER_BLOCK);
-	res += DIV_ROUND_UP(res * sizeof(struct bm_block),
-			    LINKED_PAGE_DATA_SIZE);
+	res += DIV_ROUND_UP(res * sizeof(struct bm_block), PAGE_SIZE);
 	return 2 * res;
 }
 
@@ -858,9 +838,6 @@ static struct page *saveable_highmem_page(struct zone *zone, unsigned long pfn)
 
 	if (swsusp_page_is_forbidden(page) ||  swsusp_page_is_free(page) ||
 	    PageReserved(page))
-		return NULL;
-
-	if (page_is_guard(page))
 		return NULL;
 
 	return page;
@@ -923,9 +900,6 @@ static struct page *saveable_page(struct zone *zone, unsigned long pfn)
 
 	if (PageReserved(page)
 	    && (!kernel_page_present(page) || pfn_is_nosave(pfn)))
-		return NULL;
-
-	if (page_is_guard(page))
 		return NULL;
 
 	return page;
@@ -1001,20 +975,20 @@ static void copy_data_page(unsigned long dst_pfn, unsigned long src_pfn)
 	s_page = pfn_to_page(src_pfn);
 	d_page = pfn_to_page(dst_pfn);
 	if (PageHighMem(s_page)) {
-		src = kmap_atomic(s_page);
-		dst = kmap_atomic(d_page);
+		src = kmap_atomic(s_page, KM_USER0);
+		dst = kmap_atomic(d_page, KM_USER1);
 		do_copy_page(dst, src);
-		kunmap_atomic(dst);
-		kunmap_atomic(src);
+		kunmap_atomic(src, KM_USER0);
+		kunmap_atomic(dst, KM_USER1);
 	} else {
 		if (PageHighMem(d_page)) {
 			/* Page pointed to by src may contain some kernel
 			 * data modified by kmap_atomic()
 			 */
 			safe_copy_page(buffer, s_page);
-			dst = kmap_atomic(d_page);
-			copy_page(dst, buffer);
-			kunmap_atomic(dst);
+			dst = kmap_atomic(d_page, KM_USER0);
+			memcpy(dst, buffer, PAGE_SIZE);
+			kunmap_atomic(dst, KM_USER0);
 		} else {
 			safe_copy_page(page_address(d_page), s_page);
 		}
@@ -1287,13 +1261,11 @@ static unsigned long minimum_image_size(unsigned long saveable)
  * frame in use.  We also need a number of page frames to be free during
  * hibernation for allocations made while saving the image and for device
  * drivers, in case they need to allocate memory from their hibernation
- * callbacks (these two numbers are given by PAGES_FOR_IO (which is a rough
- * estimate) and reserverd_size divided by PAGE_SIZE (which is tunable through
- * /sys/power/reserved_size, respectively).  To make this happen, we compute the
- * total number of available page frames and allocate at least
+ * callbacks (these two numbers are given by PAGES_FOR_IO and SPARE_PAGES,
+ * respectively, both of which are rough estimates).  To make this happen, we
+ * compute the total number of available page frames and allocate at least
  *
- * ([page frames total] + PAGES_FOR_IO + [metadata pages]) / 2
- *  + 2 * DIV_ROUND_UP(reserved_size, PAGE_SIZE)
+ * ([page frames total] + PAGES_FOR_IO + [metadata pages]) / 2 + 2 * SPARE_PAGES
  *
  * of them, which corresponds to the maximum size of a hibernation image.
  *
@@ -1347,20 +1319,14 @@ int hibernate_preallocate_memory(void)
 	count += highmem;
 	count -= totalreserve_pages;
 
-	/* Add number of pages required for page keys (s390 only). */
-	size += page_key_additional_pages(saveable);
-
 	/* Compute the maximum number of saveable pages to leave in memory. */
-	max_size = (count - (size + PAGES_FOR_IO)) / 2
-			- 2 * DIV_ROUND_UP(reserved_size, PAGE_SIZE);
-	/* Compute the desired number of image pages specified by image_size. */
+	max_size = (count - (size + PAGES_FOR_IO)) / 2 - 2 * SPARE_PAGES;
 	size = DIV_ROUND_UP(image_size, PAGE_SIZE);
 	if (size > max_size)
 		size = max_size;
 	/*
-	 * If the desired number of image pages is at least as large as the
-	 * current number of saveable pages in memory, allocate page frames for
-	 * the image and we're done.
+	 * If the maximum is not less than the current number of saveable pages
+	 * in memory, allocate page frames for the image and we're done.
 	 */
 	if (size >= saveable) {
 		pages = preallocate_image_highmem(save_highmem);
@@ -1398,11 +1364,7 @@ int hibernate_preallocate_memory(void)
 	 * highmem and non-highmem zones separately.
 	 */
 	pages_highmem = preallocate_image_highmem(highmem / 2);
-	alloc = count - max_size;
-	if (alloc > pages_highmem)
-		alloc -= pages_highmem;
-	else
-		alloc = 0;
+	alloc = (count - max_size) - pages_highmem;
 	pages = preallocate_image_memory(alloc, avail_normal);
 	if (pages < alloc) {
 		/* We have exhausted non-highmem pages, try highmem. */
@@ -1584,7 +1546,7 @@ asmlinkage int swsusp_save(void)
 {
 	unsigned int nr_pages, nr_highmem;
 
-	printk(KERN_INFO "PM: Creating hibernation image:\n");
+	printk(KERN_INFO "PM: Creating hibernation image: \n");
 
 	drain_local_pages(NULL);
 	nr_pages = count_data_pages();
@@ -1677,8 +1639,6 @@ pack_pfns(unsigned long *buf, struct memory_bitmap *bm)
 		buf[j] = memory_bm_next_pfn(bm);
 		if (unlikely(buf[j] == BM_END_OF_MAP))
 			break;
-		/* Save page key for data page (s390 only). */
-		page_key_read(buf + j);
 	}
 }
 
@@ -1689,9 +1649,14 @@ pack_pfns(unsigned long *buf, struct memory_bitmap *bm)
  *	snapshot_handle structure.  The structure gets updated and a pointer
  *	to it should be passed to this function every next time.
  *
+ *	The @count parameter should contain the number of bytes the caller
+ *	wants to read from the snapshot.  It must not be zero.
+ *
  *	On success the function returns a positive number.  Then, the caller
  *	is allowed to read up to the returned number of bytes from the memory
- *	location computed by the data_of() macro.
+ *	location computed by the data_of() macro.  The number returned
+ *	may be smaller than @count, but this only happens if the read would
+ *	cross a page boundary otherwise.
  *
  *	The function returns 0 to indicate the end of data stream condition,
  *	and a negative number is returned on error.  In such cases the
@@ -1699,7 +1664,7 @@ pack_pfns(unsigned long *buf, struct memory_bitmap *bm)
  *	any more.
  */
 
-int snapshot_read_next(struct snapshot_handle *handle)
+int snapshot_read_next(struct snapshot_handle *handle, size_t count)
 {
 	if (handle->cur > nr_meta_pages + nr_copy_pages)
 		return 0;
@@ -1710,7 +1675,7 @@ int snapshot_read_next(struct snapshot_handle *handle)
 		if (!buffer)
 			return -ENOMEM;
 	}
-	if (!handle->cur) {
+	if (!handle->offset) {
 		int error;
 
 		error = init_header((struct swsusp_info *)buffer);
@@ -1719,30 +1684,42 @@ int snapshot_read_next(struct snapshot_handle *handle)
 		handle->buffer = buffer;
 		memory_bm_position_reset(&orig_bm);
 		memory_bm_position_reset(&copy_bm);
-	} else if (handle->cur <= nr_meta_pages) {
-		clear_page(buffer);
-		pack_pfns(buffer, &orig_bm);
-	} else {
-		struct page *page;
-
-		page = pfn_to_page(memory_bm_next_pfn(&copy_bm));
-		if (PageHighMem(page)) {
-			/* Highmem pages are copied to the buffer,
-			 * because we can't return with a kmapped
-			 * highmem page (we may not be called again).
-			 */
-			void *kaddr;
-
-			kaddr = kmap_atomic(page);
-			copy_page(buffer, kaddr);
-			kunmap_atomic(kaddr);
-			handle->buffer = buffer;
-		} else {
-			handle->buffer = page_address(page);
-		}
 	}
-	handle->cur++;
-	return PAGE_SIZE;
+	if (handle->prev < handle->cur) {
+		if (handle->cur <= nr_meta_pages) {
+			memset(buffer, 0, PAGE_SIZE);
+			pack_pfns(buffer, &orig_bm);
+		} else {
+			struct page *page;
+
+			page = pfn_to_page(memory_bm_next_pfn(&copy_bm));
+			if (PageHighMem(page)) {
+				/* Highmem pages are copied to the buffer,
+				 * because we can't return with a kmapped
+				 * highmem page (we may not be called again).
+				 */
+				void *kaddr;
+
+				kaddr = kmap_atomic(page, KM_USER0);
+				memcpy(buffer, kaddr, PAGE_SIZE);
+				kunmap_atomic(kaddr, KM_USER0);
+				handle->buffer = buffer;
+			} else {
+				handle->buffer = page_address(page);
+			}
+		}
+		handle->prev = handle->cur;
+	}
+	handle->buf_offset = handle->cur_offset;
+	if (handle->cur_offset + count >= PAGE_SIZE) {
+		count = PAGE_SIZE - handle->cur_offset;
+		handle->cur_offset = 0;
+		handle->cur++;
+	} else {
+		handle->cur_offset += count;
+	}
+	handle->offset += count;
+	return count;
 }
 
 /**
@@ -1837,9 +1814,6 @@ static int unpack_orig_pfns(unsigned long *buf, struct memory_bitmap *bm)
 	for (j = 0; j < PAGE_SIZE / sizeof(long); j++) {
 		if (unlikely(buf[j] == BM_END_OF_MAP))
 			break;
-
-		/* Extract and buffer page key for data page (s390 only). */
-		page_key_memorize(buf + j);
 
 		if (memory_bm_pfn_present(bm, buf[j]))
 			memory_bm_set_bit(bm, buf[j]);
@@ -2019,9 +1993,9 @@ static void copy_last_highmem_page(void)
 	if (last_highmem_page) {
 		void *dst;
 
-		dst = kmap_atomic(last_highmem_page);
-		copy_page(dst, buffer);
-		kunmap_atomic(dst);
+		dst = kmap_atomic(last_highmem_page, KM_USER0);
+		memcpy(dst, buffer, PAGE_SIZE);
+		kunmap_atomic(dst, KM_USER0);
 		last_highmem_page = NULL;
 	}
 }
@@ -2204,9 +2178,14 @@ static void *get_buffer(struct memory_bitmap *bm, struct chain_allocator *ca)
  *	snapshot_handle structure.  The structure gets updated and a pointer
  *	to it should be passed to this function every next time.
  *
+ *	The @count parameter should contain the number of bytes the caller
+ *	wants to write to the image.  It must not be zero.
+ *
  *	On success the function returns a positive number.  Then, the caller
  *	is allowed to write up to the returned number of bytes to the memory
- *	location computed by the data_of() macro.
+ *	location computed by the data_of() macro.  The number returned
+ *	may be smaller than @count, but this only happens if the write would
+ *	cross a page boundary otherwise.
  *
  *	The function returns 0 to indicate the "end of file" condition,
  *	and a negative number is returned on error.  In such cases the
@@ -2214,18 +2193,16 @@ static void *get_buffer(struct memory_bitmap *bm, struct chain_allocator *ca)
  *	any more.
  */
 
-int snapshot_write_next(struct snapshot_handle *handle)
+int snapshot_write_next(struct snapshot_handle *handle, size_t count)
 {
 	static struct chain_allocator ca;
 	int error = 0;
 
 	/* Check if we have already loaded the entire image */
-	if (handle->cur > 1 && handle->cur > nr_meta_pages + nr_copy_pages)
+	if (handle->prev && handle->cur > nr_meta_pages + nr_copy_pages)
 		return 0;
 
-	handle->sync_read = 1;
-
-	if (!handle->cur) {
+	if (handle->offset == 0) {
 		if (!buffer)
 			/* This makes the buffer be freed by swsusp_free() */
 			buffer = get_image_page(GFP_ATOMIC, PG_ANY);
@@ -2234,50 +2211,56 @@ int snapshot_write_next(struct snapshot_handle *handle)
 			return -ENOMEM;
 
 		handle->buffer = buffer;
-	} else if (handle->cur == 1) {
-		error = load_header(buffer);
-		if (error)
-			return error;
-
-		error = memory_bm_create(&copy_bm, GFP_ATOMIC, PG_ANY);
-		if (error)
-			return error;
-
-		/* Allocate buffer for page keys. */
-		error = page_key_alloc(nr_copy_pages);
-		if (error)
-			return error;
-
-	} else if (handle->cur <= nr_meta_pages + 1) {
-		error = unpack_orig_pfns(buffer, &copy_bm);
-		if (error)
-			return error;
-
-		if (handle->cur == nr_meta_pages + 1) {
-			error = prepare_image(&orig_bm, &copy_bm);
+	}
+	handle->sync_read = 1;
+	if (handle->prev < handle->cur) {
+		if (handle->prev == 0) {
+			error = load_header(buffer);
 			if (error)
 				return error;
 
-			chain_init(&ca, GFP_ATOMIC, PG_SAFE);
-			memory_bm_position_reset(&orig_bm);
-			restore_pblist = NULL;
+			error = memory_bm_create(&copy_bm, GFP_ATOMIC, PG_ANY);
+			if (error)
+				return error;
+
+		} else if (handle->prev <= nr_meta_pages) {
+			error = unpack_orig_pfns(buffer, &copy_bm);
+			if (error)
+				return error;
+
+			if (handle->prev == nr_meta_pages) {
+				error = prepare_image(&orig_bm, &copy_bm);
+				if (error)
+					return error;
+
+				chain_init(&ca, GFP_ATOMIC, PG_SAFE);
+				memory_bm_position_reset(&orig_bm);
+				restore_pblist = NULL;
+				handle->buffer = get_buffer(&orig_bm, &ca);
+				handle->sync_read = 0;
+				if (IS_ERR(handle->buffer))
+					return PTR_ERR(handle->buffer);
+			}
+		} else {
+			copy_last_highmem_page();
 			handle->buffer = get_buffer(&orig_bm, &ca);
-			handle->sync_read = 0;
 			if (IS_ERR(handle->buffer))
 				return PTR_ERR(handle->buffer);
+			if (handle->buffer != buffer)
+				handle->sync_read = 0;
 		}
-	} else {
-		copy_last_highmem_page();
-		/* Restore page key for data page (s390 only). */
-		page_key_write(handle->buffer);
-		handle->buffer = get_buffer(&orig_bm, &ca);
-		if (IS_ERR(handle->buffer))
-			return PTR_ERR(handle->buffer);
-		if (handle->buffer != buffer)
-			handle->sync_read = 0;
+		handle->prev = handle->cur;
 	}
-	handle->cur++;
-	return PAGE_SIZE;
+	handle->buf_offset = handle->cur_offset;
+	if (handle->cur_offset + count >= PAGE_SIZE) {
+		count = PAGE_SIZE - handle->cur_offset;
+		handle->cur_offset = 0;
+		handle->cur++;
+	} else {
+		handle->cur_offset += count;
+	}
+	handle->offset += count;
+	return count;
 }
 
 /**
@@ -2291,11 +2274,8 @@ int snapshot_write_next(struct snapshot_handle *handle)
 void snapshot_write_finalize(struct snapshot_handle *handle)
 {
 	copy_last_highmem_page();
-	/* Restore page key for data page (s390 only). */
-	page_key_write(handle->buffer);
-	page_key_free();
 	/* Free only if we have loaded the image entirely */
-	if (handle->cur > 1 && handle->cur > nr_meta_pages + nr_copy_pages) {
+	if (handle->prev && handle->cur > nr_meta_pages + nr_copy_pages) {
 		memory_bm_free(&orig_bm, PG_UNSAFE_CLEAR);
 		free_highmem_data();
 	}
@@ -2314,13 +2294,13 @@ swap_two_pages_data(struct page *p1, struct page *p2, void *buf)
 {
 	void *kaddr1, *kaddr2;
 
-	kaddr1 = kmap_atomic(p1);
-	kaddr2 = kmap_atomic(p2);
-	copy_page(buf, kaddr1);
-	copy_page(kaddr1, kaddr2);
-	copy_page(kaddr2, buf);
-	kunmap_atomic(kaddr2);
-	kunmap_atomic(kaddr1);
+	kaddr1 = kmap_atomic(p1, KM_USER0);
+	kaddr2 = kmap_atomic(p2, KM_USER1);
+	memcpy(buf, kaddr1, PAGE_SIZE);
+	memcpy(kaddr1, kaddr2, PAGE_SIZE);
+	memcpy(kaddr2, buf, PAGE_SIZE);
+	kunmap_atomic(kaddr1, KM_USER0);
+	kunmap_atomic(kaddr2, KM_USER1);
 }
 
 /**

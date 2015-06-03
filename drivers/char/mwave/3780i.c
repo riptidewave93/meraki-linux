@@ -56,6 +56,7 @@
 
 #include <asm/io.h>
 #include <asm/uaccess.h>
+#include <asm/system.h>
 #include <asm/irq.h>
 #include "smapi.h"
 #include "mwavedd.h"

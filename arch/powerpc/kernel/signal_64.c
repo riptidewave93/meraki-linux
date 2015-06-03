@@ -23,7 +23,7 @@
 #include <linux/stddef.h>
 #include <linux/elf.h>
 #include <linux/ptrace.h>
-#include <linux/ratelimit.h>
+#include <linux/module.h>
 
 #include <asm/sigcontext.h>
 #include <asm/ucontext.h>
@@ -33,7 +33,6 @@
 #include <asm/cacheflush.h>
 #include <asm/syscalls.h>
 #include <asm/vdso.h>
-#include <asm/switch_to.h>
 
 #include "signal.h"
 
@@ -117,12 +116,6 @@ static long setup_sigcontext(struct sigcontext __user *sc, struct pt_regs *regs,
 	flush_fp_to_thread(current);
 	/* copy fpr regs and fpscr */
 	err |= copy_fpr_to_user(&sc->fp_regs, current);
-
-	/*
-	 * Clear the MSR VSX bit to indicate there is no valid state attached
-	 * to this context, except in the specific case below where we set it.
-	 */
-	msr &= ~MSR_VSX;
 #ifdef CONFIG_VSX
 	/*
 	 * Copy VSX low doubleword to local buffer for formatting,
@@ -185,7 +178,7 @@ static long restore_sigcontext(struct pt_regs *regs, sigset_t *set, int sig,
 	err |= __get_user(regs->xer, &sc->gp_regs[PT_XER]);
 	err |= __get_user(regs->ccr, &sc->gp_regs[PT_CCR]);
 	/* skip SOFTE */
-	regs->trap = 0;
+	err |= __get_user(regs->trap, &sc->gp_regs[PT_TRAP]);
 	err |= __get_user(regs->dar, &sc->gp_regs[PT_DAR]);
 	err |= __get_user(regs->dsisr, &sc->gp_regs[PT_DSISR]);
 	err |= __get_user(regs->result, &sc->gp_regs[PT_RESULT]);
@@ -387,10 +380,10 @@ badframe:
 	printk("badframe in sys_rt_sigreturn, regs=%p uc=%p &uc->uc_mcontext=%p\n",
 	       regs, uc, &uc->uc_mcontext);
 #endif
-	if (show_unhandled_signals)
-		printk_ratelimited(regs->msr & MSR_64BIT ? fmt64 : fmt32,
-				   current->comm, current->pid, "rt_sigreturn",
-				   (long)uc, regs->nip, regs->link);
+	if (show_unhandled_signals && printk_ratelimit())
+		printk(regs->msr & MSR_SF ? fmt64 : fmt32,
+			current->comm, current->pid, "rt_sigreturn",
+			(long)uc, regs->nip, regs->link);
 
 	force_sig(SIGSEGV, current);
 	return 0;
@@ -475,10 +468,10 @@ badframe:
 	printk("badframe in setup_rt_frame, regs=%p frame=%p newsp=%lx\n",
 	       regs, frame, newsp);
 #endif
-	if (show_unhandled_signals)
-		printk_ratelimited(regs->msr & MSR_64BIT ? fmt64 : fmt32,
-				   current->comm, current->pid, "setup_rt_frame",
-				   (long)frame, regs->nip, regs->link);
+	if (show_unhandled_signals && printk_ratelimit())
+		printk(regs->msr & MSR_SF ? fmt64 : fmt32,
+			current->comm, current->pid, "setup_rt_frame",
+			(long)frame, regs->nip, regs->link);
 
 	force_sigsegv(signr, current);
 	return 0;

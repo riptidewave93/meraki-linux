@@ -40,6 +40,7 @@
 
 
 #include "pwc-kiara.h"
+#include "pwc-uncompress.h"
 
 const unsigned int Kiara_fps_vector[PWC_FPS_MAX_KIARA] = { 5, 10, 15, 20, 25, 30 };
 

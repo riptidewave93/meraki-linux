@@ -51,8 +51,8 @@ MODULE_DESCRIPTION("Large Receive Offload (ipv4 / tcp)");
  * Basic tcp checks whether packet is suitable for LRO
  */
 
-static int lro_tcp_ip_check(const struct iphdr *iph, const struct tcphdr *tcph,
-			    int len, const struct net_lro_desc *lro_desc)
+static int lro_tcp_ip_check(struct iphdr *iph, struct tcphdr *tcph,
+			    int len, struct net_lro_desc *lro_desc)
 {
         /* check ip header: don't aggregate padded frames */
 	if (ntohs(iph->tot_len) != len)
@@ -64,15 +64,15 @@ static int lro_tcp_ip_check(const struct iphdr *iph, const struct tcphdr *tcph,
 	if (iph->ihl != IPH_LEN_WO_OPTIONS)
 		return -1;
 
-	if (tcph->cwr || tcph->ece || tcph->urg || !tcph->ack ||
-	    tcph->rst || tcph->syn || tcph->fin)
+	if (tcph->cwr || tcph->ece || tcph->urg || !tcph->ack
+	    || tcph->rst || tcph->syn || tcph->fin)
 		return -1;
 
 	if (INET_ECN_is_ce(ipv4_get_dsfield(iph)))
 		return -1;
 
-	if (tcph->doff != TCPH_LEN_WO_OPTIONS &&
-	    tcph->doff != TCPH_LEN_W_TIMESTAMP)
+	if (tcph->doff != TCPH_LEN_WO_OPTIONS
+	    && tcph->doff != TCPH_LEN_W_TIMESTAMP)
 		return -1;
 
 	/* check tcp options (only timestamp allowed) */
@@ -146,7 +146,8 @@ static __wsum lro_tcp_data_csum(struct iphdr *iph, struct tcphdr *tcph, int len)
 }
 
 static void lro_init_desc(struct net_lro_desc *lro_desc, struct sk_buff *skb,
-			  struct iphdr *iph, struct tcphdr *tcph)
+			  struct iphdr *iph, struct tcphdr *tcph,
+			  u16 vlan_tag, struct vlan_group *vgrp)
 {
 	int nr_frags;
 	__be32 *ptr;
@@ -172,6 +173,8 @@ static void lro_init_desc(struct net_lro_desc *lro_desc, struct sk_buff *skb,
 	}
 
 	lro_desc->mss = tcp_data_len;
+	lro_desc->vgrp = vgrp;
+	lro_desc->vlan_tag = vlan_tag;
 	lro_desc->active = 1;
 
 	lro_desc->data_csum = lro_tcp_data_csum(iph, tcph,
@@ -244,11 +247,11 @@ static void lro_add_frags(struct net_lro_desc *lro_desc,
 	skb->truesize += truesize;
 
 	skb_frags[0].page_offset += hlen;
-	skb_frag_size_sub(&skb_frags[0], hlen);
+	skb_frags[0].size -= hlen;
 
 	while (tcp_data_len > 0) {
 		*(lro_desc->next_frag) = *skb_frags;
-		tcp_data_len -= skb_frag_size(skb_frags);
+		tcp_data_len -= skb_frags->size;
 		lro_desc->next_frag++;
 		skb_frags++;
 		skb_shinfo(skb)->nr_frags++;
@@ -259,10 +262,10 @@ static int lro_check_tcp_conn(struct net_lro_desc *lro_desc,
 			      struct iphdr *iph,
 			      struct tcphdr *tcph)
 {
-	if ((lro_desc->iph->saddr != iph->saddr) ||
-	    (lro_desc->iph->daddr != iph->daddr) ||
-	    (lro_desc->tcph->source != tcph->source) ||
-	    (lro_desc->tcph->dest != tcph->dest))
+	if ((lro_desc->iph->saddr != iph->saddr)
+	    || (lro_desc->iph->daddr != iph->daddr)
+	    || (lro_desc->tcph->source != tcph->source)
+	    || (lro_desc->tcph->dest != tcph->dest))
 		return -1;
 	return 0;
 }
@@ -306,17 +309,29 @@ static void lro_flush(struct net_lro_mgr *lro_mgr,
 
 	skb_shinfo(lro_desc->parent)->gso_size = lro_desc->mss;
 
-	if (lro_mgr->features & LRO_F_NAPI)
-		netif_receive_skb(lro_desc->parent);
-	else
-		netif_rx(lro_desc->parent);
+	if (lro_desc->vgrp) {
+		if (lro_mgr->features & LRO_F_NAPI)
+			vlan_hwaccel_receive_skb(lro_desc->parent,
+						 lro_desc->vgrp,
+						 lro_desc->vlan_tag);
+		else
+			vlan_hwaccel_rx(lro_desc->parent,
+					lro_desc->vgrp,
+					lro_desc->vlan_tag);
+
+	} else {
+		if (lro_mgr->features & LRO_F_NAPI)
+			netif_receive_skb(lro_desc->parent);
+		else
+			netif_rx(lro_desc->parent);
+	}
 
 	LRO_INC_STATS(lro_mgr, flushed);
 	lro_clear_desc(lro_desc);
 }
 
 static int __lro_proc_skb(struct net_lro_mgr *lro_mgr, struct sk_buff *skb,
-			  void *priv)
+			  struct vlan_group *vgrp, u16 vlan_tag, void *priv)
 {
 	struct net_lro_desc *lro_desc;
 	struct iphdr *iph;
@@ -324,9 +339,9 @@ static int __lro_proc_skb(struct net_lro_mgr *lro_mgr, struct sk_buff *skb,
 	u64 flags;
 	int vlan_hdr_len = 0;
 
-	if (!lro_mgr->get_skb_header ||
-	    lro_mgr->get_skb_header(skb, (void *)&iph, (void *)&tcph,
-				    &flags, priv))
+	if (!lro_mgr->get_skb_header
+	    || lro_mgr->get_skb_header(skb, (void *)&iph, (void *)&tcph,
+				       &flags, priv))
 		goto out;
 
 	if (!(flags & LRO_IPV4) || !(flags & LRO_TCP))
@@ -336,8 +351,8 @@ static int __lro_proc_skb(struct net_lro_mgr *lro_mgr, struct sk_buff *skb,
 	if (!lro_desc)
 		goto out;
 
-	if ((skb->protocol == htons(ETH_P_8021Q)) &&
-	    !(lro_mgr->features & LRO_F_EXTRACT_VLAN_ID))
+	if ((skb->protocol == htons(ETH_P_8021Q))
+	    && !(lro_mgr->features & LRO_F_EXTRACT_VLAN_ID))
 		vlan_hdr_len = VLAN_HLEN;
 
 	if (!lro_desc->active) { /* start new lro session */
@@ -345,7 +360,7 @@ static int __lro_proc_skb(struct net_lro_mgr *lro_mgr, struct sk_buff *skb,
 			goto out;
 
 		skb->ip_summed = lro_mgr->ip_summed_aggr;
-		lro_init_desc(lro_desc, skb, iph, tcph);
+		lro_init_desc(lro_desc, skb, iph, tcph, vlan_tag, vgrp);
 		LRO_INC_STATS(lro_mgr, aggregated);
 		return 0;
 	}
@@ -400,14 +415,14 @@ static struct sk_buff *lro_gen_skb(struct net_lro_mgr *lro_mgr,
 	skb_frags = skb_shinfo(skb)->frags;
 	while (data_len > 0) {
 		*skb_frags = *frags;
-		data_len -= skb_frag_size(frags);
+		data_len -= frags->size;
 		skb_frags++;
 		frags++;
 		skb_shinfo(skb)->nr_frags++;
 	}
 
 	skb_shinfo(skb)->frags[0].page_offset += hdr_len;
-	skb_frag_size_sub(&skb_shinfo(skb)->frags[0], hdr_len);
+	skb_shinfo(skb)->frags[0].size -= hdr_len;
 
 	skb->ip_summed = ip_summed;
 	skb->csum = sum;
@@ -418,7 +433,8 @@ static struct sk_buff *lro_gen_skb(struct net_lro_mgr *lro_mgr,
 static struct sk_buff *__lro_proc_segment(struct net_lro_mgr *lro_mgr,
 					  struct skb_frag_struct *frags,
 					  int len, int true_size,
-					  void *priv, __wsum sum)
+					  struct vlan_group *vgrp,
+					  u16 vlan_tag, void *priv, __wsum sum)
 {
 	struct net_lro_desc *lro_desc;
 	struct iphdr *iph;
@@ -430,10 +446,10 @@ static struct sk_buff *__lro_proc_segment(struct net_lro_mgr *lro_mgr,
 	int hdr_len = LRO_MAX_PG_HLEN;
 	int vlan_hdr_len = 0;
 
-	if (!lro_mgr->get_frag_header ||
-	    lro_mgr->get_frag_header(frags, (void *)&mac_hdr, (void *)&iph,
-				     (void *)&tcph, &flags, priv)) {
-		mac_hdr = skb_frag_address(frags);
+	if (!lro_mgr->get_frag_header
+	    || lro_mgr->get_frag_header(frags, (void *)&mac_hdr, (void *)&iph,
+					(void *)&tcph, &flags, priv)) {
+		mac_hdr = page_address(frags->page) + frags->page_offset;
 		goto out1;
 	}
 
@@ -456,15 +472,15 @@ static struct sk_buff *__lro_proc_segment(struct net_lro_mgr *lro_mgr,
 		if (!skb)
 			goto out;
 
-		if ((skb->protocol == htons(ETH_P_8021Q)) &&
-		    !(lro_mgr->features & LRO_F_EXTRACT_VLAN_ID))
+		if ((skb->protocol == htons(ETH_P_8021Q))
+		    && !(lro_mgr->features & LRO_F_EXTRACT_VLAN_ID))
 			vlan_hdr_len = VLAN_HLEN;
 
 		iph = (void *)(skb->data + vlan_hdr_len);
 		tcph = (void *)((u8 *)skb->data + vlan_hdr_len
 				+ IP_HDR_LEN(iph));
 
-		lro_init_desc(lro_desc, skb, iph, tcph);
+		lro_init_desc(lro_desc, skb, iph, tcph, 0, NULL);
 		LRO_INC_STATS(lro_mgr, aggregated);
 		return NULL;
 	}
@@ -498,7 +514,7 @@ void lro_receive_skb(struct net_lro_mgr *lro_mgr,
 		     struct sk_buff *skb,
 		     void *priv)
 {
-	if (__lro_proc_skb(lro_mgr, skb, priv)) {
+	if (__lro_proc_skb(lro_mgr, skb, NULL, 0, priv)) {
 		if (lro_mgr->features & LRO_F_NAPI)
 			netif_receive_skb(skb);
 		else
@@ -507,13 +523,29 @@ void lro_receive_skb(struct net_lro_mgr *lro_mgr,
 }
 EXPORT_SYMBOL(lro_receive_skb);
 
+void lro_vlan_hwaccel_receive_skb(struct net_lro_mgr *lro_mgr,
+				  struct sk_buff *skb,
+				  struct vlan_group *vgrp,
+				  u16 vlan_tag,
+				  void *priv)
+{
+	if (__lro_proc_skb(lro_mgr, skb, vgrp, vlan_tag, priv)) {
+		if (lro_mgr->features & LRO_F_NAPI)
+			vlan_hwaccel_receive_skb(skb, vgrp, vlan_tag);
+		else
+			vlan_hwaccel_rx(skb, vgrp, vlan_tag);
+	}
+}
+EXPORT_SYMBOL(lro_vlan_hwaccel_receive_skb);
+
 void lro_receive_frags(struct net_lro_mgr *lro_mgr,
 		       struct skb_frag_struct *frags,
 		       int len, int true_size, void *priv, __wsum sum)
 {
 	struct sk_buff *skb;
 
-	skb = __lro_proc_segment(lro_mgr, frags, len, true_size, priv, sum);
+	skb = __lro_proc_segment(lro_mgr, frags, len, true_size, NULL, 0,
+				 priv, sum);
 	if (!skb)
 		return;
 
@@ -523,6 +555,26 @@ void lro_receive_frags(struct net_lro_mgr *lro_mgr,
 		netif_rx(skb);
 }
 EXPORT_SYMBOL(lro_receive_frags);
+
+void lro_vlan_hwaccel_receive_frags(struct net_lro_mgr *lro_mgr,
+				    struct skb_frag_struct *frags,
+				    int len, int true_size,
+				    struct vlan_group *vgrp,
+				    u16 vlan_tag, void *priv, __wsum sum)
+{
+	struct sk_buff *skb;
+
+	skb = __lro_proc_segment(lro_mgr, frags, len, true_size, vgrp,
+				 vlan_tag, priv, sum);
+	if (!skb)
+		return;
+
+	if (lro_mgr->features & LRO_F_NAPI)
+		vlan_hwaccel_receive_skb(skb, vgrp, vlan_tag);
+	else
+		vlan_hwaccel_rx(skb, vgrp, vlan_tag);
+}
+EXPORT_SYMBOL(lro_vlan_hwaccel_receive_frags);
 
 void lro_flush_all(struct net_lro_mgr *lro_mgr)
 {

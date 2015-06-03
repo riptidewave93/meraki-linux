@@ -6,7 +6,7 @@
 # and listed below so they are ignored.
 #
 # Usage:
-# checksyscalls.sh gcc gcc-options
+# syscallchk gcc gcc-options
 #
 
 ignore_list() {
@@ -183,6 +183,7 @@ cat << EOF
 #define __IGNORE_ustat		/* statfs */
 #define __IGNORE_utime		/* utimes */
 #define __IGNORE_vfork		/* clone */
+#define __IGNORE_wait4		/* waitid */
 
 /* sync_file_range had a stupid ABI. Allow sync_file_range2 instead */
 #ifdef __NR_sync_file_range2
@@ -198,16 +199,11 @@ EOF
 }
 
 syscall_list() {
-    grep '^[0-9]' "$1" | sort -n | (
-	while read nr abi name entry ; do
-	    echo <<EOF
-#if !defined(__NR_${name}) && !defined(__IGNORE_${name})
-#warning syscall ${name} not implemented
-#endif
-EOF
-	done
-    )
+sed -n -e '/^\#define/ s/[^_]*__NR_\([^[:space:]]*\).*/\
+\#if !defined \(__NR_\1\) \&\& !defined \(__IGNORE_\1\)\
+\#warning syscall \1 not implemented\
+\#endif/p' $1
 }
 
-(ignore_list && syscall_list $(dirname $0)/../arch/x86/syscalls/syscall_32.tbl) | \
+(ignore_list && syscall_list ${srctree}/arch/x86/include/asm/unistd_32.h) | \
 $* -E -x c - > /dev/null

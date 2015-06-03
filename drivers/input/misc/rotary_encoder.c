@@ -2,12 +2,11 @@
  * rotary_encoder.c
  *
  * (c) 2009 Daniel Mack <daniel@caiaq.de>
- * Copyright (C) 2011 Johan Hovold <jhovold@gmail.com>
  *
  * state machine code inspired by code from Tim Ruetz
  *
  * A generic driver for rotary encoders connected to GPIO lines.
- * See file:Documentation/input/rotary-encoder.txt for more information
+ * See file:Documentation/input/rotary_encoder.txt for more information
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -23,7 +22,6 @@
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
 #include <linux/rotary_encoder.h>
-#include <linux/slab.h>
 
 #define DRV_NAME "rotary-encoder"
 
@@ -39,66 +37,52 @@ struct rotary_encoder {
 
 	bool armed;
 	unsigned char dir;	/* 0 - clockwise, 1 - CCW */
-
-	char last_stable;
 };
-
-static int rotary_encoder_get_state(struct rotary_encoder_platform_data *pdata)
-{
-	int a = !!gpio_get_value(pdata->gpio_a);
-	int b = !!gpio_get_value(pdata->gpio_b);
-
-	a ^= pdata->inverted_a;
-	b ^= pdata->inverted_b;
-
-	return ((a << 1) | b);
-}
-
-static void rotary_encoder_report_event(struct rotary_encoder *encoder)
-{
-	struct rotary_encoder_platform_data *pdata = encoder->pdata;
-
-	if (pdata->relative_axis) {
-		input_report_rel(encoder->input,
-				 pdata->axis, encoder->dir ? -1 : 1);
-	} else {
-		unsigned int pos = encoder->pos;
-
-		if (encoder->dir) {
-			/* turning counter-clockwise */
-			if (pdata->rollover)
-				pos += pdata->steps;
-			if (pos)
-				pos--;
-		} else {
-			/* turning clockwise */
-			if (pdata->rollover || pos < pdata->steps)
-				pos++;
-		}
-
-		if (pdata->rollover)
-			pos %= pdata->steps;
-
-		encoder->pos = pos;
-		input_report_abs(encoder->input, pdata->axis, encoder->pos);
-	}
-
-	input_sync(encoder->input);
-}
 
 static irqreturn_t rotary_encoder_irq(int irq, void *dev_id)
 {
 	struct rotary_encoder *encoder = dev_id;
+	struct rotary_encoder_platform_data *pdata = encoder->pdata;
+	int a = !!gpio_get_value(pdata->gpio_a);
+	int b = !!gpio_get_value(pdata->gpio_b);
 	int state;
 
-	state = rotary_encoder_get_state(encoder->pdata);
+	a ^= pdata->inverted_a;
+	b ^= pdata->inverted_b;
+	state = (a << 1) | b;
 
 	switch (state) {
+
 	case 0x0:
-		if (encoder->armed) {
-			rotary_encoder_report_event(encoder);
-			encoder->armed = false;
+		if (!encoder->armed)
+			break;
+
+		if (pdata->relative_axis) {
+			input_report_rel(encoder->input, pdata->axis,
+					 encoder->dir ? -1 : 1);
+		} else {
+			unsigned int pos = encoder->pos;
+
+			if (encoder->dir) {
+				/* turning counter-clockwise */
+				if (pdata->rollover)
+					pos += pdata->steps;
+				if (pos)
+					pos--;
+			} else {
+				/* turning clockwise */
+				if (pdata->rollover || pos < pdata->steps)
+					pos++;
+			}
+			if (pdata->rollover)
+				pos %= pdata->steps;
+			encoder->pos = pos;
+			input_report_abs(encoder->input, pdata->axis,
+					 encoder->pos);
 		}
+		input_sync(encoder->input);
+
+		encoder->armed = false;
 		break;
 
 	case 0x1:
@@ -115,37 +99,11 @@ static irqreturn_t rotary_encoder_irq(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static irqreturn_t rotary_encoder_half_period_irq(int irq, void *dev_id)
-{
-	struct rotary_encoder *encoder = dev_id;
-	int state;
-
-	state = rotary_encoder_get_state(encoder->pdata);
-
-	switch (state) {
-	case 0x00:
-	case 0x03:
-		if (state != encoder->last_stable) {
-			rotary_encoder_report_event(encoder);
-			encoder->last_stable = state;
-		}
-		break;
-
-	case 0x01:
-	case 0x02:
-		encoder->dir = (encoder->last_stable + state) & 0x01;
-		break;
-	}
-
-	return IRQ_HANDLED;
-}
-
 static int __devinit rotary_encoder_probe(struct platform_device *pdev)
 {
 	struct rotary_encoder_platform_data *pdata = pdev->dev.platform_data;
 	struct rotary_encoder *encoder;
 	struct input_dev *input;
-	irq_handler_t handler;
 	int err;
 
 	if (!pdata) {
@@ -194,13 +152,6 @@ static int __devinit rotary_encoder_probe(struct platform_device *pdev)
 		goto exit_unregister_input;
 	}
 
-	err = gpio_direction_input(pdata->gpio_a);
-	if (err) {
-		dev_err(&pdev->dev, "unable to set GPIO %d for input\n",
-			pdata->gpio_a);
-		goto exit_unregister_input;
-	}
-
 	err = gpio_request(pdata->gpio_b, DRV_NAME);
 	if (err) {
 		dev_err(&pdev->dev, "unable to request GPIO %d\n",
@@ -208,23 +159,9 @@ static int __devinit rotary_encoder_probe(struct platform_device *pdev)
 		goto exit_free_gpio_a;
 	}
 
-	err = gpio_direction_input(pdata->gpio_b);
-	if (err) {
-		dev_err(&pdev->dev, "unable to set GPIO %d for input\n",
-			pdata->gpio_b);
-		goto exit_free_gpio_a;
-	}
-
 	/* request the IRQs */
-	if (pdata->half_period) {
-		handler = &rotary_encoder_half_period_irq;
-		encoder->last_stable = rotary_encoder_get_state(pdata);
-	} else {
-		handler = &rotary_encoder_irq;
-	}
-
-	err = request_irq(encoder->irq_a, handler,
-			  IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
+	err = request_irq(encoder->irq_a, &rotary_encoder_irq,
+			  IORESOURCE_IRQ_HIGHEDGE | IORESOURCE_IRQ_LOWEDGE,
 			  DRV_NAME, encoder);
 	if (err) {
 		dev_err(&pdev->dev, "unable to request IRQ %d\n",
@@ -232,8 +169,8 @@ static int __devinit rotary_encoder_probe(struct platform_device *pdev)
 		goto exit_free_gpio_b;
 	}
 
-	err = request_irq(encoder->irq_b, handler,
-			  IRQF_TRIGGER_RISING | IRQF_TRIGGER_FALLING,
+	err = request_irq(encoder->irq_b, &rotary_encoder_irq,
+			  IORESOURCE_IRQ_HIGHEDGE | IORESOURCE_IRQ_LOWEDGE,
 			  DRV_NAME, encoder);
 	if (err) {
 		dev_err(&pdev->dev, "unable to request IRQ %d\n",
@@ -284,9 +221,22 @@ static struct platform_driver rotary_encoder_driver = {
 		.owner	= THIS_MODULE,
 	}
 };
-module_platform_driver(rotary_encoder_driver);
+
+static int __init rotary_encoder_init(void)
+{
+	return platform_driver_register(&rotary_encoder_driver);
+}
+
+static void __exit rotary_encoder_exit(void)
+{
+	platform_driver_unregister(&rotary_encoder_driver);
+}
+
+module_init(rotary_encoder_init);
+module_exit(rotary_encoder_exit);
 
 MODULE_ALIAS("platform:" DRV_NAME);
 MODULE_DESCRIPTION("GPIO rotary encoder driver");
-MODULE_AUTHOR("Daniel Mack <daniel@caiaq.de>, Johan Hovold");
+MODULE_AUTHOR("Daniel Mack <daniel@caiaq.de>");
 MODULE_LICENSE("GPL v2");
+

@@ -52,7 +52,7 @@
  *
  * 0.1.3 (released 1999-11-02)	added Attila's panning support, code
  *				reorg, hwcursor address page size alignment
- *				(for mmapping both frame buffer and regs),
+ *				(for mmaping both frame buffer and regs),
  *				and my changes to get rid of hardcoded
  *				VGA i/o register locations (uses PCI
  *				configuration info now)
@@ -169,7 +169,7 @@ static int nowrap = 1;      /* not implemented (yet) */
 static int hwcursor = 1;
 static char *mode_option __devinitdata;
 /* mtrr option */
-static bool nomtrr __devinitdata;
+static int nomtrr __devinitdata;
 
 /* -------------------------------------------------------------------------
  *			Hardware-specific funcions
@@ -877,12 +877,12 @@ static void tdfxfb_fillrect(struct fb_info *info,
 	else
 		tdfx_rop = TDFX_ROP_XOR;
 
-	/* assume always rect->height < 4096 */
+	/* asume always rect->height < 4096 */
 	if (dy + rect->height > 4095) {
 		dstbase = stride * dy;
 		dy = 0;
 	}
-	/* assume always rect->width < 4096 */
+	/* asume always rect->width < 4096 */
 	if (dx + rect->width > 4095) {
 		dstbase += dx * bpp >> 3;
 		dx = 0;
@@ -915,22 +915,22 @@ static void tdfxfb_copyarea(struct fb_info *info,
 	u32 dstbase = 0;
 	u32 srcbase = 0;
 
-	/* assume always area->height < 4096 */
+	/* asume always area->height < 4096 */
 	if (sy + area->height > 4095) {
 		srcbase = stride * sy;
 		sy = 0;
 	}
-	/* assume always area->width < 4096 */
+	/* asume always area->width < 4096 */
 	if (sx + area->width > 4095) {
 		srcbase += sx * bpp >> 3;
 		sx = 0;
 	}
-	/* assume always area->height < 4096 */
+	/* asume always area->height < 4096 */
 	if (dy + area->height > 4095) {
 		dstbase = stride * dy;
 		dy = 0;
 	}
-	/* assume always area->width < 4096 */
+	/* asume always area->width < 4096 */
 	if (dx + area->width > 4095) {
 		dstbase += dx * bpp >> 3;
 		dx = 0;
@@ -1003,12 +1003,12 @@ static void tdfxfb_imageblit(struct fb_info *info, const struct fb_image *image)
 #else
 	srcfmt = 0x400000;
 #endif
-	/* assume always image->height < 4096 */
+	/* asume always image->height < 4096 */
 	if (dy + image->height > 4095) {
 		dstbase = stride * dy;
 		dy = 0;
 	}
-	/* assume always image->width < 4096 */
+	/* asume always image->width < 4096 */
 	if (dx + image->width > 4095) {
 		dstbase += dx * bpp >> 3;
 		dx = 0;
@@ -1124,7 +1124,7 @@ static int tdfxfb_cursor(struct fb_info *info, struct fb_cursor *cursor)
 		 * lower half (least significant 64 bits) of a 128 bit word
 		 * and pattern 1 the upper half. If you examine the data of
 		 * the cursor image the graphics card uses then from the
-		 * beginning you see line one of pattern 0, line one of
+		 * begining you see line one of pattern 0, line one of
 		 * pattern 1, line two of pattern 0, line two of pattern 1,
 		 * etc etc. The linear stride for the cursor is always 16 bytes
 		 * (128 bits) which is the maximum cursor width times two for
@@ -1571,8 +1571,8 @@ out_err_iobase:
 	if (default_par->mtrr_handle >= 0)
 		mtrr_del(default_par->mtrr_handle, info->fix.smem_start,
 			 info->fix.smem_len);
-	release_region(pci_resource_start(pdev, 2),
-		       pci_resource_len(pdev, 2));
+	release_mem_region(pci_resource_start(pdev, 2),
+			   pci_resource_len(pdev, 2));
 out_err_screenbase:
 	if (info->screen_base)
 		iounmap(info->screen_base);

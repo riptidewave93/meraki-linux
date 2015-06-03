@@ -36,8 +36,12 @@ enum audit_state {
 	AUDIT_DISABLED,		/* Do not create per-task audit_context.
 				 * No syscall-specific audit records can
 				 * be generated. */
+	AUDIT_SETUP_CONTEXT,	/* Create the per-task audit_context,
+				 * but don't necessarily fill it in at
+				 * syscall entry time (i.e., filter
+				 * instead). */
 	AUDIT_BUILD_CONTEXT,	/* Create the per-task audit_context,
-				 * and fill it in at syscall
+				 * and always fill it in at syscall
 				 * entry time.  This makes a full
 				 * syscall record available if some
 				 * other part of the kernel decides it
@@ -80,7 +84,10 @@ extern int audit_compare_dname_path(const char *dname, const char *path,
 				    int *dirlen);
 extern struct sk_buff *	    audit_make_reply(int pid, int seq, int type,
 					     int done, int multi,
-					     const void *payload, int size);
+					     void *payload, int size);
+extern void		    audit_send_reply(int pid, int seq, int type,
+					     int done, int multi,
+					     void *payload, int size);
 extern void		    audit_panic(const char *message);
 
 struct audit_netlink_list {
@@ -96,27 +103,21 @@ extern struct mutex audit_filter_mutex;
 extern void audit_free_rule_rcu(struct rcu_head *);
 extern struct list_head audit_filter_list[];
 
-extern struct audit_entry *audit_dupe_rule(struct audit_krule *old);
-
 /* audit watch functions */
-#ifdef CONFIG_AUDIT_WATCH
+extern unsigned long audit_watch_inode(struct audit_watch *watch);
+extern dev_t audit_watch_dev(struct audit_watch *watch);
 extern void audit_put_watch(struct audit_watch *watch);
 extern void audit_get_watch(struct audit_watch *watch);
 extern int audit_to_watch(struct audit_krule *krule, char *path, int len, u32 op);
-extern int audit_add_watch(struct audit_krule *krule, struct list_head **list);
-extern void audit_remove_watch_rule(struct audit_krule *krule);
+extern int audit_add_watch(struct audit_krule *krule);
+extern void audit_remove_watch(struct audit_watch *watch);
+extern void audit_remove_watch_rule(struct audit_krule *krule, struct list_head *list);
+extern void audit_inotify_unregister(struct list_head *in_list);
 extern char *audit_watch_path(struct audit_watch *watch);
-extern int audit_watch_compare(struct audit_watch *watch, unsigned long ino, dev_t dev);
-#else
-#define audit_put_watch(w) {}
-#define audit_get_watch(w) {}
-#define audit_to_watch(k, p, l, o) (-EINVAL)
-#define audit_add_watch(k, l) (-EINVAL)
-#define audit_remove_watch_rule(k) BUG()
-#define audit_watch_path(w) ""
-#define audit_watch_compare(w, i, d) 0
+extern struct list_head *audit_watch_rules(struct audit_watch *watch);
 
-#endif /* CONFIG_AUDIT_WATCH */
+extern struct audit_entry *audit_dupe_rule(struct audit_krule *old,
+					   struct audit_watch *watch);
 
 #ifdef CONFIG_AUDIT_TREE
 extern struct audit_chunk *audit_tree_lookup(const struct inode *);

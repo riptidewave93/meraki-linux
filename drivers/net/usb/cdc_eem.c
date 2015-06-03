@@ -30,7 +30,6 @@
 #include <linux/crc32.h>
 #include <linux/usb/cdc.h>
 #include <linux/usb/usbnet.h>
-#include <linux/gfp.h>
 
 
 /*
@@ -74,7 +73,7 @@ static void eem_linkcmd(struct usbnet *dev, struct sk_buff *skb)
 		usb_free_urb(urb);
 fail:
 		dev_kfree_skb(skb);
-		netdev_warn(dev->net, "link cmd failure\n");
+		devwarn(dev, "link cmd failure\n");
 		return;
 	}
 }
@@ -93,7 +92,6 @@ static int eem_bind(struct usbnet *dev, struct usb_interface *intf)
 	/* no jumbogram (16K) support for now */
 
 	dev->net->hard_header_len += EEM_HEAD + ETH_FCS_LEN;
-	dev->hard_mtu = dev->net->mtu + dev->net->hard_header_len;
 
 	return 0;
 }
@@ -123,8 +121,8 @@ static struct sk_buff *eem_tx_fixup(struct usbnet *dev, struct sk_buff *skb,
 		int	headroom = skb_headroom(skb);
 		int	tailroom = skb_tailroom(skb);
 
-		if ((tailroom >= ETH_FCS_LEN + padlen) &&
-		    (headroom >= EEM_HEAD))
+		if ((tailroom >= ETH_FCS_LEN + padlen)
+				&& (headroom >= EEM_HEAD))
 			goto done;
 
 		if ((headroom + tailroom)
@@ -191,7 +189,7 @@ static int eem_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 
 		/*
 		 * EEM packet header format:
-		 * b0..14:	EEM type dependent (Data or Command)
+		 * b0..14:	EEM type dependant (Data or Command)
 		 * b15:		bmType
 		 */
 		header = get_unaligned_le16(skb->data);
@@ -214,8 +212,7 @@ static int eem_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 			 * b15:		1 (EEM command)
 			 */
 			if (header & BIT(14)) {
-				netdev_dbg(dev->net, "reserved command %04x\n",
-					   header);
+				devdbg(dev, "reserved command %04x\n", header);
 				continue;
 			}
 
@@ -258,9 +255,8 @@ static int eem_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 			case 1:		/* Echo response */
 			case 5:		/* Tickle */
 			default:	/* reserved */
-				netdev_warn(dev->net,
-					    "unexpected link command %d\n",
-					    bmEEMCmd);
+				devwarn(dev, "unexpected link command %d\n",
+						bmEEMCmd);
 				continue;
 			}
 
@@ -341,7 +337,7 @@ next:
 
 static const struct driver_info eem_info = {
 	.description =	"CDC EEM Device",
-	.flags =	FLAG_ETHER | FLAG_POINTTOPOINT,
+	.flags =	FLAG_ETHER,
 	.bind =		eem_bind,
 	.rx_fixup =	eem_rx_fixup,
 	.tx_fixup =	eem_tx_fixup,
@@ -370,7 +366,18 @@ static struct usb_driver eem_driver = {
 	.resume =	usbnet_resume,
 };
 
-module_usb_driver(eem_driver);
+
+static int __init eem_init(void)
+{
+	return usb_register(&eem_driver);
+}
+module_init(eem_init);
+
+static void __exit eem_exit(void)
+{
+	usb_deregister(&eem_driver);
+}
+module_exit(eem_exit);
 
 MODULE_AUTHOR("Omar Laazimani <omar.oberthur@gmail.com>");
 MODULE_DESCRIPTION("USB CDC EEM");

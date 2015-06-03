@@ -30,7 +30,7 @@ asmlinkage void mach_irq_dispatch(unsigned int pending)
 	if (pending & CAUSEF_IP7)
 		do_IRQ(MIPS_CPU_IRQ_BASE + 7);
 	else if (pending & CAUSEF_IP6) /* perf counter loverflow */
-		do_perfcnt_IRQ();
+		do_IRQ(LOONGSON2_PERFCNT_IRQ);
 	else if (pending & CAUSEF_IP5)
 		i8259_irqdispatch();
 	else if (pending & CAUSEF_IP2)
@@ -42,8 +42,14 @@ asmlinkage void mach_irq_dispatch(unsigned int pending)
 static struct irqaction cascade_irqaction = {
 	.handler = no_action,
 	.name = "cascade",
-	.flags = IRQF_NO_THREAD,
 };
+
+void __init set_irq_trigger_mode(void)
+{
+	/* most bonito irq should be level triggered */
+	BONITO_INTEDGE = BONITO_ICU_SYSTEMERR | BONITO_ICU_MASTERERR |
+	    BONITO_ICU_RETRYERR | BONITO_ICU_MBOXES;
+}
 
 void __init mach_init_irq(void)
 {
@@ -52,10 +58,6 @@ void __init mach_init_irq(void)
 	 *   16-23        ------> mips cpu interrupt
 	 *   32-63        ------> bonito irq
 	 */
-
-	/* most bonito irq should be level triggered */
-	LOONGSON_INTEDGE = LOONGSON_ICU_SYSTEMERR | LOONGSON_ICU_MASTERERR |
-	    LOONGSON_ICU_RETRYERR | LOONGSON_ICU_MBOXES;
 
 	/* Sets the first-level interrupt dispatcher. */
 	mips_cpu_irq_init();

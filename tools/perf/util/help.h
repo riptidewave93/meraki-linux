@@ -1,5 +1,5 @@
-#ifndef __PERF_HELP_H
-#define __PERF_HELP_H
+#ifndef HELP_H
+#define HELP_H
 
 struct cmdnames {
 	size_t alloc;
@@ -26,4 +26,4 @@ int is_in_cmdlist(struct cmdnames *c, const char *s);
 void list_commands(const char *title, struct cmdnames *main_cmds,
 		   struct cmdnames *other_cmds);
 
-#endif /* __PERF_HELP_H */
+#endif /* HELP_H */

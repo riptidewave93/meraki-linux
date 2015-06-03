@@ -50,11 +50,11 @@
  *
  * ROADMAP
  *
- * i2400m_dev_initialize()       Called by i2400m_dev_start()
+ * i2400m_dev_initalize()       Called by i2400m_dev_start()
  *   i2400m_set_init_config()
  *   i2400m_cmd_get_state()
  * i2400m_dev_shutdown()        Called by i2400m_dev_stop()
- *   i2400m_reset()
+ *   i2400m->bus_reset()
  *
  * i2400m_{cmd,get,set}_*()
  *   i2400m_msg_to_dev()
@@ -76,36 +76,11 @@
 #include <stdarg.h>
 #include "i2400m.h"
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/wimax/i2400m.h>
-#include <linux/export.h>
-#include <linux/moduleparam.h>
 
 
 #define D_SUBMODULE control
 #include "debug-levels.h"
-
-static int i2400m_idle_mode_disabled;/* 0 (idle mode enabled) by default */
-module_param_named(idle_mode_disabled, i2400m_idle_mode_disabled, int, 0644);
-MODULE_PARM_DESC(idle_mode_disabled,
-		 "If true, the device will not enable idle mode negotiation "
-		 "with the base station (when connected) to save power.");
-
-/* 0 (power saving enabled) by default */
-static int i2400m_power_save_disabled;
-module_param_named(power_save_disabled, i2400m_power_save_disabled, int, 0644);
-MODULE_PARM_DESC(power_save_disabled,
-		 "If true, the driver will not tell the device to enter "
-		 "power saving mode when it reports it is ready for it. "
-		 "False by default (so the device is told to do power "
-		 "saving).");
-
-static int i2400m_passive_mode;	/* 0 (passive mode disabled) by default */
-module_param_named(passive_mode, i2400m_passive_mode, int, 0644);
-MODULE_PARM_DESC(passive_mode,
-		 "If true, the driver will not do any device setup "
-		 "and leave it up to user space, who must be properly "
-		 "setup.");
 
 
 /*
@@ -288,7 +263,7 @@ int i2400m_msg_check_status(const struct i2400m_l3l4_hdr *l3l4_hdr,
 
 	if (status == 0)
 		return 0;
-	if (status >= ARRAY_SIZE(ms_to_errno)) {
+	if (status > ARRAY_SIZE(ms_to_errno)) {
 		str = "unknown status code";
 		result = -EBADR;
 	} else {
@@ -361,9 +336,9 @@ void i2400m_report_tlv_system_state(struct i2400m *i2400m,
 		/* Huh? just in case, shut it down */
 		dev_err(dev, "HW BUG? unknown state %u: shutting down\n",
 			i2400m_state);
-		i2400m_reset(i2400m, I2400M_RT_WARM);
+		i2400m->bus_reset(i2400m, I2400M_RT_WARM);
 		break;
-	}
+	};
 	d_fnend(3, dev, "(i2400m %p ss %p [%u]) = void\n",
 		i2400m, ss, i2400m_state);
 }
@@ -380,7 +355,7 @@ void i2400m_report_tlv_system_state(struct i2400m *i2400m,
  * the device's state as sometimes we need to do a link-renew (the BS
  * wants us to renew a DHCP lease, for example).
  *
- * In fact, doc says that every time we get a link-up, we should do a
+ * In fact, doc says that everytime we get a link-up, we should do a
  * DHCP negotiation...
  */
 static
@@ -412,7 +387,7 @@ void i2400m_report_tlv_media_status(struct i2400m *i2400m,
 	default:
 		dev_err(dev, "HW BUG? unknown media status %u\n",
 			status);
-	}
+	};
 	d_fnend(3, dev, "(i2400m %p ms %p [%u]) = void\n",
 		i2400m, ms, status);
 }
@@ -541,7 +516,7 @@ void i2400m_report_hook(struct i2400m *i2400m,
 			}
 		}
 		break;
-	}
+	};
 	d_fnend(3, dev, "(i2400m %p l3l4_hdr %p size %zu) = void\n",
 		i2400m, l3l4_hdr, size);
 }
@@ -560,9 +535,8 @@ void i2400m_report_hook(struct i2400m *i2400m,
  * processing should be done in the function that calls the
  * command. This is here for some cases where it can't happen...
  */
-static void i2400m_msg_ack_hook(struct i2400m *i2400m,
-				 const struct i2400m_l3l4_hdr *l3l4_hdr,
-				 size_t size)
+void i2400m_msg_ack_hook(struct i2400m *i2400m,
+			 const struct i2400m_l3l4_hdr *l3l4_hdr, size_t size)
 {
 	int result;
 	struct device *dev = i2400m_dev(i2400m);
@@ -585,7 +559,8 @@ static void i2400m_msg_ack_hook(struct i2400m *i2400m,
 					 size);
 		}
 		break;
-	}
+	};
+	return;
 }
 
 
@@ -677,7 +652,7 @@ void i2400m_msg_to_dev_cancel_wait(struct i2400m *i2400m, int code)
  *  - the ack message wasn't formatted correctly
  *
  * The returned skb has been allocated with wimax_msg_to_user_alloc(),
- * it contains the response in a netlink attribute and is ready to be
+ * it contains the reponse in a netlink attribute and is ready to be
  * passed up to user space with wimax_msg_to_user_send(). To access
  * the payload and its length, use wimax_msg_{data,len}() on the skb.
  *
@@ -757,7 +732,7 @@ struct sk_buff *i2400m_msg_to_dev(struct i2400m *i2400m,
 		break;
 	default:
 		ack_timeout = HZ;
-	}
+	};
 
 	if (unlikely(i2400m->trace_msg_from_user))
 		wimax_msg(&i2400m->wimax_dev, "echo", buf, buf_len, GFP_KERNEL);
@@ -851,7 +826,7 @@ struct i2400m_cmd_enter_power_save {
 	struct i2400m_l3l4_hdr hdr;
 	struct i2400m_tlv_hdr tlv;
 	__le32 val;
-} __packed;
+} __attribute__((packed));
 
 
 /*
@@ -1138,7 +1113,7 @@ error_alloc:
  * i2400m_report_state_hook() to parse the answer. This will set the
  * carrier state, as well as the RF Kill switches state.
  */
-static int i2400m_cmd_get_state(struct i2400m *i2400m)
+int i2400m_cmd_get_state(struct i2400m *i2400m)
 {
 	int result;
 	struct device *dev = i2400m_dev(i2400m);
@@ -1180,6 +1155,8 @@ error_msg_to_dev:
 error_alloc:
 	return result;
 }
+EXPORT_SYMBOL_GPL(i2400m_cmd_get_state);
+
 
 /**
  * Set basic configuration settings
@@ -1191,9 +1168,8 @@ error_alloc:
  *     right endianess (LE).
  * @arg_size: number of pointers in the @args array
  */
-static int i2400m_set_init_config(struct i2400m *i2400m,
-				  const struct i2400m_tlv_hdr **arg,
-				  size_t args)
+int i2400m_set_init_config(struct i2400m *i2400m,
+			   const struct i2400m_tlv_hdr **arg, size_t args)
 {
 	int result;
 	struct device *dev = i2400m_dev(i2400m);
@@ -1260,6 +1236,8 @@ none:
 	return result;
 
 }
+EXPORT_SYMBOL_GPL(i2400m_set_init_config);
+
 
 /**
  * i2400m_set_idle_timeout - Set the device's idle mode timeout
@@ -1357,8 +1335,6 @@ int i2400m_dev_initialize(struct i2400m *i2400m)
 	unsigned argc = 0;
 
 	d_fnstart(3, dev, "(i2400m %p)\n", i2400m);
-	if (i2400m_passive_mode)
-		goto out_passive;
 	/* Disable idle mode? (enabled by default) */
 	if (i2400m_idle_mode_disabled) {
 		if (i2400m_le_v1_3(i2400m)) {
@@ -1401,7 +1377,6 @@ int i2400m_dev_initialize(struct i2400m *i2400m)
 	result = i2400m_set_init_config(i2400m, args, argc);
 	if (result < 0)
 		goto error;
-out_passive:
 	/*
 	 * Update state: Here it just calls a get state; parsing the
 	 * result (System State TLV and RF Status TLV [done in the rx
@@ -1433,4 +1408,5 @@ void i2400m_dev_shutdown(struct i2400m *i2400m)
 
 	d_fnstart(3, dev, "(i2400m %p)\n", i2400m);
 	d_fnend(3, dev, "(i2400m %p) = void\n", i2400m);
+	return;
 }

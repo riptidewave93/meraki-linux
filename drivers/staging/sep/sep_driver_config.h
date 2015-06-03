@@ -2,12 +2,13 @@
  *
  *  sep_driver_config.h - Security Processor Driver configuration
  *
- *  Copyright(c) 2009-2011 Intel Corporation. All rights reserved.
- *  Contributions(c) 2009-2011 Discretix. All rights reserved.
+ *  Copyright(c) 2009 Intel Corporation. All rights reserved.
+ *  Copyright(c) 2009 Discretix. All rights reserved.
  *
  *  This program is free software; you can redistribute it and/or modify it
  *  under the terms of the GNU General Public License as published by the Free
- *  Software Foundation; version 2 of the License.
+ *  Software Foundation; either version 2 of the License, or (at your option)
+ *  any later version.
  *
  *  This program is distributed in the hope that it will be useful, but WITHOUT
  *  ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
@@ -21,12 +22,10 @@
  *  CONTACTS:
  *
  *  Mark Allyn		mark.a.allyn@intel.com
- *  Jayant Mangalampalli jayant.mangalampalli@intel.com
  *
  *  CHANGES:
  *
- *  2010.06.26	Upgrade to Medfield
- *  2011.02.22  Enable kernel crypto
+ *  2009.06.26	Initial publish
  *
  */
 
@@ -40,7 +39,7 @@
 
 /* if flag is on , then the driver is running in polling and
 	not interrupt mode */
-#define SEP_DRIVER_POLLING_MODE                         0
+#define SEP_DRIVER_POLLING_MODE                         1
 
 /* flag which defines if the shared area address should be
 	reconfiged (send to SEP anew) during init of the driver */
@@ -49,8 +48,6 @@
 /* the mode for running on the ARM1172 Evaluation platform (flag is 1) */
 #define SEP_DRIVER_ARM_DEBUG_MODE                       0
 
-/* Critical message area contents for sanity checking */
-#define SEP_START_MSG_TOKEN				0x02558808
 /*-------------------------------------------
 	INTERNAL DATA CONFIGURATION
 	-------------------------------------------*/
@@ -62,22 +59,8 @@
 #define SEP_DRIVER_OUT_FLAG                             1
 
 /* maximum number of entries in one LLI tables */
-#define SEP_DRIVER_ENTRIES_PER_TABLE_IN_SEP             31
+#define SEP_DRIVER_ENTRIES_PER_TABLE_IN_SEP             8
 
-/* minimum data size of the MLLI table */
-#define SEP_DRIVER_MIN_DATA_SIZE_PER_TABLE		16
-
-/* flag that signifies tah the lock is
-currently held by the proccess (struct file) */
-#define SEP_DRIVER_OWN_LOCK_FLAG                        1
-
-/* flag that signifies tah the lock is currently NOT
-held by the proccess (struct file) */
-#define SEP_DRIVER_DISOWN_LOCK_FLAG                     0
-
-/* indicates whether driver has mapped/unmapped shared area */
-#define SEP_REQUEST_DAEMON_MAPPED 1
-#define SEP_REQUEST_DAEMON_UNMAPPED 0
 
 /*--------------------------------------------------------
 	SHARED AREA  memory total size is 36K
@@ -89,9 +72,8 @@ held by the proccess (struct file) */
 									}
 	DATA_POOL_AREA                          12K        }
 
-	SYNCHRONIC_DMA_TABLES_AREA              29K
+	SYNCHRONIC_DMA_TABLES_AREA              5K
 
-	placeholder until drver changes
 	FLOW_DMA_TABLES_AREA                    4K
 
 	SYSTEM_MEMORY_AREA                      3k
@@ -102,64 +84,49 @@ held by the proccess (struct file) */
 	TIME_MEMORY_AREA                     8B
 -----------------------------------------------------------*/
 
-#define SEP_DEV_NAME "sep_sec_driver"
-#define SEP_DEV_SINGLETON "sep_sec_singleton_driver"
-#define SEP_DEV_DAEMON "sep_req_daemon_driver"
 
-
-/*
-	the minimum length of the message - includes 2 reserved fields
-	at the start, then token, message size and opcode fields. all dwords
-*/
-#define SEP_DRIVER_MIN_MESSAGE_SIZE_IN_BYTES			(5*sizeof(u32))
 
 /*
 	the maximum length of the message - the rest of the message shared
 	area will be dedicated to the dma lli tables
 */
-#define SEP_DRIVER_MAX_MESSAGE_SIZE_IN_BYTES			(8 * 1024)
+#define SEP_DRIVER_MAX_MESSAGE_SIZE_IN_BYTES                  (8 * 1024)
 
 /* the size of the message shared area in pages */
-#define SEP_DRIVER_MESSAGE_SHARED_AREA_SIZE_IN_BYTES		(8 * 1024)
+#define SEP_DRIVER_MESSAGE_SHARED_AREA_SIZE_IN_BYTES          (8 * 1024)
 
 /* the size of the data pool static area in pages */
-#define SEP_DRIVER_STATIC_AREA_SIZE_IN_BYTES			(4 * 1024)
+#define SEP_DRIVER_STATIC_AREA_SIZE_IN_BYTES                  (4 * 1024)
 
 /* the size of the data pool shared area size in pages */
-#define SEP_DRIVER_DATA_POOL_SHARED_AREA_SIZE_IN_BYTES		(16 * 1024)
+#define SEP_DRIVER_DATA_POOL_SHARED_AREA_SIZE_IN_BYTES        (12 * 1024)
 
 /* the size of the message shared area in pages */
-#define SYNCHRONIC_DMA_TABLES_AREA_SIZE_BYTES	(1024 * 29)
+#define SEP_DRIVER_SYNCHRONIC_DMA_TABLES_AREA_SIZE_IN_BYTES   (1024 * 5)
 
-/* Placeholder until driver changes */
-#define SEP_DRIVER_FLOW_DMA_TABLES_AREA_SIZE_IN_BYTES		(1024 * 4)
+
+/* the size of the data pool shared area size in pages */
+#define SEP_DRIVER_FLOW_DMA_TABLES_AREA_SIZE_IN_BYTES         (1024 * 4)
 
 /* system data (time, caller id etc') pool */
-#define SEP_DRIVER_SYSTEM_DATA_MEMORY_SIZE_IN_BYTES		(1024 * 3)
+#define SEP_DRIVER_SYSTEM_DATA_MEMORY_SIZE_IN_BYTES           100
 
-/* Offset of the sep printf buffer in the message area */
-#define SEP_DRIVER_PRINTF_OFFSET_IN_BYTES			(5888)
-
-/* the size in bytes of the time memory */
-#define SEP_DRIVER_TIME_MEMORY_SIZE_IN_BYTES			8
-
-/* the size in bytes of the RAR parameters memory */
-#define SEP_DRIVER_SYSTEM_RAR_MEMORY_SIZE_IN_BYTES		8
 
 /* area size that is mapped  - we map the MESSAGE AREA, STATIC POOL and
 	DATA POOL areas. area must be module 4k */
-#define SEP_DRIVER_MMMAP_AREA_SIZE				(1024 * 28)
+#define SEP_DRIVER_MMMAP_AREA_SIZE                            (1024 * 24)
+
 
 /*-----------------------------------------------
 	offsets of the areas starting from the shared area start address
 */
 
 /* message area offset */
-#define SEP_DRIVER_MESSAGE_AREA_OFFSET_IN_BYTES			0
+#define SEP_DRIVER_MESSAGE_AREA_OFFSET_IN_BYTES               0
 
 /* static pool area offset */
 #define SEP_DRIVER_STATIC_AREA_OFFSET_IN_BYTES \
-	(SEP_DRIVER_MESSAGE_SHARED_AREA_SIZE_IN_BYTES)
+		(SEP_DRIVER_MESSAGE_SHARED_AREA_SIZE_IN_BYTES)
 
 /* data pool area offset */
 #define SEP_DRIVER_DATA_POOL_AREA_OFFSET_IN_BYTES \
@@ -167,132 +134,92 @@ held by the proccess (struct file) */
 	SEP_DRIVER_STATIC_AREA_SIZE_IN_BYTES)
 
 /* synhronic dma tables area offset */
-#define SYNCHRONIC_DMA_TABLES_AREA_OFFSET_BYTES \
+#define SEP_DRIVER_SYNCHRONIC_DMA_TABLES_AREA_OFFSET_IN_BYTES \
 	(SEP_DRIVER_DATA_POOL_AREA_OFFSET_IN_BYTES + \
 	SEP_DRIVER_DATA_POOL_SHARED_AREA_SIZE_IN_BYTES)
 
+/* sep driver flow dma tables area offset */
+#define SEP_DRIVER_FLOW_DMA_TABLES_AREA_OFFSET_IN_BYTES \
+	(SEP_DRIVER_SYNCHRONIC_DMA_TABLES_AREA_OFFSET_IN_BYTES + \
+	SEP_DRIVER_SYNCHRONIC_DMA_TABLES_AREA_SIZE_IN_BYTES)
+
 /* system memory offset in bytes */
 #define SEP_DRIVER_SYSTEM_DATA_MEMORY_OFFSET_IN_BYTES \
-	(SYNCHRONIC_DMA_TABLES_AREA_OFFSET_BYTES + \
-	SYNCHRONIC_DMA_TABLES_AREA_SIZE_BYTES)
+	(SEP_DRIVER_FLOW_DMA_TABLES_AREA_OFFSET_IN_BYTES + \
+	SEP_DRIVER_FLOW_DMA_TABLES_AREA_SIZE_IN_BYTES)
 
 /* offset of the time area */
 #define SEP_DRIVER_SYSTEM_TIME_MEMORY_OFFSET_IN_BYTES \
 	(SEP_DRIVER_SYSTEM_DATA_MEMORY_OFFSET_IN_BYTES)
 
-/* offset of the RAR area */
-#define SEP_DRIVER_SYSTEM_RAR_MEMORY_OFFSET_IN_BYTES \
-	(SEP_DRIVER_SYSTEM_TIME_MEMORY_OFFSET_IN_BYTES + \
-	SEP_DRIVER_TIME_MEMORY_SIZE_IN_BYTES)
 
-/* offset of the caller id area */
-#define SEP_CALLER_ID_OFFSET_BYTES \
-	(SEP_DRIVER_SYSTEM_RAR_MEMORY_OFFSET_IN_BYTES + \
-	SEP_DRIVER_SYSTEM_RAR_MEMORY_SIZE_IN_BYTES)
 
-/* offset of the DCB area */
-#define SEP_DRIVER_SYSTEM_DCB_MEMORY_OFFSET_IN_BYTES \
-	(SEP_DRIVER_SYSTEM_DATA_MEMORY_OFFSET_IN_BYTES + \
-	0x400)
+/* start physical address of the SEP registers memory in HOST */
+#define SEP_IO_MEM_REGION_START_ADDRESS                       0x80000000
 
-/* offset of the ext cache area */
-#define SEP_DRIVER_SYSTEM_EXT_CACHE_ADDR_OFFSET_IN_BYTES \
-	SEP_DRIVER_SYSTEM_RAR_MEMORY_OFFSET_IN_BYTES
+/* size of the SEP registers memory region  in HOST (for now 100 registers) */
+#define SEP_IO_MEM_REGION_SIZE                                (2 * 0x100000)
 
-/* offset of the allocation data pointer area */
-#define SEP_DRIVER_DATA_POOL_ALLOCATION_OFFSET_IN_BYTES \
-	(SEP_CALLER_ID_OFFSET_BYTES + \
-	SEP_CALLER_ID_HASH_SIZE_IN_BYTES)
+/* define the number of IRQ for SEP interrupts */
+#define SEP_DIRVER_IRQ_NUM                                    1
+
+/* maximum number of add buffers */
+#define SEP_MAX_NUM_ADD_BUFFERS                               100
+
+/* number of flows */
+#define SEP_DRIVER_NUM_FLOWS                                  4
+
+/* maximum number of entries in flow table */
+#define SEP_DRIVER_MAX_FLOW_NUM_ENTRIES_IN_TABLE              25
+
+/* offset of the num entries in the block length entry of the LLI */
+#define SEP_NUM_ENTRIES_OFFSET_IN_BITS                        24
+
+/* offset of the interrupt flag in the block length entry of the LLI */
+#define SEP_INT_FLAG_OFFSET_IN_BITS                           31
+
+/* mask for extracting data size from LLI */
+#define SEP_TABLE_DATA_SIZE_MASK                              0xFFFFFF
+
+/* mask for entries after being shifted left */
+#define SEP_NUM_ENTRIES_MASK                                  0x7F
+
+/* default flow id */
+#define SEP_FREE_FLOW_ID                                      0xFFFFFFFF
+
+/* temp flow id used during cretiong of new flow until receiving
+	real flow id from sep */
+#define SEP_TEMP_FLOW_ID                   (SEP_DRIVER_NUM_FLOWS + 1)
+
+/* maximum add buffers message length in bytes */
+#define SEP_MAX_ADD_MESSAGE_LENGTH_IN_BYTES                   (7 * 4)
+
+/* maximum number of concurrent virtual buffers */
+#define SEP_MAX_VIRT_BUFFERS_CONCURRENT                       100
 
 /* the token that defines the start of time address */
 #define SEP_TIME_VAL_TOKEN                                    0x12345678
 
-#define FAKE_RAR_SIZE (1024*1024) /* used only for mfld */
 /* DEBUG LEVEL MASKS */
+#define SEP_DEBUG_LEVEL_BASIC       0x1
 
-/* size of the caller id hash (sha2) */
-#define SEP_CALLER_ID_HASH_SIZE_IN_BYTES                      32
-
-/* size of the caller id hash (sha2) in 32 bit words */
-#define SEP_CALLER_ID_HASH_SIZE_IN_WORDS                8
-
-/* maximum number of entries in the caller id table */
-#define SEP_CALLER_ID_TABLE_NUM_ENTRIES                       20
-
-/* maximum number of symetric operation (that require DMA resource)
-	per one message */
-#define SEP_MAX_NUM_SYNC_DMA_OPS			16
-
-/* the token that defines the start of time address */
-#define SEP_RAR_VAL_TOKEN                                     0xABABABAB
-
-/* ioctl error that should be returned when trying
-   to realloc the cache/resident second time */
-#define SEP_ALREADY_INITIALIZED_ERR                           12
-
-/* bit that locks access to the shared area */
-#define SEP_TRANSACTION_STARTED_LOCK_BIT                      0
-
-/* bit that lock access to the poll  - after send_command */
-#define SEP_WORKING_LOCK_BIT                                  1
-
-/* the token that defines the static pool address address */
-#define SEP_STATIC_POOL_VAL_TOKEN                             0xABBAABBA
-
-/* the token that defines the data pool pointers address */
-#define SEP_DATA_POOL_POINTERS_VAL_TOKEN                      0xEDDEEDDE
-
-/* the token that defines the data pool pointers address */
-#define SEP_EXT_CACHE_ADDR_VAL_TOKEN                          0xBABABABA
-
-/* Time limit for SEP to finish */
-#define WAIT_TIME 10
-
-/* Delay for pm runtime suspend (reduces pm thrashing with bursty traffic */
-#define SUSPEND_DELAY 10
-
-/* Number of delays to wait until scu boots after runtime resume */
-#define SCU_DELAY_MAX 50
-
-/* Delay for each iteration (usec) wait for scu boots after runtime resume */
-#define SCU_DELAY_ITERATION 10
+#define SEP_DEBUG_LEVEL_EXTENDED    0x4
 
 
-/*
- * Bits used in struct sep_call_status to check that
- * driver's APIs are called in valid order
- */
+/* Debug helpers */
 
-/* Bit offset which indicates status of sep_write() */
-#define SEP_FASTCALL_WRITE_DONE_OFFSET		0
+#define dbg(fmt, args...) \
+do {\
+	if (debug & SEP_DEBUG_LEVEL_BASIC) \
+		printk(KERN_DEBUG fmt, ##args); \
+} while(0);
 
-/* Bit offset which indicates status of sep_mmap() */
-#define SEP_LEGACY_MMAP_DONE_OFFSET		1
+#define edbg(fmt, args...) \
+do { \
+	if (debug & SEP_DEBUG_LEVEL_EXTENDED) \
+		printk(KERN_DEBUG fmt, ##args); \
+} while(0);
 
-/* Bit offset which indicates status of the SEP_IOCSENDSEPCOMMAND ioctl */
-#define SEP_LEGACY_SENDMSG_DONE_OFFSET		2
 
-/* Bit offset which indicates status of sep_poll() */
-#define SEP_LEGACY_POLL_DONE_OFFSET		3
 
-/* Bit offset which indicates status of the SEP_IOCENDTRANSACTION ioctl */
-#define SEP_LEGACY_ENDTRANSACTION_DONE_OFFSET	4
-
-/*
- * Used to limit number of concurrent processes
- * allowed to allocte dynamic buffers in fastcall
- * interface.
- */
-#define SEP_DOUBLEBUF_USERS_LIMIT		3
-
-/* Identifier for valid fastcall header */
-#define SEP_FC_MAGIC				0xFFAACCAA
-
-/*
- * Used for enabling driver runtime power management.
- * Useful for enabling/disabling it during performance
- * testing
- */
-#define SEP_ENABLE_RUNTIME_PM
-
-#endif /* SEP DRIVER CONFIG */
+#endif

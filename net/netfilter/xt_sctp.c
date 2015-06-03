@@ -1,9 +1,7 @@
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include <linux/module.h>
 #include <linux/skbuff.h>
 #include <net/ip.h>
 #include <net/ipv6.h>
-#include <net/sctp/sctp.h>
 #include <linux/sctp.h>
 
 #include <linux/netfilter/x_tables.h>
@@ -16,6 +14,12 @@ MODULE_AUTHOR("Kiran Kumar Immidi");
 MODULE_DESCRIPTION("Xtables: SCTP protocol packet match");
 MODULE_ALIAS("ipt_sctp");
 MODULE_ALIAS("ip6t_sctp");
+
+#ifdef DEBUG_SCTP
+#define duprintf(format, args...) printk(format , ## args)
+#else
+#define duprintf(format, args...)
+#endif
 
 #define SCCHECK(cond, option, flag, invflag) (!((flag) & (option)) \
 					      || (!!((invflag) & (option)) ^ (cond)))
@@ -48,7 +52,7 @@ match_packet(const struct sk_buff *skb,
 	const struct xt_sctp_flag_info *flag_info = info->flag_info;
 	int flag_count = info->flag_count;
 
-#ifdef DEBUG
+#ifdef DEBUG_SCTP
 	int i = 0;
 #endif
 
@@ -58,19 +62,17 @@ match_packet(const struct sk_buff *skb,
 	do {
 		sch = skb_header_pointer(skb, offset, sizeof(_sch), &_sch);
 		if (sch == NULL || sch->length == 0) {
-			pr_debug("Dropping invalid SCTP packet.\n");
+			duprintf("Dropping invalid SCTP packet.\n");
 			*hotdrop = true;
 			return false;
 		}
-#ifdef DEBUG
-		pr_debug("Chunk num: %d\toffset: %d\ttype: %d\tlength: %d"
-			 "\tflags: %x\n",
-			 ++i, offset, sch->type, htons(sch->length),
-			 sch->flags);
-#endif
-		offset += WORD_ROUND(ntohs(sch->length));
 
-		pr_debug("skb->len: %d\toffset: %d\n", skb->len, offset);
+		duprintf("Chunk num: %d\toffset: %d\ttype: %d\tlength: %d\tflags: %x\n",
+				++i, offset, sch->type, htons(sch->length), sch->flags);
+
+		offset += (ntohs(sch->length) + 3) & ~3;
+
+		duprintf("skb->len: %d\toffset: %d\n", skb->len, offset);
 
 		if (SCTP_CHUNKMAP_IS_SET(info->chunkmap, sch->type)) {
 			switch (chunk_match_type) {
@@ -115,24 +117,24 @@ match_packet(const struct sk_buff *skb,
 }
 
 static bool
-sctp_mt(const struct sk_buff *skb, struct xt_action_param *par)
+sctp_mt(const struct sk_buff *skb, const struct xt_match_param *par)
 {
 	const struct xt_sctp_info *info = par->matchinfo;
 	const sctp_sctphdr_t *sh;
 	sctp_sctphdr_t _sh;
 
 	if (par->fragoff != 0) {
-		pr_debug("Dropping non-first fragment.. FIXME\n");
+		duprintf("Dropping non-first fragment.. FIXME\n");
 		return false;
 	}
 
 	sh = skb_header_pointer(skb, par->thoff, sizeof(_sh), &_sh);
 	if (sh == NULL) {
-		pr_debug("Dropping evil TCP offset=0 tinygram.\n");
-		par->hotdrop = true;
+		duprintf("Dropping evil TCP offset=0 tinygram.\n");
+		*par->hotdrop = true;
 		return false;
 	}
-	pr_debug("spt: %d\tdpt: %d\n", ntohs(sh->source), ntohs(sh->dest));
+	duprintf("spt: %d\tdpt: %d\n", ntohs(sh->source), ntohs(sh->dest));
 
 	return  SCCHECK(ntohs(sh->source) >= info->spts[0]
 			&& ntohs(sh->source) <= info->spts[1],
@@ -141,26 +143,22 @@ sctp_mt(const struct sk_buff *skb, struct xt_action_param *par)
 			&& ntohs(sh->dest) <= info->dpts[1],
 			XT_SCTP_DEST_PORTS, info->flags, info->invflags)
 		&& SCCHECK(match_packet(skb, par->thoff + sizeof(sctp_sctphdr_t),
-					info, &par->hotdrop),
+					info, par->hotdrop),
 			   XT_SCTP_CHUNK_TYPES, info->flags, info->invflags);
 }
 
-static int sctp_mt_check(const struct xt_mtchk_param *par)
+static bool sctp_mt_check(const struct xt_mtchk_param *par)
 {
 	const struct xt_sctp_info *info = par->matchinfo;
 
-	if (info->flags & ~XT_SCTP_VALID_FLAGS)
-		return -EINVAL;
-	if (info->invflags & ~XT_SCTP_VALID_FLAGS)
-		return -EINVAL;
-	if (info->invflags & ~info->flags)
-		return -EINVAL;
-	if (!(info->flags & XT_SCTP_CHUNK_TYPES))
-		return 0;
-	if (info->chunk_match_type & (SCTP_CHUNK_MATCH_ALL |
-	    SCTP_CHUNK_MATCH_ANY | SCTP_CHUNK_MATCH_ONLY))
-		return 0;
-	return -EINVAL;
+	return !(info->flags & ~XT_SCTP_VALID_FLAGS)
+		&& !(info->invflags & ~XT_SCTP_VALID_FLAGS)
+		&& !(info->invflags & ~info->flags)
+		&& ((!(info->flags & XT_SCTP_CHUNK_TYPES)) ||
+			(info->chunk_match_type &
+				(SCTP_CHUNK_MATCH_ALL
+				| SCTP_CHUNK_MATCH_ANY
+				| SCTP_CHUNK_MATCH_ONLY)));
 }
 
 static struct xt_match sctp_mt_reg[] __read_mostly = {

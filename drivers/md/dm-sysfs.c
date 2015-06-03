@@ -59,7 +59,7 @@ static ssize_t dm_attr_uuid_show(struct mapped_device *md, char *buf)
 
 static ssize_t dm_attr_suspended_show(struct mapped_device *md, char *buf)
 {
-	sprintf(buf, "%d\n", dm_suspended_md(md));
+	sprintf(buf, "%d\n", dm_suspended(md));
 
 	return strlen(buf);
 }
@@ -75,7 +75,7 @@ static struct attribute *dm_attrs[] = {
 	NULL,
 };
 
-static const struct sysfs_ops dm_sysfs_ops = {
+static struct sysfs_ops dm_sysfs_ops = {
 	.show	= dm_attr_show,
 };
 
@@ -86,7 +86,6 @@ static const struct sysfs_ops dm_sysfs_ops = {
 static struct kobj_type dm_ktype = {
 	.sysfs_ops	= &dm_sysfs_ops,
 	.default_attrs	= dm_attrs,
-	.release	= dm_kobject_release,
 };
 
 /*
@@ -105,7 +104,5 @@ int dm_sysfs_init(struct mapped_device *md)
  */
 void dm_sysfs_exit(struct mapped_device *md)
 {
-	struct kobject *kobj = dm_kobject(md);
-	kobject_put(kobj);
-	wait_for_completion(dm_get_completion_from_kobject(kobj));
+	kobject_put(dm_kobject(md));
 }

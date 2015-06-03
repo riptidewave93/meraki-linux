@@ -30,41 +30,14 @@
  * IN THE SOFTWARE.
  */
 
-#include <linux/slab.h>
 #include <linux/types.h>
-#include <linux/spinlock.h>
 #include <linux/vmalloc.h>
-#include <linux/export.h>
 #include <asm/xen/hypervisor.h>
-#include <asm/xen/page.h>
 #include <xen/interface/xen.h>
 #include <xen/interface/event_channel.h>
-#include <xen/balloon.h>
 #include <xen/events.h>
 #include <xen/grant_table.h>
 #include <xen/xenbus.h>
-#include <xen/xen.h>
-
-#include "xenbus_probe.h"
-
-struct xenbus_map_node {
-	struct list_head next;
-	union {
-		struct vm_struct *area; /* PV */
-		struct page *page;     /* HVM */
-	};
-	grant_handle_t handle;
-};
-
-static DEFINE_SPINLOCK(xenbus_valloc_lock);
-static LIST_HEAD(xenbus_valloc_pages);
-
-struct xenbus_ring_ops {
-	int (*map)(struct xenbus_device *dev, int gnt, void **vaddr);
-	int (*unmap)(struct xenbus_device *dev, void *vaddr);
-};
-
-static const struct xenbus_ring_ops *ring_ops __read_mostly;
 
 const char *xenbus_strstate(enum xenbus_state state)
 {
@@ -76,8 +49,6 @@ const char *xenbus_strstate(enum xenbus_state state)
 		[ XenbusStateConnected    ] = "Connected",
 		[ XenbusStateClosing      ] = "Closing",
 		[ XenbusStateClosed	  ] = "Closed",
-		[XenbusStateReconfiguring] = "Reconfiguring",
-		[XenbusStateReconfigured] = "Reconfigured",
 	};
 	return (state < ARRAY_SIZE(name)) ? name[state] : "INVALID";
 }
@@ -161,64 +132,6 @@ int xenbus_watch_pathfmt(struct xenbus_device *dev,
 }
 EXPORT_SYMBOL_GPL(xenbus_watch_pathfmt);
 
-static void xenbus_switch_fatal(struct xenbus_device *, int, int,
-				const char *, ...);
-
-static int
-__xenbus_switch_state(struct xenbus_device *dev,
-		      enum xenbus_state state, int depth)
-{
-	/* We check whether the state is currently set to the given value, and
-	   if not, then the state is set.  We don't want to unconditionally
-	   write the given state, because we don't want to fire watches
-	   unnecessarily.  Furthermore, if the node has gone, we don't write
-	   to it, as the device will be tearing down, and we don't want to
-	   resurrect that directory.
-
-	   Note that, because of this cached value of our state, this
-	   function will not take a caller's Xenstore transaction
-	   (something it was trying to in the past) because dev->state
-	   would not get reset if the transaction was aborted.
-	 */
-
-	struct xenbus_transaction xbt;
-	int current_state;
-	int err, abort;
-
-	if (state == dev->state)
-		return 0;
-
-again:
-	abort = 1;
-
-	err = xenbus_transaction_start(&xbt);
-	if (err) {
-		xenbus_switch_fatal(dev, depth, err, "starting transaction");
-		return 0;
-	}
-
-	err = xenbus_scanf(xbt, dev->nodename, "state", "%d", &current_state);
-	if (err != 1)
-		goto abort;
-
-	err = xenbus_printf(xbt, dev->nodename, "state", "%d", state);
-	if (err) {
-		xenbus_switch_fatal(dev, depth, err, "writing new state");
-		goto abort;
-	}
-
-	abort = 0;
-abort:
-	err = xenbus_transaction_end(xbt, abort);
-	if (err) {
-		if (err == -EAGAIN && !abort)
-			goto again;
-		xenbus_switch_fatal(dev, depth, err, "ending transaction");
-	} else
-		dev->state = state;
-
-	return 0;
-}
 
 /**
  * xenbus_switch_state
@@ -231,9 +144,42 @@ abort:
  */
 int xenbus_switch_state(struct xenbus_device *dev, enum xenbus_state state)
 {
-	return __xenbus_switch_state(dev, state, 0);
-}
+	/* We check whether the state is currently set to the given value, and
+	   if not, then the state is set.  We don't want to unconditionally
+	   write the given state, because we don't want to fire watches
+	   unnecessarily.  Furthermore, if the node has gone, we don't write
+	   to it, as the device will be tearing down, and we don't want to
+	   resurrect that directory.
 
+	   Note that, because of this cached value of our state, this function
+	   will not work inside a Xenstore transaction (something it was
+	   trying to in the past) because dev->state would not get reset if
+	   the transaction was aborted.
+
+	 */
+
+	int current_state;
+	int err;
+
+	if (state == dev->state)
+		return 0;
+
+	err = xenbus_scanf(XBT_NIL, dev->nodename, "state", "%d",
+			   &current_state);
+	if (err != 1)
+		return 0;
+
+	err = xenbus_printf(XBT_NIL, dev->nodename, "state", "%d", state);
+	if (err) {
+		if (state != XenbusStateClosing) /* Avoid looping */
+			xenbus_dev_fatal(dev, err, "writing new state");
+		return err;
+	}
+
+	dev->state = state;
+
+	return 0;
+}
 EXPORT_SYMBOL_GPL(xenbus_switch_state);
 
 int xenbus_frontend_closed(struct xenbus_device *dev)
@@ -335,23 +281,6 @@ void xenbus_dev_fatal(struct xenbus_device *dev, int err, const char *fmt, ...)
 	xenbus_switch_state(dev, XenbusStateClosing);
 }
 EXPORT_SYMBOL_GPL(xenbus_dev_fatal);
-
-/**
- * Equivalent to xenbus_dev_fatal(dev, err, fmt, args), but helps
- * avoiding recursion within xenbus_switch_state.
- */
-static void xenbus_switch_fatal(struct xenbus_device *dev, int depth, int err,
-				const char *fmt, ...)
-{
-	va_list ap;
-
-	va_start(ap, fmt);
-	xenbus_va_dev_error(dev, err, fmt, ap);
-	va_end(ap);
-
-	if (!depth)
-		__xenbus_switch_state(dev, XenbusStateClosing, 1);
-}
 
 /**
  * xenbus_grant_ring
@@ -460,94 +389,39 @@ EXPORT_SYMBOL_GPL(xenbus_free_evtchn);
  */
 int xenbus_map_ring_valloc(struct xenbus_device *dev, int gnt_ref, void **vaddr)
 {
-	return ring_ops->map(dev, gnt_ref, vaddr);
-}
-EXPORT_SYMBOL_GPL(xenbus_map_ring_valloc);
-
-static int xenbus_map_ring_valloc_pv(struct xenbus_device *dev,
-				     int gnt_ref, void **vaddr)
-{
 	struct gnttab_map_grant_ref op = {
-		.flags = GNTMAP_host_map | GNTMAP_contains_pte,
+		.flags = GNTMAP_host_map,
 		.ref   = gnt_ref,
 		.dom   = dev->otherend_id,
 	};
-	struct xenbus_map_node *node;
 	struct vm_struct *area;
-	pte_t *pte;
 
 	*vaddr = NULL;
 
-	node = kzalloc(sizeof(*node), GFP_KERNEL);
-	if (!node)
+	area = xen_alloc_vm_area(PAGE_SIZE);
+	if (!area)
 		return -ENOMEM;
 
-	area = alloc_vm_area(PAGE_SIZE, &pte);
-	if (!area) {
-		kfree(node);
-		return -ENOMEM;
-	}
-
-	op.host_addr = arbitrary_virt_to_machine(pte).maddr;
+	op.host_addr = (unsigned long)area->addr;
 
 	if (HYPERVISOR_grant_table_op(GNTTABOP_map_grant_ref, &op, 1))
 		BUG();
 
 	if (op.status != GNTST_okay) {
-		free_vm_area(area);
-		kfree(node);
+		xen_free_vm_area(area);
 		xenbus_dev_fatal(dev, op.status,
 				 "mapping in shared page %d from domain %d",
 				 gnt_ref, dev->otherend_id);
 		return op.status;
 	}
 
-	node->handle = op.handle;
-	node->area = area;
-
-	spin_lock(&xenbus_valloc_lock);
-	list_add(&node->next, &xenbus_valloc_pages);
-	spin_unlock(&xenbus_valloc_lock);
+	/* Stuff the handle in an unused field */
+	area->phys_addr = (unsigned long)op.handle;
 
 	*vaddr = area->addr;
 	return 0;
 }
-
-static int xenbus_map_ring_valloc_hvm(struct xenbus_device *dev,
-				      int gnt_ref, void **vaddr)
-{
-	struct xenbus_map_node *node;
-	int err;
-	void *addr;
-
-	*vaddr = NULL;
-
-	node = kzalloc(sizeof(*node), GFP_KERNEL);
-	if (!node)
-		return -ENOMEM;
-
-	err = alloc_xenballooned_pages(1, &node->page, false /* lowmem */);
-	if (err)
-		goto out_err;
-
-	addr = pfn_to_kaddr(page_to_pfn(node->page));
-
-	err = xenbus_map_ring(dev, gnt_ref, &node->handle, addr);
-	if (err)
-		goto out_err;
-
-	spin_lock(&xenbus_valloc_lock);
-	list_add(&node->next, &xenbus_valloc_pages);
-	spin_unlock(&xenbus_valloc_lock);
-
-	*vaddr = addr;
-	return 0;
-
- out_err:
-	free_xenballooned_pages(1, &node->page);
-	kfree(node);
-	return err;
-}
+EXPORT_SYMBOL_GPL(xenbus_map_ring_valloc);
 
 
 /**
@@ -567,10 +441,12 @@ static int xenbus_map_ring_valloc_hvm(struct xenbus_device *dev,
 int xenbus_map_ring(struct xenbus_device *dev, int gnt_ref,
 		    grant_handle_t *handle, void *vaddr)
 {
-	struct gnttab_map_grant_ref op;
-
-	gnttab_set_map_op(&op, (unsigned long)vaddr, GNTMAP_host_map, gnt_ref,
-			  dev->otherend_id);
+	struct gnttab_map_grant_ref op = {
+		.host_addr = (unsigned long)vaddr,
+		.flags     = GNTMAP_host_map,
+		.ref       = gnt_ref,
+		.dom       = dev->otherend_id,
+	};
 
 	if (HYPERVISOR_grant_table_op(GNTTABOP_map_grant_ref, &op, 1))
 		BUG();
@@ -601,87 +477,46 @@ EXPORT_SYMBOL_GPL(xenbus_map_ring);
  */
 int xenbus_unmap_ring_vfree(struct xenbus_device *dev, void *vaddr)
 {
-	return ring_ops->unmap(dev, vaddr);
-}
-EXPORT_SYMBOL_GPL(xenbus_unmap_ring_vfree);
-
-static int xenbus_unmap_ring_vfree_pv(struct xenbus_device *dev, void *vaddr)
-{
-	struct xenbus_map_node *node;
+	struct vm_struct *area;
 	struct gnttab_unmap_grant_ref op = {
 		.host_addr = (unsigned long)vaddr,
 	};
-	unsigned int level;
 
-	spin_lock(&xenbus_valloc_lock);
-	list_for_each_entry(node, &xenbus_valloc_pages, next) {
-		if (node->area->addr == vaddr) {
-			list_del(&node->next);
-			goto found;
-		}
+	/* It'd be nice if linux/vmalloc.h provided a find_vm_area(void *addr)
+	 * method so that we don't have to muck with vmalloc internals here.
+	 * We could force the user to hang on to their struct vm_struct from
+	 * xenbus_map_ring_valloc, but these 6 lines considerably simplify
+	 * this API.
+	 */
+	read_lock(&vmlist_lock);
+	for (area = vmlist; area != NULL; area = area->next) {
+		if (area->addr == vaddr)
+			break;
 	}
-	node = NULL;
- found:
-	spin_unlock(&xenbus_valloc_lock);
+	read_unlock(&vmlist_lock);
 
-	if (!node) {
+	if (!area) {
 		xenbus_dev_error(dev, -ENOENT,
 				 "can't find mapped virtual address %p", vaddr);
 		return GNTST_bad_virt_addr;
 	}
 
-	op.handle = node->handle;
-	op.host_addr = arbitrary_virt_to_machine(
-		lookup_address((unsigned long)vaddr, &level)).maddr;
+	op.handle = (grant_handle_t)area->phys_addr;
 
 	if (HYPERVISOR_grant_table_op(GNTTABOP_unmap_grant_ref, &op, 1))
 		BUG();
 
 	if (op.status == GNTST_okay)
-		free_vm_area(node->area);
+		xen_free_vm_area(area);
 	else
 		xenbus_dev_error(dev, op.status,
 				 "unmapping page at handle %d error %d",
-				 node->handle, op.status);
+				 (int16_t)area->phys_addr, op.status);
 
-	kfree(node);
 	return op.status;
 }
+EXPORT_SYMBOL_GPL(xenbus_unmap_ring_vfree);
 
-static int xenbus_unmap_ring_vfree_hvm(struct xenbus_device *dev, void *vaddr)
-{
-	int rv;
-	struct xenbus_map_node *node;
-	void *addr;
-
-	spin_lock(&xenbus_valloc_lock);
-	list_for_each_entry(node, &xenbus_valloc_pages, next) {
-		addr = pfn_to_kaddr(page_to_pfn(node->page));
-		if (addr == vaddr) {
-			list_del(&node->next);
-			goto found;
-		}
-	}
-	node = addr = NULL;
- found:
-	spin_unlock(&xenbus_valloc_lock);
-
-	if (!node) {
-		xenbus_dev_error(dev, -ENOENT,
-				 "can't find mapped virtual address %p", vaddr);
-		return GNTST_bad_virt_addr;
-	}
-
-	rv = xenbus_unmap_ring(dev, node->handle, addr);
-
-	if (!rv)
-		free_xenballooned_pages(1, &node->page);
-	else
-		WARN(1, "Leaking %p\n", vaddr);
-
-	kfree(node);
-	return rv;
-}
 
 /**
  * xenbus_unmap_ring
@@ -696,9 +531,10 @@ static int xenbus_unmap_ring_vfree_hvm(struct xenbus_device *dev, void *vaddr)
 int xenbus_unmap_ring(struct xenbus_device *dev,
 		      grant_handle_t handle, void *vaddr)
 {
-	struct gnttab_unmap_grant_ref op;
-
-	gnttab_set_unmap_op(&op, (unsigned long)vaddr, GNTMAP_host_map, handle);
+	struct gnttab_unmap_grant_ref op = {
+		.host_addr = (unsigned long)vaddr,
+		.handle    = handle,
+	};
 
 	if (HYPERVISOR_grant_table_op(GNTTABOP_unmap_grant_ref, &op, 1))
 		BUG();
@@ -730,21 +566,3 @@ enum xenbus_state xenbus_read_driver_state(const char *path)
 	return result;
 }
 EXPORT_SYMBOL_GPL(xenbus_read_driver_state);
-
-static const struct xenbus_ring_ops ring_ops_pv = {
-	.map = xenbus_map_ring_valloc_pv,
-	.unmap = xenbus_unmap_ring_vfree_pv,
-};
-
-static const struct xenbus_ring_ops ring_ops_hvm = {
-	.map = xenbus_map_ring_valloc_hvm,
-	.unmap = xenbus_unmap_ring_vfree_hvm,
-};
-
-void __init xenbus_ring_ops_init(void)
-{
-	if (xen_pv_domain())
-		ring_ops = &ring_ops_pv;
-	else
-		ring_ops = &ring_ops_hvm;
-}

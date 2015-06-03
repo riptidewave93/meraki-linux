@@ -12,7 +12,6 @@
  *	flags as the navman is rx only so cannot echo.
  */
 
-#include <linux/gfp.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/tty.h>
@@ -21,9 +20,9 @@
 #include <linux/usb.h>
 #include <linux/usb/serial.h>
 
-static bool debug;
+static int debug;
 
-static const struct usb_device_id id_table[] = {
+static struct usb_device_id id_table [] = {
 	{ USB_DEVICE(0x0a99, 0x0001) },	/* Talon Technology device */
 	{ USB_DEVICE(0x0df7, 0x0900) },	/* Mobile Action i-gotU */
 	{ },
@@ -35,6 +34,7 @@ static struct usb_driver navman_driver = {
 	.probe =	usb_serial_probe,
 	.disconnect =	usb_serial_disconnect,
 	.id_table =	id_table,
+	.no_dynamic_id = 	1,
 };
 
 static void navman_read_int_callback(struct urb *urb)
@@ -67,6 +67,7 @@ static void navman_read_int_callback(struct urb *urb)
 
 	tty = tty_port_tty_get(&port->port);
 	if (tty && urb->actual_length) {
+		tty_buffer_request_room(tty, urb->actual_length);
 		tty_insert_flip_string(tty, data, urb->actual_length);
 		tty_flip_buffer_push(tty);
 	}
@@ -121,6 +122,7 @@ static struct usb_serial_driver navman_device = {
 		.name =		"navman",
 	},
 	.id_table =		id_table,
+	.usb_driver =		&navman_driver,
 	.num_ports =		1,
 	.open =			navman_open,
 	.close = 		navman_close,
@@ -128,12 +130,27 @@ static struct usb_serial_driver navman_device = {
 	.read_int_callback =	navman_read_int_callback,
 };
 
-static struct usb_serial_driver * const serial_drivers[] = {
-	&navman_device, NULL
-};
+static int __init navman_init(void)
+{
+	int retval;
 
-module_usb_serial_driver(navman_driver, serial_drivers);
+	retval = usb_serial_register(&navman_device);
+	if (retval)
+		return retval;
+	retval = usb_register(&navman_driver);
+	if (retval)
+		usb_serial_deregister(&navman_device);
+	return retval;
+}
 
+static void __exit navman_exit(void)
+{
+	usb_deregister(&navman_driver);
+	usb_serial_deregister(&navman_device);
+}
+
+module_init(navman_init);
+module_exit(navman_exit);
 MODULE_LICENSE("GPL");
 
 module_param(debug, bool, S_IRUGO | S_IWUSR);

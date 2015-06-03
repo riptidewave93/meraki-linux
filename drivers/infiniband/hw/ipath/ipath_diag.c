@@ -45,7 +45,6 @@
 #include <linux/pci.h>
 #include <linux/vmalloc.h>
 #include <linux/fs.h>
-#include <linux/export.h>
 #include <asm/uaccess.h>
 
 #include "ipath_kernel.h"
@@ -66,8 +65,7 @@ static const struct file_operations diag_file_ops = {
 	.write = ipath_diag_write,
 	.read = ipath_diag_read,
 	.open = ipath_diag_open,
-	.release = ipath_diag_release,
-	.llseek = default_llseek,
+	.release = ipath_diag_release
 };
 
 static ssize_t ipath_diagpkt_write(struct file *fp,
@@ -77,7 +75,6 @@ static ssize_t ipath_diagpkt_write(struct file *fp,
 static const struct file_operations diagpkt_file_ops = {
 	.owner = THIS_MODULE,
 	.write = ipath_diagpkt_write,
-	.llseek = noop_llseek,
 };
 
 static atomic_t diagpkt_count = ATOMIC_INIT(0);
@@ -326,7 +323,7 @@ static ssize_t ipath_diagpkt_write(struct file *fp,
 				   size_t count, loff_t *off)
 {
 	u32 __iomem *piobuf;
-	u32 plen, pbufn, maxlen_reserve;
+	u32 plen, clen, pbufn;
 	struct ipath_diag_pkt odp;
 	struct ipath_diag_xpkt dp;
 	u32 *tmpbuf = NULL;
@@ -335,24 +332,42 @@ static ssize_t ipath_diagpkt_write(struct file *fp,
 	u64 val;
 	u32 l_state, lt_state; /* LinkState, LinkTrainingState */
 
+	if (count < sizeof(odp)) {
+		ret = -EINVAL;
+		goto bail;
+	}
 
 	if (count == sizeof(dp)) {
 		if (copy_from_user(&dp, data, sizeof(dp))) {
 			ret = -EFAULT;
 			goto bail;
 		}
-	} else if (count == sizeof(odp)) {
-		if (copy_from_user(&odp, data, sizeof(odp))) {
-			ret = -EFAULT;
-			goto bail;
-		}
-		dp.len = odp.len;
+	} else if (copy_from_user(&odp, data, sizeof(odp))) {
+		ret = -EFAULT;
+		goto bail;
+	}
+
+	/*
+	 * Due to padding/alignment issues (lessened with new struct)
+	 * the old and new structs are the same length. We need to
+	 * disambiguate them, which we can do because odp.len has never
+	 * been less than the total of LRH+BTH+DETH so far, while
+	 * dp.unit (same offset) unit is unlikely to get that high.
+	 * Similarly, dp.data, the pointer to user at the same offset
+	 * as odp.unit, is almost certainly at least one (512byte)page
+	 * "above" NULL. The if-block below can be omitted if compatibility
+	 * between a new driver and older diagnostic code is unimportant.
+	 * compatibility the other direction (new diags, old driver) is
+	 * handled in the diagnostic code, with a warning.
+	 */
+	if (dp.unit >= 20 && dp.data < 512) {
+		/* very probable version mismatch. Fix it up */
+		memcpy(&odp, &dp, sizeof(odp));
+		/* We got a legacy dp, copy elements to dp */
 		dp.unit = odp.unit;
 		dp.data = odp.data;
-		dp.pbc_wd = 0;
-	} else {
-		ret = -EINVAL;
-		goto bail;
+		dp.len = odp.len;
+		dp.pbc_wd = 0; /* Indicate we need to compute PBC wd */
 	}
 
 	/* send count must be an exact number of dwords */
@@ -361,7 +376,7 @@ static ssize_t ipath_diagpkt_write(struct file *fp,
 		goto bail;
 	}
 
-	plen = dp.len >> 2;
+	clen = dp.len >> 2;
 
 	dd = ipath_lookup(dp.unit);
 	if (!dd || !(dd->ipath_flags & IPATH_PRESENT) ||
@@ -404,22 +419,16 @@ static ssize_t ipath_diagpkt_write(struct file *fp,
 		goto bail;
 	}
 
-	/*
-	 * need total length before first word written, plus 2 Dwords. One Dword
-	 * is for padding so we get the full user data when not aligned on
-	 * a word boundary. The other Dword is to make sure we have room for the
-	 * ICRC which gets tacked on later.
-	 */
-	maxlen_reserve = 2 * sizeof(u32);
-	if (dp.len > dd->ipath_ibmaxlen - maxlen_reserve) {
-		ipath_dbg("Pkt len 0x%x > ibmaxlen %x\n",
-			  dp.len, dd->ipath_ibmaxlen);
-		ret = -EINVAL;
-		goto bail;
-	}
-
+	/* need total length before first word written */
+	/* +1 word is for the qword padding */
 	plen = sizeof(u32) + dp.len;
 
+	if ((plen + 4) > dd->ipath_ibmaxlen) {
+		ipath_dbg("Pkt len 0x%x > ibmaxlen %x\n",
+			  plen - 4, dd->ipath_ibmaxlen);
+		ret = -EINVAL;
+		goto bail;	/* before writing pbc */
+	}
 	tmpbuf = vmalloc(plen);
 	if (!tmpbuf) {
 		dev_info(&dd->pcidev->dev, "Unable to allocate tmp buffer, "
@@ -461,11 +470,11 @@ static ssize_t ipath_diagpkt_write(struct file *fp,
 	 */
 	if (dd->ipath_flags & IPATH_PIO_FLUSH_WC) {
 		ipath_flush_wc();
-		__iowrite32_copy(piobuf + 2, tmpbuf, plen - 1);
+		__iowrite32_copy(piobuf + 2, tmpbuf, clen - 1);
 		ipath_flush_wc();
-		__raw_writel(tmpbuf[plen - 1], piobuf + plen + 1);
+		__raw_writel(tmpbuf[clen - 1], piobuf + clen + 1);
 	} else
-		__iowrite32_copy(piobuf + 2, tmpbuf, plen);
+		__iowrite32_copy(piobuf + 2, tmpbuf, clen);
 
 	ipath_flush_wc();
 

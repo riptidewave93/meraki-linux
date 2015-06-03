@@ -102,7 +102,6 @@
 
 #include <linux/fs.h>
 #include <linux/quotaops.h>
-#include <linux/slab.h>
 #include "jfs_incore.h"
 #include "jfs_superblock.h"
 #include "jfs_filsys.h"
@@ -382,10 +381,10 @@ static u32 add_index(tid_t tid, struct inode *ip, s64 bn, int slot)
 		 * It's time to move the inline table to an external
 		 * page and begin to build the xtree
 		 */
-		if (dquot_alloc_block(ip, sbi->nbperpage))
+		if (vfs_dq_alloc_block(ip, sbi->nbperpage))
 			goto clean_up;
 		if (dbAlloc(ip, 0, sbi->nbperpage, &xaddr)) {
-			dquot_free_block(ip, sbi->nbperpage);
+			vfs_dq_free_block(ip, sbi->nbperpage);
 			goto clean_up;
 		}
 
@@ -409,7 +408,7 @@ static u32 add_index(tid_t tid, struct inode *ip, s64 bn, int slot)
 			memcpy(&jfs_ip->i_dirtable, temp_table,
 			       sizeof (temp_table));
 			dbFree(ip, xaddr, sbi->nbperpage);
-			dquot_free_block(ip, sbi->nbperpage);
+			vfs_dq_free_block(ip, sbi->nbperpage);
 			goto clean_up;
 		}
 		ip->i_size = PSIZE;
@@ -1028,9 +1027,10 @@ static int dtSplitUp(tid_t tid,
 			n = xlen;
 
 		/* Allocate blocks to quota. */
-		rc = dquot_alloc_block(ip, n);
-		if (rc)
+		if (vfs_dq_alloc_block(ip, n)) {
+			rc = -EDQUOT;
 			goto extendOut;
+		}
 		quota_allocation += n;
 
 		if ((rc = dbReAlloc(sbi->ipbmap, xaddr, (s64) xlen,
@@ -1308,7 +1308,7 @@ static int dtSplitUp(tid_t tid,
 
 	/* Rollback quota allocation */
 	if (rc && quota_allocation)
-		dquot_free_block(ip, quota_allocation);
+		vfs_dq_free_block(ip, quota_allocation);
 
       dtSplitUp_Exit:
 
@@ -1369,10 +1369,9 @@ static int dtSplitPage(tid_t tid, struct inode *ip, struct dtsplit * split,
 		return -EIO;
 
 	/* Allocate blocks to quota. */
-	rc = dquot_alloc_block(ip, lengthPXD(pxd));
-	if (rc) {
+	if (vfs_dq_alloc_block(ip, lengthPXD(pxd))) {
 		release_metapage(rmp);
-		return rc;
+		return -EDQUOT;
 	}
 
 	jfs_info("dtSplitPage: ip:0x%p smp:0x%p rmp:0x%p", ip, smp, rmp);
@@ -1893,7 +1892,6 @@ static int dtSplitRoot(tid_t tid,
 	struct dt_lock *dtlck;
 	struct tlock *tlck;
 	struct lv *lv;
-	int rc;
 
 	/* get split root page */
 	smp = split->mp;
@@ -1918,10 +1916,9 @@ static int dtSplitRoot(tid_t tid,
 	rp = rmp->data;
 
 	/* Allocate blocks to quota. */
-	rc = dquot_alloc_block(ip, lengthPXD(pxd));
-	if (rc) {
+	if (vfs_dq_alloc_block(ip, lengthPXD(pxd))) {
 		release_metapage(rmp);
-		return rc;
+		return -EDQUOT;
 	}
 
 	BT_MARK_DIRTY(rmp, ip);
@@ -2290,7 +2287,7 @@ static int dtDeleteUp(tid_t tid, struct inode *ip,
 	xlen = lengthPXD(&fp->header.self);
 
 	/* Free quota allocation. */
-	dquot_free_block(ip, xlen);
+	vfs_dq_free_block(ip, xlen);
 
 	/* free/invalidate its buffer page */
 	discard_metapage(fmp);
@@ -2366,7 +2363,7 @@ static int dtDeleteUp(tid_t tid, struct inode *ip,
 				xlen = lengthPXD(&p->header.self);
 
 				/* Free quota allocation */
-				dquot_free_block(ip, xlen);
+				vfs_dq_free_block(ip, xlen);
 
 				/* free/invalidate its buffer page */
 				discard_metapage(mp);
@@ -3047,14 +3044,6 @@ int jfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 
 		dir_index = (u32) filp->f_pos;
 
-		/*
-		 * NFSv4 reserves cookies 1 and 2 for . and .. so we add
-		 * the value we return to the vfs is one greater than the
-		 * one we use internally.
-		 */
-		if (dir_index)
-			dir_index--;
-
 		if (dir_index > 1) {
 			struct dir_table_slot dirtab_slot;
 
@@ -3094,7 +3083,7 @@ int jfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 			if (p->header.flag & BT_INTERNAL) {
 				jfs_err("jfs_readdir: bad index table");
 				DT_PUTPAGE(mp);
-				filp->f_pos = DIREND;
+				filp->f_pos = -1;
 				return 0;
 			}
 		} else {
@@ -3102,7 +3091,7 @@ int jfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 				/*
 				 * self "."
 				 */
-				filp->f_pos = 1;
+				filp->f_pos = 0;
 				if (filldir(dirent, ".", 1, 0, ip->i_ino,
 					    DT_DIR))
 					return 0;
@@ -3110,7 +3099,7 @@ int jfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 			/*
 			 * parent ".."
 			 */
-			filp->f_pos = 2;
+			filp->f_pos = 1;
 			if (filldir(dirent, "..", 2, 1, PARENT(ip), DT_DIR))
 				return 0;
 
@@ -3131,25 +3120,24 @@ int jfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 		/*
 		 * Legacy filesystem - OS/2 & Linux JFS < 0.3.6
 		 *
-		 * pn = 0; index = 1:	First entry "."
-		 * pn = 0; index = 2:	Second entry ".."
+		 * pn = index = 0:	First entry "."
+		 * pn = 0; index = 1:	Second entry ".."
 		 * pn > 0:		Real entries, pn=1 -> leftmost page
 		 * pn = index = -1:	No more entries
 		 */
 		dtpos = filp->f_pos;
-		if (dtpos < 2) {
+		if (dtpos == 0) {
 			/* build "." entry */
 
-			filp->f_pos = 1;
 			if (filldir(dirent, ".", 1, filp->f_pos, ip->i_ino,
 				    DT_DIR))
 				return 0;
-			dtoffset->index = 2;
+			dtoffset->index = 1;
 			filp->f_pos = dtpos;
 		}
 
 		if (dtoffset->pn == 0) {
-			if (dtoffset->index == 2) {
+			if (dtoffset->index == 1) {
 				/* build ".." entry */
 
 				if (filldir(dirent, "..", 2, filp->f_pos,
@@ -3242,12 +3230,6 @@ int jfs_readdir(struct file *filp, void *dirent, filldir_t filldir)
 					}
 					jfs_dirent->position = unique_pos++;
 				}
-				/*
-				 * We add 1 to the index because we may
-				 * use a value of 2 internally, and NFSv4
-				 * doesn't like that.
-				 */
-				jfs_dirent->position++;
 			} else {
 				jfs_dirent->position = dtpos;
 				len = min(d_namleft, DTLHDRDATALEN_LEGACY);

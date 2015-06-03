@@ -14,15 +14,13 @@
 #include <linux/sched.h>
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
-#include <linux/memblock.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
 #include <mach/hardware.h>
 #include <mach/platform.h>
-#include <asm/hardware/vic.h>
+#include <mach/memory.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
-#include <asm/memory.h>
 
 static void __init u300_init_machine(void)
 {
@@ -47,11 +45,11 @@ static void __init u300_init_machine(void)
 
 MACHINE_START(U300, MACH_U300_STRING)
 	/* Maintainer: Linus Walleij <linus.walleij@stericsson.com> */
-	.atag_offset	= 0x100,
+	.phys_io	= U300_AHB_PER_PHYS_BASE,
+	.io_pg_offst	= ((U300_AHB_PER_VIRT_BASE) >> 18) & 0xfffc,
+	.boot_params	= BOOT_PARAMS_OFFSET,
 	.map_io		= u300_map_io,
 	.init_irq	= u300_init_irq,
-	.handle_irq	= vic_handle_irq,
 	.timer		= &u300_timer,
 	.init_machine	= u300_init_machine,
-	.restart	= u300_restart,
 MACHINE_END

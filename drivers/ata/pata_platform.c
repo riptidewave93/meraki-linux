@@ -39,7 +39,7 @@ static int pata_platform_set_mode(struct ata_link *link, struct ata_device **unu
 		dev->pio_mode = dev->xfer_mode = XFER_PIO_0;
 		dev->xfer_shift = ATA_SHIFT_PIO;
 		dev->flags |= ATA_DFLAG_PIO;
-		ata_dev_info(dev, "configured for PIO\n");
+		ata_dev_printk(dev, KERN_INFO, "configured for PIO\n");
 	}
 	return 0;
 }
@@ -53,6 +53,7 @@ static struct ata_port_operations pata_platform_port_ops = {
 	.sff_data_xfer		= ata_sff_data_xfer_noirq,
 	.cable_detect		= ata_cable_unknown,
 	.set_mode		= pata_platform_set_mode,
+	.port_start		= ATA_OP_NULL,
 };
 
 static void pata_platform_setup_port(struct ata_ioports *ioaddr,
@@ -256,7 +257,17 @@ static struct platform_driver pata_platform_driver = {
 	},
 };
 
-module_platform_driver(pata_platform_driver);
+static int __init pata_platform_init(void)
+{
+	return platform_driver_register(&pata_platform_driver);
+}
+
+static void __exit pata_platform_exit(void)
+{
+	platform_driver_unregister(&pata_platform_driver);
+}
+module_init(pata_platform_init);
+module_exit(pata_platform_exit);
 
 module_param(pio_mask, int, 0);
 

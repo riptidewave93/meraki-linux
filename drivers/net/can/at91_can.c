@@ -1,12 +1,14 @@
 /*
  * at91_can.c - CAN network driver for AT91 SoC CAN controller
  *
- * (C) 2007 by Hans J. Koch <hjk@hansjkoch.de>
- * (C) 2008, 2009, 2010, 2011 by Marc Kleine-Budde <kernel@pengutronix.de>
+ * (C) 2007 by Hans J. Koch <hjk@linutronix.de>
+ * (C) 2008, 2009 by Marc Kleine-Budde <kernel@pengutronix.de>
  *
  * This software may be distributed under the terms of the GNU General
  * Public License ("GPL") version 2 as distributed in the 'COPYING'
  * file from the main directory of the linux kernel source.
+ *
+ * Send feedback to <socketcan-users@lists.berlios.de>
  *
  *
  * Your platform definition file should specify something like:
@@ -28,18 +30,43 @@
 #include <linux/module.h>
 #include <linux/netdevice.h>
 #include <linux/platform_device.h>
-#include <linux/rtnetlink.h>
 #include <linux/skbuff.h>
 #include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/types.h>
 
+#include <linux/can.h>
 #include <linux/can/dev.h>
 #include <linux/can/error.h>
 
 #include <mach/board.h>
 
-#define AT91_MB_MASK(i)		((1 << (i)) - 1)
+#define DRV_NAME		"at91_can"
+#define AT91_NAPI_WEIGHT	12
+
+/*
+ * RX/TX Mailbox split
+ * don't dare to touch
+ */
+#define AT91_MB_RX_NUM		12
+#define AT91_MB_TX_SHIFT	2
+
+#define AT91_MB_RX_FIRST	0
+#define AT91_MB_RX_LAST		(AT91_MB_RX_FIRST + AT91_MB_RX_NUM - 1)
+
+#define AT91_MB_RX_MASK(i)	((1 << (i)) - 1)
+#define AT91_MB_RX_SPLIT	8
+#define AT91_MB_RX_LOW_LAST	(AT91_MB_RX_SPLIT - 1)
+#define AT91_MB_RX_LOW_MASK	(AT91_MB_RX_MASK(AT91_MB_RX_SPLIT))
+
+#define AT91_MB_TX_NUM		(1 << AT91_MB_TX_SHIFT)
+#define AT91_MB_TX_FIRST	(AT91_MB_RX_LAST + 1)
+#define AT91_MB_TX_LAST		(AT91_MB_TX_FIRST + AT91_MB_TX_NUM - 1)
+
+#define AT91_NEXT_PRIO_SHIFT	(AT91_MB_TX_SHIFT)
+#define AT91_NEXT_PRIO_MASK	(0xf << AT91_MB_TX_SHIFT)
+#define AT91_NEXT_MB_MASK	(AT91_MB_TX_NUM - 1)
+#define AT91_NEXT_MASK		((AT91_MB_TX_NUM - 1) | AT91_NEXT_PRIO_MASK)
 
 /* Common registers */
 enum at91_reg {
@@ -101,6 +128,12 @@ enum at91_mb_mode {
 };
 
 /* Interrupt mask bits */
+#define AT91_IRQ_MB_RX		((1 << (AT91_MB_RX_LAST + 1)) \
+				 - (1 << AT91_MB_RX_FIRST))
+#define AT91_IRQ_MB_TX		((1 << (AT91_MB_TX_LAST + 1)) \
+				 - (1 << AT91_MB_TX_FIRST))
+#define AT91_IRQ_MB_ALL		(AT91_IRQ_MB_RX | AT91_IRQ_MB_TX)
+
 #define AT91_IRQ_ERRA		(1 << 16)
 #define AT91_IRQ_WARN		(1 << 17)
 #define AT91_IRQ_ERRP		(1 << 18)
@@ -123,55 +156,23 @@ enum at91_mb_mode {
 
 #define AT91_IRQ_ALL		(0x1fffffff)
 
-enum at91_devtype {
-	AT91_DEVTYPE_SAM9263,
-	AT91_DEVTYPE_SAM9X5,
-};
-
-struct at91_devtype_data {
-	unsigned int rx_first;
-	unsigned int rx_split;
-	unsigned int rx_last;
-	unsigned int tx_shift;
-	enum at91_devtype type;
-};
-
 struct at91_priv {
-	struct can_priv can;		/* must be the first member! */
-	struct net_device *dev;
-	struct napi_struct napi;
+	struct can_priv		can;	   /* must be the first member! */
+	struct net_device	*dev;
+	struct napi_struct	napi;
 
-	void __iomem *reg_base;
+	void __iomem		*reg_base;
 
-	u32 reg_sr;
-	unsigned int tx_next;
-	unsigned int tx_echo;
-	unsigned int rx_next;
-	struct at91_devtype_data devtype_data;
+	u32			reg_sr;
+	unsigned int		tx_next;
+	unsigned int		tx_echo;
+	unsigned int		rx_next;
 
-	struct clk *clk;
-	struct at91_can_data *pdata;
-
-	canid_t mb0_id;
-};
-
-static const struct at91_devtype_data at91_devtype_data[] __devinitconst = {
-	[AT91_DEVTYPE_SAM9263] = {
-		.rx_first = 1,
-		.rx_split = 8,
-		.rx_last = 11,
-		.tx_shift = 2,
-	},
-	[AT91_DEVTYPE_SAM9X5] = {
-		.rx_first = 0,
-		.rx_split = 4,
-		.rx_last = 5,
-		.tx_shift = 1,
-	},
+	struct clk		*clk;
+	struct at91_can_data	*pdata;
 };
 
 static struct can_bittiming_const at91_bittiming_const = {
-	.name		= KBUILD_MODNAME,
 	.tseg1_min	= 4,
 	.tseg1_max	= 16,
 	.tseg2_min	= 2,
@@ -182,122 +183,30 @@ static struct can_bittiming_const at91_bittiming_const = {
 	.brp_inc	= 1,
 };
 
-#define AT91_IS(_model) \
-static inline int at91_is_sam##_model(const struct at91_priv *priv) \
-{ \
-	return priv->devtype_data.type == AT91_DEVTYPE_SAM##_model; \
+static inline int get_tx_next_mb(const struct at91_priv *priv)
+{
+	return (priv->tx_next & AT91_NEXT_MB_MASK) + AT91_MB_TX_FIRST;
 }
 
-AT91_IS(9263);
-AT91_IS(9X5);
-
-static inline unsigned int get_mb_rx_first(const struct at91_priv *priv)
+static inline int get_tx_next_prio(const struct at91_priv *priv)
 {
-	return priv->devtype_data.rx_first;
+	return (priv->tx_next >> AT91_NEXT_PRIO_SHIFT) & 0xf;
 }
 
-static inline unsigned int get_mb_rx_last(const struct at91_priv *priv)
+static inline int get_tx_echo_mb(const struct at91_priv *priv)
 {
-	return priv->devtype_data.rx_last;
-}
-
-static inline unsigned int get_mb_rx_split(const struct at91_priv *priv)
-{
-	return priv->devtype_data.rx_split;
-}
-
-static inline unsigned int get_mb_rx_num(const struct at91_priv *priv)
-{
-	return get_mb_rx_last(priv) - get_mb_rx_first(priv) + 1;
-}
-
-static inline unsigned int get_mb_rx_low_last(const struct at91_priv *priv)
-{
-	return get_mb_rx_split(priv) - 1;
-}
-
-static inline unsigned int get_mb_rx_low_mask(const struct at91_priv *priv)
-{
-	return AT91_MB_MASK(get_mb_rx_split(priv)) &
-		~AT91_MB_MASK(get_mb_rx_first(priv));
-}
-
-static inline unsigned int get_mb_tx_shift(const struct at91_priv *priv)
-{
-	return priv->devtype_data.tx_shift;
-}
-
-static inline unsigned int get_mb_tx_num(const struct at91_priv *priv)
-{
-	return 1 << get_mb_tx_shift(priv);
-}
-
-static inline unsigned int get_mb_tx_first(const struct at91_priv *priv)
-{
-	return get_mb_rx_last(priv) + 1;
-}
-
-static inline unsigned int get_mb_tx_last(const struct at91_priv *priv)
-{
-	return get_mb_tx_first(priv) + get_mb_tx_num(priv) - 1;
-}
-
-static inline unsigned int get_next_prio_shift(const struct at91_priv *priv)
-{
-	return get_mb_tx_shift(priv);
-}
-
-static inline unsigned int get_next_prio_mask(const struct at91_priv *priv)
-{
-	return 0xf << get_mb_tx_shift(priv);
-}
-
-static inline unsigned int get_next_mb_mask(const struct at91_priv *priv)
-{
-	return AT91_MB_MASK(get_mb_tx_shift(priv));
-}
-
-static inline unsigned int get_next_mask(const struct at91_priv *priv)
-{
-	return get_next_mb_mask(priv) | get_next_prio_mask(priv);
-}
-
-static inline unsigned int get_irq_mb_rx(const struct at91_priv *priv)
-{
-	return AT91_MB_MASK(get_mb_rx_last(priv) + 1) &
-		~AT91_MB_MASK(get_mb_rx_first(priv));
-}
-
-static inline unsigned int get_irq_mb_tx(const struct at91_priv *priv)
-{
-	return AT91_MB_MASK(get_mb_tx_last(priv) + 1) &
-		~AT91_MB_MASK(get_mb_tx_first(priv));
-}
-
-static inline unsigned int get_tx_next_mb(const struct at91_priv *priv)
-{
-	return (priv->tx_next & get_next_mb_mask(priv)) + get_mb_tx_first(priv);
-}
-
-static inline unsigned int get_tx_next_prio(const struct at91_priv *priv)
-{
-	return (priv->tx_next >> get_next_prio_shift(priv)) & 0xf;
-}
-
-static inline unsigned int get_tx_echo_mb(const struct at91_priv *priv)
-{
-	return (priv->tx_echo & get_next_mb_mask(priv)) + get_mb_tx_first(priv);
+	return (priv->tx_echo & AT91_NEXT_MB_MASK) + AT91_MB_TX_FIRST;
 }
 
 static inline u32 at91_read(const struct at91_priv *priv, enum at91_reg reg)
 {
-	return __raw_readl(priv->reg_base + reg);
+	return readl(priv->reg_base + reg);
 }
 
 static inline void at91_write(const struct at91_priv *priv, enum at91_reg reg,
 		u32 value)
 {
-	__raw_writel(value, priv->reg_base + reg);
+	writel(value, priv->reg_base + reg);
 }
 
 static inline void set_mb_mode_prio(const struct at91_priv *priv,
@@ -312,16 +221,36 @@ static inline void set_mb_mode(const struct at91_priv *priv, unsigned int mb,
 	set_mb_mode_prio(priv, mb, mode, 0);
 }
 
-static inline u32 at91_can_id_to_reg_mid(canid_t can_id)
+static struct sk_buff *alloc_can_skb(struct net_device *dev,
+		struct can_frame **cf)
 {
-	u32 reg_mid;
+	struct sk_buff *skb;
 
-	if (can_id & CAN_EFF_FLAG)
-		reg_mid = (can_id & CAN_EFF_MASK) | AT91_MID_MIDE;
-	else
-		reg_mid = (can_id & CAN_SFF_MASK) << 18;
+	skb = netdev_alloc_skb(dev, sizeof(struct can_frame));
+	if (unlikely(!skb))
+		return NULL;
 
-	return reg_mid;
+	skb->protocol = htons(ETH_P_CAN);
+	skb->ip_summed = CHECKSUM_UNNECESSARY;
+	*cf = (struct can_frame *)skb_put(skb, sizeof(struct can_frame));
+
+	return skb;
+}
+
+static struct sk_buff *alloc_can_err_skb(struct net_device *dev,
+		struct can_frame **cf)
+{
+	struct sk_buff *skb;
+
+	skb = alloc_can_skb(dev, cf);
+	if (unlikely(!skb))
+		return NULL;
+
+	memset(*cf, 0, sizeof(struct can_frame));
+	(*cf)->can_id = CAN_ERR_FLAG;
+	(*cf)->can_dlc = CAN_ERR_DLC;
+
+	return skb;
 }
 
 /*
@@ -337,39 +266,22 @@ static void at91_setup_mailboxes(struct net_device *dev)
 {
 	struct at91_priv *priv = netdev_priv(dev);
 	unsigned int i;
-	u32 reg_mid;
 
 	/*
-	 * Due to a chip bug (errata 50.2.6.3 & 50.3.5.3) the first
-	 * mailbox is disabled. The next 11 mailboxes are used as a
-	 * reception FIFO. The last mailbox is configured with
-	 * overwrite option. The overwrite flag indicates a FIFO
-	 * overflow.
+	 * The first 12 mailboxes are used as a reception FIFO. The
+	 * last mailbox is configured with overwrite option. The
+	 * overwrite flag indicates a FIFO overflow.
 	 */
-	reg_mid = at91_can_id_to_reg_mid(priv->mb0_id);
-	for (i = 0; i < get_mb_rx_first(priv); i++) {
-		set_mb_mode(priv, i, AT91_MB_MODE_DISABLED);
-		at91_write(priv, AT91_MID(i), reg_mid);
-		at91_write(priv, AT91_MCR(i), 0x0);	/* clear dlc */
-	}
-
-	for (i = get_mb_rx_first(priv); i < get_mb_rx_last(priv); i++)
+	for (i = AT91_MB_RX_FIRST; i < AT91_MB_RX_LAST; i++)
 		set_mb_mode(priv, i, AT91_MB_MODE_RX);
-	set_mb_mode(priv, get_mb_rx_last(priv), AT91_MB_MODE_RX_OVRWR);
-
-	/* reset acceptance mask and id register */
-	for (i = get_mb_rx_first(priv); i <= get_mb_rx_last(priv); i++) {
-		at91_write(priv, AT91_MAM(i), 0x0);
-		at91_write(priv, AT91_MID(i), AT91_MID_MIDE);
-	}
+	set_mb_mode(priv, AT91_MB_RX_LAST, AT91_MB_MODE_RX_OVRWR);
 
 	/* The last 4 mailboxes are used for transmitting. */
-	for (i = get_mb_tx_first(priv); i <= get_mb_tx_last(priv); i++)
+	for (i = AT91_MB_TX_FIRST; i <= AT91_MB_TX_LAST; i++)
 		set_mb_mode_prio(priv, i, AT91_MB_MODE_TX, 0);
 
 	/* Reset tx and rx helper pointers */
-	priv->tx_next = priv->tx_echo = 0;
-	priv->rx_next = get_mb_rx_first(priv);
+	priv->tx_next = priv->tx_echo = priv->rx_next = 0;
 }
 
 static int at91_set_bittiming(struct net_device *dev)
@@ -378,26 +290,14 @@ static int at91_set_bittiming(struct net_device *dev)
 	const struct can_bittiming *bt = &priv->can.bittiming;
 	u32 reg_br;
 
-	reg_br = ((priv->can.ctrlmode & CAN_CTRLMODE_3_SAMPLES) ? 1 << 24 : 0) |
-		((bt->brp - 1) << 16) | ((bt->sjw - 1) << 12) |
+	reg_br = ((priv->can.ctrlmode & CAN_CTRLMODE_3_SAMPLES) << 24) |
+		((bt->brp - 1) << 16) |	((bt->sjw - 1) << 12) |
 		((bt->prop_seg - 1) << 8) | ((bt->phase_seg1 - 1) << 4) |
 		((bt->phase_seg2 - 1) << 0);
 
-	netdev_info(dev, "writing AT91_BR: 0x%08x\n", reg_br);
+	dev_info(dev->dev.parent, "writing AT91_BR: 0x%08x\n", reg_br);
 
 	at91_write(priv, AT91_BR, reg_br);
-
-	return 0;
-}
-
-static int at91_get_berr_counter(const struct net_device *dev,
-		struct can_berr_counter *bec)
-{
-	const struct at91_priv *priv = netdev_priv(dev);
-	u32 reg_ecr = at91_read(priv, AT91_ECR);
-
-	bec->rxerr = reg_ecr & 0xff;
-	bec->txerr = reg_ecr >> 16;
 
 	return 0;
 }
@@ -414,7 +314,6 @@ static void at91_chip_start(struct net_device *dev)
 	reg_mr = at91_read(priv, AT91_MR);
 	at91_write(priv, AT91_MR, reg_mr & ~AT91_MR_CANEN);
 
-	at91_set_bittiming(dev);
 	at91_setup_mailboxes(dev);
 	at91_transceiver_switch(priv, 1);
 
@@ -424,7 +323,7 @@ static void at91_chip_start(struct net_device *dev)
 	priv->can.state = CAN_STATE_ERROR_ACTIVE;
 
 	/* Enable interrupts */
-	reg_ier = get_irq_mb_rx(priv) | AT91_IRQ_ERRP | AT91_IRQ_ERR_FRAME;
+	reg_ier = AT91_IRQ_MB_RX | AT91_IRQ_ERRP | AT91_IRQ_ERR_FRAME;
 	at91_write(priv, AT91_IDR, AT91_IRQ_ALL);
 	at91_write(priv, AT91_IER, reg_ier);
 }
@@ -463,8 +362,8 @@ static void at91_chip_stop(struct net_device *dev, enum can_state state)
  * mailbox, but without the offset AT91_MB_TX_FIRST. The lower bits
  * encode the mailbox number, the upper 4 bits the mailbox priority:
  *
- * priv->tx_next = (prio << get_next_prio_shift(priv)) |
- *                 (mb - get_mb_tx_first(priv));
+ * priv->tx_next = (prio << AT91_NEXT_PRIO_SHIFT) ||
+ *                 (mb - AT91_MB_TX_FIRST);
  *
  */
 static netdev_tx_t at91_start_xmit(struct sk_buff *skb, struct net_device *dev)
@@ -475,19 +374,22 @@ static netdev_tx_t at91_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	unsigned int mb, prio;
 	u32 reg_mid, reg_mcr;
 
-	if (can_dropped_invalid_skb(dev, skb))
-		return NETDEV_TX_OK;
-
 	mb = get_tx_next_mb(priv);
 	prio = get_tx_next_prio(priv);
 
 	if (unlikely(!(at91_read(priv, AT91_MSR(mb)) & AT91_MSR_MRDY))) {
 		netif_stop_queue(dev);
 
-		netdev_err(dev, "BUG! TX buffer full when queue awake!\n");
+		dev_err(dev->dev.parent,
+			"BUG! TX buffer full when queue awake!\n");
 		return NETDEV_TX_BUSY;
 	}
-	reg_mid = at91_can_id_to_reg_mid(cf->can_id);
+
+	if (cf->can_id & CAN_EFF_FLAG)
+		reg_mid = (cf->can_id & CAN_EFF_MASK) | AT91_MID_MIDE;
+	else
+		reg_mid = (cf->can_id & CAN_SFF_MASK) << 18;
+
 	reg_mcr = ((cf->can_id & CAN_RTR_FLAG) ? AT91_MCR_MRTR : 0) |
 		(cf->can_dlc << 16) | AT91_MCR_MTCR;
 
@@ -503,9 +405,10 @@ static netdev_tx_t at91_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	at91_write(priv, AT91_MCR(mb), reg_mcr);
 
 	stats->tx_bytes += cf->can_dlc;
+	dev->trans_start = jiffies;
 
-	/* _NOTE_: subtract AT91_MB_TX_FIRST offset from mb! */
-	can_put_echo_skb(skb, dev, mb - get_mb_tx_first(priv));
+	/* _NOTE_: substract AT91_MB_TX_FIRST offset from mb! */
+	can_put_echo_skb(skb, dev, mb - AT91_MB_TX_FIRST);
 
 	/*
 	 * we have to stop the queue and deliver all messages in case
@@ -518,7 +421,7 @@ static netdev_tx_t at91_start_xmit(struct sk_buff *skb, struct net_device *dev)
 	priv->tx_next++;
 	if (!(at91_read(priv, AT91_MSR(get_tx_next_mb(priv))) &
 	      AT91_MSR_MRDY) ||
-	    (priv->tx_next & get_next_mask(priv)) == 0)
+	    (priv->tx_next & AT91_NEXT_MASK) == 0)
 		netif_stop_queue(dev);
 
 	/* Enable interrupt for this mailbox */
@@ -535,7 +438,7 @@ static netdev_tx_t at91_start_xmit(struct sk_buff *skb, struct net_device *dev)
  */
 static inline void at91_activate_rx_low(const struct at91_priv *priv)
 {
-	u32 mask = get_mb_rx_low_mask(priv);
+	u32 mask = AT91_MB_RX_LOW_MASK;
 	at91_write(priv, AT91_TCR, mask);
 }
 
@@ -563,7 +466,7 @@ static void at91_rx_overflow_err(struct net_device *dev)
 	struct sk_buff *skb;
 	struct can_frame *cf;
 
-	netdev_dbg(dev, "RX buffer overflow\n");
+	dev_dbg(dev->dev.parent, "RX buffer overflow\n");
 	stats->rx_over_errors++;
 	stats->rx_errors++;
 
@@ -601,19 +504,14 @@ static void at91_read_mb(struct net_device *dev, unsigned int mb,
 		cf->can_id = (reg_mid >> 18) & CAN_SFF_MASK;
 
 	reg_msr = at91_read(priv, AT91_MSR(mb));
-	cf->can_dlc = get_can_dlc((reg_msr >> 16) & 0xf);
-
 	if (reg_msr & AT91_MSR_MRTR)
 		cf->can_id |= CAN_RTR_FLAG;
-	else {
-		*(u32 *)(cf->data + 0) = at91_read(priv, AT91_MDL(mb));
-		*(u32 *)(cf->data + 4) = at91_read(priv, AT91_MDH(mb));
-	}
+	cf->can_dlc = min_t(__u8, (reg_msr >> 16) & 0xf, 8);
 
-	/* allow RX of extended frames */
-	at91_write(priv, AT91_MID(mb), AT91_MID_MIDE);
+	*(u32 *)(cf->data + 0) = at91_read(priv, AT91_MDL(mb));
+	*(u32 *)(cf->data + 4) = at91_read(priv, AT91_MDH(mb));
 
-	if (unlikely(mb == get_mb_rx_last(priv) && reg_msr & AT91_MSR_MMI))
+	if (unlikely(mb == AT91_MB_RX_LAST && reg_msr & AT91_MSR_MMI))
 		at91_rx_overflow_err(dev);
 }
 
@@ -651,32 +549,27 @@ static void at91_read_msg(struct net_device *dev, unsigned int mb)
  *
  * Theory of Operation:
  *
- * About 3/4 of the mailboxes (get_mb_rx_first()...get_mb_rx_last())
- * on the chip are reserved for RX. We split them into 2 groups. The
- * lower group ranges from get_mb_rx_first() to get_mb_rx_low_last().
+ * 12 of the 16 mailboxes on the chip are reserved for RX. we split
+ * them into 2 groups. The lower group holds 8 and upper 4 mailboxes.
  *
  * Like it or not, but the chip always saves a received CAN message
  * into the first free mailbox it finds (starting with the
  * lowest). This makes it very difficult to read the messages in the
  * right order from the chip. This is how we work around that problem:
  *
- * The first message goes into mb nr. 1 and issues an interrupt. All
+ * The first message goes into mb nr. 0 and issues an interrupt. All
  * rx ints are disabled in the interrupt handler and a napi poll is
  * scheduled. We read the mailbox, but do _not_ reenable the mb (to
  * receive another message).
  *
  *    lower mbxs      upper
- *     ____^______    __^__
- *    /           \  /     \
+ *   ______^______    __^__
+ *  /             \  /     \
  * +-+-+-+-+-+-+-+-++-+-+-+-+
- * | |x|x|x|x|x|x|x|| | | | |
+ * |x|x|x|x|x|x|x|x|| | | | |
  * +-+-+-+-+-+-+-+-++-+-+-+-+
  *  0 0 0 0 0 0  0 0 0 0 1 1  \ mail
  *  0 1 2 3 4 5  6 7 8 9 0 1  / box
- *  ^
- *  |
- *   \
- *     unused, due to chip bug
  *
  * The variable priv->rx_next points to the next mailbox to read a
  * message from. As long we're in the lower mailboxes we just read the
@@ -701,23 +594,23 @@ static int at91_poll_rx(struct net_device *dev, int quota)
 	unsigned int mb;
 	int received = 0;
 
-	if (priv->rx_next > get_mb_rx_low_last(priv) &&
-	    reg_sr & get_mb_rx_low_mask(priv))
-		netdev_info(dev,
-			"order of incoming frames cannot be guaranteed\n");
+	if (priv->rx_next > AT91_MB_RX_LOW_LAST &&
+	    reg_sr & AT91_MB_RX_LOW_MASK)
+		dev_info(dev->dev.parent,
+			 "order of incoming frames cannot be guaranteed\n");
 
  again:
-	for (mb = find_next_bit(addr, get_mb_tx_first(priv), priv->rx_next);
-	     mb < get_mb_tx_first(priv) && quota > 0;
+	for (mb = find_next_bit(addr, AT91_MB_RX_NUM, priv->rx_next);
+	     mb < AT91_MB_RX_NUM && quota > 0;
 	     reg_sr = at91_read(priv, AT91_SR),
-	     mb = find_next_bit(addr, get_mb_tx_first(priv), ++priv->rx_next)) {
+	     mb = find_next_bit(addr, AT91_MB_RX_NUM, ++priv->rx_next)) {
 		at91_read_msg(dev, mb);
 
 		/* reactivate mailboxes */
-		if (mb == get_mb_rx_low_last(priv))
+		if (mb == AT91_MB_RX_LOW_LAST)
 			/* all lower mailboxed, if just finished it */
 			at91_activate_rx_low(priv);
-		else if (mb > get_mb_rx_low_last(priv))
+		else if (mb > AT91_MB_RX_LOW_LAST)
 			/* only the mailbox we read */
 			at91_activate_rx_mb(priv, mb);
 
@@ -726,9 +619,9 @@ static int at91_poll_rx(struct net_device *dev, int quota)
 	}
 
 	/* upper group completed, look again in lower */
-	if (priv->rx_next > get_mb_rx_low_last(priv) &&
-	    quota > 0 && mb > get_mb_rx_last(priv)) {
-		priv->rx_next = get_mb_rx_first(priv);
+	if (priv->rx_next > AT91_MB_RX_LOW_LAST &&
+	    quota > 0 && mb >= AT91_MB_RX_NUM) {
+		priv->rx_next = 0;
 		goto again;
 	}
 
@@ -742,7 +635,7 @@ static void at91_poll_err_frame(struct net_device *dev,
 
 	/* CRC error */
 	if (reg_sr & AT91_IRQ_CERR) {
-		netdev_dbg(dev, "CERR irq\n");
+		dev_dbg(dev->dev.parent, "CERR irq\n");
 		dev->stats.rx_errors++;
 		priv->can.can_stats.bus_error++;
 		cf->can_id |= CAN_ERR_PROT | CAN_ERR_BUSERROR;
@@ -750,7 +643,7 @@ static void at91_poll_err_frame(struct net_device *dev,
 
 	/* Stuffing Error */
 	if (reg_sr & AT91_IRQ_SERR) {
-		netdev_dbg(dev, "SERR irq\n");
+		dev_dbg(dev->dev.parent, "SERR irq\n");
 		dev->stats.rx_errors++;
 		priv->can.can_stats.bus_error++;
 		cf->can_id |= CAN_ERR_PROT | CAN_ERR_BUSERROR;
@@ -759,14 +652,14 @@ static void at91_poll_err_frame(struct net_device *dev,
 
 	/* Acknowledgement Error */
 	if (reg_sr & AT91_IRQ_AERR) {
-		netdev_dbg(dev, "AERR irq\n");
+		dev_dbg(dev->dev.parent, "AERR irq\n");
 		dev->stats.tx_errors++;
 		cf->can_id |= CAN_ERR_ACK;
 	}
 
 	/* Form error */
 	if (reg_sr & AT91_IRQ_FERR) {
-		netdev_dbg(dev, "FERR irq\n");
+		dev_dbg(dev->dev.parent, "FERR irq\n");
 		dev->stats.rx_errors++;
 		priv->can.can_stats.bus_error++;
 		cf->can_id |= CAN_ERR_PROT | CAN_ERR_BUSERROR;
@@ -775,7 +668,7 @@ static void at91_poll_err_frame(struct net_device *dev,
 
 	/* Bit Error */
 	if (reg_sr & AT91_IRQ_BERR) {
-		netdev_dbg(dev, "BERR irq\n");
+		dev_dbg(dev->dev.parent, "BERR irq\n");
 		dev->stats.tx_errors++;
 		priv->can.can_stats.bus_error++;
 		cf->can_id |= CAN_ERR_PROT | CAN_ERR_BUSERROR;
@@ -798,6 +691,7 @@ static int at91_poll_err(struct net_device *dev, int quota, u32 reg_sr)
 	at91_poll_err_frame(dev, cf, reg_sr);
 	netif_receive_skb(skb);
 
+	dev->last_rx = jiffies;
 	dev->stats.rx_packets++;
 	dev->stats.rx_bytes += cf->can_dlc;
 
@@ -811,7 +705,7 @@ static int at91_poll(struct napi_struct *napi, int quota)
 	u32 reg_sr = at91_read(priv, AT91_SR);
 	int work_done = 0;
 
-	if (reg_sr & get_irq_mb_rx(priv))
+	if (reg_sr & AT91_IRQ_MB_RX)
 		work_done += at91_poll_rx(dev, quota - work_done);
 
 	/*
@@ -825,7 +719,7 @@ static int at91_poll(struct napi_struct *napi, int quota)
 	if (work_done < quota) {
 		/* enable IRQs for frame errors and all mailboxes >= rx_next */
 		u32 reg_ier = AT91_IRQ_ERR_FRAME;
-		reg_ier |= get_irq_mb_rx(priv) & ~AT91_MB_MASK(priv->rx_next);
+		reg_ier |= AT91_IRQ_MB_RX & ~AT91_MB_RX_MASK(priv->rx_next);
 
 		napi_complete(napi);
 		at91_write(priv, AT91_IER, reg_ier);
@@ -873,8 +767,8 @@ static void at91_irq_tx(struct net_device *dev, u32 reg_sr)
 		reg_msr = at91_read(priv, AT91_MSR(mb));
 		if (likely(reg_msr & AT91_MSR_MRDY &&
 			   ~reg_msr & AT91_MSR_MABT)) {
-			/* _NOTE_: subtract AT91_MB_TX_FIRST offset from mb! */
-			can_get_echo_skb(dev, mb - get_mb_tx_first(priv));
+			/* _NOTE_: substract AT91_MB_TX_FIRST offset from mb! */
+			can_get_echo_skb(dev, mb - AT91_MB_TX_FIRST);
 			dev->stats.tx_packets++;
 		}
 	}
@@ -884,8 +778,8 @@ static void at91_irq_tx(struct net_device *dev, u32 reg_sr)
 	 * we get a TX int for the last can frame directly before a
 	 * wrap around.
 	 */
-	if ((priv->tx_next & get_next_mask(priv)) != 0 ||
-	    (priv->tx_echo & get_next_mask(priv)) == 0)
+	if ((priv->tx_next & AT91_NEXT_MASK) != 0 ||
+	    (priv->tx_echo & AT91_NEXT_MASK) == 0)
 		netif_wake_queue(dev);
 }
 
@@ -893,10 +787,12 @@ static void at91_irq_err_state(struct net_device *dev,
 		struct can_frame *cf, enum can_state new_state)
 {
 	struct at91_priv *priv = netdev_priv(dev);
-	u32 reg_idr = 0, reg_ier = 0;
-	struct can_berr_counter bec;
+	u32 reg_idr, reg_ier, reg_ecr;
+	u8 tec, rec;
 
-	at91_get_berr_counter(dev, &bec);
+	reg_ecr = at91_read(priv, AT91_ECR);
+	rec = reg_ecr & 0xff;
+	tec = reg_ecr >> 16;
 
 	switch (priv->can.state) {
 	case CAN_STATE_ERROR_ACTIVE:
@@ -907,11 +803,11 @@ static void at91_irq_err_state(struct net_device *dev,
 		 */
 		if (new_state >= CAN_STATE_ERROR_WARNING &&
 		    new_state <= CAN_STATE_BUS_OFF) {
-			netdev_dbg(dev, "Error Warning IRQ\n");
+			dev_dbg(dev->dev.parent, "Error Warning IRQ\n");
 			priv->can.can_stats.error_warning++;
 
 			cf->can_id |= CAN_ERR_CRTL;
-			cf->data[1] = (bec.txerr > bec.rxerr) ?
+			cf->data[1] = (tec > rec) ?
 				CAN_ERR_CRTL_TX_WARNING :
 				CAN_ERR_CRTL_RX_WARNING;
 		}
@@ -923,11 +819,11 @@ static void at91_irq_err_state(struct net_device *dev,
 		 */
 		if (new_state >= CAN_STATE_ERROR_PASSIVE &&
 		    new_state <= CAN_STATE_BUS_OFF) {
-			netdev_dbg(dev, "Error Passive IRQ\n");
+			dev_dbg(dev->dev.parent, "Error Passive IRQ\n");
 			priv->can.can_stats.error_passive++;
 
 			cf->can_id |= CAN_ERR_CRTL;
-			cf->data[1] = (bec.txerr > bec.rxerr) ?
+			cf->data[1] = (tec > rec) ?
 				CAN_ERR_CRTL_TX_PASSIVE :
 				CAN_ERR_CRTL_RX_PASSIVE;
 		}
@@ -940,7 +836,7 @@ static void at91_irq_err_state(struct net_device *dev,
 		if (new_state <= CAN_STATE_ERROR_PASSIVE) {
 			cf->can_id |= CAN_ERR_RESTARTED;
 
-			netdev_dbg(dev, "restarted\n");
+			dev_dbg(dev->dev.parent, "restarted\n");
 			priv->can.can_stats.restarts++;
 
 			netif_carrier_on(dev);
@@ -961,7 +857,7 @@ static void at91_irq_err_state(struct net_device *dev,
 		 * circumstances. so just enable AT91_IRQ_ERRP, thus
 		 * the "fallthrough"
 		 */
-		netdev_dbg(dev, "Error Active\n");
+		dev_dbg(dev->dev.parent, "Error Active\n");
 		cf->can_id |= CAN_ERR_PROT;
 		cf->data[2] = CAN_ERR_PROT_ACTIVE;
 	case CAN_STATE_ERROR_WARNING:	/* fallthrough */
@@ -979,7 +875,7 @@ static void at91_irq_err_state(struct net_device *dev,
 
 		cf->can_id |= CAN_ERR_BUSOFF;
 
-		netdev_dbg(dev, "bus-off\n");
+		dev_dbg(dev->dev.parent, "bus-off\n");
 		netif_carrier_off(dev);
 		priv->can.can_stats.bus_off++;
 
@@ -997,29 +893,6 @@ static void at91_irq_err_state(struct net_device *dev,
 	at91_write(priv, AT91_IER, reg_ier);
 }
 
-static int at91_get_state_by_bec(const struct net_device *dev,
-		enum can_state *state)
-{
-	struct can_berr_counter bec;
-	int err;
-
-	err = at91_get_berr_counter(dev, &bec);
-	if (err)
-		return err;
-
-	if (bec.txerr < 96 && bec.rxerr < 96)
-		*state = CAN_STATE_ERROR_ACTIVE;
-	else if (bec.txerr < 128 && bec.rxerr < 128)
-		*state = CAN_STATE_ERROR_WARNING;
-	else if (bec.txerr < 256 && bec.rxerr < 256)
-		*state = CAN_STATE_ERROR_PASSIVE;
-	else
-		*state = CAN_STATE_BUS_OFF;
-
-	return 0;
-}
-
-
 static void at91_irq_err(struct net_device *dev)
 {
 	struct at91_priv *priv = netdev_priv(dev);
@@ -1027,28 +900,21 @@ static void at91_irq_err(struct net_device *dev)
 	struct can_frame *cf;
 	enum can_state new_state;
 	u32 reg_sr;
-	int err;
 
-	if (at91_is_sam9263(priv)) {
-		reg_sr = at91_read(priv, AT91_SR);
+	reg_sr = at91_read(priv, AT91_SR);
 
-		/* we need to look at the unmasked reg_sr */
-		if (unlikely(reg_sr & AT91_IRQ_BOFF))
-			new_state = CAN_STATE_BUS_OFF;
-		else if (unlikely(reg_sr & AT91_IRQ_ERRP))
-			new_state = CAN_STATE_ERROR_PASSIVE;
-		else if (unlikely(reg_sr & AT91_IRQ_WARN))
-			new_state = CAN_STATE_ERROR_WARNING;
-		else if (likely(reg_sr & AT91_IRQ_ERRA))
-			new_state = CAN_STATE_ERROR_ACTIVE;
-		else {
-			netdev_err(dev, "BUG! hardware in undefined state\n");
-			return;
-		}
-	} else {
-		err = at91_get_state_by_bec(dev, &new_state);
-		if (err)
-			return;
+	/* we need to look at the unmasked reg_sr */
+	if (unlikely(reg_sr & AT91_IRQ_BOFF))
+		new_state = CAN_STATE_BUS_OFF;
+	else if (unlikely(reg_sr & AT91_IRQ_ERRP))
+		new_state = CAN_STATE_ERROR_PASSIVE;
+	else if (unlikely(reg_sr & AT91_IRQ_WARN))
+		new_state = CAN_STATE_ERROR_WARNING;
+	else if (likely(reg_sr & AT91_IRQ_ERRA))
+		new_state = CAN_STATE_ERROR_ACTIVE;
+	else {
+		dev_err(dev->dev.parent, "BUG! hardware in undefined state\n");
+		return;
 	}
 
 	/* state hasn't changed */
@@ -1062,6 +928,7 @@ static void at91_irq_err(struct net_device *dev)
 	at91_irq_err_state(dev, cf, new_state);
 	netif_rx(skb);
 
+	dev->last_rx = jiffies;
 	dev->stats.rx_packets++;
 	dev->stats.rx_bytes += cf->can_dlc;
 
@@ -1089,19 +956,19 @@ static irqreturn_t at91_irq(int irq, void *dev_id)
 	handled = IRQ_HANDLED;
 
 	/* Receive or error interrupt? -> napi */
-	if (reg_sr & (get_irq_mb_rx(priv) | AT91_IRQ_ERR_FRAME)) {
+	if (reg_sr & (AT91_IRQ_MB_RX | AT91_IRQ_ERR_FRAME)) {
 		/*
 		 * The error bits are clear on read,
 		 * save for later use.
 		 */
 		priv->reg_sr = reg_sr;
 		at91_write(priv, AT91_IDR,
-			   get_irq_mb_rx(priv) | AT91_IRQ_ERR_FRAME);
+			   AT91_IRQ_MB_RX | AT91_IRQ_ERR_FRAME);
 		napi_schedule(&priv->napi);
 	}
 
 	/* Transmission complete interrupt */
-	if (reg_sr & get_irq_mb_tx(priv))
+	if (reg_sr & AT91_IRQ_MB_TX)
 		at91_irq_tx(dev, reg_sr);
 
 	at91_irq_err(dev);
@@ -1115,9 +982,7 @@ static int at91_open(struct net_device *dev)
 	struct at91_priv *priv = netdev_priv(dev);
 	int err;
 
-	err = clk_prepare_enable(priv->clk);
-	if (err)
-		return err;
+	clk_enable(priv->clk);
 
 	/* check or determine and set bittime */
 	err = open_candev(dev);
@@ -1141,7 +1006,7 @@ static int at91_open(struct net_device *dev)
  out_close:
 	close_candev(dev);
  out:
-	clk_disable_unprepare(priv->clk);
+	clk_disable(priv->clk);
 
 	return err;
 }
@@ -1158,7 +1023,7 @@ static int at91_close(struct net_device *dev)
 	at91_chip_stop(dev, CAN_STATE_STOPPED);
 
 	free_irq(dev->irq, dev);
-	clk_disable_unprepare(priv->clk);
+	clk_disable(priv->clk);
 
 	close_candev(dev);
 
@@ -1186,77 +1051,14 @@ static const struct net_device_ops at91_netdev_ops = {
 	.ndo_start_xmit	= at91_start_xmit,
 };
 
-static ssize_t at91_sysfs_show_mb0_id(struct device *dev,
-		struct device_attribute *attr, char *buf)
+static int __init at91_can_probe(struct platform_device *pdev)
 {
-	struct at91_priv *priv = netdev_priv(to_net_dev(dev));
-
-	if (priv->mb0_id & CAN_EFF_FLAG)
-		return snprintf(buf, PAGE_SIZE, "0x%08x\n", priv->mb0_id);
-	else
-		return snprintf(buf, PAGE_SIZE, "0x%03x\n", priv->mb0_id);
-}
-
-static ssize_t at91_sysfs_set_mb0_id(struct device *dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct net_device *ndev = to_net_dev(dev);
-	struct at91_priv *priv = netdev_priv(ndev);
-	unsigned long can_id;
-	ssize_t ret;
-	int err;
-
-	rtnl_lock();
-
-	if (ndev->flags & IFF_UP) {
-		ret = -EBUSY;
-		goto out;
-	}
-
-	err = strict_strtoul(buf, 0, &can_id);
-	if (err) {
-		ret = err;
-		goto out;
-	}
-
-	if (can_id & CAN_EFF_FLAG)
-		can_id &= CAN_EFF_MASK | CAN_EFF_FLAG;
-	else
-		can_id &= CAN_SFF_MASK;
-
-	priv->mb0_id = can_id;
-	ret = count;
-
- out:
-	rtnl_unlock();
-	return ret;
-}
-
-static DEVICE_ATTR(mb0_id, S_IWUSR | S_IRUGO,
-	at91_sysfs_show_mb0_id, at91_sysfs_set_mb0_id);
-
-static struct attribute *at91_sysfs_attrs[] = {
-	&dev_attr_mb0_id.attr,
-	NULL,
-};
-
-static struct attribute_group at91_sysfs_attr_group = {
-	.attrs = at91_sysfs_attrs,
-};
-
-static int __devinit at91_can_probe(struct platform_device *pdev)
-{
-	const struct at91_devtype_data *devtype_data;
-	enum at91_devtype devtype;
 	struct net_device *dev;
 	struct at91_priv *priv;
 	struct resource *res;
 	struct clk *clk;
 	void __iomem *addr;
 	int err, irq;
-
-	devtype = pdev->id_entry->driver_data;
-	devtype_data = &at91_devtype_data[devtype];
 
 	clk = clk_get(&pdev->dev, "can_clk");
 	if (IS_ERR(clk)) {
@@ -1267,7 +1069,7 @@ static int __devinit at91_can_probe(struct platform_device *pdev)
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	irq = platform_get_irq(pdev, 0);
-	if (!res || irq <= 0) {
+	if (!res || !irq) {
 		err = -ENODEV;
 		goto exit_put;
 	}
@@ -1285,8 +1087,7 @@ static int __devinit at91_can_probe(struct platform_device *pdev)
 		goto exit_release;
 	}
 
-	dev = alloc_candev(sizeof(struct at91_priv),
-			   1 << devtype_data->tx_shift);
+	dev = alloc_candev(sizeof(struct at91_priv));
 	if (!dev) {
 		err = -ENOMEM;
 		goto exit_iounmap;
@@ -1299,21 +1100,14 @@ static int __devinit at91_can_probe(struct platform_device *pdev)
 	priv = netdev_priv(dev);
 	priv->can.clock.freq = clk_get_rate(clk);
 	priv->can.bittiming_const = &at91_bittiming_const;
+	priv->can.do_set_bittiming = at91_set_bittiming;
 	priv->can.do_set_mode = at91_set_mode;
-	priv->can.do_get_berr_counter = at91_get_berr_counter;
-	priv->can.ctrlmode_supported = CAN_CTRLMODE_3_SAMPLES;
-	priv->dev = dev;
 	priv->reg_base = addr;
-	priv->devtype_data = *devtype_data;
-	priv->devtype_data.type = devtype;
+	priv->dev = dev;
 	priv->clk = clk;
 	priv->pdata = pdev->dev.platform_data;
-	priv->mb0_id = 0x7ff;
 
-	netif_napi_add(dev, &priv->napi, at91_poll, get_mb_rx_num(priv));
-
-	if (at91_is_sam9263(priv))
-		dev->sysfs_groups[0] = &at91_sysfs_attr_group;
+	netif_napi_add(dev, &priv->napi, at91_poll, AT91_NAPI_WEIGHT);
 
 	dev_set_drvdata(&pdev->dev, dev);
 	SET_NETDEV_DEV(dev, &pdev->dev);
@@ -1330,7 +1124,7 @@ static int __devinit at91_can_probe(struct platform_device *pdev)
 	return 0;
 
  exit_free:
-	free_candev(dev);
+	free_netdev(dev);
  exit_iounmap:
 	iounmap(addr);
  exit_release:
@@ -1351,6 +1145,8 @@ static int __devexit at91_can_remove(struct platform_device *pdev)
 
 	platform_set_drvdata(pdev, NULL);
 
+	free_netdev(dev);
+
 	iounmap(priv->reg_base);
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
@@ -1358,35 +1154,33 @@ static int __devexit at91_can_remove(struct platform_device *pdev)
 
 	clk_put(priv->clk);
 
-	free_candev(dev);
-
 	return 0;
 }
 
-static const struct platform_device_id at91_can_id_table[] = {
-	{
-		.name = "at91_can",
-		.driver_data = AT91_DEVTYPE_SAM9263,
-	}, {
-		.name = "at91sam9x5_can",
-		.driver_data = AT91_DEVTYPE_SAM9X5,
-	}, {
-		/* sentinel */
-	}
-};
-
 static struct platform_driver at91_can_driver = {
-	.probe = at91_can_probe,
-	.remove = __devexit_p(at91_can_remove),
-	.driver = {
-		.name = KBUILD_MODNAME,
-		.owner = THIS_MODULE,
+	.probe		= at91_can_probe,
+	.remove		= __devexit_p(at91_can_remove),
+	.driver		= {
+		.name	= DRV_NAME,
+		.owner	= THIS_MODULE,
 	},
-	.id_table = at91_can_id_table,
 };
 
-module_platform_driver(at91_can_driver);
+static int __init at91_can_module_init(void)
+{
+	printk(KERN_INFO "%s netdevice driver\n", DRV_NAME);
+	return platform_driver_register(&at91_can_driver);
+}
+
+static void __exit at91_can_module_exit(void)
+{
+	platform_driver_unregister(&at91_can_driver);
+	printk(KERN_INFO "%s: driver removed\n", DRV_NAME);
+}
+
+module_init(at91_can_module_init);
+module_exit(at91_can_module_exit);
 
 MODULE_AUTHOR("Marc Kleine-Budde <mkl@pengutronix.de>");
 MODULE_LICENSE("GPL v2");
-MODULE_DESCRIPTION(KBUILD_MODNAME " CAN netdevice driver");
+MODULE_DESCRIPTION(DRV_NAME " CAN netdevice driver");

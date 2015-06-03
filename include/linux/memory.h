@@ -15,18 +15,14 @@
 #ifndef _LINUX_MEMORY_H_
 #define _LINUX_MEMORY_H_
 
+#include <linux/sysdev.h>
 #include <linux/node.h>
 #include <linux/compiler.h>
 #include <linux/mutex.h>
 
-#define MIN_MEMORY_BLOCK_SIZE     (1UL << SECTION_SIZE_BITS)
-
 struct memory_block {
-	unsigned long start_section_nr;
-	unsigned long end_section_nr;
+	unsigned long phys_index;
 	unsigned long state;
-	int section_count;
-
 	/*
 	 * This serializes all state change requests.  It isn't
 	 * held during creation because the control files are
@@ -37,10 +33,8 @@ struct memory_block {
 	int phys_device;		/* to which fru does this belong? */
 	void *hw;			/* optional pointer to fw/hw data */
 	int (*phys_callback)(struct memory_block *);
-	struct device dev;
+	struct sys_device sysdev;
 };
-
-int arch_get_memory_phys_device(unsigned long start_pfn);
 
 /* These states are exposed to userspace as text strings in sysfs */
 #define	MEM_ONLINE		(1<<0) /* exposed to userspace */
@@ -54,19 +48,6 @@ struct memory_notify {
 	unsigned long start_pfn;
 	unsigned long nr_pages;
 	int status_change_nid;
-};
-
-/*
- * During pageblock isolation, count the number of pages within the
- * range [start_pfn, start_pfn + nr_pages) which are owned by code
- * in the notifier chain.
- */
-#define MEM_ISOLATE_COUNT	(1<<0)
-
-struct memory_isolate_notify {
-	unsigned long start_pfn;	/* Start of range to check */
-	unsigned int nr_pages;		/* # pages in range to check */
-	unsigned int pages_found;	/* # pages owned found by callbacks */
 };
 
 struct notifier_block;
@@ -95,30 +76,14 @@ static inline int memory_notify(unsigned long val, void *v)
 {
 	return 0;
 }
-static inline int register_memory_isolate_notifier(struct notifier_block *nb)
-{
-	return 0;
-}
-static inline void unregister_memory_isolate_notifier(struct notifier_block *nb)
-{
-}
-static inline int memory_isolate_notify(unsigned long val, void *v)
-{
-	return 0;
-}
 #else
 extern int register_memory_notifier(struct notifier_block *nb);
 extern void unregister_memory_notifier(struct notifier_block *nb);
-extern int register_memory_isolate_notifier(struct notifier_block *nb);
-extern void unregister_memory_isolate_notifier(struct notifier_block *nb);
 extern int register_new_memory(int, struct mem_section *);
 extern int unregister_memory_section(struct mem_section *);
 extern int memory_dev_init(void);
 extern int remove_memory_block(unsigned long, struct mem_section *, int);
 extern int memory_notify(unsigned long val, void *v);
-extern int memory_isolate_notify(unsigned long val, void *v);
-extern struct memory_block *find_memory_block_hinted(struct mem_section *,
-							struct memory_block *);
 extern struct memory_block *find_memory_block(struct mem_section *);
 #define CONFIG_MEM_BLOCK_SIZE	(PAGES_PER_SECTION<<PAGE_SHIFT)
 enum mem_add_context { BOOT, HOTPLUG };

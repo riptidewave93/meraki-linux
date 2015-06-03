@@ -23,7 +23,6 @@
 #include <linux/seq_file.h>
 #include <linux/debugfs.h>
 #include <linux/uaccess.h>
-#include <linux/module.h>
 
 #include <asm/time.h>
 #include <asm-generic/div64.h>
@@ -34,8 +33,9 @@ void kvmppc_init_timing_stats(struct kvm_vcpu *vcpu)
 {
 	int i;
 
-	/* Take a lock to avoid concurrent updates */
-	mutex_lock(&vcpu->arch.exit_timing_lock);
+	/* pause guest execution to avoid concurrent updates */
+	local_irq_disable();
+	mutex_lock(&vcpu->mutex);
 
 	vcpu->arch.last_exit_type = 0xDEAD;
 	for (i = 0; i < __NUMBER_OF_KVM_EXIT_TYPES; i++) {
@@ -49,14 +49,22 @@ void kvmppc_init_timing_stats(struct kvm_vcpu *vcpu)
 	vcpu->arch.timing_exit.tv64 = 0;
 	vcpu->arch.timing_last_enter.tv64 = 0;
 
-	mutex_unlock(&vcpu->arch.exit_timing_lock);
+	mutex_unlock(&vcpu->mutex);
+	local_irq_enable();
 }
 
 static void add_exit_timing(struct kvm_vcpu *vcpu, u64 duration, int type)
 {
 	u64 old;
 
-	mutex_lock(&vcpu->arch.exit_timing_lock);
+	do_div(duration, tb_ticks_per_usec);
+	if (unlikely(duration > 0xFFFFFFFF)) {
+		printk(KERN_ERR"%s - duration too big -> overflow"
+			" duration %lld type %d exit #%d\n",
+			__func__, duration, type,
+			vcpu->arch.timing_count_type[type]);
+		return;
+	}
 
 	vcpu->arch.timing_count_type[type]++;
 
@@ -86,8 +94,6 @@ static void add_exit_timing(struct kvm_vcpu *vcpu, u64 duration, int type)
 		vcpu->arch.timing_min_duration[type] = duration;
 	if (unlikely(duration > vcpu->arch.timing_max_duration[type]))
 		vcpu->arch.timing_max_duration[type] = duration;
-
-	mutex_unlock(&vcpu->arch.exit_timing_lock);
 }
 
 void kvmppc_update_timing_stats(struct kvm_vcpu *vcpu)
@@ -142,30 +148,17 @@ static int kvmppc_exit_timing_show(struct seq_file *m, void *private)
 {
 	struct kvm_vcpu *vcpu = m->private;
 	int i;
-	u64 min, max, sum, sum_quad;
 
 	seq_printf(m, "%s", "type	count	min	max	sum	sum_squared\n");
 
-
 	for (i = 0; i < __NUMBER_OF_KVM_EXIT_TYPES; i++) {
-
-		min = vcpu->arch.timing_min_duration[i];
-		do_div(min, tb_ticks_per_usec);
-		max = vcpu->arch.timing_max_duration[i];
-		do_div(max, tb_ticks_per_usec);
-		sum = vcpu->arch.timing_sum_duration[i];
-		do_div(sum, tb_ticks_per_usec);
-		sum_quad = vcpu->arch.timing_sum_quad_duration[i];
-		do_div(sum_quad, tb_ticks_per_usec);
-
 		seq_printf(m, "%12s	%10d	%10lld	%10lld	%20lld	%20lld\n",
 			kvm_exit_names[i],
 			vcpu->arch.timing_count_type[i],
-			min,
-			max,
-			sum,
-			sum_quad);
-
+			vcpu->arch.timing_min_duration[i],
+			vcpu->arch.timing_max_duration[i],
+			vcpu->arch.timing_sum_duration[i],
+			vcpu->arch.timing_sum_quad_duration[i]);
 	}
 	return 0;
 }
@@ -188,7 +181,7 @@ static ssize_t kvmppc_exit_timing_write(struct file *file,
 	}
 
 	if (c == 'c') {
-		struct seq_file *seqf = file->private_data;
+		struct seq_file *seqf = (struct seq_file *)file->private_data;
 		struct kvm_vcpu *vcpu = seqf->private;
 		/* Write does not affect our buffers previously generated with
 		 * show. seq_file is locked here to prevent races of init with

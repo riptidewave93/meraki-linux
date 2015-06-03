@@ -41,13 +41,13 @@
 
 /*---------------------  Export Functions  --------------------------*/
 
-bool
+BOOL
 device_receive_frame (
-    PSDevice pDevice,
-    PSRxDesc pCurrRD
+    IN  PSDevice pDevice,
+    IN  PSRxDesc pCurrRD
     );
 
-void	MngWorkItem(void *Context);
+VOID	MngWorkItem(PVOID Context);
 
 #endif // __RXTX_H__
 

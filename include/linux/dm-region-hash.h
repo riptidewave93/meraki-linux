@@ -78,7 +78,8 @@ void dm_rh_dec(struct dm_region_hash *rh, region_t region);
 /* Delay bios on regions. */
 void dm_rh_delay(struct dm_region_hash *rh, struct bio *bio);
 
-void dm_rh_mark_nosync(struct dm_region_hash *rh, struct bio *bio);
+void dm_rh_mark_nosync(struct dm_region_hash *rh,
+		       struct bio *bio, unsigned done, int error);
 
 /*
  * Region recovery control.

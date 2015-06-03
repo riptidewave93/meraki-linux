@@ -1,27 +1,21 @@
 config ARM_GIC
-	select IRQ_DOMAIN
-	select MULTI_IRQ_HANDLER
-	bool
-
-config GIC_NON_BANKED
 	bool
 
 config ARM_VIC
-	select IRQ_DOMAIN
-	select MULTI_IRQ_HANDLER
 	bool
 
 config ARM_VIC_NR
 	int
-	default 4 if ARCH_S5PV210
-	default 3 if ARCH_S5PC100
 	default 2
 	depends on ARM_VIC
 	help
 	  The maximum number of VICs available in the system, for
 	  power management.
 
-config ICST
+config ICST525
+	bool
+
+config ICST307
 	bool
 
 config SA1111
@@ -32,6 +26,9 @@ config DMABOUNCE
 	bool
 	select ZONE_DMA
 
+config TIMER_ACORN
+	bool
+
 config SHARP_LOCOMO
 	bool
 
@@ -39,4 +36,7 @@ config SHARP_PARAM
 	bool
 
 config SHARP_SCOOP
+	bool
+
+config COMMON_CLKDEV
 	bool

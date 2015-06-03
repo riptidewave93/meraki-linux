@@ -9,12 +9,7 @@
 
 #ifdef CONFIG_BUG
 
-/*
- * This can be any undefined 16-bit opcode, meaning
- * ((opcode & 0xc000) != 0xc000)
- * Anything from 0x0001 to 0x000A (inclusive) will work
- */
-#define BFIN_BUG_OPCODE	0x0001
+#define BFIN_BUG_OPCODE	0xefcd
 
 #ifdef CONFIG_DEBUG_BUGVERBOSE
 
@@ -52,7 +47,7 @@
 #define BUG()								\
 	do {								\
 		_BUG_OR_WARN(0);					\
-		unreachable();						\
+		for (;;);						\
 	} while (0)
 
 #define WARN_ON(condition)							\

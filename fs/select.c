@@ -17,7 +17,7 @@
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/syscalls.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/poll.h>
 #include <linux/personality.h> /* for STICKY_TIMEOUTS */
@@ -67,7 +67,7 @@ static long __estimate_accuracy(struct timespec *tv)
 	return slack;
 }
 
-long select_estimate_accuracy(struct timespec *tv)
+static long estimate_accuracy(struct timespec *tv)
 {
 	unsigned long ret;
 	struct timespec now;
@@ -223,7 +223,7 @@ static void __pollwait(struct file *filp, wait_queue_head_t *wait_address,
 	get_file(filp);
 	entry->filp = filp;
 	entry->wait_address = wait_address;
-	entry->key = p->_key;
+	entry->key = p->key;
 	init_waitqueue_func_entry(&entry->wait, pollwake);
 	entry->wait.private = pwq;
 	add_wait_queue(wait_address, &entry->wait);
@@ -306,8 +306,6 @@ static int poll_select_copy_remaining(struct timespec *end_time, void __user *p,
 		rts.tv_sec = rts.tv_nsec = 0;
 
 	if (timeval) {
-		if (sizeof(rtv) > sizeof(rtv.tv_sec) + sizeof(rtv.tv_usec))
-			memset(&rtv, 0, sizeof(rtv));
 		rtv.tv_sec = rts.tv_sec;
 		rtv.tv_usec = rts.tv_nsec / NSEC_PER_USEC;
 
@@ -345,10 +343,10 @@ static int max_select_fd(unsigned long n, fd_set_bits *fds)
 	struct fdtable *fdt;
 
 	/* handle last in-complete long-word first */
-	set = ~(~0UL << (n & (BITS_PER_LONG-1)));
-	n /= BITS_PER_LONG;
+	set = ~(~0UL << (n & (__NFDBITS-1)));
+	n /= __NFDBITS;
 	fdt = files_fdtable(current->files);
-	open_fds = fdt->open_fds + n;
+	open_fds = fdt->open_fds->fds_bits+n;
 	max = 0;
 	if (set) {
 		set &= BITS(fds, n);
@@ -373,7 +371,7 @@ get_max:
 			max++;
 			set >>= 1;
 		} while (set);
-		max += n * BITS_PER_LONG;
+		max += n * __NFDBITS;
 	}
 
 	return max;
@@ -386,11 +384,13 @@ get_max:
 static inline void wait_key_set(poll_table *wait, unsigned long in,
 				unsigned long out, unsigned long bit)
 {
-	wait->_key = POLLEX_SET;
-	if (in & bit)
-		wait->_key |= POLLIN_SET;
-	if (out & bit)
-		wait->_key |= POLLOUT_SET;
+	if (wait) {
+		wait->key = POLLEX_SET;
+		if (in & bit)
+			wait->key |= POLLIN_SET;
+		if (out & bit)
+			wait->key |= POLLOUT_SET;
+	}
 }
 
 int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
@@ -412,12 +412,12 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 	poll_initwait(&table);
 	wait = &table.pt;
 	if (end_time && !end_time->tv_sec && !end_time->tv_nsec) {
-		wait->_qproc = NULL;
+		wait = NULL;
 		timed_out = 1;
 	}
 
 	if (end_time && !timed_out)
-		slack = select_estimate_accuracy(end_time);
+		slack = estimate_accuracy(end_time);
 
 	retval = 0;
 	for (;;) {
@@ -435,11 +435,11 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 			in = *inp++; out = *outp++; ex = *exp++;
 			all_bits = in | out | ex;
 			if (all_bits == 0) {
-				i += BITS_PER_LONG;
+				i += __NFDBITS;
 				continue;
 			}
 
-			for (j = 0; j < BITS_PER_LONG; ++j, ++i, bit <<= 1) {
+			for (j = 0; j < __NFDBITS; ++j, ++i, bit <<= 1) {
 				int fput_needed;
 				if (i >= n)
 					break;
@@ -457,17 +457,17 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 					if ((mask & POLLIN_SET) && (in & bit)) {
 						res_in |= bit;
 						retval++;
-						wait->_qproc = NULL;
+						wait = NULL;
 					}
 					if ((mask & POLLOUT_SET) && (out & bit)) {
 						res_out |= bit;
 						retval++;
-						wait->_qproc = NULL;
+						wait = NULL;
 					}
 					if ((mask & POLLEX_SET) && (ex & bit)) {
 						res_ex |= bit;
 						retval++;
-						wait->_qproc = NULL;
+						wait = NULL;
 					}
 				}
 			}
@@ -479,7 +479,7 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
 				*rexp = res_ex;
 			cond_resched();
 		}
-		wait->_qproc = NULL;
+		wait = NULL;
 		if (retval || timed_out || signal_pending(current))
 			break;
 		if (table.error) {
@@ -515,6 +515,9 @@ int do_select(int n, fd_set_bits *fds, struct timespec *end_time)
  * Update: ERESTARTSYS breaks at least the xview clock binary, so
  * I'm trying ERESTARTNOHAND which restart only when you want to.
  */
+#define MAX_SELECT_SECONDS \
+	((unsigned long) (MAX_SCHEDULE_TIMEOUT / HZ)-1)
+
 int core_sys_select(int n, fd_set __user *inp, fd_set __user *outp,
 			   fd_set __user *exp, struct timespec *end_time)
 {
@@ -688,23 +691,6 @@ SYSCALL_DEFINE6(pselect6, int, n, fd_set __user *, inp, fd_set __user *, outp,
 }
 #endif /* HAVE_SET_RESTORE_SIGMASK */
 
-#ifdef __ARCH_WANT_SYS_OLD_SELECT
-struct sel_arg_struct {
-	unsigned long n;
-	fd_set __user *inp, *outp, *exp;
-	struct timeval __user *tvp;
-};
-
-SYSCALL_DEFINE1(old_select, struct sel_arg_struct __user *, arg)
-{
-	struct sel_arg_struct a;
-
-	if (copy_from_user(&a, arg, sizeof(a)))
-		return -EFAULT;
-	return sys_select(a.n, a.inp, a.outp, a.exp, a.tvp);
-}
-#endif
-
 struct poll_list {
 	struct poll_list *next;
 	int len;
@@ -718,7 +704,7 @@ struct poll_list {
  * interested in events matching the pollfd->events mask, and the result
  * matching that mask is both recorded in pollfd->revents and returned. The
  * pwait poll_table will be used by the fd-provided poll handler for waiting,
- * if pwait->_qproc is non-NULL.
+ * if non-NULL.
  */
 static inline unsigned int do_pollfd(struct pollfd *pollfd, poll_table *pwait)
 {
@@ -736,7 +722,9 @@ static inline unsigned int do_pollfd(struct pollfd *pollfd, poll_table *pwait)
 		if (file != NULL) {
 			mask = DEFAULT_POLLMASK;
 			if (file->f_op && file->f_op->poll) {
-				pwait->_key = pollfd->events|POLLERR|POLLHUP;
+				if (pwait)
+					pwait->key = pollfd->events |
+							POLLERR | POLLHUP;
 				mask = file->f_op->poll(file, pwait);
 			}
 			/* Mask out unneeded events. */
@@ -759,12 +747,12 @@ static int do_poll(unsigned int nfds,  struct poll_list *list,
 
 	/* Optimise the no-wait case */
 	if (end_time && !end_time->tv_sec && !end_time->tv_nsec) {
-		pt->_qproc = NULL;
+		pt = NULL;
 		timed_out = 1;
 	}
 
 	if (end_time && !timed_out)
-		slack = select_estimate_accuracy(end_time);
+		slack = estimate_accuracy(end_time);
 
 	for (;;) {
 		struct poll_list *walk;
@@ -777,22 +765,22 @@ static int do_poll(unsigned int nfds,  struct poll_list *list,
 			for (; pfd != pfd_end; pfd++) {
 				/*
 				 * Fish for events. If we found one, record it
-				 * and kill poll_table->_qproc, so we don't
+				 * and kill the poll_table, so we don't
 				 * needlessly register any other waiters after
 				 * this. They'll get immediately deregistered
 				 * when we break out and return.
 				 */
 				if (do_pollfd(pfd, pt)) {
 					count++;
-					pt->_qproc = NULL;
+					pt = NULL;
 				}
 			}
 		}
 		/*
 		 * All waiters have already been registered, so don't provide
-		 * a poll_table->_qproc to them on the next loop iteration.
+		 * a poll_table to them on the next loop iteration.
 		 */
-		pt->_qproc = NULL;
+		pt = NULL;
 		if (!count) {
 			count = wait->error;
 			if (signal_pending(current))
@@ -833,7 +821,7 @@ int do_sys_poll(struct pollfd __user *ufds, unsigned int nfds,
  	struct poll_list *walk = head;
  	unsigned long todo = nfds;
 
-	if (nfds > rlimit(RLIMIT_NOFILE))
+	if (nfds > current->signal->rlim[RLIMIT_NOFILE].rlim_cur)
 		return -EINVAL;
 
 	len = min_t(unsigned int, nfds, N_STACK_PPS);
@@ -908,7 +896,7 @@ static long do_restart_poll(struct restart_block *restart_block)
 }
 
 SYSCALL_DEFINE3(poll, struct pollfd __user *, ufds, unsigned int, nfds,
-		int, timeout_msecs)
+		long, timeout_msecs)
 {
 	struct timespec end_time, *to = NULL;
 	int ret;

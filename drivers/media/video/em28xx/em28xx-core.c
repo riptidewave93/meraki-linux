@@ -24,7 +24,6 @@
 #include <linux/init.h>
 #include <linux/list.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/usb.h>
 #include <linux/vmalloc.h>
 #include <media/v4l2-common.h>
@@ -51,7 +50,7 @@ MODULE_PARM_DESC(reg_debug, "enable debug messages [URB reg]");
 		printk(KERN_INFO "%s %s :"fmt, \
 			 dev->name, __func__ , ##arg); } while (0)
 
-static int alt;
+static int alt = EM28XX_PINOUT;
 module_param(alt, int, 0644);
 MODULE_PARM_DESC(alt, "alternate setting to use for video endpoint");
 
@@ -211,14 +210,13 @@ int em28xx_write_reg(struct em28xx *dev, u16 reg, u8 val)
 {
 	return em28xx_write_regs(dev, reg, &val, 1);
 }
-EXPORT_SYMBOL_GPL(em28xx_write_reg);
 
 /*
  * em28xx_write_reg_bits()
  * sets only some bits (specified by bitmask) of a register, by first reading
  * the actual value
  */
-int em28xx_write_reg_bits(struct em28xx *dev, u16 reg, u8 val,
+static int em28xx_write_reg_bits(struct em28xx *dev, u16 reg, u8 val,
 				 u8 bitmask)
 {
 	int oldval;
@@ -287,7 +285,6 @@ int em28xx_read_ac97(struct em28xx *dev, u8 reg)
 		return ret;
 	return le16_to_cpu(val);
 }
-EXPORT_SYMBOL_GPL(em28xx_read_ac97);
 
 /*
  * em28xx_write_ac97()
@@ -315,14 +312,13 @@ int em28xx_write_ac97(struct em28xx *dev, u8 reg, u16 val)
 
 	return 0;
 }
-EXPORT_SYMBOL_GPL(em28xx_write_ac97);
 
-struct em28xx_vol_itable {
+struct em28xx_vol_table {
 	enum em28xx_amux mux;
 	u8		 reg;
 };
 
-static struct em28xx_vol_itable inputs[] = {
+static struct em28xx_vol_table inputs[] = {
 	{ EM28XX_AMUX_VIDEO, 	AC97_VIDEO_VOL   },
 	{ EM28XX_AMUX_LINE_IN,	AC97_LINEIN_VOL  },
 	{ EM28XX_AMUX_PHONE,	AC97_PHONE_VOL   },
@@ -406,12 +402,7 @@ static int em28xx_set_audio_source(struct em28xx *dev)
 	return ret;
 }
 
-struct em28xx_vol_otable {
-	enum em28xx_aout mux;
-	u8		 reg;
-};
-
-static const struct em28xx_vol_otable outputs[] = {
+static const struct em28xx_vol_table outputs[] = {
 	{ EM28XX_AOUT_MASTER, AC97_MASTER_VOL      },
 	{ EM28XX_AOUT_LINE,   AC97_LINE_LEVEL_VOL  },
 	{ EM28XX_AOUT_MONO,   AC97_MASTER_MONO_VOL },
@@ -497,16 +488,19 @@ int em28xx_audio_setup(struct em28xx *dev)
 	int vid1, vid2, feat, cfg;
 	u32 vid;
 
-	if (dev->chip_id == CHIP_ID_EM2870 || dev->chip_id == CHIP_ID_EM2874
-		|| dev->chip_id == CHIP_ID_EM28174) {
+	if (dev->chip_id == CHIP_ID_EM2870 || dev->chip_id == CHIP_ID_EM2874) {
 		/* Digital only device - don't load any alsa module */
-		dev->audio_mode.has_audio = false;
-		dev->has_audio_class = false;
-		dev->has_alsa_audio = false;
+		dev->audio_mode.has_audio = 0;
+		dev->has_audio_class = 0;
+		dev->has_alsa_audio = 0;
 		return 0;
 	}
 
-	dev->audio_mode.has_audio = true;
+	/* If device doesn't support Usb Audio Class, use vendor class */
+	if (!dev->has_audio_class)
+		dev->has_alsa_audio = 1;
+
+	dev->audio_mode.has_audio = 1;
 
 	/* See how this device is configured */
 	cfg = em28xx_read_reg(dev, EM28XX_R00_CHIPCFG);
@@ -516,8 +510,8 @@ int em28xx_audio_setup(struct em28xx *dev)
 		cfg = EM28XX_CHIPCFG_AC97; /* Be conservative */
 	} else if ((cfg & EM28XX_CHIPCFG_AUDIOMASK) == 0x00) {
 		/* The device doesn't have vendor audio at all */
-		dev->has_alsa_audio = false;
-		dev->audio_mode.has_audio = false;
+		dev->has_alsa_audio = 0;
+		dev->audio_mode.has_audio = 0;
 		return 0;
 	} else if ((cfg & EM28XX_CHIPCFG_AUDIOMASK) ==
 		   EM28XX_CHIPCFG_I2S_3_SAMPRATES) {
@@ -539,15 +533,8 @@ int em28xx_audio_setup(struct em28xx *dev)
 
 	vid1 = em28xx_read_ac97(dev, AC97_VENDOR_ID1);
 	if (vid1 < 0) {
-		/*
-		 * Device likely doesn't support AC97
-		 * Note: (some) em2800 devices without eeprom reports 0x91 on
-		 *	 CHIPCFG register, even not having an AC97 chip
-		 */
+		/* Device likely doesn't support AC97 */
 		em28xx_warn("AC97 chip type couldn't be determined\n");
-		dev->audio_mode.ac97 = EM28XX_NO_AC97;
-		dev->has_alsa_audio = false;
-		dev->audio_mode.has_audio = false;
 		goto init_audio;
 	}
 
@@ -568,7 +555,7 @@ int em28xx_audio_setup(struct em28xx *dev)
 	em28xx_warn("AC97 features = 0x%04x\n", feat);
 
 	/* Try to identify what audio processor we have */
-	if (((vid == 0xffffffff) || (vid == 0x83847650)) && (feat == 0x6a90))
+	if ((vid == 0xffffffff) && (feat == 0x6a90))
 		dev->audio_mode.ac97 = EM28XX_AC97_EM202;
 	else if ((vid >> 8) == 0x838476)
 		dev->audio_mode.ac97 = EM28XX_AC97_SIGMATEL;
@@ -619,9 +606,7 @@ int em28xx_capture_start(struct em28xx *dev, int start)
 {
 	int rc;
 
-	if (dev->chip_id == CHIP_ID_EM2874 ||
-	    dev->chip_id == CHIP_ID_EM2884 ||
-	    dev->chip_id == CHIP_ID_EM28174) {
+	if (dev->chip_id == CHIP_ID_EM2874) {
 		/* The Transport Stream Enable Register moved in em2874 */
 		if (!start) {
 			rc = em28xx_write_reg_bits(dev, EM2874_R5F_TS_ENABLE,
@@ -666,7 +651,6 @@ int em28xx_capture_start(struct em28xx *dev, int start)
 
 	return rc;
 }
-EXPORT_SYMBOL_GPL(em28xx_capture_start);
 
 int em28xx_vbi_supported(struct em28xx *dev)
 {
@@ -700,15 +684,9 @@ int em28xx_set_outfmt(struct em28xx *dev)
 	if (em28xx_vbi_supported(dev) == 1) {
 		vinctrl |= EM28XX_VINCTRL_VBI_RAW;
 		em28xx_write_reg(dev, EM28XX_R34_VBI_START_H, 0x00);
-		em28xx_write_reg(dev, EM28XX_R36_VBI_WIDTH, dev->vbi_width/4);
-		em28xx_write_reg(dev, EM28XX_R37_VBI_HEIGHT, dev->vbi_height);
-		if (dev->norm & V4L2_STD_525_60) {
-			/* NTSC */
-			em28xx_write_reg(dev, EM28XX_R35_VBI_START_V, 0x09);
-		} else if (dev->norm & V4L2_STD_625_50) {
-			/* PAL */
-			em28xx_write_reg(dev, EM28XX_R35_VBI_START_V, 0x07);
-		}
+		em28xx_write_reg(dev, EM28XX_R35_VBI_START_V, 0x09);
+		em28xx_write_reg(dev, EM28XX_R36_VBI_WIDTH, 0xb4);
+		em28xx_write_reg(dev, EM28XX_R37_VBI_HEIGHT, 0x0c);
 	}
 
 	return em28xx_write_reg(dev, EM28XX_R11_VINCTRL, vinctrl);
@@ -775,13 +753,6 @@ int em28xx_resolution_set(struct em28xx *dev)
 	width = norm_maxw(dev);
 	height = norm_maxh(dev);
 
-	/* Properly setup VBI */
-	dev->vbi_width = 720;
-	if (dev->norm & V4L2_STD_525_60)
-		dev->vbi_height = 12;
-	else
-		dev->vbi_height = 18;
-
 	if (!dev->progressive)
 		height >>= norm_maxh(dev);
 
@@ -790,15 +761,11 @@ int em28xx_resolution_set(struct em28xx *dev)
 
 	em28xx_accumulator_set(dev, 1, (width - 4) >> 2, 1, (height - 4) >> 2);
 
-	/* If we don't set the start position to 2 in VBI mode, we end up
-	   with line 20/21 being YUYV encoded instead of being in 8-bit
-	   greyscale.  The core of the issue is that line 21 (and line 23 for
-	   PAL WSS) are inside of active video region, and as a result they
-	   get the pixelformatting associated with that area.  So by cropping
-	   it out, we end up with the same format as the rest of the VBI
-	   region */
+	/* If we don't set the start position to 4 in VBI mode, we end up
+	   with line 21 being YUYV encoded instead of being in 8-bit
+	   greyscale */
 	if (em28xx_vbi_supported(dev) == 1)
-		em28xx_capture_area_set(dev, 0, 2, width >> 2, height >> 2);
+		em28xx_capture_area_set(dev, 0, 4, width >> 2, height >> 2);
 	else
 		em28xx_capture_area_set(dev, 0, 0, width >> 2, height >> 2);
 
@@ -810,16 +777,6 @@ int em28xx_set_alternate(struct em28xx *dev)
 	int errCode, prev_alt = dev->alt;
 	int i;
 	unsigned int min_pkt_size = dev->width * 2 + 4;
-
-	/*
-	 * alt = 0 is used only for control messages, so, only values
-	 * greater than 0 can be used for streaming.
-	 */
-	if (alt && alt < dev->num_alt) {
-		em28xx_coredbg("alternate forced to %d\n", dev->alt);
-		dev->alt = alt;
-		goto set_alt;
-	}
 
 	/* When image size is bigger than a certain value,
 	   the frame size should be increased, otherwise, only
@@ -841,7 +798,6 @@ int em28xx_set_alternate(struct em28xx *dev)
 			dev->alt = i;
 	}
 
-set_alt:
 	if (dev->alt != prev_alt) {
 		em28xx_coredbg("minimum isoc packet size: %u (alt=%d)\n",
 				min_pkt_size, dev->alt);
@@ -891,7 +847,6 @@ int em28xx_gpio_set(struct em28xx *dev, struct em28xx_reg_seq *gpio)
 	}
 	return rc;
 }
-EXPORT_SYMBOL_GPL(em28xx_gpio_set);
 
 int em28xx_set_mode(struct em28xx *dev, enum em28xx_mode set_mode)
 {
@@ -925,7 +880,7 @@ EXPORT_SYMBOL_GPL(em28xx_set_mode);
 static void em28xx_irq_callback(struct urb *urb)
 {
 	struct em28xx *dev = urb->context;
-	int i;
+	int rc, i;
 
 	switch (urb->status) {
 	case 0:             /* success */
@@ -942,7 +897,7 @@ static void em28xx_irq_callback(struct urb *urb)
 
 	/* Copy data from URB */
 	spin_lock(&dev->slock);
-	dev->isoc_ctl.isoc_copy(dev, urb);
+	rc = dev->isoc_ctl.isoc_copy(dev, urb);
 	spin_unlock(&dev->slock);
 
 	/* Reset urb buffers */
@@ -962,178 +917,131 @@ static void em28xx_irq_callback(struct urb *urb)
 /*
  * Stop and Deallocate URBs
  */
-void em28xx_uninit_isoc(struct em28xx *dev, enum em28xx_mode mode)
+void em28xx_uninit_isoc(struct em28xx *dev)
 {
 	struct urb *urb;
-	struct em28xx_usb_isoc_bufs *isoc_bufs;
 	int i;
 
-	em28xx_isocdbg("em28xx: called em28xx_uninit_isoc in mode %d\n", mode);
-
-	if (mode == EM28XX_DIGITAL_MODE)
-		isoc_bufs = &dev->isoc_ctl.digital_bufs;
-	else
-		isoc_bufs = &dev->isoc_ctl.analog_bufs;
+	em28xx_isocdbg("em28xx: called em28xx_uninit_isoc\n");
 
 	dev->isoc_ctl.nfields = -1;
-	for (i = 0; i < isoc_bufs->num_bufs; i++) {
-		urb = isoc_bufs->urb[i];
+	for (i = 0; i < dev->isoc_ctl.num_bufs; i++) {
+		urb = dev->isoc_ctl.urb[i];
 		if (urb) {
 			if (!irqs_disabled())
 				usb_kill_urb(urb);
 			else
 				usb_unlink_urb(urb);
 
-			if (isoc_bufs->transfer_buffer[i]) {
-				usb_free_coherent(dev->udev,
+			if (dev->isoc_ctl.transfer_buffer[i]) {
+				usb_buffer_free(dev->udev,
 					urb->transfer_buffer_length,
-					isoc_bufs->transfer_buffer[i],
+					dev->isoc_ctl.transfer_buffer[i],
 					urb->transfer_dma);
 			}
 			usb_free_urb(urb);
-			isoc_bufs->urb[i] = NULL;
+			dev->isoc_ctl.urb[i] = NULL;
 		}
-		isoc_bufs->transfer_buffer[i] = NULL;
+		dev->isoc_ctl.transfer_buffer[i] = NULL;
 	}
 
-	kfree(isoc_bufs->urb);
-	kfree(isoc_bufs->transfer_buffer);
+	kfree(dev->isoc_ctl.urb);
+	kfree(dev->isoc_ctl.transfer_buffer);
 
-	isoc_bufs->urb = NULL;
-	isoc_bufs->transfer_buffer = NULL;
-	isoc_bufs->num_bufs = 0;
+	dev->isoc_ctl.urb = NULL;
+	dev->isoc_ctl.transfer_buffer = NULL;
+	dev->isoc_ctl.num_bufs = 0;
 
 	em28xx_capture_start(dev, 0);
 }
 EXPORT_SYMBOL_GPL(em28xx_uninit_isoc);
 
 /*
- * Allocate URBs
+ * Allocate URBs and start IRQ
  */
-int em28xx_alloc_isoc(struct em28xx *dev, enum em28xx_mode mode,
-		      int max_packets, int num_bufs, int max_pkt_size)
+int em28xx_init_isoc(struct em28xx *dev, int max_packets,
+		     int num_bufs, int max_pkt_size,
+		     int (*isoc_copy) (struct em28xx *dev, struct urb *urb))
 {
-	struct em28xx_usb_isoc_bufs *isoc_bufs;
+	struct em28xx_dmaqueue *dma_q = &dev->vidq;
+	struct em28xx_dmaqueue *vbi_dma_q = &dev->vbiq;
 	int i;
 	int sb_size, pipe;
 	struct urb *urb;
 	int j, k;
+	int rc;
 
-	em28xx_isocdbg("em28xx: called em28xx_alloc_isoc in mode %d\n", mode);
-
-	if (mode == EM28XX_DIGITAL_MODE)
-		isoc_bufs = &dev->isoc_ctl.digital_bufs;
-	else
-		isoc_bufs = &dev->isoc_ctl.analog_bufs;
+	em28xx_isocdbg("em28xx: called em28xx_prepare_isoc\n");
 
 	/* De-allocates all pending stuff */
-	em28xx_uninit_isoc(dev, mode);
+	em28xx_uninit_isoc(dev);
 
-	isoc_bufs->num_bufs = num_bufs;
+	dev->isoc_ctl.isoc_copy = isoc_copy;
+	dev->isoc_ctl.num_bufs = num_bufs;
 
-	isoc_bufs->urb = kzalloc(sizeof(void *)*num_bufs,  GFP_KERNEL);
-	if (!isoc_bufs->urb) {
+	dev->isoc_ctl.urb = kzalloc(sizeof(void *)*num_bufs,  GFP_KERNEL);
+	if (!dev->isoc_ctl.urb) {
 		em28xx_errdev("cannot alloc memory for usb buffers\n");
 		return -ENOMEM;
 	}
 
-	isoc_bufs->transfer_buffer = kzalloc(sizeof(void *)*num_bufs,
-					     GFP_KERNEL);
-	if (!isoc_bufs->transfer_buffer) {
+	dev->isoc_ctl.transfer_buffer = kzalloc(sizeof(void *)*num_bufs,
+					      GFP_KERNEL);
+	if (!dev->isoc_ctl.transfer_buffer) {
 		em28xx_errdev("cannot allocate memory for usb transfer\n");
-		kfree(isoc_bufs->urb);
+		kfree(dev->isoc_ctl.urb);
 		return -ENOMEM;
 	}
 
-	isoc_bufs->max_pkt_size = max_pkt_size;
-	isoc_bufs->num_packets = max_packets;
+	dev->isoc_ctl.max_pkt_size = max_pkt_size;
 	dev->isoc_ctl.vid_buf = NULL;
 	dev->isoc_ctl.vbi_buf = NULL;
 
-	sb_size = isoc_bufs->num_packets * isoc_bufs->max_pkt_size;
+	sb_size = max_packets * dev->isoc_ctl.max_pkt_size;
 
 	/* allocate urbs and transfer buffers */
-	for (i = 0; i < isoc_bufs->num_bufs; i++) {
-		urb = usb_alloc_urb(isoc_bufs->num_packets, GFP_KERNEL);
+	for (i = 0; i < dev->isoc_ctl.num_bufs; i++) {
+		urb = usb_alloc_urb(max_packets, GFP_KERNEL);
 		if (!urb) {
 			em28xx_err("cannot alloc isoc_ctl.urb %i\n", i);
-			em28xx_uninit_isoc(dev, mode);
+			em28xx_uninit_isoc(dev);
 			return -ENOMEM;
 		}
-		isoc_bufs->urb[i] = urb;
+		dev->isoc_ctl.urb[i] = urb;
 
-		isoc_bufs->transfer_buffer[i] = usb_alloc_coherent(dev->udev,
+		dev->isoc_ctl.transfer_buffer[i] = usb_buffer_alloc(dev->udev,
 			sb_size, GFP_KERNEL, &urb->transfer_dma);
-		if (!isoc_bufs->transfer_buffer[i]) {
+		if (!dev->isoc_ctl.transfer_buffer[i]) {
 			em28xx_err("unable to allocate %i bytes for transfer"
 					" buffer %i%s\n",
 					sb_size, i,
 					in_interrupt() ? " while in int" : "");
-			em28xx_uninit_isoc(dev, mode);
+			em28xx_uninit_isoc(dev);
 			return -ENOMEM;
 		}
-		memset(isoc_bufs->transfer_buffer[i], 0, sb_size);
+		memset(dev->isoc_ctl.transfer_buffer[i], 0, sb_size);
 
 		/* FIXME: this is a hack - should be
 			'desc.bEndpointAddress & USB_ENDPOINT_NUMBER_MASK'
 			should also be using 'desc.bInterval'
 		 */
 		pipe = usb_rcvisocpipe(dev->udev,
-				       mode == EM28XX_ANALOG_MODE ?
-				       EM28XX_EP_ANALOG : EM28XX_EP_DIGITAL);
+			dev->mode == EM28XX_ANALOG_MODE ? 0x82 : 0x84);
 
 		usb_fill_int_urb(urb, dev->udev, pipe,
-				 isoc_bufs->transfer_buffer[i], sb_size,
+				 dev->isoc_ctl.transfer_buffer[i], sb_size,
 				 em28xx_irq_callback, dev, 1);
 
-		urb->number_of_packets = isoc_bufs->num_packets;
+		urb->number_of_packets = max_packets;
 		urb->transfer_flags = URB_ISO_ASAP | URB_NO_TRANSFER_DMA_MAP;
 
 		k = 0;
-		for (j = 0; j < isoc_bufs->num_packets; j++) {
+		for (j = 0; j < max_packets; j++) {
 			urb->iso_frame_desc[j].offset = k;
 			urb->iso_frame_desc[j].length =
-						isoc_bufs->max_pkt_size;
-			k += isoc_bufs->max_pkt_size;
+						dev->isoc_ctl.max_pkt_size;
+			k += dev->isoc_ctl.max_pkt_size;
 		}
-	}
-
-	return 0;
-}
-EXPORT_SYMBOL_GPL(em28xx_alloc_isoc);
-
-/*
- * Allocate URBs and start IRQ
- */
-int em28xx_init_isoc(struct em28xx *dev, enum em28xx_mode mode,
-		     int max_packets, int num_bufs, int max_pkt_size,
-		     int (*isoc_copy) (struct em28xx *dev, struct urb *urb))
-{
-	struct em28xx_dmaqueue *dma_q = &dev->vidq;
-	struct em28xx_dmaqueue *vbi_dma_q = &dev->vbiq;
-	struct em28xx_usb_isoc_bufs *isoc_bufs;
-	int i;
-	int rc;
-	int alloc;
-
-	em28xx_isocdbg("em28xx: called em28xx_init_isoc in mode %d\n", mode);
-
-	dev->isoc_ctl.isoc_copy = isoc_copy;
-
-	if (mode == EM28XX_DIGITAL_MODE) {
-		isoc_bufs = &dev->isoc_ctl.digital_bufs;
-		/* no need to free/alloc isoc buffers in digital mode */
-		alloc = 0;
-	} else {
-		isoc_bufs = &dev->isoc_ctl.analog_bufs;
-		alloc = 1;
-	}
-
-	if (alloc) {
-		rc = em28xx_alloc_isoc(dev, mode, max_packets,
-				       num_bufs, max_pkt_size);
-		if (rc)
-			return rc;
 	}
 
 	init_waitqueue_head(&dma_q->wq);
@@ -1142,12 +1050,12 @@ int em28xx_init_isoc(struct em28xx *dev, enum em28xx_mode mode,
 	em28xx_capture_start(dev, 1);
 
 	/* submit urbs and enables IRQ */
-	for (i = 0; i < isoc_bufs->num_bufs; i++) {
-		rc = usb_submit_urb(isoc_bufs->urb[i], GFP_ATOMIC);
+	for (i = 0; i < dev->isoc_ctl.num_bufs; i++) {
+		rc = usb_submit_urb(dev->isoc_ctl.urb[i], GFP_ATOMIC);
 		if (rc) {
 			em28xx_err("submit of urb %i failed (error=%i)\n", i,
 				   rc);
-			em28xx_uninit_isoc(dev, mode);
+			em28xx_uninit_isoc(dev);
 			return rc;
 		}
 	}
@@ -1155,6 +1063,41 @@ int em28xx_init_isoc(struct em28xx *dev, enum em28xx_mode mode,
 	return 0;
 }
 EXPORT_SYMBOL_GPL(em28xx_init_isoc);
+
+/* Determine the packet size for the DVB stream for the given device
+   (underlying value programmed into the eeprom) */
+int em28xx_isoc_dvb_max_packetsize(struct em28xx *dev)
+{
+	unsigned int chip_cfg2;
+	unsigned int packet_size = 564;
+
+	if (dev->chip_id == CHIP_ID_EM2874) {
+		/* FIXME - for now assume 564 like it was before, but the
+		   em2874 code should be added to return the proper value... */
+		packet_size = 564;
+	} else {
+		/* TS max packet size stored in bits 1-0 of R01 */
+		chip_cfg2 = em28xx_read_reg(dev, EM28XX_R01_CHIPCFG2);
+		switch (chip_cfg2 & EM28XX_CHIPCFG2_TS_PACKETSIZE_MASK) {
+		case EM28XX_CHIPCFG2_TS_PACKETSIZE_188:
+			packet_size = 188;
+			break;
+		case EM28XX_CHIPCFG2_TS_PACKETSIZE_376:
+			packet_size = 376;
+			break;
+		case EM28XX_CHIPCFG2_TS_PACKETSIZE_564:
+			packet_size = 564;
+			break;
+		case EM28XX_CHIPCFG2_TS_PACKETSIZE_752:
+			packet_size = 752;
+			break;
+		}
+	}
+
+	em28xx_coredbg("dvb max packet size=%d\n", packet_size);
+	return packet_size;
+}
+EXPORT_SYMBOL_GPL(em28xx_isoc_dvb_max_packetsize);
 
 /*
  * em28xx_wake_i2c()
@@ -1175,23 +1118,74 @@ void em28xx_wake_i2c(struct em28xx *dev)
 static LIST_HEAD(em28xx_devlist);
 static DEFINE_MUTEX(em28xx_devlist_mutex);
 
+struct em28xx *em28xx_get_device(int minor,
+				 enum v4l2_buf_type *fh_type,
+				 int *has_radio)
+{
+	struct em28xx *h, *dev = NULL;
+
+	*fh_type = V4L2_BUF_TYPE_VIDEO_CAPTURE;
+	*has_radio = 0;
+
+	mutex_lock(&em28xx_devlist_mutex);
+	list_for_each_entry(h, &em28xx_devlist, devlist) {
+		if (h->vdev->minor == minor)
+			dev = h;
+		if (h->vbi_dev && h->vbi_dev->minor == minor) {
+			dev = h;
+			*fh_type = V4L2_BUF_TYPE_VBI_CAPTURE;
+		}
+		if (h->radio_dev &&
+		    h->radio_dev->minor == minor) {
+			dev = h;
+			*has_radio = 1;
+		}
+	}
+	mutex_unlock(&em28xx_devlist_mutex);
+
+	return dev;
+}
+
+/*
+ * em28xx_realease_resources()
+ * unregisters the v4l2,i2c and usb devices
+ * called when the device gets disconected or at module unload
+*/
+void em28xx_remove_from_devlist(struct em28xx *dev)
+{
+	mutex_lock(&em28xx_devlist_mutex);
+	list_del(&dev->devlist);
+	mutex_unlock(&em28xx_devlist_mutex);
+};
+
+void em28xx_add_into_devlist(struct em28xx *dev)
+{
+	mutex_lock(&em28xx_devlist_mutex);
+	list_add_tail(&dev->devlist, &em28xx_devlist);
+	mutex_unlock(&em28xx_devlist_mutex);
+};
+
 /*
  * Extension interface
  */
 
 static LIST_HEAD(em28xx_extension_devlist);
+static DEFINE_MUTEX(em28xx_extension_devlist_lock);
 
 int em28xx_register_extension(struct em28xx_ops *ops)
 {
 	struct em28xx *dev = NULL;
 
 	mutex_lock(&em28xx_devlist_mutex);
+	mutex_lock(&em28xx_extension_devlist_lock);
 	list_add_tail(&ops->next, &em28xx_extension_devlist);
 	list_for_each_entry(dev, &em28xx_devlist, devlist) {
-		ops->init(dev);
+		if (dev)
+			ops->init(dev);
 	}
-	mutex_unlock(&em28xx_devlist_mutex);
 	printk(KERN_INFO "Em28xx: Initialized (%s) extension\n", ops->name);
+	mutex_unlock(&em28xx_extension_devlist_lock);
+	mutex_unlock(&em28xx_devlist_mutex);
 	return 0;
 }
 EXPORT_SYMBOL(em28xx_register_extension);
@@ -1202,36 +1196,42 @@ void em28xx_unregister_extension(struct em28xx_ops *ops)
 
 	mutex_lock(&em28xx_devlist_mutex);
 	list_for_each_entry(dev, &em28xx_devlist, devlist) {
-		ops->fini(dev);
+		if (dev)
+			ops->fini(dev);
 	}
-	list_del(&ops->next);
-	mutex_unlock(&em28xx_devlist_mutex);
+
+	mutex_lock(&em28xx_extension_devlist_lock);
 	printk(KERN_INFO "Em28xx: Removed (%s) extension\n", ops->name);
+	list_del(&ops->next);
+	mutex_unlock(&em28xx_extension_devlist_lock);
+	mutex_unlock(&em28xx_devlist_mutex);
 }
 EXPORT_SYMBOL(em28xx_unregister_extension);
 
 void em28xx_init_extension(struct em28xx *dev)
 {
-	const struct em28xx_ops *ops = NULL;
+	struct em28xx_ops *ops = NULL;
 
-	mutex_lock(&em28xx_devlist_mutex);
-	list_add_tail(&dev->devlist, &em28xx_devlist);
-	list_for_each_entry(ops, &em28xx_extension_devlist, next) {
-		if (ops->init)
-			ops->init(dev);
+	mutex_lock(&em28xx_extension_devlist_lock);
+	if (!list_empty(&em28xx_extension_devlist)) {
+		list_for_each_entry(ops, &em28xx_extension_devlist, next) {
+			if (ops->init)
+				ops->init(dev);
+		}
 	}
-	mutex_unlock(&em28xx_devlist_mutex);
+	mutex_unlock(&em28xx_extension_devlist_lock);
 }
 
 void em28xx_close_extension(struct em28xx *dev)
 {
-	const struct em28xx_ops *ops = NULL;
+	struct em28xx_ops *ops = NULL;
 
-	mutex_lock(&em28xx_devlist_mutex);
-	list_for_each_entry(ops, &em28xx_extension_devlist, next) {
-		if (ops->fini)
-			ops->fini(dev);
+	mutex_lock(&em28xx_extension_devlist_lock);
+	if (!list_empty(&em28xx_extension_devlist)) {
+		list_for_each_entry(ops, &em28xx_extension_devlist, next) {
+			if (ops->fini)
+				ops->fini(dev);
+		}
 	}
-	list_del(&dev->devlist);
-	mutex_unlock(&em28xx_devlist_mutex);
+	mutex_unlock(&em28xx_extension_devlist_lock);
 }

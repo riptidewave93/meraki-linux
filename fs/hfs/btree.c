@@ -9,7 +9,6 @@
  */
 
 #include <linux/pagemap.h>
-#include <linux/slab.h>
 #include <linux/log2.h>
 
 #include "btree.h"
@@ -27,7 +26,7 @@ struct hfs_btree *hfs_btree_open(struct super_block *sb, u32 id, btree_keycmp ke
 	if (!tree)
 		return NULL;
 
-	mutex_init(&tree->tree_lock);
+	init_MUTEX(&tree->tree_lock);
 	spin_lock_init(&tree->hash_lock);
 	/* Set the correct compare function */
 	tree->sb = sb;

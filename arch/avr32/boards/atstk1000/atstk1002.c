@@ -90,14 +90,18 @@ static struct mtd_partition nand_partitions[] = {
 	},
 };
 
+static struct mtd_partition *nand_part_info(int size, int *num_partitions)
+{
+	*num_partitions = ARRAY_SIZE(nand_partitions);
+	return nand_partitions;
+}
+
 static struct atmel_nand_data atstk1006_nand_data __initdata = {
 	.cle		= 21,
 	.ale		= 22,
 	.rdy_pin	= GPIO_PIN_PB(30),
 	.enable_pin	= GPIO_PIN_PB(29),
-	.ecc_mode	= NAND_ECC_SOFT,
-	.parts		= nand_partitions,
-	.num_parts	= ARRAY_SIZE(num_partitions),
+	.partition_info	= nand_part_info,
 };
 #endif
 
@@ -106,7 +110,7 @@ struct eth_addr {
 };
 
 static struct eth_addr __initdata hw_addr[2];
-static struct macb_platform_data __initdata eth_data[2] = {
+static struct eth_platform_data __initdata eth_data[2] = {
 	{
 		/*
 		 * The MDIO pullups on STK1000 are a bit too weak for
@@ -199,7 +203,7 @@ static void __init set_hw_addr(struct platform_device *pdev)
 	 */
 	regs = (void __iomem __force *)res->start;
 	pclk = clk_get(&pdev->dev, "pclk");
-	if (IS_ERR(pclk))
+	if (!pclk)
 		return;
 
 	clk_enable(pclk);

@@ -109,7 +109,6 @@ static void iforce_usb_out(struct urb *urb)
 	struct iforce *iforce = urb->context;
 
 	if (urb->status) {
-		clear_bit(IFORCE_XMIT_RUNNING, iforce->xmit_flags);
 		dbg("urb->status %d, exiting", urb->status);
 		return;
 	}
@@ -187,19 +186,33 @@ fail:
 	return err;
 }
 
-static void iforce_usb_disconnect(struct usb_interface *intf)
+/* Called by iforce_delete() */
+void iforce_usb_delete(struct iforce* iforce)
 {
-	struct iforce *iforce = usb_get_intfdata(intf);
-
-	usb_set_intfdata(intf, NULL);
-
-	input_unregister_device(iforce->dev);
+	usb_kill_urb(iforce->irq);
+	usb_kill_urb(iforce->out);
+	usb_kill_urb(iforce->ctrl);
 
 	usb_free_urb(iforce->irq);
 	usb_free_urb(iforce->out);
 	usb_free_urb(iforce->ctrl);
+}
 
-	kfree(iforce);
+static void iforce_usb_disconnect(struct usb_interface *intf)
+{
+	struct iforce *iforce = usb_get_intfdata(intf);
+	int open = 0; /* FIXME! iforce->dev.handle->open; */
+
+	usb_set_intfdata(intf, NULL);
+	if (iforce) {
+		iforce->usbdev = NULL;
+		input_unregister_device(iforce->dev);
+
+		if (!open) {
+			iforce_delete_device(iforce);
+			kfree(iforce);
+		}
+	}
 }
 
 static struct usb_device_id iforce_usb_ids [] = {
@@ -212,7 +225,6 @@ static struct usb_device_id iforce_usb_ids [] = {
 	{ USB_DEVICE(0x061c, 0xc0a4) },         /* ACT LABS Force RS */
 	{ USB_DEVICE(0x061c, 0xc084) },         /* ACT LABS Force RS */
 	{ USB_DEVICE(0x06f8, 0x0001) },		/* Guillemot Race Leader Force Feedback */
-	{ USB_DEVICE(0x06f8, 0x0003) },		/* Guillemot Jet Leader Force Feedback */
 	{ USB_DEVICE(0x06f8, 0x0004) },		/* Guillemot Force Feedback Racing Wheel */
 	{ USB_DEVICE(0x06f8, 0xa302) },		/* Guillemot Jet Leader 3D */
 	{ }					/* Terminating entry */

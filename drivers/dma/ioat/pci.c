@@ -30,7 +30,6 @@
 #include <linux/pci.h>
 #include <linux/interrupt.h>
 #include <linux/dca.h>
-#include <linux/slab.h>
 #include "dma.h"
 #include "dma_v2.h"
 #include "registers.h"
@@ -71,17 +70,6 @@ static struct pci_device_id ioat_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_JSF7) },
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_JSF8) },
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_JSF9) },
-
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB0) },
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB1) },
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB2) },
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB3) },
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB4) },
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB5) },
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB6) },
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB7) },
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB8) },
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB9) },
 
 	{ 0, }
 };
@@ -149,10 +137,15 @@ static int __devinit ioat_pci_probe(struct pci_dev *pdev, const struct pci_devic
 	if (err)
 		return err;
 
+	device = devm_kzalloc(dev, sizeof(*device), GFP_KERNEL);
+	if (!device)
+		return -ENOMEM;
+
+	pci_set_master(pdev);
+
 	device = alloc_ioatdma(pdev, iomap[IOAT_MMIO_BAR]);
 	if (!device)
 		return -ENOMEM;
-	pci_set_master(pdev);
 	pci_set_drvdata(pdev, device);
 
 	device->version = readb(device->reg_base + IOAT_VER_OFFSET);

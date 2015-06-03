@@ -16,7 +16,6 @@
 #include <linux/fsnotify.h>
 #include <linux/quotaops.h>
 #include <linux/xattr.h>
-#include <linux/slab.h>
 #include "internal.h"
 
 static const char cachefiles_xattr_cache[] =

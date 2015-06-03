@@ -23,6 +23,7 @@
 #include <linux/delay.h>
 #include <linux/types.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 #include <linux/blkdev.h>
 #include <linux/proc_fs.h>
 #include <linux/stat.h>
@@ -33,6 +34,7 @@
 #include <asm/io.h>
 #include <asm/pgtable.h>
 #include <asm/prom.h>
+#include <asm/system.h>
 #include <asm/irq.h>
 #include <asm/hydra.h>
 #include <asm/processor.h>
@@ -414,7 +416,8 @@ static void mesh_start_cmd(struct mesh_state *ms, struct scsi_cmnd *cmd)
 #if 1
 	if (DEBUG_TARGET(cmd)) {
 		int i;
-		printk(KERN_DEBUG "mesh_start: %p tgt=%d cmd=", cmd, id);
+		printk(KERN_DEBUG "mesh_start: %p ser=%lu tgt=%d cmd=",
+		       cmd, cmd->serial_number, id);
 		for (i = 0; i < cmd->cmd_len; ++i)
 			printk(" %x", cmd->cmnd[i]);
 		printk(" use_sg=%d buffer=%p bufflen=%u\n",
@@ -1625,7 +1628,7 @@ static void cmd_complete(struct mesh_state *ms)
  * Called by midlayer with host locked to queue a new
  * request
  */
-static int mesh_queue_lck(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
+static int mesh_queue(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 {
 	struct mesh_state *ms;
 
@@ -1645,8 +1648,6 @@ static int mesh_queue_lck(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *
 
 	return 0;
 }
-
-static DEF_SCSI_QCMD(mesh_queue)
 
 /*
  * Called to handle interrupts, either call by the interrupt
@@ -2036,11 +2037,8 @@ MODULE_DEVICE_TABLE (of, mesh_match);
 
 static struct macio_driver mesh_driver = 
 {
-	.driver = {
-		.name 		= "mesh",
-		.owner		= THIS_MODULE,
-		.of_match_table	= mesh_match,
-	},
+	.name 		= "mesh",
+	.match_table	= mesh_match,
 	.probe		= mesh_probe,
 	.remove		= mesh_remove,
 	.shutdown	= mesh_shutdown,

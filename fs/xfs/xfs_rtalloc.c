@@ -25,10 +25,17 @@
 #include "xfs_sb.h"
 #include "xfs_ag.h"
 #include "xfs_dir2.h"
+#include "xfs_dmapi.h"
 #include "xfs_mount.h"
 #include "xfs_bmap_btree.h"
+#include "xfs_alloc_btree.h"
+#include "xfs_ialloc_btree.h"
+#include "xfs_dir2_sf.h"
+#include "xfs_attr_sf.h"
 #include "xfs_dinode.h"
 #include "xfs_inode.h"
+#include "xfs_btree.h"
+#include "xfs_ialloc.h"
 #include "xfs_alloc.h"
 #include "xfs_bmap.h"
 #include "xfs_rtalloc.h"
@@ -38,8 +45,6 @@
 #include "xfs_inode_item.h"
 #include "xfs_trans_space.h"
 #include "xfs_utils.h"
-#include "xfs_trace.h"
-#include "xfs_buf.h"
 
 
 /*
@@ -76,7 +81,7 @@ xfs_growfs_rt_alloc(
 	xfs_mount_t	*mp,		/* file system mount point */
 	xfs_extlen_t	oblocks,	/* old count of blocks */
 	xfs_extlen_t	nblocks,	/* new count of blocks */
-	xfs_inode_t	*ip)		/* inode (bitmap/summary) */
+	xfs_ino_t	ino)		/* inode number (bitmap/summary) */
 {
 	xfs_fileoff_t	bno;		/* block number in file */
 	xfs_buf_t	*bp;		/* temporary buffer for zeroing */
@@ -86,6 +91,7 @@ xfs_growfs_rt_alloc(
 	xfs_fsblock_t	firstblock;	/* first block allocated in xaction */
 	xfs_bmap_free_t	flist;		/* list of freed blocks */
 	xfs_fsblock_t	fsbno;		/* filesystem block for bno */
+	xfs_inode_t	*ip;		/* pointer to incore inode */
 	xfs_bmbt_irec_t	map;		/* block map output */
 	int		nmap;		/* number of block maps */
 	int		resblks;	/* space reservation */
@@ -111,18 +117,18 @@ xfs_growfs_rt_alloc(
 		/*
 		 * Lock the inode.
 		 */
-		xfs_ilock(ip, XFS_ILOCK_EXCL);
-		xfs_trans_ijoin(tp, ip, XFS_ILOCK_EXCL);
-
+		if ((error = xfs_trans_iget(mp, tp, ino, 0,
+						XFS_ILOCK_EXCL, &ip)))
+			goto error_cancel;
 		xfs_bmap_init(&flist, &firstblock);
 		/*
 		 * Allocate blocks to the bitmap file.
 		 */
 		nmap = 1;
 		cancelflags |= XFS_TRANS_ABORT;
-		error = xfs_bmapi_write(tp, ip, oblocks, nblocks - oblocks,
-					XFS_BMAPI_METADATA, &firstblock,
-					resblks, &map, &nmap, &flist);
+		error = xfs_bmapi(tp, ip, oblocks, nblocks - oblocks,
+			XFS_BMAPI_WRITE | XFS_BMAPI_METADATA, &firstblock,
+			resblks, &map, &nmap, &flist, NULL);
 		if (!error && nmap < 1)
 			error = XFS_ERROR(ENOSPC);
 		if (error)
@@ -154,8 +160,9 @@ xfs_growfs_rt_alloc(
 			/*
 			 * Lock the bitmap inode.
 			 */
-			xfs_ilock(ip, XFS_ILOCK_EXCL);
-			xfs_trans_ijoin(tp, ip, XFS_ILOCK_EXCL);
+			if ((error = xfs_trans_iget(mp, tp, ino, 0,
+							XFS_ILOCK_EXCL, &ip)))
+				goto error_cancel;
 			/*
 			 * Get a buffer for the block.
 			 */
@@ -168,7 +175,7 @@ error_cancel:
 				xfs_trans_cancel(tp, cancelflags);
 				goto error;
 			}
-			memset(bp->b_addr, 0, mp->m_sb.sb_blocksize);
+			memset(XFS_BUF_PTR(bp), 0, mp->m_sb.sb_blocksize);
 			xfs_trans_log_buf(tp, bp, 0, mp->m_sb.sb_blocksize - 1);
 			/*
 			 * Commit the transaction.
@@ -183,7 +190,6 @@ error_cancel:
 		oblocks = map.br_startoff + map.br_blockcount;
 	}
 	return 0;
-
 error:
 	return error;
 }
@@ -857,24 +863,34 @@ xfs_rtbuf_get(
 	xfs_buf_t	**bpp)		/* output: buffer for the block */
 {
 	xfs_buf_t	*bp;		/* block buffer, result */
-	xfs_inode_t	*ip;		/* bitmap or summary inode */
-	xfs_bmbt_irec_t	map;
-	int		nmap;
+	xfs_daddr_t	d;		/* disk addr of block */
 	int		error;		/* error value */
+	xfs_fsblock_t	fsb;		/* fs block number for block */
+	xfs_inode_t	*ip;		/* bitmap or summary inode */
 
 	ip = issum ? mp->m_rsumip : mp->m_rbmip;
-
-	error = xfs_bmapi_read(ip, block, 1, &map, &nmap, XFS_DATA_FORK);
-	if (error)
+	/*
+	 * Map from the file offset (block) and inode number to the
+	 * file system block.
+	 */
+	error = xfs_bmapi_single(tp, ip, XFS_DATA_FORK, &fsb, block);
+	if (error) {
 		return error;
-
-	ASSERT(map.br_startblock != NULLFSBLOCK);
-	error = xfs_trans_read_buf(mp, tp, mp->m_ddev_targp,
-				   XFS_FSB_TO_DADDR(mp, map.br_startblock),
+	}
+	ASSERT(fsb != NULLFSBLOCK);
+	/*
+	 * Convert to disk address for buffer cache.
+	 */
+	d = XFS_FSB_TO_DADDR(mp, fsb);
+	/*
+	 * Read the buffer.
+	 */
+	error = xfs_trans_read_buf(mp, tp, mp->m_ddev_targp, d,
 				   mp->m_bsize, 0, &bp);
-	if (error)
+	if (error) {
 		return error;
-	ASSERT(!xfs_buf_geterror(bp));
+	}
+	ASSERT(bp && !XFS_BUF_GETERROR(bp));
 	*bpp = bp;
 	return 0;
 }
@@ -934,7 +950,7 @@ xfs_rtcheck_range(
 	if (error) {
 		return error;
 	}
-	bufp = bp->b_addr;
+	bufp = (xfs_rtword_t *)XFS_BUF_PTR(bp);
 	/*
 	 * Compute the starting word's address, and starting bit.
 	 */
@@ -985,7 +1001,7 @@ xfs_rtcheck_range(
 			if (error) {
 				return error;
 			}
-			b = bufp = bp->b_addr;
+			b = bufp = (xfs_rtword_t *)XFS_BUF_PTR(bp);
 			word = 0;
 		} else {
 			/*
@@ -1031,7 +1047,7 @@ xfs_rtcheck_range(
 			if (error) {
 				return error;
 			}
-			b = bufp = bp->b_addr;
+			b = bufp = (xfs_rtword_t *)XFS_BUF_PTR(bp);
 			word = 0;
 		} else {
 			/*
@@ -1149,7 +1165,7 @@ xfs_rtfind_back(
 	if (error) {
 		return error;
 	}
-	bufp = bp->b_addr;
+	bufp = (xfs_rtword_t *)XFS_BUF_PTR(bp);
 	/*
 	 * Get the first word's index & point to it.
 	 */
@@ -1201,7 +1217,7 @@ xfs_rtfind_back(
 			if (error) {
 				return error;
 			}
-			bufp = bp->b_addr;
+			bufp = (xfs_rtword_t *)XFS_BUF_PTR(bp);
 			word = XFS_BLOCKWMASK(mp);
 			b = &bufp[word];
 		} else {
@@ -1247,7 +1263,7 @@ xfs_rtfind_back(
 			if (error) {
 				return error;
 			}
-			bufp = bp->b_addr;
+			bufp = (xfs_rtword_t *)XFS_BUF_PTR(bp);
 			word = XFS_BLOCKWMASK(mp);
 			b = &bufp[word];
 		} else {
@@ -1324,7 +1340,7 @@ xfs_rtfind_forw(
 	if (error) {
 		return error;
 	}
-	bufp = bp->b_addr;
+	bufp = (xfs_rtword_t *)XFS_BUF_PTR(bp);
 	/*
 	 * Get the first word's index & point to it.
 	 */
@@ -1375,7 +1391,7 @@ xfs_rtfind_forw(
 			if (error) {
 				return error;
 			}
-			b = bufp = bp->b_addr;
+			b = bufp = (xfs_rtword_t *)XFS_BUF_PTR(bp);
 			word = 0;
 		} else {
 			/*
@@ -1420,7 +1436,7 @@ xfs_rtfind_forw(
 			if (error) {
 				return error;
 			}
-			b = bufp = bp->b_addr;
+			b = bufp = (xfs_rtword_t *)XFS_BUF_PTR(bp);
 			word = 0;
 		} else {
 			/*
@@ -1500,8 +1516,6 @@ xfs_rtfree_range(
 	 */
 	error = xfs_rtfind_forw(mp, tp, end, mp->m_sb.sb_rextents - 1,
 		&postblock);
-	if (error)
-		return error;
 	/*
 	 * If there are blocks not being freed at the front of the
 	 * old extent, add summary data for them to be allocated.
@@ -1640,7 +1654,7 @@ xfs_rtmodify_range(
 	if (error) {
 		return error;
 	}
-	bufp = bp->b_addr;
+	bufp = (xfs_rtword_t *)XFS_BUF_PTR(bp);
 	/*
 	 * Compute the starting word's address, and starting bit.
 	 */
@@ -1685,7 +1699,7 @@ xfs_rtmodify_range(
 			if (error) {
 				return error;
 			}
-			first = b = bufp = bp->b_addr;
+			first = b = bufp = (xfs_rtword_t *)XFS_BUF_PTR(bp);
 			word = 0;
 		} else {
 			/*
@@ -1725,7 +1739,7 @@ xfs_rtmodify_range(
 			if (error) {
 				return error;
 			}
-			first = b = bufp = bp->b_addr;
+			first = b = bufp = (xfs_rtword_t *)XFS_BUF_PTR(bp);
 			word = 0;
 		} else {
 			/*
@@ -1823,8 +1837,8 @@ xfs_rtmodify_summary(
 	 */
 	sp = XFS_SUMPTR(mp, bp, so);
 	*sp += delta;
-	xfs_trans_log_buf(tp, bp, (uint)((char *)sp - (char *)bp->b_addr),
-		(uint)((char *)sp - (char *)bp->b_addr + sizeof(*sp) - 1));
+	xfs_trans_log_buf(tp, bp, (uint)((char *)sp - (char *)XFS_BUF_PTR(bp)),
+		(uint)((char *)sp - (char *)XFS_BUF_PTR(bp) + sizeof(*sp) - 1));
 	return 0;
 }
 
@@ -1843,6 +1857,7 @@ xfs_growfs_rt(
 	xfs_rtblock_t	bmbno;		/* bitmap block number */
 	xfs_buf_t	*bp;		/* temporary buffer */
 	int		error;		/* error return value */
+	xfs_inode_t	*ip;		/* bitmap inode, used as lock */
 	xfs_mount_t	*nmp;		/* new (fake) mount structure */
 	xfs_drfsbno_t	nrblocks;	/* new number of realtime blocks */
 	xfs_extlen_t	nrbmblocks;	/* new number of rt bitmap blocks */
@@ -1872,13 +1887,13 @@ xfs_growfs_rt(
 	/*
 	 * Read in the last block of the device, make sure it exists.
 	 */
-	bp = xfs_buf_read_uncached(mp, mp->m_rtdev_targp,
-				XFS_FSB_TO_BB(mp, nrblocks - 1),
-				XFS_FSB_TO_B(mp, 1), 0);
-	if (!bp)
-		return EIO;
+	error = xfs_read_buf(mp, mp->m_rtdev_targp,
+			XFS_FSB_TO_BB(mp, nrblocks - 1),
+			XFS_FSB_TO_BB(mp, 1), 0, &bp);
+	if (error)
+		return error;
+	ASSERT(bp);
 	xfs_buf_relse(bp);
-
 	/*
 	 * Calculate new parameters.  These are the final values to be reached.
 	 */
@@ -1906,11 +1921,11 @@ xfs_growfs_rt(
 	/*
 	 * Allocate space to the bitmap and summary files, as necessary.
 	 */
-	error = xfs_growfs_rt_alloc(mp, rbmblocks, nrbmblocks, mp->m_rbmip);
-	if (error)
+	if ((error = xfs_growfs_rt_alloc(mp, rbmblocks, nrbmblocks,
+			mp->m_sb.sb_rbmino)))
 		return error;
-	error = xfs_growfs_rt_alloc(mp, rsumblocks, nrsumblocks, mp->m_rsumip);
-	if (error)
+	if ((error = xfs_growfs_rt_alloc(mp, rsumblocks, nrsumblocks,
+			mp->m_sb.sb_rsumino)))
 		return error;
 	/*
 	 * Allocate a new (fake) mount/sb.
@@ -1960,8 +1975,10 @@ xfs_growfs_rt(
 		/*
 		 * Lock out other callers by grabbing the bitmap inode lock.
 		 */
-		xfs_ilock(mp->m_rbmip, XFS_ILOCK_EXCL);
-		xfs_trans_ijoin(tp, mp->m_rbmip, XFS_ILOCK_EXCL);
+		if ((error = xfs_trans_iget(mp, tp, mp->m_sb.sb_rbmino, 0,
+						XFS_ILOCK_EXCL, &ip)))
+			goto error_cancel;
+		ASSERT(ip == mp->m_rbmip);
 		/*
 		 * Update the bitmap inode's size.
 		 */
@@ -1972,8 +1989,10 @@ xfs_growfs_rt(
 		/*
 		 * Get the summary inode into the transaction.
 		 */
-		xfs_ilock(mp->m_rsumip, XFS_ILOCK_EXCL);
-		xfs_trans_ijoin(tp, mp->m_rsumip, XFS_ILOCK_EXCL);
+		if ((error = xfs_trans_iget(mp, tp, mp->m_sb.sb_rsumino, 0,
+						XFS_ILOCK_EXCL, &ip)))
+			goto error_cancel;
+		ASSERT(ip == mp->m_rsumip);
 		/*
 		 * Update the summary inode's size.
 		 */
@@ -2059,15 +2078,15 @@ xfs_rtallocate_extent(
 	xfs_extlen_t	prod,		/* extent product factor */
 	xfs_rtblock_t	*rtblock)	/* out: start block allocated */
 {
-	xfs_mount_t	*mp = tp->t_mountp;
 	int		error;		/* error value */
+	xfs_inode_t	*ip;		/* inode for bitmap file */
+	xfs_mount_t	*mp;		/* file system mount structure */
 	xfs_rtblock_t	r;		/* result allocated block */
 	xfs_fsblock_t	sb;		/* summary file block number */
 	xfs_buf_t	*sumbp;		/* summary file block buffer */
 
-	ASSERT(xfs_isilocked(mp->m_rbmip, XFS_ILOCK_EXCL));
 	ASSERT(minlen > 0 && minlen <= maxlen);
-
+	mp = tp->t_mountp;
 	/*
 	 * If prod is set then figure out what to do to minlen and maxlen.
 	 */
@@ -2083,7 +2102,12 @@ xfs_rtallocate_extent(
 			return 0;
 		}
 	}
-
+	/*
+	 * Lock out other callers by grabbing the bitmap inode lock.
+	 */
+	if ((error = xfs_trans_iget(mp, tp, mp->m_sb.sb_rbmino, 0,
+					XFS_ILOCK_EXCL, &ip)))
+		return error;
 	sumbp = NULL;
 	/*
 	 * Allocate by size, or near another block, or exactly at some block.
@@ -2102,12 +2126,11 @@ xfs_rtallocate_extent(
 				len, &sumbp, &sb, prod, &r);
 		break;
 	default:
-		error = EIO;
 		ASSERT(0);
 	}
-	if (error)
+	if (error) {
 		return error;
-
+	}
 	/*
 	 * If it worked, update the superblock.
 	 */
@@ -2135,15 +2158,18 @@ xfs_rtfree_extent(
 	xfs_extlen_t	len)		/* length of extent freed */
 {
 	int		error;		/* error value */
+	xfs_inode_t	*ip;		/* bitmap file inode */
 	xfs_mount_t	*mp;		/* file system mount structure */
 	xfs_fsblock_t	sb;		/* summary file block number */
 	xfs_buf_t	*sumbp;		/* summary file block buffer */
 
 	mp = tp->t_mountp;
-
-	ASSERT(mp->m_rbmip->i_itemp != NULL);
-	ASSERT(xfs_isilocked(mp->m_rbmip, XFS_ILOCK_EXCL));
-
+	/*
+	 * Synchronize by locking the bitmap inode.
+	 */
+	if ((error = xfs_trans_iget(mp, tp, mp->m_sb.sb_rbmino, 0,
+					XFS_ILOCK_EXCL, &ip)))
+		return error;
 #if defined(__KERNEL__) && defined(DEBUG)
 	/*
 	 * Check to see that this whole range is currently allocated.
@@ -2176,10 +2202,10 @@ xfs_rtfree_extent(
 	 */
 	if (tp->t_frextents_delta + mp->m_sb.sb_frextents ==
 	    mp->m_sb.sb_rextents) {
-		if (!(mp->m_rbmip->i_d.di_flags & XFS_DIFLAG_NEWRTBM))
-			mp->m_rbmip->i_d.di_flags |= XFS_DIFLAG_NEWRTBM;
-		*(__uint64_t *)&mp->m_rbmip->i_d.di_atime = 0;
-		xfs_trans_log_inode(tp, mp->m_rbmip, XFS_ILOG_CORE);
+		if (!(ip->i_d.di_flags & XFS_DIFLAG_NEWRTBM))
+			ip->i_d.di_flags |= XFS_DIFLAG_NEWRTBM;
+		*(__uint64_t *)&ip->i_d.di_atime = 0;
+		xfs_trans_log_inode(tp, ip, XFS_ILOG_CORE);
 	}
 	return 0;
 }
@@ -2193,14 +2219,15 @@ xfs_rtmount_init(
 {
 	xfs_buf_t	*bp;	/* buffer for last block of subvolume */
 	xfs_daddr_t	d;	/* address of last block of subvolume */
+	int		error;	/* error return value */
 	xfs_sb_t	*sbp;	/* filesystem superblock copy in mount */
 
 	sbp = &mp->m_sb;
 	if (sbp->sb_rblocks == 0)
 		return 0;
 	if (mp->m_rtdev_targp == NULL) {
-		xfs_warn(mp,
-	"Filesystem has a realtime volume, use rtdev=device option");
+		cmn_err(CE_WARN,
+	"XFS: This filesystem has a realtime volume, use rtdev=device option");
 		return XFS_ERROR(ENODEV);
 	}
 	mp->m_rsumlevels = sbp->sb_rextslog + 1;
@@ -2214,17 +2241,20 @@ xfs_rtmount_init(
 	 */
 	d = (xfs_daddr_t)XFS_FSB_TO_BB(mp, mp->m_sb.sb_rblocks);
 	if (XFS_BB_TO_FSB(mp, d) != mp->m_sb.sb_rblocks) {
-		xfs_warn(mp, "realtime mount -- %llu != %llu",
+		cmn_err(CE_WARN, "XFS: realtime mount -- %llu != %llu",
 			(unsigned long long) XFS_BB_TO_FSB(mp, d),
 			(unsigned long long) mp->m_sb.sb_rblocks);
-		return XFS_ERROR(EFBIG);
+		return XFS_ERROR(E2BIG);
 	}
-	bp = xfs_buf_read_uncached(mp, mp->m_rtdev_targp,
-					d - XFS_FSB_TO_BB(mp, 1),
-					XFS_FSB_TO_B(mp, 1), 0);
-	if (!bp) {
-		xfs_warn(mp, "realtime device size check failed");
-		return EIO;
+	error = xfs_read_buf(mp, mp->m_rtdev_targp,
+				d - XFS_FSB_TO_BB(mp, 1),
+				XFS_FSB_TO_BB(mp, 1), 0, &bp);
+	if (error) {
+		cmn_err(CE_WARN,
+	"XFS: realtime mount -- xfs_read_buf failed, returned %d", error);
+		if (error == ENOSPC)
+			return XFS_ERROR(E2BIG);
+		return error;
 	}
 	xfs_buf_relse(bp);
 	return 0;
@@ -2283,16 +2313,20 @@ xfs_rtpick_extent(
 	xfs_rtblock_t	*pick)		/* result rt extent */
 {
 	xfs_rtblock_t	b;		/* result block */
+	int		error;		/* error return value */
+	xfs_inode_t	*ip;		/* bitmap incore inode */
 	int		log2;		/* log of sequence number */
 	__uint64_t	resid;		/* residual after log removed */
 	__uint64_t	seq;		/* sequence number of file creation */
 	__uint64_t	*seqp;		/* pointer to seqno in inode */
 
-	ASSERT(xfs_isilocked(mp->m_rbmip, XFS_ILOCK_EXCL));
-
-	seqp = (__uint64_t *)&mp->m_rbmip->i_d.di_atime;
-	if (!(mp->m_rbmip->i_d.di_flags & XFS_DIFLAG_NEWRTBM)) {
-		mp->m_rbmip->i_d.di_flags |= XFS_DIFLAG_NEWRTBM;
+	if ((error = xfs_trans_iget(mp, tp, mp->m_sb.sb_rbmino, 0,
+					XFS_ILOCK_EXCL, &ip)))
+		return error;
+	ASSERT(ip == mp->m_rbmip);
+	seqp = (__uint64_t *)&ip->i_d.di_atime;
+	if (!(ip->i_d.di_flags & XFS_DIFLAG_NEWRTBM)) {
+		ip->i_d.di_flags |= XFS_DIFLAG_NEWRTBM;
 		*seqp = 0;
 	}
 	seq = *seqp;
@@ -2308,7 +2342,7 @@ xfs_rtpick_extent(
 			b = mp->m_sb.sb_rextents - len;
 	}
 	*seqp = seq + 1;
-	xfs_trans_log_inode(tp, mp->m_rbmip, XFS_ILOG_CORE);
+	xfs_trans_log_inode(tp, ip, XFS_ILOG_CORE);
 	*pick = b;
 	return 0;
 }

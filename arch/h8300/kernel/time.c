@@ -35,11 +35,13 @@ void h8300_timer_tick(void)
 {
 	if (current->pid)
 		profile_tick(CPU_PROFILING);
-	xtime_update(1);
+	write_seqlock(&xtime_lock);
+	do_timer(1);
+	write_sequnlock(&xtime_lock);
 	update_process_times(user_mode(get_irq_regs()));
 }
 
-void read_persistent_clock(struct timespec *ts)
+void __init time_init(void)
 {
 	unsigned int year, mon, day, hour, min, sec;
 
@@ -54,12 +56,8 @@ void read_persistent_clock(struct timespec *ts)
 #endif
 	if ((year += 1900) < 1970)
 		year += 100;
-	ts->tv_sec = mktime(year, mon, day, hour, min, sec);
-	ts->tv_nsec = 0;
-}
-
-void __init time_init(void)
-{
+	xtime.tv_sec = mktime(year, mon, day, hour, min, sec);
+	xtime.tv_nsec = 0;
 
 	h8300_timer_setup();
 }

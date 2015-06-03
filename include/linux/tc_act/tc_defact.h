@@ -3,11 +3,13 @@
 
 #include <linux/pkt_cls.h>
 
-struct tc_defact {
+struct tc_defact
+{
 	tc_gen;
 };
                                                                                 
-enum {
+enum
+{
 	TCA_DEF_UNSPEC,
 	TCA_DEF_TM,
 	TCA_DEF_PARMS,

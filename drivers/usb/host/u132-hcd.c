@@ -49,13 +49,14 @@
 #include <linux/list.h>
 #include <linux/interrupt.h>
 #include <linux/usb.h>
-#include <linux/usb/hcd.h>
 #include <linux/workqueue.h>
 #include <linux/platform_device.h>
 #include <linux/mutex.h>
 #include <asm/io.h>
 #include <asm/irq.h>
+#include <asm/system.h>
 #include <asm/byteorder.h>
+#include "../core/hcd.h"
 
 	/* FIXME ohci.h is ONLY for internal use by the OHCI driver.
 	 * If you're going to try stuff like this, you need to split
@@ -73,7 +74,7 @@ MODULE_LICENSE("GPL");
 #define INT_MODULE_PARM(n, v) static int n = v;module_param(n, int, 0444)
 INT_MODULE_PARM(testing, 0);
 /* Some boards misreport power switching/overcurrent*/
-static bool distrust_firmware = 1;
+static int distrust_firmware = 1;
 module_param(distrust_firmware, bool, 0);
 MODULE_PARM_DESC(distrust_firmware, "true to distrust firmware power/overcurren"
 	"t setup");
@@ -315,6 +316,7 @@ static void u132_ring_requeue_work(struct u132 *u132, struct u132_ring *ring,
 	} else if (queue_delayed_work(workqueue, &ring->scheduler, 0))
 		return;
 	kref_put(&u132->kref, u132_hcd_delete);
+	return;
 }
 
 static void u132_ring_queue_work(struct u132 *u132, struct u132_ring *ring,
@@ -322,6 +324,7 @@ static void u132_ring_queue_work(struct u132 *u132, struct u132_ring *ring,
 {
 	kref_get(&u132->kref);
 	u132_ring_requeue_work(u132, ring, delta);
+	return;
 }
 
 static void u132_ring_cancel_work(struct u132 *u132, struct u132_ring *ring)
@@ -540,6 +543,7 @@ static void u132_hcd_giveback_urb(struct u132 *u132, struct u132_endp *endp,
 	mutex_unlock(&u132->scheduler_lock);
 	u132_endp_put_kref(u132, endp);
 	usb_hcd_giveback_urb(hcd, urb, status);
+	return;
 }
 
 static void u132_hcd_forget_urb(struct u132 *u132, struct u132_endp *endp,
@@ -570,8 +574,8 @@ static void u132_hcd_abandon_urb(struct u132 *u132, struct u132_endp *endp,
 		endp->active = 0;
 		spin_unlock_irqrestore(&endp->queue_lock.slock, irqs);
 		kfree(urbq);
-	}
-	usb_hcd_giveback_urb(hcd, urb, status);
+	} usb_hcd_giveback_urb(hcd, urb, status);
+	return;
 }
 
 static inline int edset_input(struct u132 *u132, struct u132_ring *ring,
@@ -1442,9 +1446,9 @@ static void u132_hcd_endp_work_scheduler(struct work_struct *work)
 			return;
 		} else {
 			int retval;
+			u8 address = u132->addr[endp->usb_addr].address;
 			struct urb *urb = endp->urb_list[ENDP_QUEUE_MASK &
 				endp->queue_next];
-			address = u132->addr[endp->usb_addr].address;
 			endp->active = 1;
 			ring->curr_endp = endp;
 			ring->in_use = 1;
@@ -2603,14 +2607,13 @@ static int u132_roothub_descriptor(struct u132 *u132,
 	retval = u132_read_pcimem(u132, roothub.b, &rh_b);
 	if (retval)
 		return retval;
-	memset(desc->u.hs.DeviceRemovable, 0xff,
-			sizeof(desc->u.hs.DeviceRemovable));
-	desc->u.hs.DeviceRemovable[0] = rh_b & RH_B_DR;
+	memset(desc->bitmap, 0xff, sizeof(desc->bitmap));
+	desc->bitmap[0] = rh_b & RH_B_DR;
 	if (u132->num_ports > 7) {
-		desc->u.hs.DeviceRemovable[1] = (rh_b & RH_B_DR) >> 8;
-		desc->u.hs.DeviceRemovable[2] = 0xff;
+		desc->bitmap[1] = (rh_b & RH_B_DR) >> 8;
+		desc->bitmap[2] = 0xff;
 	} else
-		desc->u.hs.DeviceRemovable[1] = 0xff;
+		desc->bitmap[1] = 0xff;
 	return 0;
 }
 
@@ -3082,6 +3085,7 @@ static void u132_initialise(struct u132 *u132, struct platform_device *pdev)
 		u132->endp[endps] = NULL;
 
 	mutex_unlock(&u132->sw_lock);
+	return;
 }
 
 static int __devinit u132_probe(struct platform_device *pdev)
@@ -3116,8 +3120,8 @@ static int __devinit u132_probe(struct platform_device *pdev)
 		ftdi_elan_gone_away(pdev);
 		return -ENOMEM;
 	} else {
+		int retval = 0;
 		struct u132 *u132 = hcd_to_u132(hcd);
-		retval = 0;
 		hcd->rsrc_start = 0;
 		mutex_lock(&u132_module_lock);
 		list_add_tail(&u132->u132_list, &u132_static_list);
@@ -3229,7 +3233,8 @@ static int __init u132_hcd_init(void)
 	mutex_init(&u132_module_lock);
 	if (usb_disabled())
 		return -ENODEV;
-	printk(KERN_INFO "driver %s\n", hcd_name);
+	printk(KERN_INFO "driver %s built at %s on %s\n", hcd_name, __TIME__,
+		__DATE__);
 	workqueue = create_singlethread_workqueue("u132");
 	retval = platform_driver_register(&u132_platform_driver);
 	return retval;

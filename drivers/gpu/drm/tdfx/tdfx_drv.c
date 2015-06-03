@@ -30,8 +30,6 @@
  *    Gareth Hughes <gareth@valinux.com>
  */
 
-#include <linux/module.h>
-
 #include "drmP.h"
 #include "tdfx_drv.h"
 
@@ -41,21 +39,25 @@ static struct pci_device_id pciidlist[] = {
 	tdfx_PCI_IDS
 };
 
-static const struct file_operations tdfx_driver_fops = {
-	.owner = THIS_MODULE,
-	.open = drm_open,
-	.release = drm_release,
-	.unlocked_ioctl = drm_ioctl,
-	.mmap = drm_mmap,
-	.poll = drm_poll,
-	.fasync = drm_fasync,
-	.llseek = noop_llseek,
-};
-
 static struct drm_driver driver = {
 	.driver_features = DRIVER_USE_MTRR,
 	.reclaim_buffers = drm_core_reclaim_buffers,
-	.fops = &tdfx_driver_fops,
+	.get_map_ofs = drm_core_get_map_ofs,
+	.get_reg_ofs = drm_core_get_reg_ofs,
+	.fops = {
+		 .owner = THIS_MODULE,
+		 .open = drm_open,
+		 .release = drm_release,
+		 .ioctl = drm_ioctl,
+		 .mmap = drm_mmap,
+		 .poll = drm_poll,
+		 .fasync = drm_fasync,
+	},
+	.pci_driver = {
+		 .name = DRIVER_NAME,
+		 .id_table = pciidlist,
+	},
+
 	.name = DRIVER_NAME,
 	.desc = DRIVER_DESC,
 	.date = DRIVER_DATE,
@@ -64,19 +66,14 @@ static struct drm_driver driver = {
 	.patchlevel = DRIVER_PATCHLEVEL,
 };
 
-static struct pci_driver tdfx_pci_driver = {
-	.name = DRIVER_NAME,
-	.id_table = pciidlist,
-};
-
 static int __init tdfx_init(void)
 {
-	return drm_pci_init(&driver, &tdfx_pci_driver);
+	return drm_init(&driver);
 }
 
 static void __exit tdfx_exit(void)
 {
-	drm_pci_exit(&driver, &tdfx_pci_driver);
+	drm_exit(&driver);
 }
 
 module_init(tdfx_init);

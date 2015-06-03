@@ -5,7 +5,6 @@
 
 #include "fsm.h"
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/timer.h>
 
 MODULE_AUTHOR("(C) 2000 IBM Corp. by Fritz Elfert (felfert@millenux.com)");
@@ -28,7 +27,6 @@ init_fsm(char *name, const char **state_names, const char **event_names, int nr_
 		return NULL;
 	}
 	strlcpy(this->name, name, sizeof(this->name));
-	init_waitqueue_head(&this->wait_q);
 
 	f = kzalloc(sizeof(fsm), order);
 	if (f == NULL) {

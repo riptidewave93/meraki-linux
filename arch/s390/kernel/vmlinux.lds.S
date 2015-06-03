@@ -8,13 +8,13 @@
 
 #ifndef CONFIG_64BIT
 OUTPUT_FORMAT("elf32-s390", "elf32-s390", "elf32-s390")
-OUTPUT_ARCH(s390:31-bit)
-ENTRY(startup)
+OUTPUT_ARCH(s390)
+ENTRY(_start)
 jiffies = jiffies_64 + 4;
 #else
 OUTPUT_FORMAT("elf64-s390", "elf64-s390", "elf64-s390")
 OUTPUT_ARCH(s390:64-bit)
-ENTRY(startup)
+ENTRY(_start)
 jiffies = jiffies_64;
 #endif
 
@@ -42,8 +42,6 @@ SECTIONS
 	_etext = .;		/* End of text section */
 
 	NOTES :text :note
-
-	.dummy : { *(.dummy) } :data
 
 	RODATA
 
@@ -79,7 +77,7 @@ SECTIONS
 	. = ALIGN(PAGE_SIZE);
 	INIT_DATA_SECTION(0x100)
 
-	PERCPU_SECTION(0x100)
+	PERCPU(PAGE_SIZE)
 	. = ALIGN(PAGE_SIZE);
 	__init_end = .;		/* freed after init ends here */
 

@@ -35,7 +35,7 @@
  *
  * On 32-bit CPUs an optimized representation of the timespec structure
  * is used to avoid expensive conversions from and to timespecs. The
- * endian-aware order of the tv struct members is chosen to allow
+ * endian-aware order of the tv struct members is choosen to allow
  * mathematical operations on the tv64 member of the union too, which
  * for certain operations produces better code.
  *
@@ -123,7 +123,7 @@ static inline ktime_t timeval_to_ktime(struct timeval tv)
 /* Convert ktime_t to nanoseconds - NOP in the scalar storage format: */
 #define ktime_to_ns(kt)			((kt).tv64)
 
-#else	/* !((BITS_PER_LONG == 64) || defined(CONFIG_KTIME_SCALAR)) */
+#else
 
 /*
  * Helper macros/inlines to get the ktime_t math right in the timespec
@@ -143,7 +143,10 @@ static inline ktime_t timeval_to_ktime(struct timeval tv)
 /* Set a ktime_t variable to a value in sec/nsec representation: */
 static inline ktime_t ktime_set(const long secs, const unsigned long nsecs)
 {
-	return (ktime_t) { .tv = { .sec = secs, .nsec = nsecs } };
+	ktime_t res;
+	res.tv.sec = secs;
+	res.tv.nsec = nsecs;
+	return res;
 }
 
 /**
@@ -151,7 +154,7 @@ static inline ktime_t ktime_set(const long secs, const unsigned long nsecs)
  * @lhs:	minuend
  * @rhs:	subtrahend
  *
- * Returns the remainder of the subtraction
+ * Returns the remainder of the substraction
  */
 static inline ktime_t ktime_sub(const ktime_t lhs, const ktime_t rhs)
 {
@@ -216,8 +219,10 @@ extern ktime_t ktime_sub_ns(const ktime_t kt, u64 nsec);
  */
 static inline ktime_t timespec_to_ktime(const struct timespec ts)
 {
-	return (ktime_t) { .tv = { .sec = (s32)ts.tv_sec,
-			   	   .nsec = (s32)ts.tv_nsec } };
+	ktime_t res;
+	res.tv.sec = (s32)ts.tv_sec;
+	res.tv.nsec = (s32)ts.tv_nsec;
+	return res;
 }
 
 /**
@@ -228,8 +233,10 @@ static inline ktime_t timespec_to_ktime(const struct timespec ts)
  */
 static inline ktime_t timeval_to_ktime(const struct timeval tv)
 {
-	return (ktime_t) { .tv = { .sec = (s32)tv.tv_sec,
-				   .nsec = (s32)tv.tv_usec * 1000 } };
+	ktime_t res;
+	res.tv.sec = (s32)tv.tv_sec;
+	res.tv.nsec = (s32)tv.tv_usec * 1000;
+	return res;
 }
 
 /**
@@ -268,7 +275,7 @@ static inline s64 ktime_to_ns(const ktime_t kt)
 	return (s64) kt.tv.sec * NSEC_PER_SEC + kt.tv.nsec;
 }
 
-#endif	/* !((BITS_PER_LONG == 64) || defined(CONFIG_KTIME_SCALAR)) */
+#endif
 
 /**
  * ktime_equal - Compares two ktime_t variables to see if they are equal
@@ -286,12 +293,6 @@ static inline s64 ktime_to_us(const ktime_t kt)
 {
 	struct timeval tv = ktime_to_timeval(kt);
 	return (s64) tv.tv_sec * USEC_PER_SEC + tv.tv_usec;
-}
-
-static inline s64 ktime_to_ms(const ktime_t kt)
-{
-	struct timeval tv = ktime_to_timeval(kt);
-	return (s64) tv.tv_sec * MSEC_PER_SEC + tv.tv_usec / USEC_PER_MSEC;
 }
 
 static inline s64 ktime_us_delta(const ktime_t later, const ktime_t earlier)

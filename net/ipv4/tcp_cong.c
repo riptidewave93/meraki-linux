@@ -6,13 +6,10 @@
  * Copyright (C) 2005 Stephen Hemminger <shemminger@osdl.org>
  */
 
-#define pr_fmt(fmt) "TCP: " fmt
-
 #include <linux/module.h>
 #include <linux/mm.h>
 #include <linux/types.h>
 #include <linux/list.h>
-#include <linux/gfp.h>
 #include <net/tcp.h>
 
 int sysctl_tcp_max_ssthresh = 0;
@@ -43,17 +40,18 @@ int tcp_register_congestion_control(struct tcp_congestion_ops *ca)
 
 	/* all algorithms must implement ssthresh and cong_avoid ops */
 	if (!ca->ssthresh || !ca->cong_avoid) {
-		pr_err("%s does not implement required ops\n", ca->name);
+		printk(KERN_ERR "TCP %s does not implement required ops\n",
+		       ca->name);
 		return -EINVAL;
 	}
 
 	spin_lock(&tcp_cong_list_lock);
 	if (tcp_ca_find(ca->name)) {
-		pr_notice("%s already registered\n", ca->name);
+		printk(KERN_NOTICE "TCP %s already registered\n", ca->name);
 		ret = -EEXIST;
 	} else {
 		list_add_tail_rcu(&ca->list, &tcp_cong_list);
-		pr_info("%s registered\n", ca->name);
+		printk(KERN_INFO "TCP %s registered\n", ca->name);
 	}
 	spin_unlock(&tcp_cong_list_lock);
 
@@ -197,10 +195,10 @@ void tcp_get_allowed_congestion_control(char *buf, size_t maxlen)
 int tcp_set_allowed_congestion_control(char *val)
 {
 	struct tcp_congestion_ops *ca;
-	char *saved_clone, *clone, *name;
+	char *clone, *name;
 	int ret = 0;
 
-	saved_clone = clone = kstrdup(val, GFP_USER);
+	clone = kstrdup(val, GFP_USER);
 	if (!clone)
 		return -ENOMEM;
 
@@ -227,7 +225,6 @@ int tcp_set_allowed_congestion_control(char *val)
 	}
 out:
 	spin_unlock(&tcp_cong_list_lock);
-	kfree(saved_clone);
 
 	return ret;
 }
@@ -291,10 +288,9 @@ int tcp_is_cwnd_limited(const struct sock *sk, u32 in_flight)
 	left = tp->snd_cwnd - in_flight;
 	if (sk_can_gso(sk) &&
 	    left * sysctl_tcp_tso_win_divisor < tp->snd_cwnd &&
-	    left * tp->mss_cache < sk->sk_gso_max_size &&
-	    left < sk->sk_gso_max_segs)
+	    left * tp->mss_cache < sk->sk_gso_max_size)
 		return 1;
-	return left <= tcp_max_tso_deferred_mss(tp);
+	return left <= tcp_max_burst(tp);
 }
 EXPORT_SYMBOL_GPL(tcp_is_cwnd_limited);
 

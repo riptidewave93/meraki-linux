@@ -67,7 +67,7 @@
 #include <linux/i2c.h>
 #include <linux/init.h>
 #include <linux/acpi.h>
-#include <linux/io.h>
+#include <asm/io.h>
 
 /* ALI15X3 SMBus address offsets */
 #define SMBHSTSTS	(0 + ali15x3_smba)
@@ -131,7 +131,7 @@ MODULE_PARM_DESC(force_addr,
 static struct pci_driver ali15x3_driver;
 static unsigned short ali15x3_smba;
 
-static int __devinit ali15x3_setup(struct pci_dev *ALI15X3_dev)
+static int ali15x3_setup(struct pci_dev *ALI15X3_dev)
 {
 	u16 a;
 	unsigned char temp;
@@ -318,7 +318,7 @@ static int ali15x3_transaction(struct i2c_adapter *adap)
 
 	/*
 	  Unfortunately the ALI SMB controller maps "no response" and "bus
-	  collision" into a single bit. No response is the usual case so don't
+	  collision" into a single bit. No reponse is the usual case so don't
 	  do a printk.
 	  This means that bus collisions go unreported.
 	*/
@@ -477,7 +477,7 @@ static struct i2c_adapter ali15x3_adapter = {
 	.algo		= &smbus_algorithm,
 };
 
-static DEFINE_PCI_DEVICE_TABLE(ali15x3_ids) = {
+static struct pci_device_id ali15x3_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_AL, PCI_DEVICE_ID_AL_M7101) },
 	{ 0, }
 };

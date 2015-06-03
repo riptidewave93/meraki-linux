@@ -4,6 +4,7 @@
 /*
  * MIPS floating point support
  * Copyright (C) 1994-2000 Algorithmics Ltd.
+ * http://www.algor.co.uk
  *
  * ########################################################################
  *
@@ -109,7 +110,7 @@ ieee754dp ieee754dp_sub(ieee754dp x, ieee754dp y)
 
 	case CLPAIR(IEEE754_CLASS_DNORM, IEEE754_CLASS_DNORM):
 		DPDNORMX;
-		/* FALL THROUGH */
+		/* FAAL THOROUGH */
 
 	case CLPAIR(IEEE754_CLASS_NORM, IEEE754_CLASS_DNORM):
 		/* normalize ym,ye */

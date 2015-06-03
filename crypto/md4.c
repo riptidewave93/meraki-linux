@@ -23,7 +23,6 @@
 #include <crypto/internal/hash.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/string.h>
 #include <linux/types.h>
 #include <asm/byteorder.h>

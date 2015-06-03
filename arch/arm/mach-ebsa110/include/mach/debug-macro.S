@@ -11,10 +11,9 @@
  *
 **/
 
-		.macro	addruart, rp, rv, tmp
-		mov	\rp, #0xf0000000
-		orr	\rp, \rp, #0x00000be0
-		mov	\rp, \rv
+		.macro	addruart,rx
+		mov	\rx, #0xf0000000
+		orr	\rx, \rx, #0x00000be0
 		.endm
 
 #define UART_SHIFT	2

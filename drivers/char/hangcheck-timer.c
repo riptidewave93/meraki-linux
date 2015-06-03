@@ -49,9 +49,8 @@
 #include <asm/uaccess.h>
 #include <linux/sysrq.h>
 #include <linux/timer.h>
-#include <linux/time.h>
 
-#define VERSION_STR "0.9.1"
+#define VERSION_STR "0.9.0"
 
 #define DEFAULT_IOFENCE_MARGIN 60	/* Default fudge factor, in seconds */
 #define DEFAULT_IOFENCE_TICK 180	/* Default timer timeout, in seconds */
@@ -120,8 +119,10 @@ __setup("hcheck_dump_tasks", hangcheck_parse_dump_tasks);
 #if defined(CONFIG_S390)
 # define HAVE_MONOTONIC
 # define TIMER_FREQ 1000000000ULL
+#elif defined(CONFIG_IA64)
+# define TIMER_FREQ ((unsigned long long)local_cpu_data->itc_freq)
 #else
-# define TIMER_FREQ 1000000000ULL
+# define TIMER_FREQ (HZ*loops_per_jiffy)
 #endif
 
 #ifdef HAVE_MONOTONIC
@@ -129,9 +130,7 @@ extern unsigned long long monotonic_clock(void);
 #else
 static inline unsigned long long monotonic_clock(void)
 {
-	struct timespec ts;
-	getrawmonotonic(&ts);
-	return timespec_to_ns(&ts);
+	return get_cycles();
 }
 #endif  /* HAVE_MONOTONIC */
 
@@ -159,7 +158,7 @@ static void hangcheck_fire(unsigned long data)
 		if (hangcheck_dump_tasks) {
 			printk(KERN_CRIT "Hangcheck: Task state:\n");
 #ifdef CONFIG_MAGIC_SYSRQ
-			handle_sysrq('t');
+			handle_sysrq('t', NULL);
 #endif  /* CONFIG_MAGIC_SYSRQ */
 		}
 		if (hangcheck_reboot) {
@@ -169,13 +168,6 @@ static void hangcheck_fire(unsigned long data)
 			printk(KERN_CRIT "Hangcheck: hangcheck value past margin!\n");
 		}
 	}
-#if 0
-	/*
-	 * Enable to investigate delays in detail
-	 */
-	printk("Hangcheck: called %Ld ns since last time (%Ld ns overshoot)\n",
-			tsc_diff, tsc_diff - hangcheck_tick*TIMER_FREQ);
-#endif
 	mod_timer(&hangcheck_ticktock, jiffies + (hangcheck_tick*HZ));
 	hangcheck_tsc = monotonic_clock();
 }
@@ -188,7 +180,7 @@ static int __init hangcheck_init(void)
 #if defined (HAVE_MONOTONIC)
 	printk("Hangcheck: Using monotonic_clock().\n");
 #else
-	printk("Hangcheck: Using getrawmonotonic().\n");
+	printk("Hangcheck: Using get_cycles().\n");
 #endif  /* HAVE_MONOTONIC */
 	hangcheck_tsc_margin =
 		(unsigned long long)(hangcheck_margin + hangcheck_tick);

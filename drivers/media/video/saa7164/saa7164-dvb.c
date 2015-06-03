@@ -1,7 +1,7 @@
 /*
  *  Driver for the NXP SAA7164 PCIe bridge
  *
- *  Copyright (c) 2010 Steven Toth <stoth@kernellabs.com>
+ *  Copyright (c) 2009 Steven Toth <stoth@kernellabs.com>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -68,7 +68,6 @@ static struct tda18271_config hauppauge_hvr22x0s_tuner_config = {
 	.std_map	= &hauppauge_tda18271_std_map,
 	.gate		= TDA18271_GATE_ANALOG,
 	.role		= TDA18271_SLAVE,
-	.output_opt     = TDA18271_OUTPUT_LT_OFF,
 	.rf_cal_on_startup = 1
 };
 
@@ -82,7 +81,7 @@ static struct s5h1411_config hauppauge_s5h1411_config = {
 	.mpeg_timing   = S5H1411_MPEGTIMING_CONTINOUS_NONINVERTING_CLOCK,
 };
 
-static int saa7164_dvb_stop_port(struct saa7164_port *port)
+static int saa7164_dvb_stop_tsport(struct saa7164_tsport *port)
 {
 	struct saa7164_dev *dev = port->dev;
 	int ret;
@@ -100,7 +99,7 @@ static int saa7164_dvb_stop_port(struct saa7164_port *port)
 	return ret;
 }
 
-static int saa7164_dvb_acquire_port(struct saa7164_port *port)
+static int saa7164_dvb_acquire_tsport(struct saa7164_tsport *port)
 {
 	struct saa7164_dev *dev = port->dev;
 	int ret;
@@ -118,7 +117,7 @@ static int saa7164_dvb_acquire_port(struct saa7164_port *port)
 	return ret;
 }
 
-static int saa7164_dvb_pause_port(struct saa7164_port *port)
+static int saa7164_dvb_pause_tsport(struct saa7164_tsport *port)
 {
 	struct saa7164_dev *dev = port->dev;
 	int ret;
@@ -140,38 +139,90 @@ static int saa7164_dvb_pause_port(struct saa7164_port *port)
  * the part through AVStream / KS Windows stages, forwards or backwards.
  * States are: stopped, acquired (h/w), paused, started.
  */
-static int saa7164_dvb_stop_streaming(struct saa7164_port *port)
+static int saa7164_dvb_stop_streaming(struct saa7164_tsport *port)
 {
 	struct saa7164_dev *dev = port->dev;
-	struct saa7164_buffer *buf;
-	struct list_head *p, *q;
 	int ret;
 
 	dprintk(DBGLVL_DVB, "%s(port=%d)\n", __func__, port->nr);
 
-	ret = saa7164_dvb_pause_port(port);
-	ret = saa7164_dvb_acquire_port(port);
-	ret = saa7164_dvb_stop_port(port);
-
-	/* Mark the hardware buffers as free */
-	mutex_lock(&port->dmaqueue_lock);
-	list_for_each_safe(p, q, &port->dmaqueue.list) {
-		buf = list_entry(p, struct saa7164_buffer, list);
-		buf->flags = SAA7164_BUFFER_FREE;
-	}
-	mutex_unlock(&port->dmaqueue_lock);
+	ret = saa7164_dvb_pause_tsport(port);
+	ret = saa7164_dvb_acquire_tsport(port);
+	ret = saa7164_dvb_stop_tsport(port);
 
 	return ret;
 }
 
-static int saa7164_dvb_start_port(struct saa7164_port *port)
+static int saa7164_dvb_cfg_tsport(struct saa7164_tsport *port)
+{
+	tmHWStreamParameters_t *params = &port->hw_streamingparams;
+	struct saa7164_dev *dev = port->dev;
+	struct saa7164_buffer *buf;
+	struct list_head *c, *n;
+	int i = 0;
+
+	dprintk(DBGLVL_DVB, "%s(port=%d)\n", __func__, port->nr);
+
+	saa7164_writel(port->pitch, params->pitch);
+	saa7164_writel(port->bufsize, params->pitch * params->numberoflines);
+
+	dprintk(DBGLVL_DVB, " configured:\n");
+	dprintk(DBGLVL_DVB, "   lmmio       0x%p\n", dev->lmmio);
+	dprintk(DBGLVL_DVB, "   bufcounter  0x%x = 0x%x\n", port->bufcounter,
+		saa7164_readl(port->bufcounter));
+
+	dprintk(DBGLVL_DVB, "   pitch       0x%x = %d\n", port->pitch,
+		saa7164_readl(port->pitch));
+
+	dprintk(DBGLVL_DVB, "   bufsize     0x%x = %d\n", port->bufsize,
+		saa7164_readl(port->bufsize));
+
+	dprintk(DBGLVL_DVB, "   buffercount = %d\n", port->hwcfg.buffercount);
+	dprintk(DBGLVL_DVB, "   bufoffset = 0x%x\n", port->bufoffset);
+	dprintk(DBGLVL_DVB, "   bufptr32h = 0x%x\n", port->bufptr32h);
+	dprintk(DBGLVL_DVB, "   bufptr32l = 0x%x\n", port->bufptr32l);
+
+	/* Poke the buffers and offsets into PCI space */
+	mutex_lock(&port->dmaqueue_lock);
+	list_for_each_safe(c, n, &port->dmaqueue.list) {
+		buf = list_entry(c, struct saa7164_buffer, list);
+
+		/* TODO: Review this in light of 32v64 assignments */
+		saa7164_writel(port->bufoffset + (sizeof(u32) * i), 0);
+		saa7164_writel(port->bufptr32h + ((sizeof(u32) * 2) * i),
+			buf->pt_dma);
+		saa7164_writel(port->bufptr32l + ((sizeof(u32) * 2) * i), 0);
+
+		dprintk(DBGLVL_DVB,
+			"   buf[%d] offset 0x%llx (0x%x) "
+			"buf 0x%llx/%llx (0x%x/%x)\n",
+			i,
+			(u64)port->bufoffset + (i * sizeof(u32)),
+			saa7164_readl(port->bufoffset + (sizeof(u32) * i)),
+			(u64)port->bufptr32h + ((sizeof(u32) * 2) * i),
+			(u64)port->bufptr32l + ((sizeof(u32) * 2) * i),
+			saa7164_readl(port->bufptr32h + ((sizeof(u32) * i)
+				* 2)),
+			saa7164_readl(port->bufptr32l + ((sizeof(u32) * i)
+				* 2)));
+
+		if (i++ > port->hwcfg.buffercount)
+			BUG();
+
+	}
+	mutex_unlock(&port->dmaqueue_lock);
+
+	return 0;
+}
+
+static int saa7164_dvb_start_tsport(struct saa7164_tsport *port)
 {
 	struct saa7164_dev *dev = port->dev;
 	int ret = 0, result;
 
 	dprintk(DBGLVL_DVB, "%s(port=%d)\n", __func__, port->nr);
 
-	saa7164_buffer_cfg_port(port);
+	saa7164_dvb_cfg_tsport(port);
 
 	/* Acquire the hardware */
 	result = saa7164_api_transition_port(port, SAA_DMASTATE_ACQUIRE);
@@ -232,7 +283,7 @@ out:
 static int saa7164_dvb_start_feed(struct dvb_demux_feed *feed)
 {
 	struct dvb_demux *demux = feed->demux;
-	struct saa7164_port *port = (struct saa7164_port *) demux->priv;
+	struct saa7164_tsport *port = (struct saa7164_tsport *) demux->priv;
 	struct saa7164_dvb *dvb = &port->dvb;
 	struct saa7164_dev *dev = port->dev;
 	int ret = 0;
@@ -246,7 +297,7 @@ static int saa7164_dvb_start_feed(struct dvb_demux_feed *feed)
 		mutex_lock(&dvb->lock);
 		if (dvb->feeding++ == 0) {
 			/* Start transport */
-			ret = saa7164_dvb_start_port(port);
+			ret = saa7164_dvb_start_tsport(port);
 		}
 		mutex_unlock(&dvb->lock);
 		dprintk(DBGLVL_DVB, "%s(port=%d) now feeding = %d\n",
@@ -259,7 +310,7 @@ static int saa7164_dvb_start_feed(struct dvb_demux_feed *feed)
 static int saa7164_dvb_stop_feed(struct dvb_demux_feed *feed)
 {
 	struct dvb_demux *demux = feed->demux;
-	struct saa7164_port *port = (struct saa7164_port *) demux->priv;
+	struct saa7164_tsport *port = (struct saa7164_tsport *) demux->priv;
 	struct saa7164_dvb *dvb = &port->dvb;
 	struct saa7164_dev *dev = port->dev;
 	int ret = 0;
@@ -280,7 +331,7 @@ static int saa7164_dvb_stop_feed(struct dvb_demux_feed *feed)
 	return ret;
 }
 
-static int dvb_register(struct saa7164_port *port)
+static int dvb_register(struct saa7164_tsport *port)
 {
 	struct saa7164_dvb *dvb = &port->dvb;
 	struct saa7164_dev *dev = port->dev;
@@ -288,9 +339,6 @@ static int dvb_register(struct saa7164_port *port)
 	int result, i;
 
 	dprintk(DBGLVL_DVB, "%s(port=%d)\n", __func__, port->nr);
-
-	if (port->type != SAA7164_MPEG_DVB)
-		BUG();
 
 	/* Sanity check that the PCI configuration space is active */
 	if (port->hwcfg.BARLocation == 0) {
@@ -309,8 +357,8 @@ static int dvb_register(struct saa7164_port *port)
 
 	port->hw_streamingparams.pitch = 188;
 	port->hw_streamingparams.linethreshold = 0;
-	port->hw_streamingparams.pagetablelistvirt = NULL;
-	port->hw_streamingparams.pagetablelistphys = NULL;
+	port->hw_streamingparams.pagetablelistvirt = 0;
+	port->hw_streamingparams.pagetablelistphys = 0;
 	port->hw_streamingparams.numpagetables = 2 +
 		((SAA7164_TS_NUMBER_OF_LINES * 188) / PAGE_SIZE);
 
@@ -329,6 +377,7 @@ static int dvb_register(struct saa7164_port *port)
 				DRIVER_NAME, result);
 			goto fail_adapter;
 		}
+		buf->nr = i;
 
 		mutex_lock(&port->dmaqueue_lock);
 		list_add_tail(&buf->list, &port->dmaqueue.list);
@@ -423,7 +472,7 @@ fail_adapter:
 	return result;
 }
 
-int saa7164_dvb_unregister(struct saa7164_port *port)
+int saa7164_dvb_unregister(struct saa7164_tsport *port)
 {
 	struct saa7164_dvb *dvb = &port->dvb;
 	struct saa7164_dev *dev = port->dev;
@@ -432,15 +481,12 @@ int saa7164_dvb_unregister(struct saa7164_port *port)
 
 	dprintk(DBGLVL_DVB, "%s()\n", __func__);
 
-	if (port->type != SAA7164_MPEG_DVB)
-		BUG();
-
 	/* Remove any allocated buffers */
 	mutex_lock(&port->dmaqueue_lock);
 	list_for_each_safe(c, n, &port->dmaqueue.list) {
 		b = list_entry(c, struct saa7164_buffer, list);
 		list_del(c);
-		saa7164_buffer_dealloc(b);
+		saa7164_buffer_dealloc(port, b);
 	}
 	mutex_unlock(&port->dmaqueue_lock);
 
@@ -461,7 +507,7 @@ int saa7164_dvb_unregister(struct saa7164_port *port)
 /* All the DVB attach calls go here, this function get's modified
  * for each new card.
  */
-int saa7164_dvb_register(struct saa7164_port *port)
+int saa7164_dvb_register(struct saa7164_tsport *port)
 {
 	struct saa7164_dev *dev = port->dev;
 	struct saa7164_dvb *dvb = &port->dvb;
@@ -475,8 +521,6 @@ int saa7164_dvb_register(struct saa7164_port *port)
 	case SAA7164_BOARD_HAUPPAUGE_HVR2200:
 	case SAA7164_BOARD_HAUPPAUGE_HVR2200_2:
 	case SAA7164_BOARD_HAUPPAUGE_HVR2200_3:
-	case SAA7164_BOARD_HAUPPAUGE_HVR2200_4:
-	case SAA7164_BOARD_HAUPPAUGE_HVR2200_5:
 		i2c_bus = &dev->i2c_bus[port->nr + 1];
 		switch (port->nr) {
 		case 0:
@@ -542,6 +586,8 @@ int saa7164_dvb_register(struct saa7164_port *port)
 		       __func__);
 		return -1;
 	}
+
+	/* Put the analog decoder in standby to keep it quiet */
 
 	/* register everything */
 	ret = dvb_register(port);

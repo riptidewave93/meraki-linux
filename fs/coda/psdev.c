@@ -35,16 +35,17 @@
 #include <linux/poll.h>
 #include <linux/init.h>
 #include <linux/list.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/device.h>
 #include <asm/io.h>
+#include <asm/system.h>
 #include <asm/poll.h>
 #include <asm/uaccess.h>
 
 #include <linux/coda.h>
+#include <linux/coda_linux.h>
+#include <linux/coda_fs_i.h>
 #include <linux/coda_psdev.h>
-
-#include "coda_linux.h"
 
 #include "coda_int.h"
 
@@ -66,15 +67,14 @@ static unsigned int coda_psdev_poll(struct file *file, poll_table * wait)
 	unsigned int mask = POLLOUT | POLLWRNORM;
 
 	poll_wait(file, &vcp->vc_waitq, wait);
-	mutex_lock(&vcp->vc_mutex);
 	if (!list_empty(&vcp->vc_pending))
                 mask |= POLLIN | POLLRDNORM;
-	mutex_unlock(&vcp->vc_mutex);
 
 	return mask;
 }
 
-static long coda_psdev_ioctl(struct file * filp, unsigned int cmd, unsigned long arg)
+static int coda_psdev_ioctl(struct inode * inode, struct file * filp, 
+			    unsigned int cmd, unsigned long arg)
 {
 	unsigned int data;
 
@@ -109,8 +109,15 @@ static ssize_t coda_psdev_write(struct file *file, const char __user *buf,
 	        return -EFAULT;
 
         if (DOWNCALL(hdr.opcode)) {
-		union outputArgs *dcbuf;
+		struct super_block *sb = NULL;
+                union outputArgs *dcbuf;
 		int size = sizeof(*dcbuf);
+
+		sb = vcp->vc_sb;
+		if ( !sb ) {
+                        count = nbytes;
+                        goto out;
+		}
 
 		if  ( nbytes < sizeof(struct coda_out_hdr) ) {
 		        printk("coda_downcall opc %d uniq %d, not enough!\n",
@@ -131,7 +138,9 @@ static ssize_t coda_psdev_write(struct file *file, const char __user *buf,
 		}
 
 		/* what downcall errors does Venus handle ? */
-		error = coda_downcall(vcp, hdr.opcode, dcbuf);
+		lock_kernel();
+		error = coda_downcall(hdr.opcode, dcbuf, sb);
+		unlock_kernel();
 
 		CODA_FREE(dcbuf, nbytes);
 		if (error) {
@@ -144,7 +153,7 @@ static ssize_t coda_psdev_write(struct file *file, const char __user *buf,
 	}
         
 	/* Look for the message on the processing queue. */
-	mutex_lock(&vcp->vc_mutex);
+	lock_kernel();
 	list_for_each(lh, &vcp->vc_processing) {
 		tmp = list_entry(lh, struct upc_req , uc_chain);
 		if (tmp->uc_unique == hdr.unique) {
@@ -153,7 +162,7 @@ static ssize_t coda_psdev_write(struct file *file, const char __user *buf,
 			break;
 		}
 	}
-	mutex_unlock(&vcp->vc_mutex);
+	unlock_kernel();
 
 	if (!req) {
 		printk("psdev_write: msg (%d, %d) not found\n", 
@@ -169,15 +178,15 @@ static ssize_t coda_psdev_write(struct file *file, const char __user *buf,
 		nbytes = req->uc_outSize; /* don't have more space! */
 	}
         if (copy_from_user(req->uc_data, buf, nbytes)) {
-		req->uc_flags |= CODA_REQ_ABORT;
+		req->uc_flags |= REQ_ABORT;
 		wake_up(&req->uc_sleep);
 		retval = -EFAULT;
 		goto out;
 	}
 
 	/* adjust outsize. is this useful ?? */
-	req->uc_outSize = nbytes;
-	req->uc_flags |= CODA_REQ_WRITE;
+        req->uc_outSize = nbytes;	
+        req->uc_flags |= REQ_WRITE;
 	count = nbytes;
 
 	/* Convert filedescriptor into a file handle */
@@ -208,7 +217,7 @@ static ssize_t coda_psdev_read(struct file * file, char __user * buf,
 	if (nbytes == 0)
 		return 0;
 
-	mutex_lock(&vcp->vc_mutex);
+	lock_kernel();
 
 	add_wait_queue(&vcp->vc_waitq, &wait);
 	set_current_state(TASK_INTERRUPTIBLE);
@@ -222,9 +231,7 @@ static ssize_t coda_psdev_read(struct file * file, char __user * buf,
 			retval = -ERESTARTSYS;
 			break;
 		}
-		mutex_unlock(&vcp->vc_mutex);
 		schedule();
-		mutex_lock(&vcp->vc_mutex);
 	}
 
 	set_current_state(TASK_RUNNING);
@@ -248,8 +255,8 @@ static ssize_t coda_psdev_read(struct file * file, char __user * buf,
 	        retval = -EFAULT;
         
 	/* If request was not a signal, enqueue and don't free */
-	if (!(req->uc_flags & CODA_REQ_ASYNC)) {
-		req->uc_flags |= CODA_REQ_READ;
+	if (!(req->uc_flags & REQ_ASYNC)) {
+		req->uc_flags |= REQ_READ;
 		list_add_tail(&(req->uc_chain), &vcp->vc_processing);
 		goto out;
 	}
@@ -257,7 +264,7 @@ static ssize_t coda_psdev_read(struct file * file, char __user * buf,
 	CODA_FREE(req->uc_data, sizeof(struct coda_in_hdr));
 	kfree(req);
 out:
-	mutex_unlock(&vcp->vc_mutex);
+	unlock_kernel();
 	return (count ? count : retval);
 }
 
@@ -270,10 +277,10 @@ static int coda_psdev_open(struct inode * inode, struct file * file)
 	if (idx < 0 || idx >= MAX_CODADEVS)
 		return -ENODEV;
 
+	lock_kernel();
+
 	err = -EBUSY;
 	vcp = &coda_comms[idx];
-	mutex_lock(&vcp->vc_mutex);
-
 	if (!vcp->vc_inuse) {
 		vcp->vc_inuse++;
 
@@ -287,7 +294,7 @@ static int coda_psdev_open(struct inode * inode, struct file * file)
 		err = 0;
 	}
 
-	mutex_unlock(&vcp->vc_mutex);
+	unlock_kernel();
 	return err;
 }
 
@@ -302,32 +309,32 @@ static int coda_psdev_release(struct inode * inode, struct file * file)
 		return -1;
 	}
 
-	mutex_lock(&vcp->vc_mutex);
+	lock_kernel();
 
 	/* Wakeup clients so they can return. */
 	list_for_each_entry_safe(req, tmp, &vcp->vc_pending, uc_chain) {
 		list_del(&req->uc_chain);
 
 		/* Async requests need to be freed here */
-		if (req->uc_flags & CODA_REQ_ASYNC) {
+		if (req->uc_flags & REQ_ASYNC) {
 			CODA_FREE(req->uc_data, sizeof(struct coda_in_hdr));
 			kfree(req);
 			continue;
 		}
-		req->uc_flags |= CODA_REQ_ABORT;
+		req->uc_flags |= REQ_ABORT;
 		wake_up(&req->uc_sleep);
 	}
 
 	list_for_each_entry_safe(req, tmp, &vcp->vc_processing, uc_chain) {
 		list_del(&req->uc_chain);
 
-		req->uc_flags |= CODA_REQ_ABORT;
+		req->uc_flags |= REQ_ABORT;
 		wake_up(&req->uc_sleep);
 	}
 
 	file->private_data = NULL;
 	vcp->vc_inuse--;
-	mutex_unlock(&vcp->vc_mutex);
+	unlock_kernel();
 	return 0;
 }
 
@@ -337,10 +344,9 @@ static const struct file_operations coda_psdev_fops = {
 	.read		= coda_psdev_read,
 	.write		= coda_psdev_write,
 	.poll		= coda_psdev_poll,
-	.unlocked_ioctl	= coda_psdev_ioctl,
+	.ioctl		= coda_psdev_ioctl,
 	.open		= coda_psdev_open,
 	.release	= coda_psdev_release,
-	.llseek		= noop_llseek,
 };
 
 static int init_coda_psdev(void)
@@ -356,11 +362,9 @@ static int init_coda_psdev(void)
 		err = PTR_ERR(coda_psdev_class);
 		goto out_chrdev;
 	}		
-	for (i = 0; i < MAX_CODADEVS; i++) {
-		mutex_init(&(&coda_comms[i])->vc_mutex);
+	for (i = 0; i < MAX_CODADEVS; i++)
 		device_create(coda_psdev_class, NULL,
 			      MKDEV(CODA_PSDEV_MAJOR, i), NULL, "cfs%d", i);
-	}
 	coda_sysctl_init();
 	goto out;
 

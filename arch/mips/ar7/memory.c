@@ -62,7 +62,8 @@ void __init prom_meminit(void)
 	unsigned long pages;
 
 	pages = memsize() >> PAGE_SHIFT;
-	add_memory_region(PHYS_OFFSET, pages << PAGE_SHIFT, BOOT_MEM_RAM);
+	add_memory_region(PHYS_OFFSET, pages << PAGE_SHIFT,
+			  BOOT_MEM_RAM);
 }
 
 void __init prom_free_prom_memory(void)

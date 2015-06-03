@@ -22,7 +22,6 @@
  */
 #include <linux/kernel.h>
 #include <linux/interrupt.h>
-#include <linux/module.h>
 #include <linux/dma-mapping.h>
 #include <linux/raid/pq.h>
 #include <linux/async_tx.h>

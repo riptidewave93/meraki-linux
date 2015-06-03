@@ -14,10 +14,8 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/gfs2_ondisk.h>
-#include <linux/rcupdate.h>
-#include <linux/rculist_bl.h>
-#include <linux/atomic.h>
-#include <linux/mempool.h>
+#include <asm/atomic.h>
+#include <linux/slow-work.h>
 
 #include "gfs2.h"
 #include "incore.h"
@@ -26,10 +24,6 @@
 #include "util.h"
 #include "glock.h"
 #include "quota.h"
-#include "recovery.h"
-#include "dir.h"
-
-struct workqueue_struct *gfs2_control_wq;
 
 static struct shrinker qd_shrinker = {
 	.shrink = gfs2_shrink_qd_memory,
@@ -43,41 +37,19 @@ static void gfs2_init_inode_once(void *foo)
 	inode_init_once(&ip->i_inode);
 	init_rwsem(&ip->i_rw_mutex);
 	INIT_LIST_HEAD(&ip->i_trunc_list);
-	ip->i_qadata = NULL;
-	ip->i_res = NULL;
-	ip->i_hash_cache = NULL;
+	ip->i_alloc = NULL;
 }
 
 static void gfs2_init_glock_once(void *foo)
 {
 	struct gfs2_glock *gl = foo;
 
-	INIT_HLIST_BL_NODE(&gl->gl_list);
+	INIT_HLIST_NODE(&gl->gl_list);
 	spin_lock_init(&gl->gl_spin);
 	INIT_LIST_HEAD(&gl->gl_holders);
 	INIT_LIST_HEAD(&gl->gl_lru);
 	INIT_LIST_HEAD(&gl->gl_ail_list);
 	atomic_set(&gl->gl_ail_count, 0);
-	atomic_set(&gl->gl_revokes, 0);
-}
-
-static void gfs2_init_gl_aspace_once(void *foo)
-{
-	struct gfs2_glock *gl = foo;
-	struct address_space *mapping = (struct address_space *)(gl + 1);
-
-	gfs2_init_glock_once(gl);
-	address_space_init_once(mapping);
-}
-
-static void *gfs2_bh_alloc(gfp_t mask, void *data)
-{
-	return alloc_buffer_head(mask);
-}
-
-static void gfs2_bh_free(void *ptr, void *data)
-{
-	return free_buffer_head(ptr);
 }
 
 /**
@@ -89,9 +61,6 @@ static void gfs2_bh_free(void *ptr, void *data)
 static int __init init_gfs2_fs(void)
 {
 	int error;
-
-	gfs2_str2qstr(&gfs2_qdot, ".");
-	gfs2_str2qstr(&gfs2_qdotdot, "..");
 
 	error = gfs2_sys_init();
 	if (error)
@@ -107,14 +76,6 @@ static int __init init_gfs2_fs(void)
 					      0, 0,
 					      gfs2_init_glock_once);
 	if (!gfs2_glock_cachep)
-		goto fail;
-
-	gfs2_glock_aspace_cachep = kmem_cache_create("gfs2_glock(aspace)",
-					sizeof(struct gfs2_glock) +
-					sizeof(struct address_space),
-					0, 0, gfs2_init_gl_aspace_once);
-
-	if (!gfs2_glock_aspace_cachep)
 		goto fail;
 
 	gfs2_inode_cachep = kmem_cache_create("gfs2_inode",
@@ -153,32 +114,17 @@ static int __init init_gfs2_fs(void)
 	if (error)
 		goto fail_unregister;
 
-	error = -ENOMEM;
-	gfs_recovery_wq = alloc_workqueue("gfs_recovery",
-					  WQ_MEM_RECLAIM | WQ_FREEZABLE, 0);
-	if (!gfs_recovery_wq)
-		goto fail_wq;
-
-	gfs2_control_wq = alloc_workqueue("gfs2_control",
-			       WQ_NON_REENTRANT | WQ_UNBOUND | WQ_FREEZABLE, 0);
-	if (!gfs2_control_wq)
-		goto fail_recovery;
-
-	gfs2_bh_pool = mempool_create(1024, gfs2_bh_alloc, gfs2_bh_free, NULL);
-	if (!gfs2_bh_pool)
-		goto fail_control;
+	error = slow_work_register_user(THIS_MODULE);
+	if (error)
+		goto fail_slow;
 
 	gfs2_register_debugfs();
 
-	printk("GFS2 installed\n");
+	printk("GFS2 (built %s %s) installed\n", __DATE__, __TIME__);
 
 	return 0;
 
-fail_control:
-	destroy_workqueue(gfs2_control_wq);
-fail_recovery:
-	destroy_workqueue(gfs_recovery_wq);
-fail_wq:
+fail_slow:
 	unregister_filesystem(&gfs2meta_fs_type);
 fail_unregister:
 	unregister_filesystem(&gfs2_fs_type);
@@ -197,9 +143,6 @@ fail:
 
 	if (gfs2_inode_cachep)
 		kmem_cache_destroy(gfs2_inode_cachep);
-
-	if (gfs2_glock_aspace_cachep)
-		kmem_cache_destroy(gfs2_glock_aspace_cachep);
 
 	if (gfs2_glock_cachep)
 		kmem_cache_destroy(gfs2_glock_cachep);
@@ -220,17 +163,12 @@ static void __exit exit_gfs2_fs(void)
 	gfs2_unregister_debugfs();
 	unregister_filesystem(&gfs2_fs_type);
 	unregister_filesystem(&gfs2meta_fs_type);
-	destroy_workqueue(gfs_recovery_wq);
-	destroy_workqueue(gfs2_control_wq);
+	slow_work_unregister_user(THIS_MODULE);
 
-	rcu_barrier();
-
-	mempool_destroy(gfs2_bh_pool);
 	kmem_cache_destroy(gfs2_quotad_cachep);
 	kmem_cache_destroy(gfs2_rgrpd_cachep);
 	kmem_cache_destroy(gfs2_bufdata_cachep);
 	kmem_cache_destroy(gfs2_inode_cachep);
-	kmem_cache_destroy(gfs2_glock_aspace_cachep);
 	kmem_cache_destroy(gfs2_glock_cachep);
 
 	gfs2_sys_uninit();

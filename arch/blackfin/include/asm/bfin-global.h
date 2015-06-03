@@ -11,6 +11,9 @@
 
 #ifndef __ASSEMBLY__
 
+#include <asm/sections.h>
+#include <asm/ptrace.h>
+#include <asm/user.h>
 #include <linux/linkage.h>
 #include <linux/types.h>
 
@@ -20,12 +23,6 @@
 # define DMA_UNCACHED_REGION (2 * 1024 * 1024)
 #elif defined(CONFIG_DMA_UNCACHED_1M)
 # define DMA_UNCACHED_REGION (1024 * 1024)
-#elif defined(CONFIG_DMA_UNCACHED_512K)
-# define DMA_UNCACHED_REGION (512 * 1024)
-#elif defined(CONFIG_DMA_UNCACHED_256K)
-# define DMA_UNCACHED_REGION (256 * 1024)
-#elif defined(CONFIG_DMA_UNCACHED_128K)
-# define DMA_UNCACHED_REGION (128 * 1024)
 #else
 # define DMA_UNCACHED_REGION (0)
 #endif
@@ -38,16 +35,19 @@ extern unsigned long get_sclk(void);
 extern unsigned long sclk_to_usecs(unsigned long sclk);
 extern unsigned long usecs_to_sclk(unsigned long usecs);
 
-struct pt_regs;
-#if defined(CONFIG_DEBUG_VERBOSE)
 extern void dump_bfin_process(struct pt_regs *regs);
 extern void dump_bfin_mem(struct pt_regs *regs);
 extern void dump_bfin_trace_buffer(void);
-#else
-#define dump_bfin_process(regs)
-#define dump_bfin_mem(regs)
-#define dump_bfin_trace_buffer()
-#endif
+
+/* init functions only */
+extern int init_arch_irq(void);
+extern void init_exception_vectors(void);
+extern void program_IAR(void);
+
+extern asmlinkage void lower_to_irq14(void);
+extern asmlinkage void bfin_return_from_exception(void);
+extern asmlinkage void asm_do_IRQ(unsigned int irq, struct pt_regs *regs);
+extern int bfin_internal_set_wake(unsigned int irq, unsigned int state);
 
 extern void *l1_data_A_sram_alloc(size_t);
 extern void *l1_data_B_sram_alloc(size_t);

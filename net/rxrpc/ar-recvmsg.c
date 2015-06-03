@@ -11,7 +11,6 @@
 
 #include <linux/net.h>
 #include <linux/skbuff.h>
-#include <linux/export.h>
 #include <net/sock.h>
 #include <net/af_rxrpc.h>
 #include "ar-internal.h"
@@ -92,7 +91,7 @@ int rxrpc_recvmsg(struct kiocb *iocb, struct socket *sock,
 
 			/* wait for a message to turn up */
 			release_sock(&rx->sk);
-			prepare_to_wait_exclusive(sk_sleep(&rx->sk), &wait,
+			prepare_to_wait_exclusive(rx->sk.sk_sleep, &wait,
 						  TASK_INTERRUPTIBLE);
 			ret = sock_error(&rx->sk);
 			if (ret)
@@ -103,7 +102,7 @@ int rxrpc_recvmsg(struct kiocb *iocb, struct socket *sock,
 					goto wait_interrupted;
 				timeo = schedule_timeout(timeo);
 			}
-			finish_wait(sk_sleep(&rx->sk), &wait);
+			finish_wait(rx->sk.sk_sleep, &wait);
 			lock_sock(&rx->sk);
 			continue;
 		}
@@ -150,7 +149,7 @@ int rxrpc_recvmsg(struct kiocb *iocb, struct socket *sock,
 				       &call->conn->trans->peer->srx, len);
 				msg->msg_namelen = len;
 			}
-			sock_recv_ts_and_drops(msg, &rx->sk, skb);
+			sock_recv_timestamp(msg, &rx->sk, skb);
 		}
 
 		/* receive the message */
@@ -360,7 +359,7 @@ csum_copy_error:
 wait_interrupted:
 	ret = sock_intr_errno(timeo);
 wait_error:
-	finish_wait(sk_sleep(&rx->sk), &wait);
+	finish_wait(rx->sk.sk_sleep, &wait);
 	if (continue_call)
 		rxrpc_put_call(continue_call);
 	if (copied)

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2009 Manuel Lauss <manuel.lauss@gmail.com>
+ * Copyright (C) 2008 Manuel Lauss <mano@roarinelk.homelinux.net>
  *
  * Previous incarnations were:
  * Copyright (C) 2001, 2006, 2008 MontaVista Software, <source@mvista.com>
@@ -85,6 +85,7 @@ static struct clock_event_device au1x_rtcmatch2_clockdev = {
 	.name		= "rtcmatch2",
 	.features	= CLOCK_EVT_FEAT_ONESHOT,
 	.rating		= 100,
+	.irq		= AU1000_RTC_MATCH2_INT,
 	.set_next_event	= au1x_rtcmatch2_set_next_event,
 	.set_mode	= au1x_rtcmatch2_set_mode,
 	.cpumask	= cpu_all_mask,
@@ -92,17 +93,15 @@ static struct clock_event_device au1x_rtcmatch2_clockdev = {
 
 static struct irqaction au1x_rtcmatch2_irqaction = {
 	.handler	= au1x_rtcmatch2_irq,
-	.flags		= IRQF_TIMER,
+	.flags		= IRQF_DISABLED | IRQF_TIMER,
 	.name		= "timer",
 	.dev_id		= &au1x_rtcmatch2_clockdev,
 };
 
-static int __init alchemy_time_init(unsigned int m2int)
+void __init plat_time_init(void)
 {
 	struct clock_event_device *cd = &au1x_rtcmatch2_clockdev;
 	unsigned long t;
-
-	au1x_rtcmatch2_clockdev.irq = m2int;
 
 	/* Check if firmware (YAMON, ...) has enabled 32kHz and clock
 	 * has been detected.  If so install the rtcmatch2 clocksource,
@@ -141,25 +140,21 @@ static int __init alchemy_time_init(unsigned int m2int)
 		goto cntr_err;
 
 	/* register counter1 clocksource and event device */
-	clocksource_register_hz(&au1x_counter1_clocksource, 32768);
+	clocksource_set_clock(&au1x_counter1_clocksource, 32768);
+	clocksource_register(&au1x_counter1_clocksource);
 
 	cd->shift = 32;
 	cd->mult = div_sc(32768, NSEC_PER_SEC, cd->shift);
 	cd->max_delta_ns = clockevent_delta2ns(0xffffffff, cd);
-	cd->min_delta_ns = clockevent_delta2ns(9, cd);	/* ~0.28ms */
+	cd->min_delta_ns = clockevent_delta2ns(8, cd);	/* ~0.25ms */
 	clockevents_register_device(cd);
-	setup_irq(m2int, &au1x_rtcmatch2_irqaction);
+	setup_irq(AU1000_RTC_MATCH2_INT, &au1x_rtcmatch2_irqaction);
 
 	printk(KERN_INFO "Alchemy clocksource installed\n");
 
-	return 0;
+	return;
 
 cntr_err:
-	return -1;
-}
-
-static void __init alchemy_setup_c0timer(void)
-{
 	/*
 	 * MIPS kernel assigns 'au1k_wait' to 'cpu_wait' before this
 	 * function is called.  Because the Alchemy counters are unusable
@@ -170,24 +165,4 @@ static void __init alchemy_setup_c0timer(void)
 	cpu_wait = NULL;
 	r4k_clockevent_init();
 	init_r4k_clocksource();
-}
-
-static int alchemy_m2inttab[] __initdata = {
-	AU1000_RTC_MATCH2_INT,
-	AU1500_RTC_MATCH2_INT,
-	AU1100_RTC_MATCH2_INT,
-	AU1550_RTC_MATCH2_INT,
-	AU1200_RTC_MATCH2_INT,
-	AU1300_RTC_MATCH2_INT,
-};
-
-void __init plat_time_init(void)
-{
-	int t;
-
-	t = alchemy_get_cputype();
-	if (t == ALCHEMY_CPU_UNKNOWN)
-		alchemy_setup_c0timer();
-	else if (alchemy_time_init(alchemy_m2inttab[t]))
-		alchemy_setup_c0timer();
 }

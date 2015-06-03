@@ -75,6 +75,11 @@ ENTRY(cpu_feroceon_proc_init)
  * cpu_feroceon_proc_fin()
  */
 ENTRY(cpu_feroceon_proc_fin)
+	stmfd	sp!, {lr}
+	mov	ip, #PSR_F_BIT | PSR_I_BIT | SVC_MODE
+	msr	cpsr_c, ip
+	bl	feroceon_flush_kern_cache_all
+
 #if defined(CONFIG_CACHE_FEROCEON_L2) && \
 	!defined(CONFIG_CACHE_FEROCEON_L2_WRITETHROUGH)
 	mov	r0, #0
@@ -86,7 +91,7 @@ ENTRY(cpu_feroceon_proc_fin)
 	bic	r0, r0, #0x1000			@ ...i............
 	bic	r0, r0, #0x000e			@ ............wca.
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
-	mov	pc, lr
+	ldmfd	sp!, {pc}
 
 /*
  * cpu_feroceon_reset(loc)
@@ -98,7 +103,6 @@ ENTRY(cpu_feroceon_proc_fin)
  * loc: location to jump to for soft reset
  */
 	.align	5
-	.pushsection	.idmap.text, "ax"
 ENTRY(cpu_feroceon_reset)
 	mov	ip, #0
 	mcr	p15, 0, ip, c7, c7, 0		@ invalidate I,D caches
@@ -111,8 +115,6 @@ ENTRY(cpu_feroceon_reset)
 	bic	ip, ip, #0x1100			@ ...i...s........
 	mcr	p15, 0, ip, c1, c0, 0		@ ctrl register
 	mov	pc, r0
-ENDPROC(cpu_feroceon_reset)
-	.popsection
 
 /*
  * cpu_feroceon_do_idle()
@@ -125,17 +127,6 @@ ENTRY(cpu_feroceon_do_idle)
 	mcr	p15, 0, r0, c7, c10, 4		@ Drain write buffer
 	mcr	p15, 0, r0, c7, c0, 4		@ Wait for interrupt
 	mov	pc, lr
-
-/*
- *	flush_icache_all()
- *
- *	Unconditionally clean and invalidate the entire icache.
- */
-ENTRY(feroceon_flush_icache_all)
-	mov	r0, #0
-	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
-	mov	pc, lr
-ENDPROC(feroceon_flush_icache_all)
 
 /*
  *	flush_user_cache_all()
@@ -235,17 +226,16 @@ ENTRY(feroceon_coherent_user_range)
 	mov	pc, lr
 
 /*
- *	flush_kern_dcache_area(void *addr, size_t size)
+ *	flush_kern_dcache_page(void *page)
  *
  *	Ensure no D cache aliasing occurs, either with itself or
  *	the I cache
  *
- *	- addr	- kernel address
- *	- size	- region size
+ *	- addr	- page aligned address
  */
 	.align	5
-ENTRY(feroceon_flush_kern_dcache_area)
-	add	r1, r0, r1
+ENTRY(feroceon_flush_kern_dcache_page)
+	add	r1, r0, #PAGE_SZ
 1:	mcr	p15, 0, r0, c7, c14, 1		@ clean+invalidate D entry
 	add	r0, r0, #CACHE_DLINESIZE
 	cmp	r0, r1
@@ -256,7 +246,7 @@ ENTRY(feroceon_flush_kern_dcache_area)
 	mov	pc, lr
 
 	.align	5
-ENTRY(feroceon_range_flush_kern_dcache_area)
+ENTRY(feroceon_range_flush_kern_dcache_page)
 	mrs	r2, cpsr
 	add	r1, r0, #PAGE_SZ - CACHE_DLINESIZE	@ top addr is inclusive
 	orr	r3, r2, #PSR_I_BIT
@@ -283,7 +273,7 @@ ENTRY(feroceon_range_flush_kern_dcache_area)
  * (same as v4wb)
  */
 	.align	5
-feroceon_dma_inv_range:
+ENTRY(feroceon_dma_inv_range)
 	tst	r0, #CACHE_DLINESIZE - 1
 	bic	r0, r0, #CACHE_DLINESIZE - 1
 	mcrne	p15, 0, r0, c7, c10, 1		@ clean D entry
@@ -297,7 +287,7 @@ feroceon_dma_inv_range:
 	mov	pc, lr
 
 	.align	5
-feroceon_range_dma_inv_range:
+ENTRY(feroceon_range_dma_inv_range)
 	mrs	r2, cpsr
 	tst	r0, #CACHE_DLINESIZE - 1
 	mcrne	p15, 0, r0, c7, c10, 1		@ clean D entry
@@ -323,7 +313,7 @@ feroceon_range_dma_inv_range:
  * (same as v4wb)
  */
 	.align	5
-feroceon_dma_clean_range:
+ENTRY(feroceon_dma_clean_range)
 	bic	r0, r0, #CACHE_DLINESIZE - 1
 1:	mcr	p15, 0, r0, c7, c10, 1		@ clean D entry
 	add	r0, r0, #CACHE_DLINESIZE
@@ -333,7 +323,7 @@ feroceon_dma_clean_range:
 	mov	pc, lr
 
 	.align	5
-feroceon_range_dma_clean_range:
+ENTRY(feroceon_range_dma_clean_range)
 	mrs	r2, cpsr
 	cmp	r1, r0
 	subne	r1, r1, #1			@ top address is inclusive
@@ -376,70 +366,27 @@ ENTRY(feroceon_range_dma_flush_range)
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 	mov	pc, lr
 
-/*
- *	dma_map_area(start, size, dir)
- *	- start	- kernel virtual start address
- *	- size	- size of region
- *	- dir	- DMA direction
- */
-ENTRY(feroceon_dma_map_area)
-	add	r1, r1, r0
-	cmp	r2, #DMA_TO_DEVICE
-	beq	feroceon_dma_clean_range
-	bcs	feroceon_dma_inv_range
-	b	feroceon_dma_flush_range
-ENDPROC(feroceon_dma_map_area)
+ENTRY(feroceon_cache_fns)
+	.long	feroceon_flush_kern_cache_all
+	.long	feroceon_flush_user_cache_all
+	.long	feroceon_flush_user_cache_range
+	.long	feroceon_coherent_kern_range
+	.long	feroceon_coherent_user_range
+	.long	feroceon_flush_kern_dcache_page
+	.long	feroceon_dma_inv_range
+	.long	feroceon_dma_clean_range
+	.long	feroceon_dma_flush_range
 
-/*
- *	dma_map_area(start, size, dir)
- *	- start	- kernel virtual start address
- *	- size	- size of region
- *	- dir	- DMA direction
- */
-ENTRY(feroceon_range_dma_map_area)
-	add	r1, r1, r0
-	cmp	r2, #DMA_TO_DEVICE
-	beq	feroceon_range_dma_clean_range
-	bcs	feroceon_range_dma_inv_range
-	b	feroceon_range_dma_flush_range
-ENDPROC(feroceon_range_dma_map_area)
-
-/*
- *	dma_unmap_area(start, size, dir)
- *	- start	- kernel virtual start address
- *	- size	- size of region
- *	- dir	- DMA direction
- */
-ENTRY(feroceon_dma_unmap_area)
-	mov	pc, lr
-ENDPROC(feroceon_dma_unmap_area)
-
-	.globl	feroceon_flush_kern_cache_louis
-	.equ	feroceon_flush_kern_cache_louis, feroceon_flush_kern_cache_all
-
-	@ define struct cpu_cache_fns (see <asm/cacheflush.h> and proc-macros.S)
-	define_cache_functions feroceon
-
-.macro range_alias basename
-	.globl feroceon_range_\basename
-	.type feroceon_range_\basename , %function
-	.equ feroceon_range_\basename , feroceon_\basename
-.endm
-
-/*
- * Most of the cache functions are unchanged for this case.
- * Export suitable alias symbols for the unchanged functions:
- */
-	range_alias flush_icache_all
-	range_alias flush_user_cache_all
-	range_alias flush_kern_cache_all
-	range_alias flush_kern_cache_louis
-	range_alias flush_user_cache_range
-	range_alias coherent_kern_range
-	range_alias coherent_user_range
-	range_alias dma_unmap_area
-
-	define_cache_functions feroceon_range
+ENTRY(feroceon_range_cache_fns)
+	.long	feroceon_flush_kern_cache_all
+	.long	feroceon_flush_user_cache_all
+	.long	feroceon_flush_user_cache_range
+	.long	feroceon_coherent_kern_range
+	.long	feroceon_coherent_user_range
+	.long	feroceon_range_flush_kern_dcache_page
+	.long	feroceon_range_dma_inv_range
+	.long	feroceon_range_dma_clean_range
+	.long	feroceon_range_dma_flush_range
 
 	.align	5
 ENTRY(cpu_feroceon_dcache_clean_area)
@@ -513,7 +460,7 @@ ENTRY(cpu_feroceon_set_pte_ext)
 #endif
 	mov	pc, lr
 
-	__CPUINIT
+	__INIT
 
 	.type	__feroceon_setup, #function
 __feroceon_setup:
@@ -545,27 +492,64 @@ feroceon_crval:
 
 	__INITDATA
 
-	@ define struct processor (see <asm/proc-fns.h> and proc-macros.S)
-	define_processor_functions feroceon, dabort=v5t_early_abort, pabort=legacy_pabort
+/*
+ * Purpose : Function pointers used to access above functions - all calls
+ *	     come through these
+ */
+	.type	feroceon_processor_functions, #object
+feroceon_processor_functions:
+	.word	v5t_early_abort
+	.word	legacy_pabort
+	.word	cpu_feroceon_proc_init
+	.word	cpu_feroceon_proc_fin
+	.word	cpu_feroceon_reset
+	.word	cpu_feroceon_do_idle
+	.word	cpu_feroceon_dcache_clean_area
+	.word	cpu_feroceon_switch_mm
+	.word	cpu_feroceon_set_pte_ext
+	.size	feroceon_processor_functions, . - feroceon_processor_functions
 
 	.section ".rodata"
 
-	string	cpu_arch_name, "armv5te"
-	string	cpu_elf_name, "v5"
-	string	cpu_feroceon_name, "Feroceon"
-	string	cpu_88fr531_name, "Feroceon 88FR531-vd"
-	string	cpu_88fr571_name, "Feroceon 88FR571-vd"
-	string	cpu_88fr131_name, "Feroceon 88FR131"
+	.type	cpu_arch_name, #object
+cpu_arch_name:
+	.asciz	"armv5te"
+	.size	cpu_arch_name, . - cpu_arch_name
+
+	.type	cpu_elf_name, #object
+cpu_elf_name:
+	.asciz	"v5"
+	.size	cpu_elf_name, . - cpu_elf_name
+
+	.type	cpu_feroceon_name, #object
+cpu_feroceon_name:
+	.asciz	"Feroceon"
+	.size	cpu_feroceon_name, . - cpu_feroceon_name
+
+	.type	cpu_88fr531_name, #object
+cpu_88fr531_name:
+	.asciz	"Feroceon 88FR531-vd"
+	.size	cpu_88fr531_name, . - cpu_88fr531_name
+
+	.type	cpu_88fr571_name, #object
+cpu_88fr571_name:
+	.asciz	"Feroceon 88FR571-vd"
+	.size	cpu_88fr571_name, . - cpu_88fr571_name
+
+	.type	cpu_88fr131_name, #object
+cpu_88fr131_name:
+	.asciz	"Feroceon 88FR131"
+	.size	cpu_88fr131_name, . - cpu_88fr131_name
 
 	.align
 
 	.section ".proc.info.init", #alloc, #execinstr
 
-.macro feroceon_proc_info name:req, cpu_val:req, cpu_mask:req, cpu_name:req, cache:req
-	.type	__\name\()_proc_info,#object
-__\name\()_proc_info:
-	.long	\cpu_val
-	.long	\cpu_mask
+#ifdef CONFIG_CPU_FEROCEON_OLD_ID
+	.type	__feroceon_old_id_proc_info,#object
+__feroceon_old_id_proc_info:
+	.long	0x41009260
+	.long	0xff00fff0
 	.long	PMD_TYPE_SECT | \
 		PMD_SECT_BUFFERABLE | \
 		PMD_SECT_CACHEABLE | \
@@ -580,22 +564,85 @@ __\name\()_proc_info:
 	.long	cpu_arch_name
 	.long	cpu_elf_name
 	.long	HWCAP_SWP|HWCAP_HALF|HWCAP_THUMB|HWCAP_FAST_MULT|HWCAP_EDSP
-	.long	\cpu_name
+	.long	cpu_feroceon_name
 	.long	feroceon_processor_functions
 	.long	v4wbi_tlb_fns
 	.long	feroceon_user_fns
-	.long	\cache
-	 .size	__\name\()_proc_info, . - __\name\()_proc_info
-.endm
-
-#ifdef CONFIG_CPU_FEROCEON_OLD_ID
-	feroceon_proc_info feroceon_old_id, 0x41009260, 0xff00fff0, \
-		cpu_name=cpu_feroceon_name, cache=feroceon_cache_fns
+	.long	feroceon_cache_fns
+	.size	__feroceon_old_id_proc_info, . - __feroceon_old_id_proc_info
 #endif
 
-	feroceon_proc_info 88fr531, 0x56055310, 0xfffffff0, cpu_88fr531_name, \
-		cache=feroceon_cache_fns
-	feroceon_proc_info 88fr571, 0x56155710, 0xfffffff0, cpu_88fr571_name, \
-		cache=feroceon_range_cache_fns
-	feroceon_proc_info 88fr131, 0x56251310, 0xfffffff0, cpu_88fr131_name, \
-		cache=feroceon_range_cache_fns
+	.type	__88fr531_proc_info,#object
+__88fr531_proc_info:
+	.long	0x56055310
+	.long	0xfffffff0
+	.long	PMD_TYPE_SECT | \
+		PMD_SECT_BUFFERABLE | \
+		PMD_SECT_CACHEABLE | \
+		PMD_BIT4 | \
+		PMD_SECT_AP_WRITE | \
+		PMD_SECT_AP_READ
+	.long	PMD_TYPE_SECT | \
+		PMD_BIT4 | \
+		PMD_SECT_AP_WRITE | \
+		PMD_SECT_AP_READ
+	b	__feroceon_setup
+	.long	cpu_arch_name
+	.long	cpu_elf_name
+	.long	HWCAP_SWP|HWCAP_HALF|HWCAP_THUMB|HWCAP_FAST_MULT|HWCAP_EDSP
+	.long	cpu_88fr531_name
+	.long	feroceon_processor_functions
+	.long	v4wbi_tlb_fns
+	.long	feroceon_user_fns
+	.long	feroceon_cache_fns
+	.size	__88fr531_proc_info, . - __88fr531_proc_info
+
+	.type	__88fr571_proc_info,#object
+__88fr571_proc_info:
+	.long	0x56155710
+	.long	0xfffffff0
+	.long	PMD_TYPE_SECT | \
+		PMD_SECT_BUFFERABLE | \
+		PMD_SECT_CACHEABLE | \
+		PMD_BIT4 | \
+		PMD_SECT_AP_WRITE | \
+		PMD_SECT_AP_READ
+	.long	PMD_TYPE_SECT | \
+		PMD_BIT4 | \
+		PMD_SECT_AP_WRITE | \
+		PMD_SECT_AP_READ
+	b	__feroceon_setup
+	.long	cpu_arch_name
+	.long	cpu_elf_name
+	.long	HWCAP_SWP|HWCAP_HALF|HWCAP_THUMB|HWCAP_FAST_MULT|HWCAP_EDSP
+	.long	cpu_88fr571_name
+	.long	feroceon_processor_functions
+	.long	v4wbi_tlb_fns
+	.long	feroceon_user_fns
+	.long	feroceon_range_cache_fns
+	.size	__88fr571_proc_info, . - __88fr571_proc_info
+
+	.type	__88fr131_proc_info,#object
+__88fr131_proc_info:
+	.long	0x56251310
+	.long	0xfffffff0
+	.long	PMD_TYPE_SECT | \
+		PMD_SECT_BUFFERABLE | \
+		PMD_SECT_CACHEABLE | \
+		PMD_BIT4 | \
+		PMD_SECT_AP_WRITE | \
+		PMD_SECT_AP_READ
+	.long	PMD_TYPE_SECT | \
+		PMD_BIT4 | \
+		PMD_SECT_AP_WRITE | \
+		PMD_SECT_AP_READ
+	b	__feroceon_setup
+	.long	cpu_arch_name
+	.long	cpu_elf_name
+	.long	HWCAP_SWP|HWCAP_HALF|HWCAP_THUMB|HWCAP_FAST_MULT|HWCAP_EDSP
+	.long	cpu_88fr131_name
+	.long	feroceon_processor_functions
+	.long	v4wbi_tlb_fns
+	.long	feroceon_user_fns
+	.long	feroceon_range_cache_fns
+	.size	__88fr131_proc_info, . - __88fr131_proc_info

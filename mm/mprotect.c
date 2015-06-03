@@ -10,6 +10,7 @@
 
 #include <linux/mm.h>
 #include <linux/hugetlb.h>
+#include <linux/slab.h>
 #include <linux/shm.h>
 #include <linux/mman.h>
 #include <linux/fs.h>
@@ -60,7 +61,7 @@ static void change_pte_range(struct mm_struct *mm, pmd_t *pmd,
 				ptent = pte_mkwrite(ptent);
 
 			ptep_modify_prot_commit(mm, addr, pte, ptent);
-		} else if (IS_ENABLED(CONFIG_MIGRATION) && !pte_file(oldpte)) {
+		} else if (PAGE_MIGRATION && !pte_file(oldpte)) {
 			swp_entry_t entry = pte_to_swp_entry(oldpte);
 
 			if (is_write_migration_entry(entry)) {
@@ -78,7 +79,7 @@ static void change_pte_range(struct mm_struct *mm, pmd_t *pmd,
 	pte_unmap_unlock(pte - 1, ptl);
 }
 
-static inline void change_pmd_range(struct vm_area_struct *vma, pud_t *pud,
+static inline void change_pmd_range(struct mm_struct *mm, pud_t *pud,
 		unsigned long addr, unsigned long end, pgprot_t newprot,
 		int dirty_accountable)
 {
@@ -88,21 +89,13 @@ static inline void change_pmd_range(struct vm_area_struct *vma, pud_t *pud,
 	pmd = pmd_offset(pud, addr);
 	do {
 		next = pmd_addr_end(addr, end);
-		if (pmd_trans_huge(*pmd)) {
-			if (next - addr != HPAGE_PMD_SIZE)
-				split_huge_page_pmd(vma->vm_mm, pmd);
-			else if (change_huge_pmd(vma, pmd, addr, newprot))
-				continue;
-			/* fall through */
-		}
 		if (pmd_none_or_clear_bad(pmd))
 			continue;
-		change_pte_range(vma->vm_mm, pmd, addr, next, newprot,
-				 dirty_accountable);
+		change_pte_range(mm, pmd, addr, next, newprot, dirty_accountable);
 	} while (pmd++, addr = next, addr != end);
 }
 
-static inline void change_pud_range(struct vm_area_struct *vma, pgd_t *pgd,
+static inline void change_pud_range(struct mm_struct *mm, pgd_t *pgd,
 		unsigned long addr, unsigned long end, pgprot_t newprot,
 		int dirty_accountable)
 {
@@ -114,8 +107,7 @@ static inline void change_pud_range(struct vm_area_struct *vma, pgd_t *pgd,
 		next = pud_addr_end(addr, end);
 		if (pud_none_or_clear_bad(pud))
 			continue;
-		change_pmd_range(vma, pud, addr, next, newprot,
-				 dirty_accountable);
+		change_pmd_range(mm, pud, addr, next, newprot, dirty_accountable);
 	} while (pud++, addr = next, addr != end);
 }
 
@@ -135,8 +127,7 @@ static void change_protection(struct vm_area_struct *vma,
 		next = pgd_addr_end(addr, end);
 		if (pgd_none_or_clear_bad(pgd))
 			continue;
-		change_pud_range(vma, pgd, addr, next, newprot,
-				 dirty_accountable);
+		change_pud_range(mm, pgd, addr, next, newprot, dirty_accountable);
 	} while (pgd++, addr = next, addr != end);
 	flush_tlb_range(vma, start, end);
 }
@@ -168,7 +159,7 @@ mprotect_fixup(struct vm_area_struct *vma, struct vm_area_struct **pprev,
 		if (!(oldflags & (VM_ACCOUNT|VM_WRITE|VM_HUGETLB|
 						VM_SHARED|VM_NORESERVE))) {
 			charged = nrpages;
-			if (security_vm_enough_memory_mm(mm, charged))
+			if (security_vm_enough_memory(charged))
 				return -ENOMEM;
 			newflags |= VM_ACCOUNT;
 		}
@@ -262,11 +253,10 @@ SYSCALL_DEFINE3(mprotect, unsigned long, start, size_t, len,
 
 	down_write(&current->mm->mmap_sem);
 
-	vma = find_vma(current->mm, start);
+	vma = find_vma_prev(current->mm, start, &prev);
 	error = -ENOMEM;
 	if (!vma)
 		goto out;
-	prev = vma->vm_prev;
 	if (unlikely(grows & PROT_GROWSDOWN)) {
 		if (vma->vm_start >= end)
 			goto out;

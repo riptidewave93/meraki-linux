@@ -30,7 +30,6 @@
 #include <linux/sysctl.h>
 #include <linux/spinlock.h>
 #include <linux/debugfs.h>
-#include <linux/export.h>
 
 #include "cluster/heartbeat.h"
 #include "cluster/nodemanager.h"
@@ -103,7 +102,7 @@ void __dlm_print_one_lock_resource(struct dlm_lock_resource *res)
 	assert_spin_locked(&res->spinlock);
 
 	stringify_lockname(res->lockname.name, res->lockname.len,
-			   buf, sizeof(buf));
+			   buf, sizeof(buf) - 1);
 	printk("lockres: %s, owner=%u, state=%u\n",
 	       buf, res->owner, res->state);
 	printk("  last used: %lu, refcnt: %u, on purge list: %s\n",
@@ -371,46 +370,92 @@ static void dlm_debug_get(struct dlm_debug_ctxt *dc)
 	kref_get(&dc->debug_refcnt);
 }
 
-static int debug_release(struct inode *inode, struct file *file)
+static struct debug_buffer *debug_buffer_allocate(void)
 {
-	free_page((unsigned long)file->private_data);
-	return 0;
+	struct debug_buffer *db = NULL;
+
+	db = kzalloc(sizeof(struct debug_buffer), GFP_KERNEL);
+	if (!db)
+		goto bail;
+
+	db->len = PAGE_SIZE;
+	db->buf = kmalloc(db->len, GFP_KERNEL);
+	if (!db->buf)
+		goto bail;
+
+	return db;
+bail:
+	kfree(db);
+	return NULL;
 }
 
-static ssize_t debug_read(struct file *file, char __user *buf,
-			  size_t nbytes, loff_t *ppos)
+static ssize_t debug_buffer_read(struct file *file, char __user *buf,
+				 size_t nbytes, loff_t *ppos)
 {
-	return simple_read_from_buffer(buf, nbytes, ppos, file->private_data,
-				       i_size_read(file->f_mapping->host));
+	struct debug_buffer *db = file->private_data;
+
+	return simple_read_from_buffer(buf, nbytes, ppos, db->buf, db->len);
+}
+
+static loff_t debug_buffer_llseek(struct file *file, loff_t off, int whence)
+{
+	struct debug_buffer *db = file->private_data;
+	loff_t new = -1;
+
+	switch (whence) {
+	case 0:
+		new = off;
+		break;
+	case 1:
+		new = file->f_pos + off;
+		break;
+	}
+
+	if (new < 0 || new > db->len)
+		return -EINVAL;
+
+	return (file->f_pos = new);
+}
+
+static int debug_buffer_release(struct inode *inode, struct file *file)
+{
+	struct debug_buffer *db = (struct debug_buffer *)file->private_data;
+
+	if (db)
+		kfree(db->buf);
+	kfree(db);
+
+	return 0;
 }
 /* end - util funcs */
 
 /* begin - purge list funcs */
-static int debug_purgelist_print(struct dlm_ctxt *dlm, char *buf, int len)
+static int debug_purgelist_print(struct dlm_ctxt *dlm, struct debug_buffer *db)
 {
 	struct dlm_lock_resource *res;
 	int out = 0;
 	unsigned long total = 0;
 
-	out += snprintf(buf + out, len - out,
+	out += snprintf(db->buf + out, db->len - out,
 			"Dumping Purgelist for Domain: %s\n", dlm->name);
 
 	spin_lock(&dlm->spinlock);
 	list_for_each_entry(res, &dlm->purge_list, purge) {
 		++total;
-		if (len - out < 100)
+		if (db->len - out < 100)
 			continue;
 		spin_lock(&res->spinlock);
 		out += stringify_lockname(res->lockname.name,
 					  res->lockname.len,
-					  buf + out, len - out);
-		out += snprintf(buf + out, len - out, "\t%ld\n",
+					  db->buf + out, db->len - out);
+		out += snprintf(db->buf + out, db->len - out, "\t%ld\n",
 				(jiffies - res->last_used)/HZ);
 		spin_unlock(&res->spinlock);
 	}
 	spin_unlock(&dlm->spinlock);
 
-	out += snprintf(buf + out, len - out, "Total on list: %ld\n", total);
+	out += snprintf(db->buf + out, db->len - out,
+			"Total on list: %ld\n", total);
 
 	return out;
 }
@@ -418,15 +463,15 @@ static int debug_purgelist_print(struct dlm_ctxt *dlm, char *buf, int len)
 static int debug_purgelist_open(struct inode *inode, struct file *file)
 {
 	struct dlm_ctxt *dlm = inode->i_private;
-	char *buf = NULL;
+	struct debug_buffer *db;
 
-	buf = (char *) get_zeroed_page(GFP_NOFS);
-	if (!buf)
+	db = debug_buffer_allocate();
+	if (!db)
 		goto bail;
 
-	i_size_write(inode, debug_purgelist_print(dlm, buf, PAGE_SIZE - 1));
+	db->len = debug_purgelist_print(dlm, db);
 
-	file->private_data = buf;
+	file->private_data = db;
 
 	return 0;
 bail:
@@ -435,22 +480,22 @@ bail:
 
 static const struct file_operations debug_purgelist_fops = {
 	.open =		debug_purgelist_open,
-	.release =	debug_release,
-	.read =		debug_read,
-	.llseek =	generic_file_llseek,
+	.release =	debug_buffer_release,
+	.read =		debug_buffer_read,
+	.llseek =	debug_buffer_llseek,
 };
 /* end - purge list funcs */
 
 /* begin - debug mle funcs */
-static int debug_mle_print(struct dlm_ctxt *dlm, char *buf, int len)
+static int debug_mle_print(struct dlm_ctxt *dlm, struct debug_buffer *db)
 {
 	struct dlm_master_list_entry *mle;
 	struct hlist_head *bucket;
 	struct hlist_node *list;
 	int i, out = 0;
-	unsigned long total = 0, longest = 0, bucket_count = 0;
+	unsigned long total = 0, longest = 0, bktcnt;
 
-	out += snprintf(buf + out, len - out,
+	out += snprintf(db->buf + out, db->len - out,
 			"Dumping MLEs for Domain: %s\n", dlm->name);
 
 	spin_lock(&dlm->master_lock);
@@ -460,17 +505,17 @@ static int debug_mle_print(struct dlm_ctxt *dlm, char *buf, int len)
 			mle = hlist_entry(list, struct dlm_master_list_entry,
 					  master_hash_node);
 			++total;
-			++bucket_count;
-			if (len - out < 200)
+			++bktcnt;
+			if (db->len - out < 200)
 				continue;
-			out += dump_mle(mle, buf + out, len - out);
+			out += dump_mle(mle, db->buf + out, db->len - out);
 		}
-		longest = max(longest, bucket_count);
-		bucket_count = 0;
+		longest = max(longest, bktcnt);
+		bktcnt = 0;
 	}
 	spin_unlock(&dlm->master_lock);
 
-	out += snprintf(buf + out, len - out,
+	out += snprintf(db->buf + out, db->len - out,
 			"Total: %ld, Longest: %ld\n", total, longest);
 	return out;
 }
@@ -478,15 +523,15 @@ static int debug_mle_print(struct dlm_ctxt *dlm, char *buf, int len)
 static int debug_mle_open(struct inode *inode, struct file *file)
 {
 	struct dlm_ctxt *dlm = inode->i_private;
-	char *buf = NULL;
+	struct debug_buffer *db;
 
-	buf = (char *) get_zeroed_page(GFP_NOFS);
-	if (!buf)
+	db = debug_buffer_allocate();
+	if (!db)
 		goto bail;
 
-	i_size_write(inode, debug_mle_print(dlm, buf, PAGE_SIZE - 1));
+	db->len = debug_mle_print(dlm, db);
 
-	file->private_data = buf;
+	file->private_data = db;
 
 	return 0;
 bail:
@@ -495,9 +540,9 @@ bail:
 
 static const struct file_operations debug_mle_fops = {
 	.open =		debug_mle_open,
-	.release =	debug_release,
-	.read =		debug_read,
-	.llseek =	generic_file_llseek,
+	.release =	debug_buffer_release,
+	.read =		debug_buffer_read,
+	.llseek =	debug_buffer_llseek,
 };
 
 /* end - debug mle funcs */
@@ -591,14 +636,8 @@ static void *lockres_seq_start(struct seq_file *m, loff_t *pos)
 	spin_lock(&dlm->track_lock);
 	if (oldres)
 		track_list = &oldres->tracking;
-	else {
+	else
 		track_list = &dlm->tracking_list;
-		if (list_empty(track_list)) {
-			dl = NULL;
-			spin_unlock(&dlm->track_lock);
-			goto bail;
-		}
-	}
 
 	list_for_each_entry(res, track_list, tracking) {
 		if (&res->tracking == &dlm->tracking_list)
@@ -621,7 +660,6 @@ static void *lockres_seq_start(struct seq_file *m, loff_t *pos)
 	} else
 		dl = NULL;
 
-bail:
 	/* passed to seq_show */
 	return dl;
 }
@@ -677,7 +715,7 @@ static int debug_lockres_open(struct inode *inode, struct file *file)
 		goto bail;
 	}
 
-	seq = file->private_data;
+	seq = (struct seq_file *) file->private_data;
 	seq->private = dl;
 
 	dlm_grab(dlm);
@@ -693,7 +731,7 @@ bail:
 
 static int debug_lockres_release(struct inode *inode, struct file *file)
 {
-	struct seq_file *seq = file->private_data;
+	struct seq_file *seq = (struct seq_file *)file->private_data;
 	struct debug_lockres *dl = (struct debug_lockres *)seq->private;
 
 	if (dl->dl_res)
@@ -712,7 +750,7 @@ static const struct file_operations debug_lockres_fops = {
 /* end - debug lockres funcs */
 
 /* begin - debug state funcs */
-static int debug_state_print(struct dlm_ctxt *dlm, char *buf, int len)
+static int debug_state_print(struct dlm_ctxt *dlm, struct debug_buffer *db)
 {
 	int out = 0;
 	struct dlm_reco_node_data *node;
@@ -736,41 +774,33 @@ static int debug_state_print(struct dlm_ctxt *dlm, char *buf, int len)
 	}
 
 	/* Domain: xxxxxxxxxx  Key: 0xdfbac769 */
-	out += snprintf(buf + out, len - out,
-			"Domain: %s  Key: 0x%08x  Protocol: %d.%d\n",
-			dlm->name, dlm->key, dlm->dlm_locking_proto.pv_major,
-			dlm->dlm_locking_proto.pv_minor);
+	out += snprintf(db->buf + out, db->len - out,
+			"Domain: %s  Key: 0x%08x\n", dlm->name, dlm->key);
 
 	/* Thread Pid: xxx  Node: xxx  State: xxxxx */
-	out += snprintf(buf + out, len - out,
+	out += snprintf(db->buf + out, db->len - out,
 			"Thread Pid: %d  Node: %d  State: %s\n",
-			task_pid_nr(dlm->dlm_thread_task), dlm->node_num, state);
+			dlm->dlm_thread_task->pid, dlm->node_num, state);
 
 	/* Number of Joins: xxx  Joining Node: xxx */
-	out += snprintf(buf + out, len - out,
+	out += snprintf(db->buf + out, db->len - out,
 			"Number of Joins: %d  Joining Node: %d\n",
 			dlm->num_joins, dlm->joining_node);
 
 	/* Domain Map: xx xx xx */
-	out += snprintf(buf + out, len - out, "Domain Map: ");
+	out += snprintf(db->buf + out, db->len - out, "Domain Map: ");
 	out += stringify_nodemap(dlm->domain_map, O2NM_MAX_NODES,
-				 buf + out, len - out);
-	out += snprintf(buf + out, len - out, "\n");
-
-	/* Exit Domain Map: xx xx xx */
-	out += snprintf(buf + out, len - out, "Exit Domain Map: ");
-	out += stringify_nodemap(dlm->exit_domain_map, O2NM_MAX_NODES,
-				 buf + out, len - out);
-	out += snprintf(buf + out, len - out, "\n");
+				 db->buf + out, db->len - out);
+	out += snprintf(db->buf + out, db->len - out, "\n");
 
 	/* Live Map: xx xx xx */
-	out += snprintf(buf + out, len - out, "Live Map: ");
+	out += snprintf(db->buf + out, db->len - out, "Live Map: ");
 	out += stringify_nodemap(dlm->live_nodes_map, O2NM_MAX_NODES,
-				 buf + out, len - out);
-	out += snprintf(buf + out, len - out, "\n");
+				 db->buf + out, db->len - out);
+	out += snprintf(db->buf + out, db->len - out, "\n");
 
 	/* Lock Resources: xxx (xxx) */
-	out += snprintf(buf + out, len - out,
+	out += snprintf(db->buf + out, db->len - out,
 			"Lock Resources: %d (%d)\n",
 			atomic_read(&dlm->res_cur_count),
 			atomic_read(&dlm->res_tot_count));
@@ -782,29 +812,29 @@ static int debug_state_print(struct dlm_ctxt *dlm, char *buf, int len)
 		cur_mles += atomic_read(&dlm->mle_cur_count[i]);
 
 	/* MLEs: xxx (xxx) */
-	out += snprintf(buf + out, len - out,
+	out += snprintf(db->buf + out, db->len - out,
 			"MLEs: %d (%d)\n", cur_mles, tot_mles);
 
 	/*  Blocking: xxx (xxx) */
-	out += snprintf(buf + out, len - out,
+	out += snprintf(db->buf + out, db->len - out,
 			"  Blocking: %d (%d)\n",
 			atomic_read(&dlm->mle_cur_count[DLM_MLE_BLOCK]),
 			atomic_read(&dlm->mle_tot_count[DLM_MLE_BLOCK]));
 
 	/*  Mastery: xxx (xxx) */
-	out += snprintf(buf + out, len - out,
+	out += snprintf(db->buf + out, db->len - out,
 			"  Mastery: %d (%d)\n",
 			atomic_read(&dlm->mle_cur_count[DLM_MLE_MASTER]),
 			atomic_read(&dlm->mle_tot_count[DLM_MLE_MASTER]));
 
 	/*  Migration: xxx (xxx) */
-	out += snprintf(buf + out, len - out,
+	out += snprintf(db->buf + out, db->len - out,
 			"  Migration: %d (%d)\n",
 			atomic_read(&dlm->mle_cur_count[DLM_MLE_MIGRATION]),
 			atomic_read(&dlm->mle_tot_count[DLM_MLE_MIGRATION]));
 
 	/* Lists: Dirty=Empty  Purge=InUse  PendingASTs=Empty  ... */
-	out += snprintf(buf + out, len - out,
+	out += snprintf(db->buf + out, db->len - out,
 			"Lists: Dirty=%s  Purge=%s  PendingASTs=%s  "
 			"PendingBASTs=%s\n",
 			(list_empty(&dlm->dirty_list) ? "Empty" : "InUse"),
@@ -813,12 +843,12 @@ static int debug_state_print(struct dlm_ctxt *dlm, char *buf, int len)
 			(list_empty(&dlm->pending_basts) ? "Empty" : "InUse"));
 
 	/* Purge Count: xxx  Refs: xxx */
-	out += snprintf(buf + out, len - out,
+	out += snprintf(db->buf + out, db->len - out,
 			"Purge Count: %d  Refs: %d\n", dlm->purge_count,
 			atomic_read(&dlm->dlm_refs.refcount));
 
 	/* Dead Node: xxx */
-	out += snprintf(buf + out, len - out,
+	out += snprintf(db->buf + out, db->len - out,
 			"Dead Node: %d\n", dlm->reco.dead_node);
 
 	/* What about DLM_RECO_STATE_FINALIZE? */
@@ -828,19 +858,19 @@ static int debug_state_print(struct dlm_ctxt *dlm, char *buf, int len)
 		state = "INACTIVE";
 
 	/* Recovery Pid: xxxx  Master: xxx  State: xxxx */
-	out += snprintf(buf + out, len - out,
+	out += snprintf(db->buf + out, db->len - out,
 			"Recovery Pid: %d  Master: %d  State: %s\n",
-			task_pid_nr(dlm->dlm_reco_thread_task),
+			dlm->dlm_reco_thread_task->pid,
 			dlm->reco.new_master, state);
 
 	/* Recovery Map: xx xx */
-	out += snprintf(buf + out, len - out, "Recovery Map: ");
+	out += snprintf(db->buf + out, db->len - out, "Recovery Map: ");
 	out += stringify_nodemap(dlm->recovery_map, O2NM_MAX_NODES,
-				 buf + out, len - out);
-	out += snprintf(buf + out, len - out, "\n");
+				 db->buf + out, db->len - out);
+	out += snprintf(db->buf + out, db->len - out, "\n");
 
 	/* Recovery Node State: */
-	out += snprintf(buf + out, len - out, "Recovery Node State:\n");
+	out += snprintf(db->buf + out, db->len - out, "Recovery Node State:\n");
 	list_for_each_entry(node, &dlm->reco.node_data, list) {
 		switch (node->state) {
 		case DLM_RECO_NODE_DATA_INIT:
@@ -868,7 +898,7 @@ static int debug_state_print(struct dlm_ctxt *dlm, char *buf, int len)
 			state = "BAD";
 			break;
 		}
-		out += snprintf(buf + out, len - out, "\t%u - %s\n",
+		out += snprintf(db->buf + out, db->len - out, "\t%u - %s\n",
 				node->node_num, state);
 	}
 
@@ -880,15 +910,15 @@ static int debug_state_print(struct dlm_ctxt *dlm, char *buf, int len)
 static int debug_state_open(struct inode *inode, struct file *file)
 {
 	struct dlm_ctxt *dlm = inode->i_private;
-	char *buf = NULL;
+	struct debug_buffer *db = NULL;
 
-	buf = (char *) get_zeroed_page(GFP_NOFS);
-	if (!buf)
+	db = debug_buffer_allocate();
+	if (!db)
 		goto bail;
 
-	i_size_write(inode, debug_state_print(dlm, buf, PAGE_SIZE - 1));
+	db->len = debug_state_print(dlm, db);
 
-	file->private_data = buf;
+	file->private_data = db;
 
 	return 0;
 bail:
@@ -897,9 +927,9 @@ bail:
 
 static const struct file_operations debug_state_fops = {
 	.open =		debug_state_open,
-	.release =	debug_release,
-	.read =		debug_read,
-	.llseek =	generic_file_llseek,
+	.release =	debug_buffer_release,
+	.read =		debug_buffer_read,
+	.llseek =	debug_buffer_llseek,
 };
 /* end  - debug state funcs */
 
@@ -963,10 +993,14 @@ void dlm_debug_shutdown(struct dlm_ctxt *dlm)
 	struct dlm_debug_ctxt *dc = dlm->dlm_debug_ctxt;
 
 	if (dc) {
-		debugfs_remove(dc->debug_purgelist_dentry);
-		debugfs_remove(dc->debug_mle_dentry);
-		debugfs_remove(dc->debug_lockres_dentry);
-		debugfs_remove(dc->debug_state_dentry);
+		if (dc->debug_purgelist_dentry)
+			debugfs_remove(dc->debug_purgelist_dentry);
+		if (dc->debug_mle_dentry)
+			debugfs_remove(dc->debug_mle_dentry);
+		if (dc->debug_lockres_dentry)
+			debugfs_remove(dc->debug_lockres_dentry);
+		if (dc->debug_state_dentry)
+			debugfs_remove(dc->debug_state_dentry);
 		dlm_debug_put(dc);
 	}
 }
@@ -997,7 +1031,8 @@ bail:
 
 void dlm_destroy_debugfs_subroot(struct dlm_ctxt *dlm)
 {
-	debugfs_remove(dlm->dlm_debugfs_subroot);
+	if (dlm->dlm_debugfs_subroot)
+		debugfs_remove(dlm->dlm_debugfs_subroot);
 }
 
 /* debugfs root */
@@ -1013,6 +1048,7 @@ int dlm_create_debugfs_root(void)
 
 void dlm_destroy_debugfs_root(void)
 {
-	debugfs_remove(dlm_debugfs_root);
+	if (dlm_debugfs_root)
+		debugfs_remove(dlm_debugfs_root);
 }
 #endif	/* CONFIG_DEBUG_FS */

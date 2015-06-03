@@ -54,30 +54,13 @@ struct pt_regs {
 	int pt_mode;
 };
 
-#ifdef __KERNEL__
 #define kernel_mode(regs)		((regs)->pt_mode)
 #define user_mode(regs)			(!kernel_mode(regs))
 
 #define instruction_pointer(regs)	((regs)->pc)
 #define profile_pc(regs)		instruction_pointer(regs)
 
-static inline long regs_return_value(struct pt_regs *regs)
-{
-	return regs->r3;
-}
-
-#else /* __KERNEL__ */
-
-/* pt_regs offsets used by gdbserver etc in ptrace syscalls */
-#define PT_GPR(n)	((n) * sizeof(microblaze_reg_t))
-#define PT_PC		(32 * sizeof(microblaze_reg_t))
-#define PT_MSR		(33 * sizeof(microblaze_reg_t))
-#define PT_EAR		(34 * sizeof(microblaze_reg_t))
-#define PT_ESR		(35 * sizeof(microblaze_reg_t))
-#define PT_FSR		(36 * sizeof(microblaze_reg_t))
-#define PT_KERNEL_MODE	(37 * sizeof(microblaze_reg_t))
-
-#endif /* __KERNEL */
+void show_regs(struct pt_regs *);
 
 #endif /* __ASSEMBLY__ */
 

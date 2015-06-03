@@ -16,7 +16,6 @@
 #include <linux/in.h>
 #include <linux/udp.h>
 #include <linux/netfilter.h>
-#include <linux/gfp.h>
 
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_expect.h>
@@ -108,7 +107,7 @@ static int amanda_help(struct sk_buff *skb,
 	dataoff = protoff + sizeof(struct udphdr);
 	if (dataoff >= skb->len) {
 		if (net_ratelimit())
-			printk(KERN_ERR "amanda_help: skblen = %u\n", skb->len);
+			printk("amanda_help: skblen = %u\n", skb->len);
 		return NF_ACCEPT;
 	}
 

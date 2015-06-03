@@ -6,7 +6,7 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+
 #include <linux/module.h>
 #include <linux/skbuff.h>
 #include <linux/ipv6.h>
@@ -41,10 +41,8 @@ MODULE_ALIAS("ip6t_dst");
  *	5	-> RTALERT 2 x x
  */
 
-static struct xt_match hbh_mt6_reg[] __read_mostly;
-
 static bool
-hbh_mt6(const struct sk_buff *skb, struct xt_action_param *par)
+hbh_mt6(const struct sk_buff *skb, const struct xt_match_param *par)
 {
 	struct ipv6_opt_hdr _optsh;
 	const struct ipv6_opt_hdr *oh;
@@ -60,18 +58,16 @@ hbh_mt6(const struct sk_buff *skb, struct xt_action_param *par)
 	unsigned int optlen;
 	int err;
 
-	err = ipv6_find_hdr(skb, &ptr,
-			    (par->match == &hbh_mt6_reg[0]) ?
-			    NEXTHDR_HOP : NEXTHDR_DEST, NULL);
+	err = ipv6_find_hdr(skb, &ptr, par->match->data, NULL);
 	if (err < 0) {
 		if (err != -ENOENT)
-			par->hotdrop = true;
+			*par->hotdrop = true;
 		return false;
 	}
 
 	oh = skb_header_pointer(skb, ptr, sizeof(_optsh), &_optsh);
 	if (oh == NULL) {
-		par->hotdrop = true;
+		*par->hotdrop = true;
 		return false;
 	}
 
@@ -145,11 +141,11 @@ hbh_mt6(const struct sk_buff *skb, struct xt_action_param *par)
 			}
 
 			/* Step to the next */
-			pr_debug("len%04X\n", optlen);
+			pr_debug("len%04X \n", optlen);
 
 			if ((ptr > skb->len - optlen || hdrlen < optlen) &&
 			    temp < optinfo->optsnr - 1) {
-				pr_debug("new pointer is too large!\n");
+				pr_debug("new pointer is too large! \n");
 				break;
 			}
 			ptr += optlen;
@@ -164,32 +160,32 @@ hbh_mt6(const struct sk_buff *skb, struct xt_action_param *par)
 	return false;
 }
 
-static int hbh_mt6_check(const struct xt_mtchk_param *par)
+static bool hbh_mt6_check(const struct xt_mtchk_param *par)
 {
 	const struct ip6t_opts *optsinfo = par->matchinfo;
 
 	if (optsinfo->invflags & ~IP6T_OPTS_INV_MASK) {
-		pr_debug("unknown flags %X\n", optsinfo->invflags);
-		return -EINVAL;
+		pr_debug("ip6t_opts: unknown flags %X\n", optsinfo->invflags);
+		return false;
 	}
 
 	if (optsinfo->flags & IP6T_OPTS_NSTRICT) {
-		pr_debug("Not strict - not implemented");
-		return -EINVAL;
+		pr_debug("ip6t_opts: Not strict - not implemented");
+		return false;
 	}
 
-	return 0;
+	return true;
 }
 
 static struct xt_match hbh_mt6_reg[] __read_mostly = {
 	{
-		/* Note, hbh_mt6 relies on the order of hbh_mt6_reg */
 		.name		= "hbh",
 		.family		= NFPROTO_IPV6,
 		.match		= hbh_mt6,
 		.matchsize	= sizeof(struct ip6t_opts),
 		.checkentry	= hbh_mt6_check,
 		.me		= THIS_MODULE,
+		.data		= NEXTHDR_HOP,
 	},
 	{
 		.name		= "dst",
@@ -198,6 +194,7 @@ static struct xt_match hbh_mt6_reg[] __read_mostly = {
 		.matchsize	= sizeof(struct ip6t_opts),
 		.checkentry	= hbh_mt6_check,
 		.me		= THIS_MODULE,
+		.data		= NEXTHDR_DEST,
 	},
 };
 

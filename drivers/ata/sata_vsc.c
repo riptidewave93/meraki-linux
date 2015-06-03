@@ -245,7 +245,7 @@ static void vsc_port_intr(u8 port_status, struct ata_port *ap)
 
 	qc = ata_qc_from_tag(ap, ap->link.active_tag);
 	if (qc && likely(!(qc->tf.flags & ATA_TFLAG_POLLING)))
-		handled = ata_bmdma_port_intr(ap, qc);
+		handled = ata_sff_host_intr(ap, qc);
 
 	/* We received an interrupt during a polled command,
 	 * or some other spurious condition.  Interrupt reporting
@@ -273,8 +273,9 @@ static irqreturn_t vsc_sata_interrupt(int irq, void *dev_instance)
 
 	if (unlikely(status == 0xffffffff || status == 0)) {
 		if (status)
-			dev_err(host->dev,
-				": IRQ status == 0xffffffff, PCI fault or device removal?\n");
+			dev_printk(KERN_ERR, host->dev,
+				": IRQ status == 0xffffffff, "
+				"PCI fault or device removal?\n");
 		goto out;
 	}
 
@@ -283,8 +284,14 @@ static irqreturn_t vsc_sata_interrupt(int irq, void *dev_instance)
 	for (i = 0; i < host->n_ports; i++) {
 		u8 port_status = (status >> (8 * i)) & 0xff;
 		if (port_status) {
-			vsc_port_intr(port_status, host->ports[i]);
-			handled++;
+			struct ata_port *ap = host->ports[i];
+
+			if (ap && !(ap->flags & ATA_FLAG_DISABLED)) {
+				vsc_port_intr(port_status, ap);
+				handled++;
+			} else
+				dev_printk(KERN_ERR, host->dev,
+					"interrupt from disabled port %d\n", i);
 		}
 	}
 
@@ -339,19 +346,22 @@ static int __devinit vsc_sata_init_one(struct pci_dev *pdev,
 				       const struct pci_device_id *ent)
 {
 	static const struct ata_port_info pi = {
-		.flags		= ATA_FLAG_SATA,
+		.flags		= ATA_FLAG_SATA | ATA_FLAG_NO_LEGACY |
+				  ATA_FLAG_MMIO,
 		.pio_mask	= ATA_PIO4,
 		.mwdma_mask	= ATA_MWDMA2,
 		.udma_mask	= ATA_UDMA6,
 		.port_ops	= &vsc_sata_ops,
 	};
 	const struct ata_port_info *ppi[] = { &pi, NULL };
+	static int printed_version;
 	struct ata_host *host;
 	void __iomem *mmio_base;
 	int i, rc;
 	u8 cls;
 
-	ata_print_version_once(&pdev->dev, DRV_VERSION);
+	if (!printed_version++)
+		dev_printk(KERN_DEBUG, &pdev->dev, "version " DRV_VERSION "\n");
 
 	/* allocate host */
 	host = ata_host_alloc_pinfo(&pdev->dev, ppi, 4);
@@ -366,7 +376,7 @@ static int __devinit vsc_sata_init_one(struct pci_dev *pdev,
 	if (pci_resource_len(pdev, 0) == 0)
 		return -ENODEV;
 
-	/* map IO regions and initialize host accordingly */
+	/* map IO regions and intialize host accordingly */
 	rc = pcim_iomap_regions(pdev, 1 << VSC_MMIO_BAR, DRV_NAME);
 	if (rc == -EBUSY)
 		pcim_pin_device(pdev);

@@ -73,8 +73,6 @@ static unsigned long get_shared_area(struct address_space *mapping,
 	struct vm_area_struct *vma;
 	int offset = mapping ? get_offset(mapping) : 0;
 
-	offset = (offset + (pgoff << PAGE_SHIFT)) & 0x3FF000;
-
 	addr = DCACHE_ALIGN(addr - offset) + offset;
 
 	for (vma = find_vma(current->mm, addr); ; vma = vma->vm_next) {
@@ -233,6 +231,21 @@ long parisc_personality(unsigned long personality)
 	err = sys_personality(personality);
 	if (err == PER_LINUX32)
 		err = PER_LINUX;
+
+	return err;
+}
+
+long parisc_newuname(struct new_utsname __user *name)
+{
+	int err = sys_newuname(name);
+
+#ifdef CONFIG_COMPAT
+	if (!err && personality(current->personality) == PER_LINUX32) {
+		if (__put_user(0, name->machine + 6) ||
+		    __put_user(0, name->machine + 7))
+			err = -EFAULT;
+	}
+#endif
 
 	return err;
 }

@@ -8,7 +8,7 @@
 #include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/string.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 /**
  * Define this to get debugging messages.
@@ -66,7 +66,6 @@ typedef struct fsm_instance_t {
 	char name[16];
 	void *userdata;
 	int userint;
-	wait_queue_head_t wait_q;
 #if FSM_DEBUG_HISTORY
 	int         history_index;
 	int         history_size;
@@ -198,7 +197,6 @@ fsm_newstate(fsm_instance *fi, int newstate)
 	printk(KERN_DEBUG "fsm(%s): New state %s\n", fi->name,
 		fi->f->state_names[newstate]);
 #endif
-	wake_up(&fi->wait_q);
 }
 
 /**

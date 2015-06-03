@@ -7,6 +7,7 @@
  * of the GNU General Public License version 2.
  */
 
+#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/completion.h>
 #include <linux/buffer_head.h>
@@ -20,12 +21,10 @@
 #include "util.h"
 
 struct kmem_cache *gfs2_glock_cachep __read_mostly;
-struct kmem_cache *gfs2_glock_aspace_cachep __read_mostly;
 struct kmem_cache *gfs2_inode_cachep __read_mostly;
 struct kmem_cache *gfs2_bufdata_cachep __read_mostly;
 struct kmem_cache *gfs2_rgrpd_cachep __read_mostly;
 struct kmem_cache *gfs2_quotad_cachep __read_mostly;
-mempool_t *gfs2_bh_pool __read_mostly;
 
 void gfs2_assert_i(struct gfs2_sbd *sdp)
 {

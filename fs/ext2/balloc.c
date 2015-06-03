@@ -13,7 +13,6 @@
 
 #include "ext2.h"
 #include <linux/quotaops.h>
-#include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/buffer_head.h>
 #include <linux/capability.h>
@@ -421,7 +420,7 @@ static inline int rsv_is_empty(struct ext2_reserve_window *rsv)
 void ext2_init_block_alloc_info(struct inode *inode)
 {
 	struct ext2_inode_info *ei = EXT2_I(inode);
-	struct ext2_block_alloc_info *block_i;
+	struct ext2_block_alloc_info *block_i = ei->i_block_alloc_info;
 	struct super_block *sb = inode->i_sb;
 
 	block_i = kmalloc(sizeof(*block_i), GFP_NOFS);
@@ -571,7 +570,7 @@ do_more:
 error_return:
 	brelse(bitmap_bh);
 	release_blocks(sb, freed);
-	dquot_free_block_nodirty(inode, freed);
+	vfs_dq_free_block(inode, freed);
 }
 
 /**
@@ -646,9 +645,10 @@ find_next_usable_block(int start, struct buffer_head *bh, int maxblocks)
 	return here;
 }
 
-/**
+/*
  * ext2_try_to_allocate()
  * @sb:			superblock
+ * @handle:		handle to this transaction
  * @group:		given allocation block group
  * @bitmap_bh:		bufferhead holds the block bitmap
  * @grp_goal:		given target block within the group
@@ -850,7 +850,7 @@ static int find_next_reservable_window(
 		rsv_window_remove(sb, my_rsv);
 
 	/*
-	 * Let's book the whole available window for now.  We will check the
+	 * Let's book the whole avaliable window for now.  We will check the
 	 * disk bitmap later and then, if there are free blocks then we adjust
 	 * the window size if it's larger than requested.
 	 * Otherwise, we will remove this node from the tree next time
@@ -1236,7 +1236,6 @@ ext2_fsblk_t ext2_new_blocks(struct inode *inode, ext2_fsblk_t goal,
 	unsigned short windowsz = 0;
 	unsigned long ngroups;
 	unsigned long num = *count;
-	int ret;
 
 	*errp = -ENOSPC;
 	sb = inode->i_sb;
@@ -1248,9 +1247,8 @@ ext2_fsblk_t ext2_new_blocks(struct inode *inode, ext2_fsblk_t goal,
 	/*
 	 * Check quota for allocation of this block.
 	 */
-	ret = dquot_alloc_block(inode, num);
-	if (ret) {
-		*errp = ret;
+	if (vfs_dq_alloc_block(inode, num)) {
+		*errp = -EDQUOT;
 		return 0;
 	}
 
@@ -1331,12 +1329,6 @@ retry_alloc:
 
 		free_blocks = le16_to_cpu(gdp->bg_free_blocks_count);
 		/*
-		 * skip this group (and avoid loading bitmap) if there
-		 * are no free blocks
-		 */
-		if (!free_blocks)
-			continue;
-		/*
 		 * skip this group if the number of
 		 * free blocks is less than half of the reservation
 		 * window size.
@@ -1357,9 +1349,9 @@ retry_alloc:
 			goto allocated;
 	}
 	/*
-	 * We may end up a bogus earlier ENOSPC error due to
+	 * We may end up a bogus ealier ENOSPC error due to
 	 * filesystem is "full" of reservations, but
-	 * there maybe indeed free blocks available on disk
+	 * there maybe indeed free blocks avaliable on disk
 	 * In this case, we just forget about the reservations
 	 * just do block allocation as without reservations.
 	 */
@@ -1417,8 +1409,7 @@ allocated:
 
 	*errp = 0;
 	brelse(bitmap_bh);
-	dquot_free_block_nodirty(inode, *count-num);
-	mark_inode_dirty(inode);
+	vfs_dq_free_block(inode, *count-num);
 	*count = num;
 	return ret_block;
 
@@ -1428,10 +1419,8 @@ out:
 	/*
 	 * Undo the block allocation
 	 */
-	if (!performed_allocation) {
-		dquot_free_block_nodirty(inode, *count);
-		mark_inode_dirty(inode);
-	}
+	if (!performed_allocation)
+		vfs_dq_free_block(inode, *count);
 	brelse(bitmap_bh);
 	return 0;
 }

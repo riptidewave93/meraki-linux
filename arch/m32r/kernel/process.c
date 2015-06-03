@@ -21,12 +21,11 @@
  */
 
 #include <linux/fs.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/ptrace.h>
 #include <linux/unistd.h>
+#include <linux/slab.h>
 #include <linux/hardirq.h>
-#include <linux/rcupdate.h>
 
 #include <asm/io.h>
 #include <asm/uaccess.h>
@@ -83,7 +82,6 @@ void cpu_idle (void)
 {
 	/* endless idle loop with no priority at all */
 	while (1) {
-		rcu_idle_enter();
 		while (!need_resched()) {
 			void (*idle)(void) = pm_idle;
 
@@ -92,8 +90,9 @@ void cpu_idle (void)
 
 			idle();
 		}
-		rcu_idle_exit();
-		schedule_preempt_disabled();
+		preempt_enable_no_resched();
+		schedule();
+		preempt_disable();
 	}
 }
 
@@ -289,9 +288,8 @@ asmlinkage int sys_vfork(unsigned long r0, unsigned long r1, unsigned long r2,
 /*
  * sys_execve() executes a new program.
  */
-asmlinkage int sys_execve(const char __user *ufilename,
-			  const char __user *const __user *uargv,
-			  const char __user *const __user *uenvp,
+asmlinkage int sys_execve(char __user *ufilename, char __user * __user *uargv,
+			  char __user * __user *uenvp,
 			  unsigned long r3, unsigned long r4, unsigned long r5,
 			  unsigned long r6, struct pt_regs regs)
 {

@@ -28,7 +28,6 @@
 #include <linux/blkdev.h>
 #include <linux/delay.h>
 #include <linux/device.h>
-#include <linux/gfp.h>
 #include <scsi/scsi_host.h>
 #include <linux/libata.h>
 #include <linux/dmi.h>
@@ -86,8 +85,6 @@ static int rdc_pata_prereset(struct ata_link *link, unsigned long deadline)
 	return ata_sff_prereset(link, deadline);
 }
 
-static DEFINE_SPINLOCK(rdc_lock);
-
 /**
  *	rdc_set_piomode - Initialize host controller PATA PIO timings
  *	@ap: Port whose timings we are configuring
@@ -103,7 +100,6 @@ static void rdc_set_piomode(struct ata_port *ap, struct ata_device *adev)
 {
 	unsigned int pio	= adev->pio_mode - XFER_PIO_0;
 	struct pci_dev *dev	= to_pci_dev(ap->host->dev);
-	unsigned long flags;
 	unsigned int is_slave	= (adev->devno != 0);
 	unsigned int master_port= ap->port_no ? 0x42 : 0x40;
 	unsigned int slave_port	= 0x44;
@@ -126,8 +122,6 @@ static void rdc_set_piomode(struct ata_port *ap, struct ata_device *adev)
 
 	if (adev->class == ATA_DEV_ATA)
 		control |= 4;	/* PPE enable */
-
-	spin_lock_irqsave(&rdc_lock, flags);
 
 	/* PIO configuration clears DTE unconditionally.  It will be
 	 * programmed in set_dmamode which is guaranteed to be called
@@ -166,8 +160,6 @@ static void rdc_set_piomode(struct ata_port *ap, struct ata_device *adev)
 	pci_read_config_byte(dev, 0x48, &udma_enable);
 	udma_enable &= ~(1 << (2 * ap->port_no + adev->devno));
 	pci_write_config_byte(dev, 0x48, udma_enable);
-
-	spin_unlock_irqrestore(&rdc_lock, flags);
 }
 
 /**
@@ -184,7 +176,6 @@ static void rdc_set_piomode(struct ata_port *ap, struct ata_device *adev)
 static void rdc_set_dmamode(struct ata_port *ap, struct ata_device *adev)
 {
 	struct pci_dev *dev	= to_pci_dev(ap->host->dev);
-	unsigned long flags;
 	u8 master_port		= ap->port_no ? 0x42 : 0x40;
 	u16 master_data;
 	u8 speed		= adev->dma_mode;
@@ -197,8 +188,6 @@ static void rdc_set_dmamode(struct ata_port *ap, struct ata_device *adev)
 			    { 1, 0 },
 			    { 2, 1 },
 			    { 2, 3 }, };
-
-	spin_lock_irqsave(&rdc_lock, flags);
 
 	pci_read_config_word(dev, master_port, &master_data);
 	pci_read_config_byte(dev, 0x48, &udma_enable);
@@ -281,8 +270,6 @@ static void rdc_set_dmamode(struct ata_port *ap, struct ata_device *adev)
 		pci_write_config_word(dev, master_port, master_data);
 	}
 	pci_write_config_byte(dev, 0x48, udma_enable);
-
-	spin_unlock_irqrestore(&rdc_lock, flags);
 }
 
 static struct ata_port_operations rdc_pata_ops = {
@@ -297,7 +284,7 @@ static struct ata_port_info rdc_port_info = {
 
 	.flags		= ATA_FLAG_SLAVE_POSS,
 	.pio_mask	= ATA_PIO4,
-	.mwdma_mask	= ATA_MWDMA12_ONLY,
+	.mwdma_mask	= ATA_MWDMA2,
 	.udma_mask	= ATA_UDMA5,
 	.port_ops	= &rdc_pata_ops,
 };
@@ -324,6 +311,7 @@ static struct scsi_host_template rdc_sht = {
 static int __devinit rdc_init_one(struct pci_dev *pdev,
 				   const struct pci_device_id *ent)
 {
+	static int printed_version;
 	struct device *dev = &pdev->dev;
 	struct ata_port_info port_info[2];
 	const struct ata_port_info *ppi[] = { &port_info[0], &port_info[1] };
@@ -332,7 +320,9 @@ static int __devinit rdc_init_one(struct pci_dev *pdev,
 	struct rdc_host_priv *hpriv;
 	int rc;
 
-	ata_print_version_once(&pdev->dev, DRV_VERSION);
+	if (!printed_version++)
+		dev_printk(KERN_DEBUG, &pdev->dev,
+			   "version " DRV_VERSION "\n");
 
 	port_info[0] = rdc_port_info;
 	port_info[1] = rdc_port_info;
@@ -353,7 +343,7 @@ static int __devinit rdc_init_one(struct pci_dev *pdev,
 	 */
 	pci_read_config_dword(pdev, 0x54, &hpriv->saved_iocfg);
 
-	rc = ata_pci_bmdma_prepare_host(pdev, ppi, &host);
+	rc = ata_pci_sff_prepare_host(pdev, ppi, &host);
 	if (rc)
 		return rc;
 	host->private_data = hpriv;
@@ -363,7 +353,7 @@ static int __devinit rdc_init_one(struct pci_dev *pdev,
 	host->flags |= ATA_HOST_PARALLEL_SCAN;
 
 	pci_set_master(pdev);
-	return ata_pci_sff_activate_host(host, ata_bmdma_interrupt, &rdc_sht);
+	return ata_pci_sff_activate_host(host, ata_sff_interrupt, &rdc_sht);
 }
 
 static void rdc_remove_one(struct pci_dev *pdev)
@@ -387,10 +377,6 @@ static struct pci_driver rdc_pci_driver = {
 	.id_table		= rdc_pci_tbl,
 	.probe			= rdc_init_one,
 	.remove			= rdc_remove_one,
-#ifdef CONFIG_PM
-	.suspend		= ata_pci_device_suspend,
-	.resume			= ata_pci_device_resume,
-#endif
 };
 
 

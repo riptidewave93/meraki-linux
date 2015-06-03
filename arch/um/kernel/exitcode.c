@@ -6,9 +6,7 @@
 #include <linux/ctype.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
-#include <linux/module.h>
 #include <linux/proc_fs.h>
-#include <linux/seq_file.h>
 #include <linux/types.h>
 #include <asm/uaccess.h>
 
@@ -18,26 +16,30 @@
  */
 int uml_exitcode = 0;
 
-static int exitcode_proc_show(struct seq_file *m, void *v)
+static int read_proc_exitcode(char *page, char **start, off_t off,
+			      int count, int *eof, void *data)
 {
-	int val;
+	int len, val;
 
 	/*
 	 * Save uml_exitcode in a local so that we don't need to guarantee
 	 * that sprintf accesses it atomically.
 	 */
 	val = uml_exitcode;
-	seq_printf(m, "%d\n", val);
-	return 0;
+	len = sprintf(page, "%d\n", val);
+	len -= off;
+	if (len <= off+count)
+		*eof = 1;
+	*start = page + off;
+	if (len > count)
+		len = count;
+	if (len < 0)
+		len = 0;
+	return len;
 }
 
-static int exitcode_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, exitcode_proc_show, NULL);
-}
-
-static ssize_t exitcode_proc_write(struct file *file,
-		const char __user *buffer, size_t count, loff_t *pos)
+static int write_proc_exitcode(struct file *file, const char __user *buffer,
+			       unsigned long count, void *data)
 {
 	char *end, buf[sizeof("nnnnn\0")];
 	size_t size;
@@ -55,25 +57,20 @@ static ssize_t exitcode_proc_write(struct file *file,
 	return count;
 }
 
-static const struct file_operations exitcode_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= exitcode_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-	.write		= exitcode_proc_write,
-};
-
 static int make_proc_exitcode(void)
 {
 	struct proc_dir_entry *ent;
 
-	ent = proc_create("exitcode", 0600, NULL, &exitcode_proc_fops);
+	ent = create_proc_entry("exitcode", 0600, NULL);
 	if (ent == NULL) {
 		printk(KERN_WARNING "make_proc_exitcode : Failed to register "
 		       "/proc/exitcode\n");
 		return 0;
 	}
+
+	ent->read_proc = read_proc_exitcode;
+	ent->write_proc = write_proc_exitcode;
+
 	return 0;
 }
 

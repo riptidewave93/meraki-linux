@@ -28,6 +28,7 @@ struct pep_sock {
 
 	/* XXX: union-ify listening vs connected stuff ? */
 	/* Listening socket stuff: */
+	struct hlist_head	ackq;
 	struct hlist_head	hlist;
 
 	/* Connected socket stuff: */
@@ -43,7 +44,6 @@ struct pep_sock {
 	u8			rx_fc;	/* RX flow control */
 	u8			tx_fc;	/* TX flow control */
 	u8			init_enable;	/* auto-enable at creation */
-	u8			aligned;
 };
 
 static inline struct pep_sock *pep_sk(struct sock *sk)
@@ -76,13 +76,7 @@ static inline struct pnpipehdr *pnp_hdr(struct sk_buff *skb)
 #define MAX_PNPIPE_HEADER (MAX_PHONET_HEADER + 4)
 
 enum {
-	PNS_PIPE_CREATE_REQ = 0x00,
-	PNS_PIPE_CREATE_RESP,
-	PNS_PIPE_REMOVE_REQ,
-	PNS_PIPE_REMOVE_RESP,
-
 	PNS_PIPE_DATA = 0x20,
-	PNS_PIPE_ALIGNED_DATA,
 
 	PNS_PEP_CONNECT_REQ = 0x40,
 	PNS_PEP_CONNECT_RESP,
@@ -144,7 +138,6 @@ enum {
 	PN_PIPE_SB_NEGOTIATED_FC,
 	PN_PIPE_SB_REQUIRED_FC_TX,
 	PN_PIPE_SB_PREFERRED_FC_RX,
-	PN_PIPE_SB_ALIGNED_DATA,
 };
 
 /* Phonet pipe flow control models */
@@ -153,7 +146,6 @@ enum {
 	PN_LEGACY_FLOW_CONTROL,
 	PN_ONE_CREDIT_FLOW_CONTROL,
 	PN_MULTI_CREDIT_FLOW_CONTROL,
-	PN_MAX_FLOW_CONTROL,
 };
 
 #define pn_flow_safe(fc) ((fc) >> 1)

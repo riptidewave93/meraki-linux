@@ -9,17 +9,14 @@
 #include <linux/nmi.h>
 #include <linux/quicklist.h>
 
-void show_mem(unsigned int filter)
+void show_mem(void)
 {
 	pg_data_t *pgdat;
 	unsigned long total = 0, reserved = 0, shared = 0,
 		nonshared = 0, highmem = 0;
 
-	printk("Mem-Info:\n");
-	show_free_areas(filter);
-
-	if (filter & SHOW_MEM_FILTER_PAGE_COUNT)
-		return;
+	printk(KERN_INFO "Mem-Info:\n");
+	show_free_areas();
 
 	for_each_online_pgdat(pgdat) {
 		unsigned long i, flags;
@@ -52,15 +49,15 @@ void show_mem(unsigned int filter)
 		pgdat_resize_unlock(pgdat, &flags);
 	}
 
-	printk("%lu pages RAM\n", total);
+	printk(KERN_INFO "%lu pages RAM\n", total);
 #ifdef CONFIG_HIGHMEM
-	printk("%lu pages HighMem\n", highmem);
+	printk(KERN_INFO "%lu pages HighMem\n", highmem);
 #endif
-	printk("%lu pages reserved\n", reserved);
-	printk("%lu pages shared\n", shared);
-	printk("%lu pages non-shared\n", nonshared);
+	printk(KERN_INFO "%lu pages reserved\n", reserved);
+	printk(KERN_INFO "%lu pages shared\n", shared);
+	printk(KERN_INFO "%lu pages non-shared\n", nonshared);
 #ifdef CONFIG_QUICKLIST
-	printk("%lu pages in pagetable cache\n",
+	printk(KERN_INFO "%lu pages in pagetable cache\n",
 		quicklist_total_size());
 #endif
 }

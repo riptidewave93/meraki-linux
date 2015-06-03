@@ -39,22 +39,21 @@ static struct tcf_hashinfo skbedit_hash_info = {
 	.lock	=	&skbedit_lock,
 };
 
-static int tcf_skbedit(struct sk_buff *skb, const struct tc_action *a,
+static int tcf_skbedit(struct sk_buff *skb, struct tc_action *a,
 		       struct tcf_result *res)
 {
 	struct tcf_skbedit *d = a->priv;
 
 	spin_lock(&d->tcf_lock);
 	d->tcf_tm.lastuse = jiffies;
-	bstats_update(&d->tcf_bstats, skb);
+	d->tcf_bstats.bytes += qdisc_pkt_len(skb);
+	d->tcf_bstats.packets++;
 
 	if (d->flags & SKBEDIT_F_PRIORITY)
 		skb->priority = d->priority;
 	if (d->flags & SKBEDIT_F_QUEUE_MAPPING &&
 	    skb->dev->real_num_tx_queues > d->queue_mapping)
 		skb_set_queue_mapping(skb, d->queue_mapping);
-	if (d->flags & SKBEDIT_F_MARK)
-		skb->mark = d->mark;
 
 	spin_unlock(&d->tcf_lock);
 	return d->tcf_action;
@@ -64,7 +63,6 @@ static const struct nla_policy skbedit_policy[TCA_SKBEDIT_MAX + 1] = {
 	[TCA_SKBEDIT_PARMS]		= { .len = sizeof(struct tc_skbedit) },
 	[TCA_SKBEDIT_PRIORITY]		= { .len = sizeof(u32) },
 	[TCA_SKBEDIT_QUEUE_MAPPING]	= { .len = sizeof(u16) },
-	[TCA_SKBEDIT_MARK]		= { .len = sizeof(u32) },
 };
 
 static int tcf_skbedit_init(struct nlattr *nla, struct nlattr *est,
@@ -74,7 +72,7 @@ static int tcf_skbedit_init(struct nlattr *nla, struct nlattr *est,
 	struct tc_skbedit *parm;
 	struct tcf_skbedit *d;
 	struct tcf_common *pc;
-	u32 flags = 0, *priority = NULL, *mark = NULL;
+	u32 flags = 0, *priority = NULL;
 	u16 *queue_mapping = NULL;
 	int ret = 0, err;
 
@@ -97,12 +95,6 @@ static int tcf_skbedit_init(struct nlattr *nla, struct nlattr *est,
 		flags |= SKBEDIT_F_QUEUE_MAPPING;
 		queue_mapping = nla_data(tb[TCA_SKBEDIT_QUEUE_MAPPING]);
 	}
-
-	if (tb[TCA_SKBEDIT_MARK] != NULL) {
-		flags |= SKBEDIT_F_MARK;
-		mark = nla_data(tb[TCA_SKBEDIT_MARK]);
-	}
-
 	if (!flags)
 		return -EINVAL;
 
@@ -113,7 +105,7 @@ static int tcf_skbedit_init(struct nlattr *nla, struct nlattr *est,
 		pc = tcf_hash_create(parm->index, est, a, sizeof(*d), bind,
 				     &skbedit_idx_gen, &skbedit_hash_info);
 		if (IS_ERR(pc))
-			return PTR_ERR(pc);
+		    return PTR_ERR(pc);
 
 		d = to_skbedit(pc);
 		ret = ACT_P_CREATED;
@@ -132,9 +124,6 @@ static int tcf_skbedit_init(struct nlattr *nla, struct nlattr *est,
 		d->priority = *priority;
 	if (flags & SKBEDIT_F_QUEUE_MAPPING)
 		d->queue_mapping = *queue_mapping;
-	if (flags & SKBEDIT_F_MARK)
-		d->mark = *mark;
-
 	d->tcf_action = parm->action;
 
 	spin_unlock_bh(&d->tcf_lock);
@@ -144,7 +133,7 @@ static int tcf_skbedit_init(struct nlattr *nla, struct nlattr *est,
 	return ret;
 }
 
-static int tcf_skbedit_cleanup(struct tc_action *a, int bind)
+static inline int tcf_skbedit_cleanup(struct tc_action *a, int bind)
 {
 	struct tcf_skbedit *d = a->priv;
 
@@ -153,8 +142,8 @@ static int tcf_skbedit_cleanup(struct tc_action *a, int bind)
 	return 0;
 }
 
-static int tcf_skbedit_dump(struct sk_buff *skb, struct tc_action *a,
-			    int bind, int ref)
+static inline int tcf_skbedit_dump(struct sk_buff *skb, struct tc_action *a,
+				int bind, int ref)
 {
 	unsigned char *b = skb_tail_pointer(skb);
 	struct tcf_skbedit *d = a->priv;
@@ -173,9 +162,6 @@ static int tcf_skbedit_dump(struct sk_buff *skb, struct tc_action *a,
 	if (d->flags & SKBEDIT_F_QUEUE_MAPPING)
 		NLA_PUT(skb, TCA_SKBEDIT_QUEUE_MAPPING,
 			sizeof(d->queue_mapping), &d->queue_mapping);
-	if (d->flags & SKBEDIT_F_MARK)
-		NLA_PUT(skb, TCA_SKBEDIT_MARK, sizeof(d->mark),
-			&d->mark);
 	t.install = jiffies_to_clock_t(jiffies - d->tcf_tm.install);
 	t.lastuse = jiffies_to_clock_t(jiffies - d->tcf_tm.lastuse);
 	t.expires = jiffies_to_clock_t(d->tcf_tm.expires);

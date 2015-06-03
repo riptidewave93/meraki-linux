@@ -25,13 +25,14 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/fb.h>
 #include <linux/console.h>
 #include <linux/suspend.h>
 #include <linux/init.h>
 #include <linux/pci.h>
-#include <linux/cs5535.h>
+#include <asm/geode.h>
 
 #include "gxfb.h"
 
@@ -40,7 +41,7 @@ static int vram;
 static int vt_switch;
 
 /* Modes relevant to the GX (taken from modedb.c) */
-static struct fb_videomode gx_modedb[] __devinitdata = {
+static struct fb_videomode gx_modedb[] __initdata = {
 	/* 640x480-60 VESA */
 	{ NULL, 60, 640, 480, 39682,  48, 16, 33, 10, 96, 2,
 	  0, FB_VMODE_NONINTERLACED, FB_MODE_IS_VESA },
@@ -110,15 +111,14 @@ static struct fb_videomode gx_modedb[] __devinitdata = {
 #ifdef CONFIG_OLPC
 #include <asm/olpc.h>
 
-static struct fb_videomode gx_dcon_modedb[] __devinitdata = {
+static struct fb_videomode gx_dcon_modedb[] __initdata = {
 	/* The only mode the DCON has is 1200x900 */
 	{ NULL, 50, 1200, 900, 17460, 24, 8, 4, 5, 8, 3,
 	  FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
 	  FB_VMODE_NONINTERLACED, 0 }
 };
 
-static void __devinit get_modedb(struct fb_videomode **modedb,
-		unsigned int *size)
+static void __init get_modedb(struct fb_videomode **modedb, unsigned int *size)
 {
 	if (olpc_has_dcon()) {
 		*modedb = (struct fb_videomode *) gx_dcon_modedb;
@@ -130,8 +130,7 @@ static void __devinit get_modedb(struct fb_videomode **modedb,
 }
 
 #else
-static void __devinit get_modedb(struct fb_videomode **modedb,
-		unsigned int *size)
+static void __init get_modedb(struct fb_videomode **modedb, unsigned int *size)
 {
 	*modedb = (struct fb_videomode *) gx_modedb;
 	*size = ARRAY_SIZE(gx_modedb);
@@ -228,8 +227,7 @@ static int gxfb_blank(int blank_mode, struct fb_info *info)
 	return gx_blank_display(info, blank_mode);
 }
 
-static int __devinit gxfb_map_video_memory(struct fb_info *info,
-		struct pci_dev *dev)
+static int __init gxfb_map_video_memory(struct fb_info *info, struct pci_dev *dev)
 {
 	struct gxfb_par *par = info->par;
 	int ret;
@@ -293,7 +291,7 @@ static struct fb_ops gxfb_ops = {
 	.fb_imageblit	= cfb_imageblit,
 };
 
-static struct fb_info *__devinit gxfb_init_fbinfo(struct device *dev)
+static struct fb_info * __init gxfb_init_fbinfo(struct device *dev)
 {
 	struct gxfb_par *par;
 	struct fb_info *info;
@@ -344,10 +342,10 @@ static int gxfb_suspend(struct pci_dev *pdev, pm_message_t state)
 	struct fb_info *info = pci_get_drvdata(pdev);
 
 	if (state.event == PM_EVENT_SUSPEND) {
-		console_lock();
+		acquire_console_sem();
 		gx_powerdown(info);
 		fb_set_suspend(info, 1);
-		console_unlock();
+		release_console_sem();
 	}
 
 	/* there's no point in setting PCI states; we emulate PCI, so
@@ -361,7 +359,7 @@ static int gxfb_resume(struct pci_dev *pdev)
 	struct fb_info *info = pci_get_drvdata(pdev);
 	int ret;
 
-	console_lock();
+	acquire_console_sem();
 	ret = gx_powerup(info);
 	if (ret) {
 		printk(KERN_ERR "gxfb:  power up failed!\n");
@@ -369,13 +367,12 @@ static int gxfb_resume(struct pci_dev *pdev)
 	}
 
 	fb_set_suspend(info, 0);
-	console_unlock();
+	release_console_sem();
 	return 0;
 }
 #endif
 
-static int __devinit gxfb_probe(struct pci_dev *pdev,
-		const struct pci_device_id *id)
+static int __init gxfb_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	struct gxfb_par *par;
 	struct fb_info *info;
@@ -455,7 +452,7 @@ static int __devinit gxfb_probe(struct pci_dev *pdev,
 	return ret;
 }
 
-static void __devexit gxfb_remove(struct pci_dev *pdev)
+static void gxfb_remove(struct pci_dev *pdev)
 {
 	struct fb_info *info = pci_get_drvdata(pdev);
 	struct gxfb_par *par = info->par;

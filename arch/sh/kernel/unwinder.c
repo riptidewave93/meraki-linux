@@ -13,7 +13,7 @@
 #include <linux/spinlock.h>
 #include <linux/module.h>
 #include <asm/unwinder.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 /*
  * This is the most basic stack unwinder an architecture can

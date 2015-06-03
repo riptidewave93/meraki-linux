@@ -30,16 +30,17 @@
 #include <linux/init.h>
 #include <linux/poll.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/major.h>
 #include <linux/fs.h>
 #include <linux/device.h>
 #include <linux/cpu.h>
 #include <linux/notifier.h>
 #include <linux/uaccess.h>
-#include <linux/gfp.h>
 
 #include <asm/processor.h>
 #include <asm/msr.h>
+#include <asm/system.h>
 
 static struct class *msr_class;
 
@@ -171,21 +172,26 @@ static long msr_ioctl(struct file *file, unsigned int ioc, unsigned long arg)
 
 static int msr_open(struct inode *inode, struct file *file)
 {
-	unsigned int cpu;
-	struct cpuinfo_x86 *c;
+	unsigned int cpu = iminor(file->f_path.dentry->d_inode);
+	struct cpuinfo_x86 *c = &cpu_data(cpu);
+	int ret = 0;
 
 	if (!capable(CAP_SYS_RAWIO))
 		return -EPERM;
 
+	lock_kernel();
 	cpu = iminor(file->f_path.dentry->d_inode);
-	if (cpu >= nr_cpu_ids || !cpu_online(cpu))
-		return -ENXIO;	/* No such CPU */
 
+	if (cpu >= nr_cpu_ids || !cpu_online(cpu)) {
+		ret = -ENXIO;	/* No such CPU */
+		goto out;
+	}
 	c = &cpu_data(cpu);
 	if (!cpu_has(c, X86_FEATURE_MSR))
-		return -EIO;	/* MSR not supported */
-
-	return 0;
+		ret = -EIO;	/* MSR not supported */
+out:
+	unlock_kernel();
+	return ret;
 }
 
 /*
@@ -231,14 +237,14 @@ static int __cpuinit msr_class_cpu_callback(struct notifier_block *nfb,
 		msr_device_destroy(cpu);
 		break;
 	}
-	return notifier_from_errno(err);
+	return err ? NOTIFY_BAD : NOTIFY_OK;
 }
 
 static struct notifier_block __refdata msr_class_cpu_notifier = {
 	.notifier_call = msr_class_cpu_callback,
 };
 
-static char *msr_devnode(struct device *dev, umode_t *mode)
+static char *msr_devnode(struct device *dev, mode_t *mode)
 {
 	return kasprintf(GFP_KERNEL, "cpu/%u/msr", MINOR(dev->devt));
 }

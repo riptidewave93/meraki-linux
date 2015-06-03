@@ -5,8 +5,7 @@
  */
 
 #include <stdarg.h>
-#include <linux/export.h>
-#include <linux/slab.h>
+#include <linux/module.h>
 #include <linux/types.h>
 #include <linux/string.h>
 

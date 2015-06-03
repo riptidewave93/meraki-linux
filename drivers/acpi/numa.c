@@ -28,7 +28,6 @@
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/acpi.h>
-#include <linux/numa.h>
 #include <acpi/acpi_bus.h>
 
 #define PREFIX "ACPI: "
@@ -41,16 +40,14 @@ static nodemask_t nodes_found_map = NODE_MASK_NONE;
 
 /* maps to convert between proximity domain and logical node ID */
 static int pxm_to_node_map[MAX_PXM_DOMAINS]
-			= { [0 ... MAX_PXM_DOMAINS - 1] = NUMA_NO_NODE };
+				= { [0 ... MAX_PXM_DOMAINS - 1] = NID_INVAL };
 static int node_to_pxm_map[MAX_NUMNODES]
-			= { [0 ... MAX_NUMNODES - 1] = PXM_INVAL };
-
-unsigned char acpi_srat_revision __initdata;
+				= { [0 ... MAX_NUMNODES - 1] = PXM_INVAL };
 
 int pxm_to_node(int pxm)
 {
 	if (pxm < 0)
-		return NUMA_NO_NODE;
+		return NID_INVAL;
 	return pxm_to_node_map[pxm];
 }
 
@@ -63,19 +60,17 @@ int node_to_pxm(int node)
 
 void __acpi_map_pxm_to_node(int pxm, int node)
 {
-	if (pxm_to_node_map[pxm] == NUMA_NO_NODE || node < pxm_to_node_map[pxm])
-		pxm_to_node_map[pxm] = node;
-	if (node_to_pxm_map[node] == PXM_INVAL || pxm < node_to_pxm_map[node])
-		node_to_pxm_map[node] = pxm;
+	pxm_to_node_map[pxm] = node;
+	node_to_pxm_map[node] = pxm;
 }
 
 int acpi_map_pxm_to_node(int pxm)
 {
 	int node = pxm_to_node_map[pxm];
 
-	if (node < 0) {
+	if (node < 0){
 		if (nodes_weight(nodes_found_map) >= MAX_NUMNODES)
-			return NUMA_NO_NODE;
+			return NID_INVAL;
 		node = first_unset_node(nodes_found_map);
 		__acpi_map_pxm_to_node(pxm, node);
 		node_set(node, nodes_found_map);
@@ -83,6 +78,16 @@ int acpi_map_pxm_to_node(int pxm)
 
 	return node;
 }
+
+#if 0
+void __cpuinit acpi_unmap_pxm_to_node(int node)
+{
+	int pxm = node_to_pxm_map[node];
+	pxm_to_node_map[pxm] = NID_INVAL;
+	node_to_pxm_map[node] = PXM_INVAL;
+	node_clear(node, nodes_found_map);
+}
+#endif  /*  0  */
 
 static void __init
 acpi_table_print_srat_entry(struct acpi_subtable_header *header)
@@ -258,13 +263,11 @@ acpi_parse_memory_affinity(struct acpi_subtable_header * header,
 static int __init acpi_parse_srat(struct acpi_table_header *table)
 {
 	struct acpi_table_srat *srat;
+
 	if (!table)
 		return -EINVAL;
 
 	srat = (struct acpi_table_srat *)table;
-	acpi_srat_revision = srat->header.revision;
-
-	/* Real work done in acpi_table_parse_srat below. */
 
 	return 0;
 }
@@ -280,32 +283,21 @@ acpi_table_parse_srat(enum acpi_srat_type id,
 
 int __init acpi_numa_init(void)
 {
-	int cnt = 0;
-
-	/*
-	 * Should not limit number with cpu num that is from NR_CPUS or nr_cpus=
-	 * SRAT cpu entries could have different order with that in MADT.
-	 * So go over all cpu entries in SRAT to get apicid to node mapping.
-	 */
-
 	/* SRAT: Static Resource Affinity Table */
 	if (!acpi_table_parse(ACPI_SIG_SRAT, acpi_parse_srat)) {
 		acpi_table_parse_srat(ACPI_SRAT_TYPE_X2APIC_CPU_AFFINITY,
-				     acpi_parse_x2apic_affinity, 0);
+				      acpi_parse_x2apic_affinity, NR_CPUS);
 		acpi_table_parse_srat(ACPI_SRAT_TYPE_CPU_AFFINITY,
-				     acpi_parse_processor_affinity, 0);
-		cnt = acpi_table_parse_srat(ACPI_SRAT_TYPE_MEMORY_AFFINITY,
-					    acpi_parse_memory_affinity,
-					    NR_NODE_MEMBLKS);
+				      acpi_parse_processor_affinity, NR_CPUS);
+		acpi_table_parse_srat(ACPI_SRAT_TYPE_MEMORY_AFFINITY,
+				      acpi_parse_memory_affinity,
+				      NR_NODE_MEMBLKS);
 	}
 
 	/* SLIT: System Locality Information Table */
 	acpi_table_parse(ACPI_SIG_SLIT, acpi_parse_slit);
 
 	acpi_numa_arch_fixup();
-
-	if (cnt <= 0)
-		return cnt ?: -ENOENT;
 	return 0;
 }
 

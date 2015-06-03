@@ -17,7 +17,7 @@
 #include <asm/sgi/pi1.h>
 
 /*
- * All registers are 8-bit wide aligned on 32-bit boundary. Bad things
+ * All registers are 8-bit wide alligned on 32-bit boundary. Bad things
  * happen if you try word access them. You have been warned.
  */
 
@@ -164,7 +164,7 @@ struct sgioc_regs {
 	u32 _unused5;
 	u8 _write[3];
 	volatile u8 write;
-#define SGIOC_WRITE_NTHRESH	0x01	/* use 4.5db threshold */
+#define SGIOC_WRITE_NTHRESH	0x01	/* use 4.5db threshhold */
 #define SGIOC_WRITE_TPSPEED	0x02	/* use 100ohm TP speed */
 #define SGIOC_WRITE_EPSEL	0x04	/* force cable mode: 1=AUI 0=TP */
 #define SGIOC_WRITE_EASEL	0x08	/* 1=autoselect 0=manual cable selection */

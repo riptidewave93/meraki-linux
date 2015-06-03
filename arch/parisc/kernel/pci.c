@@ -13,9 +13,12 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/pci.h>
+#include <linux/slab.h>
 #include <linux/types.h>
 
 #include <asm/io.h>
+#include <asm/system.h>
+#include <asm/cache.h>		/* for L1_CACHE_BYTES */
 #include <asm/superio.h>
 
 #define DEBUG_RESOURCES 0
@@ -120,10 +123,6 @@ static int __init pcibios_init(void)
 	} else {
 		printk(KERN_WARNING "pci_bios != NULL but init() is!\n");
 	}
-
-	/* Set the CLS for PCI as early as possible. */
-	pci_cache_line_size = pci_dfl_cache_line_size;
-
 	return 0;
 }
 
@@ -172,7 +171,7 @@ void pcibios_set_master(struct pci_dev *dev)
 	** upper byte is PCI_LATENCY_TIMER.
 	*/
 	pci_write_config_word(dev, PCI_CACHE_LINE_SIZE,
-			      (0x80 << 8) | pci_cache_line_size);
+				(0x80 << 8) | (L1_CACHE_BYTES / sizeof(u32)));
 }
 
 
@@ -194,6 +193,58 @@ void __init pcibios_init_bus(struct pci_bus *bus)
 	pci_write_config_word(dev, PCI_BRIDGE_CONTROL, bridge_ctl);
 }
 
+/* called by drivers/pci/setup-bus.c:pci_setup_bridge().  */
+void __devinit pcibios_resource_to_bus(struct pci_dev *dev,
+		struct pci_bus_region *region, struct resource *res)
+{
+#ifdef CONFIG_64BIT
+	struct pci_hba_data *hba = HBA_DATA(dev->bus->bridge->platform_data);
+#endif
+
+	if (res->flags & IORESOURCE_IO) {
+		/*
+		** I/O space may see busnumbers here. Something
+		** in the form of 0xbbxxxx where bb is the bus num
+		** and xxxx is the I/O port space address.
+		** Remaining address translation are done in the
+		** PCI Host adapter specific code - ie dino_out8.
+		*/
+		region->start = PCI_PORT_ADDR(res->start);
+		region->end   = PCI_PORT_ADDR(res->end);
+	} else if (res->flags & IORESOURCE_MEM) {
+		/* Convert MMIO addr to PCI addr (undo global virtualization) */
+		region->start = PCI_BUS_ADDR(hba, res->start);
+		region->end   = PCI_BUS_ADDR(hba, res->end);
+	}
+
+	DBG_RES("pcibios_resource_to_bus(%02x %s [%lx,%lx])\n",
+		dev->bus->number, res->flags & IORESOURCE_IO ? "IO" : "MEM",
+		region->start, region->end);
+}
+
+void pcibios_bus_to_resource(struct pci_dev *dev, struct resource *res,
+			      struct pci_bus_region *region)
+{
+#ifdef CONFIG_64BIT
+	struct pci_hba_data *hba = HBA_DATA(dev->bus->bridge->platform_data);
+#endif
+
+	if (res->flags & IORESOURCE_MEM) {
+		res->start = PCI_HOST_ADDR(hba, region->start);
+		res->end = PCI_HOST_ADDR(hba, region->end);
+	}
+
+	if (res->flags & IORESOURCE_IO) {
+		res->start = region->start;
+		res->end = region->end;
+	}
+}
+
+#ifdef CONFIG_HOTPLUG
+EXPORT_SYMBOL(pcibios_resource_to_bus);
+EXPORT_SYMBOL(pcibios_bus_to_resource);
+#endif
+
 /*
  * pcibios align resources() is called every time generic PCI code
  * wants to generate a new address. The process of looking for
@@ -203,10 +254,10 @@ void __init pcibios_init_bus(struct pci_bus *bus)
  * Since we are just checking candidates, don't use any fields other
  * than res->start.
  */
-resource_size_t pcibios_align_resource(void *data, const struct resource *res,
+void pcibios_align_resource(void *data, struct resource *res,
 				resource_size_t size, resource_size_t alignment)
 {
-	resource_size_t mask, align, start = res->start;
+	resource_size_t mask, align;
 
 	DBG_RES("pcibios_align_resource(%s, (%p) [%lx,%lx]/%x, 0x%lx, 0x%lx)\n",
 		pci_name(((struct pci_dev *) data)),
@@ -218,10 +269,10 @@ resource_size_t pcibios_align_resource(void *data, const struct resource *res,
 
 	/* Align to largest of MIN or input size */
 	mask = max(alignment, align) - 1;
-	start += mask;
-	start &= ~mask;
+	res->start += mask;
+	res->start &= ~mask;
 
-	return start;
+	/* The caller updates the end field, we don't.  */
 }
 
 

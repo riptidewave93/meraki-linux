@@ -25,7 +25,6 @@
  */
 
 #include <linux/pci.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/module.h>
 #include <linux/firmware.h>

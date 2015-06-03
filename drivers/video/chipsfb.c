@@ -19,6 +19,7 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -460,10 +461,10 @@ static int chipsfb_pci_suspend(struct pci_dev *pdev, pm_message_t state)
 	if (!(state.event & PM_EVENT_SLEEP))
 		goto done;
 
-	console_lock();
+	acquire_console_sem();
 	chipsfb_blank(1, p);
 	fb_set_suspend(p, 1);
-	console_unlock();
+	release_console_sem();
  done:
 	pdev->dev.power.power_state = state;
 	return 0;
@@ -473,10 +474,10 @@ static int chipsfb_pci_resume(struct pci_dev *pdev)
 {
         struct fb_info *p = pci_get_drvdata(pdev);
 
-	console_lock();
+	acquire_console_sem();
 	fb_set_suspend(p, 0);
 	chipsfb_blank(0, p);
-	console_unlock();
+	release_console_sem();
 
 	pdev->dev.power.power_state = PMSG_ON;
 	return 0;

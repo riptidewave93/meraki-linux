@@ -58,7 +58,7 @@
 typedef struct tagSKeyItem
 {
     BOOL        bKeyValid;
-	u32 uKeyLength;
+    ULONG       uKeyLength;
     BYTE        abyKey[MAX_KEY_LEN];
     QWORD       KeyRSC;
     DWORD       dwTSC47_16;
@@ -66,12 +66,12 @@ typedef struct tagSKeyItem
     BYTE        byCipherSuite;
     BYTE        byReserved0;
     DWORD       dwKeyIndex;
-    void *pvKeyTable;
+    PVOID       pvKeyTable;
 } SKeyItem, *PSKeyItem; //64
 
 typedef struct tagSKeyTable
 {
-    BYTE        abyBSSID[ETH_ALEN];  /* 6 */
+    BYTE        abyBSSID[U_ETHER_ADDR_LEN];  //6
     BYTE        byReserved0[2];              //8
     SKeyItem    PairwiseKey;
     SKeyItem    GroupKey[MAX_GROUP_KEY]; //64*5 = 320, 320+8=328
@@ -97,69 +97,81 @@ typedef struct tagSKeyManagement
 
 /*---------------------  Export Functions  --------------------------*/
 
-void KeyvInitTable(void *pDeviceHandler, PSKeyManagement pTable);
+VOID KeyvInitTable(PVOID pDeviceHandler, PSKeyManagement pTable);
 
-BOOL KeybGetKey(PSKeyManagement pTable, PBYTE pbyBSSID, DWORD dwKeyIndex,
-		PSKeyItem *pKey);
+BOOL KeybGetKey(
+    IN  PSKeyManagement pTable,
+    IN  PBYTE           pbyBSSID,
+    IN  DWORD           dwKeyIndex,
+    OUT PSKeyItem       *pKey
+    );
 
 BOOL KeybSetKey(
-    void *pDeviceHandler,
+    PVOID           pDeviceHandler,
     PSKeyManagement pTable,
     PBYTE           pbyBSSID,
     DWORD           dwKeyIndex,
-	u32 uKeyLength,
+    ULONG           uKeyLength,
     PQWORD          pKeyRSC,
     PBYTE           pbyKey,
     BYTE            byKeyDecMode
     );
 
 BOOL KeybRemoveKey(
-    void *pDeviceHandler,
+    PVOID           pDeviceHandler,
     PSKeyManagement pTable,
     PBYTE           pbyBSSID,
     DWORD           dwKeyIndex
     );
 
-BOOL KeybRemoveAllKey(
-    void *pDeviceHandler,
+BOOL KeybRemoveAllKey (
+    PVOID           pDeviceHandler,
     PSKeyManagement pTable,
     PBYTE           pbyBSSID
     );
 
-void KeyvRemoveWEPKey(
-    void *pDeviceHandler,
+VOID KeyvRemoveWEPKey(
+    PVOID           pDeviceHandler,
     PSKeyManagement pTable,
     DWORD           dwKeyIndex
     );
 
-void KeyvRemoveAllWEPKey(
-    void *pDeviceHandler,
+VOID KeyvRemoveAllWEPKey(
+    PVOID           pDeviceHandler,
     PSKeyManagement pTable
     );
 
-BOOL KeybGetTransmitKey(PSKeyManagement pTable,	PBYTE pbyBSSID,	DWORD dwKeyType,
-			PSKeyItem *pKey);
+BOOL KeybGetTransmitKey(
+    IN  PSKeyManagement pTable,
+    IN  PBYTE           pbyBSSID,
+    IN  DWORD           dwKeyType,
+    OUT PSKeyItem       *pKey
+    );
 
-BOOL KeybCheckPairewiseKey(PSKeyManagement pTable, PSKeyItem *pKey);
+BOOL KeybCheckPairewiseKey(
+    IN  PSKeyManagement pTable,
+    OUT PSKeyItem       *pKey
+    );
 
-BOOL KeybSetDefaultKey(
-    void *pDeviceHandler,
+BOOL KeybSetDefaultKey (
+    PVOID           pDeviceHandler,
     PSKeyManagement pTable,
     DWORD           dwKeyIndex,
-	u32 uKeyLength,
+    ULONG           uKeyLength,
     PQWORD          pKeyRSC,
     PBYTE           pbyKey,
     BYTE            byKeyDecMode
     );
 
-BOOL KeybSetAllGroupKey(
-    void *pDeviceHandler,
+BOOL KeybSetAllGroupKey (
+    PVOID           pDeviceHandler,
     PSKeyManagement pTable,
     DWORD           dwKeyIndex,
-	u32 uKeyLength,
+    ULONG           uKeyLength,
     PQWORD          pKeyRSC,
     PBYTE           pbyKey,
     BYTE            byKeyDecMode
     );
 
-#endif /* __KEY_H__ */
+#endif // __KEY_H__
+

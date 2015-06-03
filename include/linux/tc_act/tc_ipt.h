@@ -5,7 +5,8 @@
 
 #define TCA_ACT_IPT 6
 
-enum {
+enum
+{
 	TCA_IPT_UNSPEC,
 	TCA_IPT_TABLE,
 	TCA_IPT_HOOK,

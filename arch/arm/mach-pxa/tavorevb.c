@@ -25,7 +25,7 @@
 
 #include <mach/pxa930.h>
 #include <mach/pxafb.h>
-#include <plat/pxa27x_keypad.h>
+#include <mach/pxa27x_keypad.h>
 
 #include "devices.h"
 #include "generic.h"
@@ -85,8 +85,8 @@ static struct resource smc91x_resources[] = {
 		.flags	= IORESOURCE_MEM,
 	},
 	[1] = {
-		.start	= PXA_GPIO_TO_IRQ(mfp_to_gpio(MFP_PIN_GPIO47)),
-		.end	= PXA_GPIO_TO_IRQ(mfp_to_gpio(MFP_PIN_GPIO47)),
+		.start	= gpio_to_irq(mfp_to_gpio(MFP_PIN_GPIO47)),
+		.end	= gpio_to_irq(mfp_to_gpio(MFP_PIN_GPIO47)),
 		.flags	= IORESOURCE_IRQ | IORESOURCE_IRQ_HIGHEDGE,
 	}
 };
@@ -466,7 +466,7 @@ static void __init tavorevb_init_lcd(void)
 {
 	platform_device_register(&tavorevb_backlight_devices[0]);
 	platform_device_register(&tavorevb_backlight_devices[1]);
-	pxa_set_fb_info(NULL, &tavorevb_lcd_info);
+	set_pxa_fb_info(&tavorevb_lcd_info);
 }
 #else
 static inline void tavorevb_init_lcd(void) {}
@@ -477,10 +477,6 @@ static void __init tavorevb_init(void)
 	/* initialize MFP configurations */
 	pxa3xx_mfp_config(ARRAY_AND_SIZE(tavorevb_mfp_cfg));
 
-	pxa_set_ffuart_info(NULL);
-	pxa_set_btuart_info(NULL);
-	pxa_set_stuart_info(NULL);
-
 	platform_device_register(&smc91x_device);
 
 	tavorevb_init_lcd();
@@ -489,12 +485,11 @@ static void __init tavorevb_init(void)
 
 MACHINE_START(TAVOREVB, "PXA930 Evaluation Board (aka TavorEVB)")
 	/* Maintainer: Eric Miao <eric.miao@marvell.com> */
-	.atag_offset    = 0x100,
-	.map_io         = pxa3xx_map_io,
-	.nr_irqs	= PXA_NR_IRQS,
+	.phys_io        = 0x40000000,
+	.boot_params    = 0xa0000100,
+	.io_pg_offst    = (io_p2v(0x40000000) >> 18) & 0xfffc,
+	.map_io         = pxa_map_io,
 	.init_irq       = pxa3xx_init_irq,
-	.handle_irq       = pxa3xx_handle_irq,
 	.timer          = &pxa_timer,
 	.init_machine   = tavorevb_init,
-	.restart	= pxa_restart,
 MACHINE_END

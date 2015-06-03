@@ -25,8 +25,7 @@
 #ifdef __KERNEL__
 
 #include <linux/workqueue.h>
-#include <linux/device.h>
-#include <linux/mutex.h>
+#include <linux/sysdev.h>
 
 #define LS_SIZE (256 * 1024)
 #define LS_ADDR_MASK (LS_SIZE - 1)
@@ -166,7 +165,7 @@ struct spu {
 	/* beat only */
 	u64 shadow_int_mask_RW[3];
 
-	struct device dev;
+	struct sys_device sysdev;
 
 	int has_mem_affinity;
 	struct list_head aff_list;
@@ -204,6 +203,14 @@ void spu_irq_setaffinity(struct spu *spu, int cpu);
 void spu_setup_kernel_slbs(struct spu *spu, struct spu_lscsa *lscsa,
 		void *code, int code_size);
 
+#ifdef CONFIG_KEXEC
+void crash_register_spus(struct list_head *list);
+#else
+static inline void crash_register_spus(struct list_head *list)
+{
+}
+#endif
+
 extern void spu_invalidate_slbs(struct spu *spu);
 extern void spu_associate_mm(struct spu *spu, struct mm_struct *mm);
 int spu_64k_pages_available(void);
@@ -237,7 +244,7 @@ extern long spu_sys_callback(struct spu_syscall_block *s);
 struct file;
 struct spufs_calls {
 	long (*create_thread)(const char __user *name,
-					unsigned int flags, umode_t mode,
+					unsigned int flags, mode_t mode,
 					struct file *neighbor);
 	long (*spu_run)(struct file *filp, __u32 __user *unpc,
 						__u32 __user *ustatus);
@@ -270,11 +277,11 @@ struct spufs_calls {
 int register_spu_syscalls(struct spufs_calls *calls);
 void unregister_spu_syscalls(struct spufs_calls *calls);
 
-int spu_add_dev_attr(struct device_attribute *attr);
-void spu_remove_dev_attr(struct device_attribute *attr);
+int spu_add_sysdev_attr(struct sysdev_attribute *attr);
+void spu_remove_sysdev_attr(struct sysdev_attribute *attr);
 
-int spu_add_dev_attr_group(struct attribute_group *attrs);
-void spu_remove_dev_attr_group(struct attribute_group *attrs);
+int spu_add_sysdev_attr_group(struct attribute_group *attrs);
+void spu_remove_sysdev_attr_group(struct attribute_group *attrs);
 
 int spu_handle_mm_fault(struct mm_struct *mm, unsigned long ea,
 		unsigned long dsisr, unsigned *flt);

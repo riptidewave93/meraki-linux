@@ -29,17 +29,30 @@
 #ifndef __TETHER_H__
 #define __TETHER_H__
 
-#include <linux/etherdevice.h>
 #include "ttype.h"
 
 /*---------------------  Export Definitions -------------------------*/
 //
 // constants
 //
-#define U_ETHER_ADDR_STR_LEN (ETH_ALEN * 2 + 1)
+#define U_ETHER_ADDR_LEN    6           // Ethernet address length
+#define U_TYPE_LEN          2           //
+#define U_CRC_LEN           4           //
+#define U_HEADER_LEN        (U_ETHER_ADDR_LEN * 2 + U_TYPE_LEN)
+#define U_ETHER_ADDR_STR_LEN (U_ETHER_ADDR_LEN * 2 + 1)
                                         // Ethernet address string length
 
-#define MAX_LOOKAHEAD_SIZE  ETH_FRAME_LEN
+#define MIN_DATA_LEN        46          // min data length
+#define MAX_DATA_LEN        1500        // max data length
+
+#define MIN_PACKET_LEN      (MIN_DATA_LEN + U_HEADER_LEN)
+                                        // 60
+                                        // min total packet length (tx)
+#define MAX_PACKET_LEN      (MAX_DATA_LEN + U_HEADER_LEN)
+                                        // 1514
+                                        // max total packet length (tx)
+
+#define MAX_LOOKAHEAD_SIZE  MAX_PACKET_LEN
 
 #define U_MULTI_ADDR_LEN    8           // multicast address length
 
@@ -154,9 +167,9 @@
 // Ethernet packet
 //
 typedef struct tagSEthernetHeader {
-    unsigned char abyDstAddr[ETH_ALEN];
-    unsigned char abySrcAddr[ETH_ALEN];
-    unsigned short wType;
+    BYTE    abyDstAddr[U_ETHER_ADDR_LEN];
+    BYTE    abySrcAddr[U_ETHER_ADDR_LEN];
+    WORD    wType;
 }__attribute__ ((__packed__))
 SEthernetHeader, *PSEthernetHeader;
 
@@ -165,9 +178,9 @@ SEthernetHeader, *PSEthernetHeader;
 // 802_3 packet
 //
 typedef struct tagS802_3Header {
-    unsigned char abyDstAddr[ETH_ALEN];
-    unsigned char abySrcAddr[ETH_ALEN];
-    unsigned short wLen;
+    BYTE    abyDstAddr[U_ETHER_ADDR_LEN];
+    BYTE    abySrcAddr[U_ETHER_ADDR_LEN];
+    WORD    wLen;
 }__attribute__ ((__packed__))
 S802_3Header, *PS802_3Header;
 
@@ -175,17 +188,37 @@ S802_3Header, *PS802_3Header;
 // 802_11 packet
 //
 typedef struct tagS802_11Header {
-    unsigned short wFrameCtl;
-    unsigned short wDurationID;
-    unsigned char abyAddr1[ETH_ALEN];
-    unsigned char abyAddr2[ETH_ALEN];
-    unsigned char abyAddr3[ETH_ALEN];
-    unsigned short wSeqCtl;
-    unsigned char abyAddr4[ETH_ALEN];
+    WORD    wFrameCtl;
+    WORD    wDurationID;
+    BYTE    abyAddr1[U_ETHER_ADDR_LEN];
+    BYTE    abyAddr2[U_ETHER_ADDR_LEN];
+    BYTE    abyAddr3[U_ETHER_ADDR_LEN];
+    WORD    wSeqCtl;
+    BYTE    abyAddr4[U_ETHER_ADDR_LEN];
 }__attribute__ ((__packed__))
 S802_11Header, *PS802_11Header;
 
 /*---------------------  Export Macros ------------------------------*/
+// Frame type macro
+
+#define IS_MULTICAST_ADDRESS(pbyEtherAddr)          \
+    ((*(PBYTE)(pbyEtherAddr) & 0x01) == 1)
+
+#define IS_BROADCAST_ADDRESS(pbyEtherAddr) (        \
+    (*(PDWORD)(pbyEtherAddr) == 0xFFFFFFFFL) &&     \
+    (*(PWORD)((PBYTE)(pbyEtherAddr) + 4) == 0xFFFF) \
+)
+
+#define IS_NULL_ADDRESS(pbyEtherAddr) (             \
+    (*(PDWORD)(pbyEtherAddr) == 0L) &&              \
+    (*(PWORD)((PBYTE)(pbyEtherAddr) + 4) == 0)      \
+)
+
+#define IS_ETH_ADDRESS_EQUAL(pbyAddr1, pbyAddr2) (  \
+    (*(PDWORD)(pbyAddr1) == *(PDWORD)(pbyAddr2)) && \
+    (*(PWORD)((PBYTE)(pbyAddr1) + 4) ==             \
+    *(PWORD)((PBYTE)(pbyAddr2) + 4))                \
+)
 
 /*---------------------  Export Classes  ----------------------------*/
 
@@ -193,9 +226,9 @@ S802_11Header, *PS802_11Header;
 
 /*---------------------  Export Functions  --------------------------*/
 
-unsigned char ETHbyGetHashIndexByCrc32(unsigned char *pbyMultiAddr);
-//unsigned char ETHbyGetHashIndexByCrc(unsigned char *pbyMultiAddr);
-bool ETHbIsBufferCrc32Ok(unsigned char *pbyBuffer, unsigned int cbFrameLength);
+BYTE ETHbyGetHashIndexByCrc32(PBYTE pbyMultiAddr);
+//BYTE ETHbyGetHashIndexByCrc(PBYTE pbyMultiAddr);
+BOOL ETHbIsBufferCrc32Ok(PBYTE pbyBuffer, UINT cbFrameLength);
 
 #endif // __TETHER_H__
 

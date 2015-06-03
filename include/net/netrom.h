@@ -9,7 +9,6 @@
 
 #include <linux/netrom.h>
 #include <linux/list.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 
 #define	NR_NETWORK_LEN			15

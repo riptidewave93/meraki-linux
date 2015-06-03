@@ -43,7 +43,6 @@
  */
 
 #include <linux/types.h>
-#include <linux/slab.h>
 #include <linux/in.h>
 #include <net/sock.h>
 #include <net/ipv6.h>
@@ -140,12 +139,14 @@ void sctp_bind_addr_init(struct sctp_bind_addr *bp, __u16 port)
 /* Dispose of the address list. */
 static void sctp_bind_addr_clean(struct sctp_bind_addr *bp)
 {
-	struct sctp_sockaddr_entry *addr, *temp;
+	struct sctp_sockaddr_entry *addr;
+	struct list_head *pos, *temp;
 
 	/* Empty the bind address list. */
-	list_for_each_entry_safe(addr, temp, &bp->address_list, list) {
-		list_del_rcu(&addr->list);
-		kfree_rcu(addr, rcu);
+	list_for_each_safe(pos, temp, &bp->address_list) {
+		addr = list_entry(pos, struct sctp_sockaddr_entry, list);
+		list_del(pos);
+		kfree(addr);
 		SCTP_DBG_OBJCNT_DEC(addr);
 	}
 }
@@ -185,6 +186,7 @@ int sctp_add_bind_addr(struct sctp_bind_addr *bp, union sctp_addr *new,
 	addr->valid = 1;
 
 	INIT_LIST_HEAD(&addr->list);
+	INIT_RCU_HEAD(&addr->rcu);
 
 	/* We always hold a socket lock when calling this function,
 	 * and that acts as a writer synchronizing lock.
@@ -217,7 +219,7 @@ int sctp_del_bind_addr(struct sctp_bind_addr *bp, union sctp_addr *del_addr)
 	}
 
 	if (found) {
-		kfree_rcu(addr, rcu);
+		call_rcu(&addr->rcu, sctp_local_addr_free);
 		SCTP_DBG_OBJCNT_DEC(addr);
 		return 0;
 	}
@@ -430,7 +432,7 @@ union sctp_addr *sctp_find_unmatch_addr(struct sctp_bind_addr	*bp,
 	list_for_each_entry(laddr, &bp->address_list, list) {
 		addr_buf = (union sctp_addr *)addrs;
 		for (i = 0; i < addrcnt; i++) {
-			addr = addr_buf;
+			addr = (union sctp_addr *)addr_buf;
 			af = sctp_get_af_specific(addr->v4.sin_family);
 			if (!af)
 				break;
@@ -531,21 +533,6 @@ int sctp_in_scope(const union sctp_addr *addr, sctp_scope_t scope)
 		break;
 	}
 
-	return 0;
-}
-
-int sctp_is_ep_boundall(struct sock *sk)
-{
-	struct sctp_bind_addr *bp;
-	struct sctp_sockaddr_entry *addr;
-
-	bp = &sctp_sk(sk)->ep->base.bind_addr;
-	if (sctp_list_single_entry(&bp->address_list)) {
-		addr = list_entry(bp->address_list.next,
-				  struct sctp_sockaddr_entry, list);
-		if (sctp_is_any(sk, &addr->a))
-			return 1;
-	}
 	return 0;
 }
 

@@ -32,6 +32,13 @@ static void ohci_hcd_init (struct ohci_hcd *ohci)
 
 /*-------------------------------------------------------------------------*/
 
+#if defined(CONFIG_APM86xxx_IOCOHERENT)
+extern void *ioc2_mem_fix_size(int idx, int size); /* from ehci-ppc-of.c */
+extern void ioc2_mem_free(void *ptr);
+extern void *ioc2_mem_alloc(int size);
+extern u64 ioc2_mem_paddr(void *addr);
+#endif
+
 static int ohci_mem_init (struct ohci_hcd *ohci)
 {
 	ohci->td_cache = dma_pool_create ("ohci_td",
@@ -86,8 +93,12 @@ td_alloc (struct ohci_hcd *hc, gfp_t mem_flags)
 {
 	dma_addr_t	dma;
 	struct td	*td;
-
+#if defined(CONFIG_APM86xxx_IOCOHERENT)
+	td = ioc2_mem_alloc(sizeof (struct td));
+	dma = ioc2_mem_paddr(td);
+#else
 	td = dma_pool_alloc (hc->td_cache, mem_flags, &dma);
+#endif
 	if (td) {
 		/* in case hc fetches it, make it look dead */
 		memset (td, 0, sizeof *td);
@@ -109,7 +120,11 @@ td_free (struct ohci_hcd *hc, struct td *td)
 		*prev = td->td_hash;
 	else if ((td->hwINFO & cpu_to_hc32(hc, TD_DONE)) != 0)
 		ohci_dbg (hc, "no hash for td %p\n", td);
+#if defined(CONFIG_APM86xxx_IOCOHERENT)
+	ioc2_mem_free(td);
+#else
 	dma_pool_free (hc->td_cache, td, td->td_dma);
+#endif	
 }
 
 /*-------------------------------------------------------------------------*/
@@ -121,7 +136,12 @@ ed_alloc (struct ohci_hcd *hc, gfp_t mem_flags)
 	dma_addr_t	dma;
 	struct ed	*ed;
 
+#if defined(CONFIG_APM86xxx_IOCOHERENT)
+	ed = ioc2_mem_alloc(sizeof(struct ed));
+	dma = ioc2_mem_paddr(ed);
+#else
 	ed = dma_pool_alloc (hc->ed_cache, mem_flags, &dma);
+#endif
 	if (ed) {
 		memset (ed, 0, sizeof (*ed));
 		INIT_LIST_HEAD (&ed->td_list);
@@ -133,6 +153,10 @@ ed_alloc (struct ohci_hcd *hc, gfp_t mem_flags)
 static void
 ed_free (struct ohci_hcd *hc, struct ed *ed)
 {
+#if defined(CONFIG_APM86xxx_IOCOHERENT)
+	ioc2_mem_free(ed);
+#else
 	dma_pool_free (hc->ed_cache, ed, ed->dma);
+#endif
 }
 

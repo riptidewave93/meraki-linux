@@ -18,13 +18,14 @@
 #include <linux/init.h>
 #include <linux/errno.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 #include <linux/efi.h>
 #include <linux/genalloc.h>
-#include <linux/gfp.h>
 #include <asm/page.h>
 #include <asm/pal.h>
+#include <asm/system.h>
 #include <asm/pgtable.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/tlbflush.h>
 #include <asm/sn/arch.h>
 

@@ -47,7 +47,25 @@
 
 static unsigned long idp_pin_config[] __initdata = {
 	/* LCD */
-	GPIOxx_LCD_DSTN_16BPP,
+	GPIO58_LCD_LDD_0,
+	GPIO59_LCD_LDD_1,
+	GPIO60_LCD_LDD_2,
+	GPIO61_LCD_LDD_3,
+	GPIO62_LCD_LDD_4,
+	GPIO63_LCD_LDD_5,
+	GPIO64_LCD_LDD_6,
+	GPIO65_LCD_LDD_7,
+	GPIO66_LCD_LDD_8,
+	GPIO67_LCD_LDD_9,
+	GPIO68_LCD_LDD_10,
+	GPIO69_LCD_LDD_11,
+	GPIO70_LCD_LDD_12,
+	GPIO71_LCD_LDD_13,
+	GPIO72_LCD_LDD_14,
+	GPIO73_LCD_LDD_15,
+	GPIO74_LCD_FCLK,
+	GPIO75_LCD_LCLK,
+	GPIO76_LCD_PCLK,
 
 	/* BTUART */
 	GPIO42_BTUART_RXD,
@@ -75,8 +93,8 @@ static struct resource smc91x_resources[] = {
 		.flags	= IORESOURCE_MEM,
 	},
 	[1] = {
-		.start	= PXA_GPIO_TO_IRQ(4),
-		.end	= PXA_GPIO_TO_IRQ(4),
+		.start	= IRQ_GPIO(4),
+		.end	= IRQ_GPIO(4),
 		.flags	= IORESOURCE_IRQ | IORESOURCE_IRQ_HIGHEDGE,
 	}
 };
@@ -161,13 +179,10 @@ static void __init idp_init(void)
 	printk("idp_init()\n");
 
 	pxa2xx_mfp_config(ARRAY_AND_SIZE(idp_pin_config));
-	pxa_set_ffuart_info(NULL);
-	pxa_set_btuart_info(NULL);
-	pxa_set_stuart_info(NULL);
 
 	platform_device_register(&smc91x_device);
 	//platform_device_register(&mst_audio_device);
-	pxa_set_fb_info(NULL, &sharp_lm8v31);
+	set_pxa_fb_info(&sharp_lm8v31);
 	pxa_set_mci_info(&idp_mci_platform_data);
 }
 
@@ -187,18 +202,17 @@ static struct map_desc idp_io_desc[] __initdata = {
 
 static void __init idp_map_io(void)
 {
-	pxa25x_map_io();
+	pxa_map_io();
 	iotable_init(idp_io_desc, ARRAY_SIZE(idp_io_desc));
 }
 
 
 MACHINE_START(PXA_IDP, "Vibren PXA255 IDP")
 	/* Maintainer: Vibren Technologies */
+	.phys_io	= 0x40000000,
+	.io_pg_offst	= (io_p2v(0x40000000) >> 18) & 0xfffc,
 	.map_io		= idp_map_io,
-	.nr_irqs	= PXA_NR_IRQS,
 	.init_irq	= pxa25x_init_irq,
-	.handle_irq	= pxa25x_handle_irq,
 	.timer		= &pxa_timer,
 	.init_machine	= idp_init,
-	.restart	= pxa_restart,
 MACHINE_END

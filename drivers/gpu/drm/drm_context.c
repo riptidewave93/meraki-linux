@@ -154,6 +154,8 @@ int drm_getsareactx(struct drm_device *dev, void *data,
 		return -EINVAL;
 	}
 
+	mutex_unlock(&dev->struct_mutex);
+
 	request->handle = NULL;
 	list_for_each_entry(_entry, &dev->maplist, head) {
 		if (_entry->map == map) {
@@ -162,9 +164,6 @@ int drm_getsareactx(struct drm_device *dev, void *data,
 			break;
 		}
 	}
-
-	mutex_unlock(&dev->struct_mutex);
-
 	if (request->handle == NULL)
 		return -EINVAL;
 
@@ -332,6 +331,14 @@ int drm_addctx(struct drm_device *dev, void *data,
 		DRM_DEBUG("Not enough free contexts.\n");
 		/* Should this return -EBUSY instead? */
 		return -ENOMEM;
+	}
+
+	if (ctx->handle != DRM_KERNEL_CONTEXT) {
+		if (dev->driver->context_ctor)
+			if (!dev->driver->context_ctor(dev, ctx->handle)) {
+				DRM_DEBUG("Running out of ctxs or memory.\n");
+				return -ENOMEM;
+			}
 	}
 
 	ctx_entry = kmalloc(sizeof(*ctx_entry), GFP_KERNEL);

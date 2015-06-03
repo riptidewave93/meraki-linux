@@ -18,7 +18,6 @@
 
 #include <linux/init.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/spinlock.h>
@@ -26,8 +25,6 @@
 #include <linux/platform_device.h>
 #include <linux/memory.h>
 #include <plat/mv_xor.h>
-
-#include "dmaengine.h"
 #include "mv_xor.h"
 
 static void mv_xor_issue_pending(struct dma_chan *chan);
@@ -437,7 +434,7 @@ static void __mv_xor_slot_cleanup(struct mv_xor_chan *mv_chan)
 	}
 
 	if (cookie > 0)
-		mv_chan->common.completed_cookie = cookie;
+		mv_chan->completed_cookie = cookie;
 }
 
 static void
@@ -536,6 +533,18 @@ retry:
 	return NULL;
 }
 
+static dma_cookie_t
+mv_desc_assign_cookie(struct mv_xor_chan *mv_chan,
+		      struct mv_xor_desc_slot *desc)
+{
+	dma_cookie_t cookie = mv_chan->common.cookie;
+
+	if (++cookie < 0)
+		cookie = 1;
+	mv_chan->common.cookie = desc->async_tx.cookie = cookie;
+	return cookie;
+}
+
 /************************ DMA engine API functions ****************************/
 static dma_cookie_t
 mv_xor_tx_submit(struct dma_async_tx_descriptor *tx)
@@ -553,7 +562,7 @@ mv_xor_tx_submit(struct dma_async_tx_descriptor *tx)
 	grp_start = sw_desc->group_head;
 
 	spin_lock_bh(&mv_chan->lock);
-	cookie = dma_cookie_assign(tx);
+	cookie = mv_desc_assign_cookie(mv_chan, sw_desc);
 
 	if (list_empty(&mv_chan->chain))
 		list_splice_init(&sw_desc->tx_list, &mv_chan->chain);
@@ -661,7 +670,7 @@ mv_xor_prep_dma_memcpy(struct dma_chan *chan, dma_addr_t dest, dma_addr_t src,
 	if (unlikely(len < MV_XOR_MIN_BYTE_COUNT))
 		return NULL;
 
-	BUG_ON(len > MV_XOR_MAX_BYTE_COUNT);
+	BUG_ON(unlikely(len > MV_XOR_MAX_BYTE_COUNT));
 
 	spin_lock_bh(&mv_chan->lock);
 	slot_cnt = mv_chan_memcpy_slot_count(len);
@@ -700,7 +709,7 @@ mv_xor_prep_dma_memset(struct dma_chan *chan, dma_addr_t dest, int value,
 	if (unlikely(len < MV_XOR_MIN_BYTE_COUNT))
 		return NULL;
 
-	BUG_ON(len > MV_XOR_MAX_BYTE_COUNT);
+	BUG_ON(unlikely(len > MV_XOR_MAX_BYTE_COUNT));
 
 	spin_lock_bh(&mv_chan->lock);
 	slot_cnt = mv_chan_memset_slot_count(len);
@@ -734,7 +743,7 @@ mv_xor_prep_dma_xor(struct dma_chan *chan, dma_addr_t dest, dma_addr_t *src,
 	if (unlikely(len < MV_XOR_MIN_BYTE_COUNT))
 		return NULL;
 
-	BUG_ON(len > MV_XOR_MAX_BYTE_COUNT);
+	BUG_ON(unlikely(len > MV_XOR_MAX_BYTE_COUNT));
 
 	dev_dbg(mv_chan->device->common.dev,
 		"%s src_cnt: %d len: dest %x %u flags: %ld\n",
@@ -800,26 +809,44 @@ static void mv_xor_free_chan_resources(struct dma_chan *chan)
 }
 
 /**
- * mv_xor_status - poll the status of an XOR transaction
+ * mv_xor_is_complete - poll the status of an XOR transaction
  * @chan: XOR channel handle
  * @cookie: XOR transaction identifier
- * @txstate: XOR transactions state holder (or NULL)
  */
-static enum dma_status mv_xor_status(struct dma_chan *chan,
+static enum dma_status mv_xor_is_complete(struct dma_chan *chan,
 					  dma_cookie_t cookie,
-					  struct dma_tx_state *txstate)
+					  dma_cookie_t *done,
+					  dma_cookie_t *used)
 {
 	struct mv_xor_chan *mv_chan = to_mv_xor_chan(chan);
+	dma_cookie_t last_used;
+	dma_cookie_t last_complete;
 	enum dma_status ret;
 
-	ret = dma_cookie_status(chan, cookie, txstate);
+	last_used = chan->cookie;
+	last_complete = mv_chan->completed_cookie;
+	mv_chan->is_complete_cookie = cookie;
+	if (done)
+		*done = last_complete;
+	if (used)
+		*used = last_used;
+
+	ret = dma_async_is_complete(cookie, last_complete, last_used);
 	if (ret == DMA_SUCCESS) {
 		mv_xor_clean_completed_slots(mv_chan);
 		return ret;
 	}
 	mv_xor_slot_cleanup(mv_chan);
 
-	return dma_cookie_status(chan, cookie, txstate);
+	last_used = chan->cookie;
+	last_complete = mv_chan->completed_cookie;
+
+	if (done)
+		*done = last_complete;
+	if (used)
+		*used = last_used;
+
+	return dma_async_is_complete(cookie, last_complete, last_used);
 }
 
 static void mv_dump_xor_regs(struct mv_xor_chan *chan)
@@ -947,7 +974,7 @@ static int __devinit mv_xor_memcpy_self_test(struct mv_xor_device *device)
 	async_tx_ack(tx);
 	msleep(1);
 
-	if (mv_xor_status(dma_chan, cookie, NULL) !=
+	if (mv_xor_is_complete(dma_chan, cookie, NULL, NULL) !=
 	    DMA_SUCCESS) {
 		dev_printk(KERN_ERR, dma_chan->device->dev,
 			   "Self-test copy timed out, disabling\n");
@@ -1045,7 +1072,7 @@ mv_xor_xor_self_test(struct mv_xor_device *device)
 	async_tx_ack(tx);
 	msleep(8);
 
-	if (mv_xor_status(dma_chan, cookie, NULL) !=
+	if (mv_xor_is_complete(dma_chan, cookie, NULL, NULL) !=
 	    DMA_SUCCESS) {
 		dev_printk(KERN_ERR, dma_chan->device->dev,
 			   "Self-test xor timed out, disabling\n");
@@ -1140,7 +1167,7 @@ static int __devinit mv_xor_probe(struct platform_device *pdev)
 	/* set base routines */
 	dma_dev->device_alloc_chan_resources = mv_xor_alloc_chan_resources;
 	dma_dev->device_free_chan_resources = mv_xor_free_chan_resources;
-	dma_dev->device_tx_status = mv_xor_status;
+	dma_dev->device_is_tx_complete = mv_xor_is_complete;
 	dma_dev->device_issue_pending = mv_xor_issue_pending;
 	dma_dev->dev = &pdev->dev;
 
@@ -1193,7 +1220,6 @@ static int __devinit mv_xor_probe(struct platform_device *pdev)
 	INIT_LIST_HEAD(&mv_chan->completed_slots);
 	INIT_LIST_HEAD(&mv_chan->all_slots);
 	mv_chan->common.device = dma_dev;
-	dma_cookie_init(&mv_chan->common);
 
 	list_add_tail(&mv_chan->common.device_node, &dma_dev->channels);
 
@@ -1230,7 +1256,7 @@ static int __devinit mv_xor_probe(struct platform_device *pdev)
 
 static void
 mv_xor_conf_mbus_windows(struct mv_xor_shared_private *msp,
-			 const struct mbus_dram_target_info *dram)
+			 struct mbus_dram_target_info *dram)
 {
 	void __iomem *base = msp->xor_base;
 	u32 win_enable = 0;
@@ -1244,7 +1270,7 @@ mv_xor_conf_mbus_windows(struct mv_xor_shared_private *msp,
 	}
 
 	for (i = 0; i < dram->num_cs; i++) {
-		const struct mbus_dram_window *cs = dram->cs + i;
+		struct mbus_dram_window *cs = dram->cs + i;
 
 		writel((cs->base & 0xffff0000) |
 		       (cs->mbus_attr << 8) |
@@ -1270,7 +1296,7 @@ static struct platform_driver mv_xor_driver = {
 
 static int mv_xor_shared_probe(struct platform_device *pdev)
 {
-	const struct mbus_dram_target_info *dram;
+	struct mv_xor_platform_shared_data *msd = pdev->dev.platform_data;
 	struct mv_xor_shared_private *msp;
 	struct resource *res;
 
@@ -1285,7 +1311,7 @@ static int mv_xor_shared_probe(struct platform_device *pdev)
 		return -ENODEV;
 
 	msp->xor_base = devm_ioremap(&pdev->dev, res->start,
-				     resource_size(res));
+				     res->end - res->start + 1);
 	if (!msp->xor_base)
 		return -EBUSY;
 
@@ -1294,7 +1320,7 @@ static int mv_xor_shared_probe(struct platform_device *pdev)
 		return -ENODEV;
 
 	msp->xor_high_base = devm_ioremap(&pdev->dev, res->start,
-					  resource_size(res));
+					  res->end - res->start + 1);
 	if (!msp->xor_high_base)
 		return -EBUSY;
 
@@ -1303,9 +1329,8 @@ static int mv_xor_shared_probe(struct platform_device *pdev)
 	/*
 	 * (Re-)program MBUS remapping windows if we are asked to.
 	 */
-	dram = mv_mbus_dram_info();
-	if (dram)
-		mv_xor_conf_mbus_windows(msp, dram);
+	if (msd != NULL && msd->dram != NULL)
+		mv_xor_conf_mbus_windows(msp, msd->dram);
 
 	return 0;
 }

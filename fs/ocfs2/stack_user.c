@@ -21,10 +21,11 @@
 #include <linux/fs.h>
 #include <linux/miscdevice.h>
 #include <linux/mutex.h>
-#include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/reboot.h>
 #include <asm/uaccess.h>
 
+#include "ocfs2.h"  /* For struct ocfs2_lock_res */
 #include "stackglue.h"
 
 #include <linux/dlm_plock.h>
@@ -62,8 +63,8 @@
  * negotiated by the client.  The client negotiates based on the maximum
  * version advertised in /sys/fs/ocfs2/max_locking_protocol.  The major
  * number from the "SETV" message must match
- * ocfs2_user_plugin.sp_max_proto.pv_major, and the minor number
- * must be less than or equal to ...sp_max_version.pv_minor.
+ * ocfs2_user_plugin.sp_proto->lp_max_version.pv_major, and the minor number
+ * must be less than or equal to ...->lp_max_version.pv_minor.
  *
  * Once this information has been set, mounts will be allowed.  From this
  * point on, the "DOWN" message can be sent for node down notification.
@@ -400,7 +401,7 @@ static int ocfs2_control_do_setversion_msg(struct file *file,
 	char *ptr = NULL;
 	struct ocfs2_control_private *p = file->private_data;
 	struct ocfs2_protocol_version *max =
-		&ocfs2_user_plugin.sp_max_proto;
+		&ocfs2_user_plugin.sp_proto->lp_max_version;
 
 	if (ocfs2_control_get_handshake_state(file) !=
 	    OCFS2_CONTROL_HANDSHAKE_PROTOCOL)
@@ -611,10 +612,12 @@ static int ocfs2_control_open(struct inode *inode, struct file *file)
 		return -ENOMEM;
 	p->op_this_node = -1;
 
+	lock_kernel();
 	mutex_lock(&ocfs2_control_lock);
 	file->private_data = p;
 	list_add(&p->op_list, &ocfs2_control_private_list);
 	mutex_unlock(&ocfs2_control_lock);
+	unlock_kernel();
 
 	return 0;
 }
@@ -625,7 +628,6 @@ static const struct file_operations ocfs2_control_fops = {
 	.read    = ocfs2_control_read,
 	.write   = ocfs2_control_write,
 	.owner   = THIS_MODULE,
-	.llseek  = default_llseek,
 };
 
 static struct miscdevice ocfs2_control_device = {
@@ -662,10 +664,18 @@ static void ocfs2_control_exit(void)
 		       -rc);
 }
 
+static struct dlm_lksb *fsdlm_astarg_to_lksb(void *astarg)
+{
+	struct ocfs2_lock_res *res = astarg;
+	return &res->l_lksb.lksb_fsdlm;
+}
+
 static void fsdlm_lock_ast_wrapper(void *astarg)
 {
-	struct ocfs2_dlm_lksb *lksb = astarg;
-	int status = lksb->lksb_fsdlm.sb_status;
+	struct dlm_lksb *lksb = fsdlm_astarg_to_lksb(astarg);
+	int status = lksb->sb_status;
+
+	BUG_ON(ocfs2_user_plugin.sp_proto == NULL);
 
 	/*
 	 * For now we're punting on the issue of other non-standard errors
@@ -678,24 +688,25 @@ static void fsdlm_lock_ast_wrapper(void *astarg)
 	 */
 
 	if (status == -DLM_EUNLOCK || status == -DLM_ECANCEL)
-		lksb->lksb_conn->cc_proto->lp_unlock_ast(lksb, 0);
+		ocfs2_user_plugin.sp_proto->lp_unlock_ast(astarg, 0);
 	else
-		lksb->lksb_conn->cc_proto->lp_lock_ast(lksb);
+		ocfs2_user_plugin.sp_proto->lp_lock_ast(astarg);
 }
 
 static void fsdlm_blocking_ast_wrapper(void *astarg, int level)
 {
-	struct ocfs2_dlm_lksb *lksb = astarg;
+	BUG_ON(ocfs2_user_plugin.sp_proto == NULL);
 
-	lksb->lksb_conn->cc_proto->lp_blocking_ast(lksb, level);
+	ocfs2_user_plugin.sp_proto->lp_blocking_ast(astarg, level);
 }
 
 static int user_dlm_lock(struct ocfs2_cluster_connection *conn,
 			 int mode,
-			 struct ocfs2_dlm_lksb *lksb,
+			 union ocfs2_dlm_lksb *lksb,
 			 u32 flags,
 			 void *name,
-			 unsigned int namelen)
+			 unsigned int namelen,
+			 void *astarg)
 {
 	int ret;
 
@@ -705,35 +716,36 @@ static int user_dlm_lock(struct ocfs2_cluster_connection *conn,
 
 	ret = dlm_lock(conn->cc_lockspace, mode, &lksb->lksb_fsdlm,
 		       flags|DLM_LKF_NODLCKWT, name, namelen, 0,
-		       fsdlm_lock_ast_wrapper, lksb,
+		       fsdlm_lock_ast_wrapper, astarg,
 		       fsdlm_blocking_ast_wrapper);
 	return ret;
 }
 
 static int user_dlm_unlock(struct ocfs2_cluster_connection *conn,
-			   struct ocfs2_dlm_lksb *lksb,
-			   u32 flags)
+			   union ocfs2_dlm_lksb *lksb,
+			   u32 flags,
+			   void *astarg)
 {
 	int ret;
 
 	ret = dlm_unlock(conn->cc_lockspace, lksb->lksb_fsdlm.sb_lkid,
-			 flags, &lksb->lksb_fsdlm, lksb);
+			 flags, &lksb->lksb_fsdlm, astarg);
 	return ret;
 }
 
-static int user_dlm_lock_status(struct ocfs2_dlm_lksb *lksb)
+static int user_dlm_lock_status(union ocfs2_dlm_lksb *lksb)
 {
 	return lksb->lksb_fsdlm.sb_status;
 }
 
-static int user_dlm_lvb_valid(struct ocfs2_dlm_lksb *lksb)
+static int user_dlm_lvb_valid(union ocfs2_dlm_lksb *lksb)
 {
 	int invalid = lksb->lksb_fsdlm.sb_flags & DLM_SBF_VALNOTVALID;
 
 	return !invalid;
 }
 
-static void *user_dlm_lvb(struct ocfs2_dlm_lksb *lksb)
+static void *user_dlm_lvb(union ocfs2_dlm_lksb *lksb)
 {
 	if (!lksb->lksb_fsdlm.sb_lvbptr)
 		lksb->lksb_fsdlm.sb_lvbptr = (char *)lksb +
@@ -741,7 +753,7 @@ static void *user_dlm_lvb(struct ocfs2_dlm_lksb *lksb)
 	return (void *)(lksb->lksb_fsdlm.sb_lvbptr);
 }
 
-static void user_dlm_dump_lksb(struct ocfs2_dlm_lksb *lksb)
+static void user_dlm_dump_lksb(union ocfs2_dlm_lksb *lksb)
 {
 }
 
@@ -802,7 +814,7 @@ static int fs_protocol_compare(struct ocfs2_protocol_version *existing,
 static int user_cluster_connect(struct ocfs2_cluster_connection *conn)
 {
 	dlm_lockspace_t *fsdlm;
-	struct ocfs2_live_connection *uninitialized_var(control);
+	struct ocfs2_live_connection *control;
 	int rc = 0;
 
 	BUG_ON(conn == NULL);
@@ -827,8 +839,8 @@ static int user_cluster_connect(struct ocfs2_cluster_connection *conn)
 		goto out;
 	}
 
-	rc = dlm_new_lockspace(conn->cc_name, NULL, DLM_LSFL_FS, DLM_LVB_LEN,
-			       NULL, NULL, NULL, &fsdlm);
+	rc = dlm_new_lockspace(conn->cc_name, strlen(conn->cc_name),
+			       &fsdlm, DLM_LSFL_FS, DLM_LVB_LEN);
 	if (rc) {
 		ocfs2_live_connection_drop(control);
 		goto out;

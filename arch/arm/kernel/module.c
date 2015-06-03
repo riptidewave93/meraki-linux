@@ -16,13 +16,12 @@
 #include <linux/mm.h>
 #include <linux/elf.h>
 #include <linux/vmalloc.h>
+#include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/string.h>
-#include <linux/gfp.h>
 
 #include <asm/pgtable.h>
 #include <asm/sections.h>
-#include <asm/smp_plat.h>
 #include <asm/unwind.h>
 
 #ifdef CONFIG_XIP_KERNEL
@@ -33,17 +32,61 @@
  * recompiling the whole kernel when CONFIG_XIP_KERNEL is turned on/off.
  */
 #undef MODULES_VADDR
-#define MODULES_VADDR	(((unsigned long)_etext + ~PMD_MASK) & PMD_MASK)
+#define MODULES_VADDR	(((unsigned long)_etext + ~PGDIR_MASK) & PGDIR_MASK)
 #endif
 
 #ifdef CONFIG_MMU
 void *module_alloc(unsigned long size)
 {
-	return __vmalloc_node_range(size, 1, MODULES_VADDR, MODULES_END,
-				GFP_KERNEL, PAGE_KERNEL_EXEC, -1,
-				__builtin_return_address(0));
+	struct vm_struct *area;
+
+	size = PAGE_ALIGN(size);
+	if (!size)
+		return NULL;
+
+	area = __get_vm_area(size, VM_ALLOC, MODULES_VADDR, MODULES_END);
+	if (!area)
+		return NULL;
+
+	return __vmalloc_area(area, GFP_KERNEL, PAGE_KERNEL_EXEC);
 }
+#else /* CONFIG_MMU */
+void *module_alloc(unsigned long size)
+{
+	return size == 0 ? NULL : vmalloc(size);
+}
+#endif /* !CONFIG_MMU */
+
+void module_free(struct module *module, void *region)
+{
+	vfree(region);
+}
+
+int module_frob_arch_sections(Elf_Ehdr *hdr,
+			      Elf_Shdr *sechdrs,
+			      char *secstrings,
+			      struct module *mod)
+{
+#ifdef CONFIG_ARM_UNWIND
+	Elf_Shdr *s, *sechdrs_end = sechdrs + hdr->e_shnum;
+
+	for (s = sechdrs; s < sechdrs_end; s++) {
+		if (strcmp(".ARM.exidx.init.text", secstrings + s->sh_name) == 0)
+			mod->arch.unw_sec_init = s;
+		else if (strcmp(".ARM.exidx.devinit.text", secstrings + s->sh_name) == 0)
+			mod->arch.unw_sec_devinit = s;
+		else if (strcmp(".ARM.exidx", secstrings + s->sh_name) == 0)
+			mod->arch.unw_sec_core = s;
+		else if (strcmp(".init.text", secstrings + s->sh_name) == 0)
+			mod->arch.sec_init_text = s;
+		else if (strcmp(".devinit.text", secstrings + s->sh_name) == 0)
+			mod->arch.sec_devinit_text = s;
+		else if (strcmp(".text", secstrings + s->sh_name) == 0)
+			mod->arch.sec_core_text = s;
+	}
 #endif
+	return 0;
+}
 
 int
 apply_relocate(Elf32_Shdr *sechdrs, const char *strtab, unsigned int symindex,
@@ -58,26 +101,23 @@ apply_relocate(Elf32_Shdr *sechdrs, const char *strtab, unsigned int symindex,
 	for (i = 0; i < relsec->sh_size / sizeof(Elf32_Rel); i++, rel++) {
 		unsigned long loc;
 		Elf32_Sym *sym;
-		const char *symname;
 		s32 offset;
-#ifdef CONFIG_THUMB2_KERNEL
 		u32 upper, lower, sign, j1, j2;
-#endif
 
 		offset = ELF32_R_SYM(rel->r_info);
 		if (offset < 0 || offset > (symsec->sh_size / sizeof(Elf32_Sym))) {
-			pr_err("%s: section %u reloc %u: bad relocation sym offset\n",
+			printk(KERN_ERR "%s: bad relocation, section %d reloc %d\n",
 				module->name, relindex, i);
 			return -ENOEXEC;
 		}
 
 		sym = ((Elf32_Sym *)symsec->sh_addr) + offset;
-		symname = strtab + sym->st_name;
 
 		if (rel->r_offset < 0 || rel->r_offset > dstsec->sh_size - sizeof(u32)) {
-			pr_err("%s: section %u reloc %u sym '%s': out of bounds relocation, offset %d size %u\n",
-			       module->name, relindex, i, symname,
-			       rel->r_offset, dstsec->sh_size);
+			printk(KERN_ERR "%s: out of bounds relocation, "
+				"section %d reloc %d offset %d size %d\n",
+				module->name, relindex, i, rel->r_offset,
+				dstsec->sh_size);
 			return -ENOEXEC;
 		}
 
@@ -104,10 +144,10 @@ apply_relocate(Elf32_Shdr *sechdrs, const char *strtab, unsigned int symindex,
 			if (offset & 3 ||
 			    offset <= (s32)0xfe000000 ||
 			    offset >= (s32)0x02000000) {
-				pr_err("%s: section %u reloc %u sym '%s': relocation %u out of range (%#lx -> %#x)\n",
-				       module->name, relindex, i, symname,
-				       ELF32_R_TYPE(rel->r_info), loc,
-				       sym->st_value);
+				printk(KERN_ERR
+				       "%s: relocation out of range, section "
+				       "%d reloc %d sym '%s'\n", module->name,
+				       relindex, i, strtab + sym->st_name);
 				return -ENOEXEC;
 			}
 
@@ -146,7 +186,6 @@ apply_relocate(Elf32_Shdr *sechdrs, const char *strtab, unsigned int symindex,
 					(offset & 0x0fff);
 			break;
 
-#ifdef CONFIG_THUMB2_KERNEL
 		case R_ARM_THM_CALL:
 		case R_ARM_THM_JUMP24:
 			upper = *(u16 *)loc;
@@ -176,23 +215,14 @@ apply_relocate(Elf32_Shdr *sechdrs, const char *strtab, unsigned int symindex,
 				offset -= 0x02000000;
 			offset += sym->st_value - loc;
 
-			/*
-			 * For function symbols, only Thumb addresses are
-			 * allowed (no interworking).
-			 *
-			 * For non-function symbols, the destination
-			 * has no specific ARM/Thumb disposition, so
-			 * the branch is resolved under the assumption
-			 * that interworking is not required.
-			 */
-			if ((ELF32_ST_TYPE(sym->st_info) == STT_FUNC &&
-				!(offset & 1)) ||
+			/* only Thumb addresses allowed (no interworking) */
+			if (!(offset & 1) ||
 			    offset <= (s32)0xff000000 ||
 			    offset >= (s32)0x01000000) {
-				pr_err("%s: section %u reloc %u sym '%s': relocation %u out of range (%#lx -> %#x)\n",
-				       module->name, relindex, i, symname,
-				       ELF32_R_TYPE(rel->r_info), loc,
-				       sym->st_value);
+				printk(KERN_ERR
+				       "%s: relocation out of range, section "
+				       "%d reloc %d sym '%s'\n", module->name,
+				       relindex, i, strtab + sym->st_name);
 				return -ENOEXEC;
 			}
 
@@ -204,40 +234,9 @@ apply_relocate(Elf32_Shdr *sechdrs, const char *strtab, unsigned int symindex,
 			*(u16 *)(loc + 2) = (u16)((lower & 0xd000) |
 						  (j1 << 13) | (j2 << 11) |
 						  ((offset >> 1) & 0x07ff));
-			break;
-
-		case R_ARM_THM_MOVW_ABS_NC:
-		case R_ARM_THM_MOVT_ABS:
 			upper = *(u16 *)loc;
 			lower = *(u16 *)(loc + 2);
-
-			/*
-			 * MOVT/MOVW instructions encoding in Thumb-2:
-			 *
-			 * i	= upper[10]
-			 * imm4	= upper[3:0]
-			 * imm3	= lower[14:12]
-			 * imm8	= lower[7:0]
-			 *
-			 * imm16 = imm4:i:imm3:imm8
-			 */
-			offset = ((upper & 0x000f) << 12) |
-				((upper & 0x0400) << 1) |
-				((lower & 0x7000) >> 4) | (lower & 0x00ff);
-			offset = (offset ^ 0x8000) - 0x8000;
-			offset += sym->st_value;
-
-			if (ELF32_R_TYPE(rel->r_info) == R_ARM_THM_MOVT_ABS)
-				offset >>= 16;
-
-			*(u16 *)loc = (u16)((upper & 0xfbf0) |
-					    ((offset & 0xf000) >> 12) |
-					    ((offset & 0x0800) >> 1));
-			*(u16 *)(loc + 2) = (u16)((lower & 0x8f00) |
-						  ((offset & 0x0700) << 4) |
-						  (offset & 0x00ff));
 			break;
-#endif
 
 		default:
 			printk(KERN_ERR "%s: unknown relocation: %u\n",
@@ -248,98 +247,59 @@ apply_relocate(Elf32_Shdr *sechdrs, const char *strtab, unsigned int symindex,
 	return 0;
 }
 
-struct mod_unwind_map {
-	const Elf_Shdr *unw_sec;
-	const Elf_Shdr *txt_sec;
-};
-
-static const Elf_Shdr *find_mod_section(const Elf32_Ehdr *hdr,
-	const Elf_Shdr *sechdrs, const char *name)
+int
+apply_relocate_add(Elf32_Shdr *sechdrs, const char *strtab,
+		   unsigned int symindex, unsigned int relsec, struct module *module)
 {
-	const Elf_Shdr *s, *se;
-	const char *secstrs = (void *)hdr + sechdrs[hdr->e_shstrndx].sh_offset;
-
-	for (s = sechdrs, se = sechdrs + hdr->e_shnum; s < se; s++)
-		if (strcmp(name, secstrs + s->sh_name) == 0)
-			return s;
-
-	return NULL;
+	printk(KERN_ERR "module %s: ADD RELOCATION unsupported\n",
+	       module->name);
+	return -ENOEXEC;
 }
 
-extern void fixup_pv_table(const void *, unsigned long);
-extern void fixup_smp(const void *, unsigned long);
-
-int module_finalize(const Elf32_Ehdr *hdr, const Elf_Shdr *sechdrs,
-		    struct module *mod)
-{
-	const Elf_Shdr *s = NULL;
 #ifdef CONFIG_ARM_UNWIND
-	const char *secstrs = (void *)hdr + sechdrs[hdr->e_shstrndx].sh_offset;
-	const Elf_Shdr *sechdrs_end = sechdrs + hdr->e_shnum;
-	struct mod_unwind_map maps[ARM_SEC_MAX];
-	int i;
+static void register_unwind_tables(struct module *mod)
+{
+	if (mod->arch.unw_sec_init && mod->arch.sec_init_text)
+		mod->arch.unwind_init =
+			unwind_table_add(mod->arch.unw_sec_init->sh_addr,
+					 mod->arch.unw_sec_init->sh_size,
+					 mod->arch.sec_init_text->sh_addr,
+					 mod->arch.sec_init_text->sh_size);
+	if (mod->arch.unw_sec_devinit && mod->arch.sec_devinit_text)
+		mod->arch.unwind_devinit =
+			unwind_table_add(mod->arch.unw_sec_devinit->sh_addr,
+					 mod->arch.unw_sec_devinit->sh_size,
+					 mod->arch.sec_devinit_text->sh_addr,
+					 mod->arch.sec_devinit_text->sh_size);
+	if (mod->arch.unw_sec_core && mod->arch.sec_core_text)
+		mod->arch.unwind_core =
+			unwind_table_add(mod->arch.unw_sec_core->sh_addr,
+					 mod->arch.unw_sec_core->sh_size,
+					 mod->arch.sec_core_text->sh_addr,
+					 mod->arch.sec_core_text->sh_size);
+}
 
-	memset(maps, 0, sizeof(maps));
-
-	for (s = sechdrs; s < sechdrs_end; s++) {
-		const char *secname = secstrs + s->sh_name;
-
-		if (!(s->sh_flags & SHF_ALLOC))
-			continue;
-
-		if (strcmp(".ARM.exidx.init.text", secname) == 0)
-			maps[ARM_SEC_INIT].unw_sec = s;
-		else if (strcmp(".ARM.exidx.devinit.text", secname) == 0)
-			maps[ARM_SEC_DEVINIT].unw_sec = s;
-		else if (strcmp(".ARM.exidx", secname) == 0)
-			maps[ARM_SEC_CORE].unw_sec = s;
-		else if (strcmp(".ARM.exidx.exit.text", secname) == 0)
-			maps[ARM_SEC_EXIT].unw_sec = s;
-		else if (strcmp(".ARM.exidx.devexit.text", secname) == 0)
-			maps[ARM_SEC_DEVEXIT].unw_sec = s;
-		else if (strcmp(".init.text", secname) == 0)
-			maps[ARM_SEC_INIT].txt_sec = s;
-		else if (strcmp(".devinit.text", secname) == 0)
-			maps[ARM_SEC_DEVINIT].txt_sec = s;
-		else if (strcmp(".text", secname) == 0)
-			maps[ARM_SEC_CORE].txt_sec = s;
-		else if (strcmp(".exit.text", secname) == 0)
-			maps[ARM_SEC_EXIT].txt_sec = s;
-		else if (strcmp(".devexit.text", secname) == 0)
-			maps[ARM_SEC_DEVEXIT].txt_sec = s;
-	}
-
-	for (i = 0; i < ARM_SEC_MAX; i++)
-		if (maps[i].unw_sec && maps[i].txt_sec)
-			mod->arch.unwind[i] =
-				unwind_table_add(maps[i].unw_sec->sh_addr,
-					         maps[i].unw_sec->sh_size,
-					         maps[i].txt_sec->sh_addr,
-					         maps[i].txt_sec->sh_size);
-#endif
-#ifdef CONFIG_ARM_PATCH_PHYS_VIRT
-	s = find_mod_section(hdr, sechdrs, ".pv_table");
-	if (s)
-		fixup_pv_table((void *)s->sh_addr, s->sh_size);
-#endif
-	s = find_mod_section(hdr, sechdrs, ".alt.smp.init");
-	if (s && !is_smp())
-#ifdef CONFIG_SMP_ON_UP
-		fixup_smp((void *)s->sh_addr, s->sh_size);
+static void unregister_unwind_tables(struct module *mod)
+{
+	unwind_table_del(mod->arch.unwind_init);
+	unwind_table_del(mod->arch.unwind_devinit);
+	unwind_table_del(mod->arch.unwind_core);
+}
 #else
-		return -EINVAL;
+static inline void register_unwind_tables(struct module *mod) { }
+static inline void unregister_unwind_tables(struct module *mod) { }
 #endif
+
+int
+module_finalize(const Elf32_Ehdr *hdr, const Elf_Shdr *sechdrs,
+		struct module *module)
+{
+	register_unwind_tables(module);
 	return 0;
 }
 
 void
 module_arch_cleanup(struct module *mod)
 {
-#ifdef CONFIG_ARM_UNWIND
-	int i;
-
-	for (i = 0; i < ARM_SEC_MAX; i++)
-		if (mod->arch.unwind[i])
-			unwind_table_del(mod->arch.unwind[i]);
-#endif
+	unregister_unwind_tables(mod);
 }

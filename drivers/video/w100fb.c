@@ -30,10 +30,8 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/vmalloc.h>
-#include <linux/module.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
 #include <video/w100fb.h>
@@ -54,7 +52,7 @@ static void w100_update_enable(void);
 static void w100_update_disable(void);
 static void calc_hsync(struct w100fb_par *par);
 static void w100_init_graphic_engine(struct w100fb_par *par);
-struct w100_pll_info *w100_get_xtal_table(unsigned int freq) __devinit;
+struct w100_pll_info *w100_get_xtal_table(unsigned int freq);
 
 /* Pseudo palette size */
 #define MAX_PALETTES      16
@@ -630,7 +628,7 @@ static int w100fb_resume(struct platform_device *dev)
 #endif
 
 
-int __devinit w100fb_probe(struct platform_device *pdev)
+int __init w100fb_probe(struct platform_device *pdev)
 {
 	int err = -EIO;
 	struct w100fb_mach_info *inf;
@@ -783,7 +781,7 @@ out:
 }
 
 
-static int __devexit w100fb_remove(struct platform_device *pdev)
+static int w100fb_remove(struct platform_device *pdev)
 {
 	struct fb_info *info = platform_get_drvdata(pdev);
 	struct w100fb_par *par=info->par;
@@ -1021,7 +1019,7 @@ static struct pll_entries {
 	{ 0 },
 };
 
-struct w100_pll_info __devinit *w100_get_xtal_table(unsigned int freq)
+struct w100_pll_info *w100_get_xtal_table(unsigned int freq)
 {
 	struct pll_entries *pll_entry = w100_pll_tables;
 
@@ -1307,7 +1305,7 @@ static void w100_init_lcd(struct w100fb_par *par)
 	union graphic_v_disp_u graphic_v_disp;
 	union crtc_total_u crtc_total;
 
-	/* w3200 doesn't like undefined bits being set so zero register values first */
+	/* w3200 doesnt like undefined bits being set so zero register values first */
 
 	active_h_disp.val = 0;
 	active_h_disp.f.active_h_start=mode->left_margin;
@@ -1612,7 +1610,7 @@ static void w100_vsync(void)
 
 static struct platform_driver w100fb_driver = {
 	.probe		= w100fb_probe,
-	.remove		= __devexit_p(w100fb_remove),
+	.remove		= w100fb_remove,
 	.suspend	= w100fb_suspend,
 	.resume		= w100fb_resume,
 	.driver		= {
@@ -1620,7 +1618,18 @@ static struct platform_driver w100fb_driver = {
 	},
 };
 
-module_platform_driver(w100fb_driver);
+int __devinit w100fb_init(void)
+{
+	return platform_driver_register(&w100fb_driver);
+}
+
+void __exit w100fb_cleanup(void)
+{
+	platform_driver_unregister(&w100fb_driver);
+}
+
+module_init(w100fb_init);
+module_exit(w100fb_cleanup);
 
 MODULE_DESCRIPTION("ATI Imageon w100 framebuffer driver");
 MODULE_LICENSE("GPL");

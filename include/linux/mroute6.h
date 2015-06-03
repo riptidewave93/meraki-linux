@@ -24,8 +24,7 @@
 #define MRT6_DEL_MFC	(MRT6_BASE+5)	/* Delete a multicast forwarding entry	*/
 #define MRT6_VERSION	(MRT6_BASE+6)	/* Get the kernel multicast version	*/
 #define MRT6_ASSERT	(MRT6_BASE+7)	/* Activate PIM assert mode		*/
-#define MRT6_PIM	(MRT6_BASE+8)	/* enable PIM code			*/
-#define MRT6_TABLE	(MRT6_BASE+9)	/* Specify mroute table ID		*/
+#define MRT6_PIM	(MRT6_BASE+8)	/* enable PIM code	*/
 
 #define SIOCGETMIFCNT_IN6	SIOCPROTOPRIVATE	/* IP protocol privates */
 #define SIOCGETSGCNT_IN6	(SIOCPROTOPRIVATE+1)
@@ -43,10 +42,8 @@ typedef unsigned short mifi_t;
 typedef	__u32		if_mask;
 #define NIFBITS (sizeof(if_mask) * 8)        /* bits per mask */
 
-#if !defined(__KERNEL__)
-#if !defined(DIV_ROUND_UP)
+#if !defined(__KERNEL__) && !defined(DIV_ROUND_UP)
 #define	DIV_ROUND_UP(x,y)	(((x) + ((y) - 1)) / (y))
-#endif
 #endif
 
 typedef struct if_set {
@@ -78,7 +75,8 @@ struct mif6ctl {
  *	Cache manipulation structures for mrouted and PIMd
  */
 
-struct mf6cctl {
+struct mf6cctl
+{
 	struct sockaddr_in6 mf6cc_origin;		/* Origin of mcast	*/
 	struct sockaddr_in6 mf6cc_mcastgrp;		/* Group in question	*/
 	mifi_t	mf6cc_parent;			/* Where it arrived	*/
@@ -89,7 +87,8 @@ struct mf6cctl {
  *	Group count retrieval for pim6sd
  */
 
-struct sioc_sg_req6 {
+struct sioc_sg_req6
+{
 	struct sockaddr_in6 src;
 	struct sockaddr_in6 grp;
 	unsigned long pktcnt;
@@ -101,7 +100,8 @@ struct sioc_sg_req6 {
  *	To get vif packet counts
  */
 
-struct sioc_mif_req6 {
+struct sioc_mif_req6
+{
 	mifi_t	mifi;		/* Which iface */
 	unsigned long icount;	/* In packets */
 	unsigned long ocount;	/* Out packets */
@@ -138,7 +138,6 @@ extern int ip6_mroute_setsockopt(struct sock *, int, char __user *, unsigned int
 extern int ip6_mroute_getsockopt(struct sock *, int, char __user *, int __user *);
 extern int ip6_mr_input(struct sk_buff *skb);
 extern int ip6mr_ioctl(struct sock *sk, int cmd, void __user *arg);
-extern int ip6mr_compat_ioctl(struct sock *sk, unsigned int cmd, void __user *arg);
 extern int ip6_mr_init(void);
 extern void ip6_mr_cleanup(void);
 #else
@@ -173,7 +172,8 @@ static inline void ip6_mr_cleanup(void)
 }
 #endif
 
-struct mif_device {
+struct mif_device
+{
 	struct net_device 	*dev;			/* Device we are using */
 	unsigned long	bytes_in,bytes_out;
 	unsigned long	pkt_in,pkt_out;		/* Statistics 			*/
@@ -185,8 +185,12 @@ struct mif_device {
 
 #define VIFF_STATIC 0x8000
 
-struct mfc6_cache {
-	struct list_head list;
+struct mfc6_cache
+{
+	struct mfc6_cache *next;		/* Next entry on cache line 	*/
+#ifdef CONFIG_NET_NS
+	struct net *mfc6_net;
+#endif
 	struct in6_addr mf6c_mcastgrp;			/* Group the entry belongs to 	*/
 	struct in6_addr mf6c_origin;			/* Source of packet 		*/
 	mifi_t mf6c_parent;			/* Source interface		*/
@@ -208,6 +212,18 @@ struct mfc6_cache {
 		} res;
 	} mfc_un;
 };
+
+static inline
+struct net *mfc6_net(const struct mfc6_cache *mfc)
+{
+	return read_pnet(&mfc->mfc6_net);
+}
+
+static inline
+void mfc6_net_set(struct mfc6_cache *mfc, struct net *net)
+{
+	write_pnet(&mfc->mfc6_net, hold_net(net));
+}
 
 #define MFC_STATIC		1
 #define MFC_NOTIFY		2
@@ -233,17 +249,14 @@ extern int ip6mr_get_route(struct net *net, struct sk_buff *skb,
 			   struct rtmsg *rtm, int nowait);
 
 #ifdef CONFIG_IPV6_MROUTE
-extern struct sock *mroute6_socket(struct net *net, struct sk_buff *skb);
+static inline struct sock *mroute6_socket(struct net *net)
+{
+	return net->ipv6.mroute6_sk;
+}
 extern int ip6mr_sk_done(struct sock *sk);
 #else
-static inline struct sock *mroute6_socket(struct net *net, struct sk_buff *skb)
-{
-	return NULL;
-}
-static inline int ip6mr_sk_done(struct sock *sk)
-{
-	return 0;
-}
+static inline struct sock *mroute6_socket(struct net *net) { return NULL; }
+static inline int ip6mr_sk_done(struct sock *sk) { return 0; }
 #endif
 #endif
 
@@ -251,7 +264,7 @@ static inline int ip6mr_sk_done(struct sock *sk)
  * Structure used to communicate from kernel to multicast router.
  * We'll overlay the structure onto an MLD header (not an IPv6 heder like igmpmsg{}
  * used for IPv4 implementation). This is because this structure will be passed via an
- * IPv6 raw socket, on which an application will only receiver the payload i.e the data after
+ * IPv6 raw socket, on wich an application will only receiver the payload i.e the data after
  * the IPv6 header and all the extension headers. (See section 3 of RFC 3542)
  */
 

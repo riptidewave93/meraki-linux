@@ -9,6 +9,15 @@ config USB_DEBUG
 	  of debug messages to the system log. Select this if you are having a
 	  problem with USB support and want to see more of what is going on.
 
+config USB_WARNING_WAR
+    bool "USB warning messages"
+    depends on USB
+    help
+     Say Y if your host side USB need to support USB-IF Embedded Host 
+     Compliance Plan section C.2 Interoperability 3.a and 4.a items.
+     Which will support the corresponding messages when plug-in 
+     unsupported USB device or attach too many USB hubs.
+
 config USB_ANNOUNCE_NEW_DEVICES
 	bool "USB announce new devices"
 	depends on USB
@@ -91,12 +100,12 @@ config USB_DYNAMIC_MINORS
 	  If you are unsure about this, say N here.
 
 config USB_SUSPEND
-	bool "USB runtime power management (autosuspend) and wakeup"
-	depends on USB && PM_RUNTIME
+	bool "USB selective suspend/resume and wakeup"
+	depends on USB && PM
 	help
 	  If you say Y here, you can use driver calls or the sysfs
-	  "power/control" file to enable or disable autosuspend for
-	  individual USB peripherals (see
+	  "power/level" file to suspend or resume individual USB
+	  peripherals and to enable or disable autosuspend (see
 	  Documentation/usb/power-management.txt for more details).
 
 	  Also, USB "remote wakeup" signaling is supported, whereby some
@@ -107,25 +116,17 @@ config USB_SUSPEND
 	  If you are unsure about this, say N here.
 
 config USB_OTG
-	bool "OTG support"
+	bool
 	depends on USB && EXPERIMENTAL
-	depends on USB_SUSPEND
+	select USB_SUSPEND
 	default n
-	help
-	  The most notable feature of USB OTG is support for a
-	  "Dual-Role" device, which can act as either a device
-	  or a host. The initial role is decided by the type of
-	  plug inserted and can be changed later when two dual
-	  role devices talk to each other.
 
-	  Select this only if your board has Mini-AB/Micro-AB
-	  connector.
 
 config USB_OTG_WHITELIST
 	bool "Rely on OTG Targeted Peripherals List"
-	depends on USB_OTG || EXPERT
+	depends on USB_OTG || EMBEDDED
 	default y if USB_OTG
-	default n if EXPERT
+	default n if EMBEDDED
 	help
 	  If you say Y here, the "otg_whitelist.h" file will be used as a
 	  product whitelist, so USB peripherals not listed there will be
@@ -141,7 +142,7 @@ config USB_OTG_WHITELIST
 
 config USB_OTG_BLACKLIST_HUB
 	bool "Disable external hubs"
-	depends on USB_OTG || EXPERT
+	depends on USB_OTG || EMBEDDED
 	help
 	  If you say Y here, then Linux will refuse to enumerate
 	  external hubs.  OTG hosts are allowed to reduce hardware

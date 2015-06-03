@@ -22,7 +22,6 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/usb.h>
 
@@ -34,7 +33,7 @@
 #define TRANCEVIBRATOR_VENDOR_ID	0x0b49	/* ASCII Corporation */
 #define TRANCEVIBRATOR_PRODUCT_ID	0x064f	/* Trance Vibrator */
 
-static const struct usb_device_id id_table[] = {
+static struct usb_device_id id_table [] = {
 	{ USB_DEVICE(TRANCEVIBRATOR_VENDOR_ID, TRANCEVIBRATOR_PRODUCT_ID) },
 	{ },
 };
@@ -137,7 +136,26 @@ static struct usb_driver tv_driver = {
 	.id_table =	id_table,
 };
 
-module_usb_driver(tv_driver);
+static int __init tv_init(void)
+{
+	int retval = usb_register(&tv_driver);
+	if (retval) {
+		err("usb_register failed. Error number %d", retval);
+		return retval;
+	}
+
+	printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_VERSION ":"
+	       DRIVER_DESC "\n");
+	return 0;
+}
+
+static void __exit tv_exit(void)
+{
+	usb_deregister(&tv_driver);
+}
+
+module_init (tv_init);
+module_exit (tv_exit);
 
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);

@@ -13,9 +13,7 @@
 #include <linux/security.h>
 #include <linux/slab.h>
 #include <linux/ipc.h>
-#include <linux/msg.h>
 #include <linux/ipc_namespace.h>
-#include <linux/utsname.h>
 #include <asm/uaccess.h>
 
 #include "util.h"
@@ -29,7 +27,11 @@ DEFINE_SPINLOCK(mq_lock);
  */
 struct ipc_namespace init_ipc_ns = {
 	.count		= ATOMIC_INIT(1),
-	.user_ns = &init_user_ns,
+#ifdef CONFIG_POSIX_MQUEUE
+	.mq_queues_max   = DFLT_QUEUESMAX,
+	.mq_msg_max      = DFLT_MSGMAX,
+	.mq_msgsize_max  = DFLT_MSGSIZEMAX,
+#endif
 };
 
 atomic_t nr_ipc_ns = ATOMIC_INIT(1);
@@ -39,15 +41,15 @@ struct msg_msgseg {
 	/* the next part of the message follows immediately */
 };
 
-#define DATALEN_MSG	((size_t)PAGE_SIZE-sizeof(struct msg_msg))
-#define DATALEN_SEG	((size_t)PAGE_SIZE-sizeof(struct msg_msgseg))
+#define DATALEN_MSG	(PAGE_SIZE-sizeof(struct msg_msg))
+#define DATALEN_SEG	(PAGE_SIZE-sizeof(struct msg_msgseg))
 
-struct msg_msg *load_msg(const void __user *src, size_t len)
+struct msg_msg *load_msg(const void __user *src, int len)
 {
 	struct msg_msg *msg;
 	struct msg_msgseg **pseg;
 	int err;
-	size_t alen;
+	int alen;
 
 	alen = len;
 	if (alen > DATALEN_MSG)
@@ -101,9 +103,9 @@ out_err:
 	return ERR_PTR(err);
 }
 
-int store_msg(void __user *dest, struct msg_msg *msg, size_t len)
+int store_msg(void __user *dest, struct msg_msg *msg, int len)
 {
-	size_t alen;
+	int alen;
 	struct msg_msgseg *seg;
 
 	alen = len;

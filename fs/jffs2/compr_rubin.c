@@ -10,8 +10,6 @@
  *
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/jffs2.h>

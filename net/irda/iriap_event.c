@@ -24,8 +24,6 @@
  *
  ********************************************************************/
 
-#include <linux/slab.h>
-
 #include <net/irda/irda.h>
 #include <net/irda/irlmp.h>
 #include <net/irda/iriap.h>

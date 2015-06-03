@@ -69,7 +69,7 @@ static int mt352_single_write(struct dvb_frontend *fe, u8 reg, u8 val)
 	return 0;
 }
 
-static int _mt352_write(struct dvb_frontend* fe, const u8 ibuf[], int ilen)
+static int _mt352_write(struct dvb_frontend* fe, u8* ibuf, int ilen)
 {
 	int err,i;
 	for (i=0; i < ilen-1; i++)
@@ -111,20 +111,20 @@ static int mt352_sleep(struct dvb_frontend* fe)
 }
 
 static void mt352_calc_nominal_rate(struct mt352_state* state,
-				    u32 bandwidth,
+				    enum fe_bandwidth bandwidth,
 				    unsigned char *buf)
 {
 	u32 adc_clock = 20480; /* 20.340 MHz */
 	u32 bw,value;
 
 	switch (bandwidth) {
-	case 6000000:
+	case BANDWIDTH_6_MHZ:
 		bw = 6;
 		break;
-	case 7000000:
+	case BANDWIDTH_7_MHZ:
 		bw = 7;
 		break;
-	case 8000000:
+	case BANDWIDTH_8_MHZ:
 	default:
 		bw = 8;
 		break;
@@ -166,14 +166,15 @@ static void mt352_calc_input_freq(struct mt352_state* state,
 	buf[1] = lsb(value);
 }
 
-static int mt352_set_parameters(struct dvb_frontend *fe)
+static int mt352_set_parameters(struct dvb_frontend* fe,
+				struct dvb_frontend_parameters *param)
 {
-	struct dtv_frontend_properties *op = &fe->dtv_property_cache;
 	struct mt352_state* state = fe->demodulator_priv;
 	unsigned char buf[13];
 	static unsigned char tuner_go[] = { 0x5d, 0x01 };
 	static unsigned char fsm_go[]   = { 0x5e, 0x01 };
 	unsigned int tps = 0;
+	struct dvb_ofdm_parameters *op = &param->u.ofdm;
 
 	switch (op->code_rate_HP) {
 		case FEC_2_3:
@@ -212,14 +213,14 @@ static int mt352_set_parameters(struct dvb_frontend *fe)
 		case FEC_AUTO:
 			break;
 		case FEC_NONE:
-			if (op->hierarchy == HIERARCHY_AUTO ||
-			    op->hierarchy == HIERARCHY_NONE)
+			if (op->hierarchy_information == HIERARCHY_AUTO ||
+			    op->hierarchy_information == HIERARCHY_NONE)
 				break;
 		default:
 			return -EINVAL;
 	}
 
-	switch (op->modulation) {
+	switch (op->constellation) {
 		case QPSK:
 			break;
 		case QAM_AUTO:
@@ -261,7 +262,7 @@ static int mt352_set_parameters(struct dvb_frontend *fe)
 			return -EINVAL;
 	}
 
-	switch (op->hierarchy) {
+	switch (op->hierarchy_information) {
 		case HIERARCHY_AUTO:
 		case HIERARCHY_NONE:
 			break;
@@ -287,12 +288,12 @@ static int mt352_set_parameters(struct dvb_frontend *fe)
 	buf[3] = 0x50;  // old
 //	buf[3] = 0xf4;  // pinnacle
 
-	mt352_calc_nominal_rate(state, op->bandwidth_hz, buf+4);
+	mt352_calc_nominal_rate(state, op->bandwidth, buf+4);
 	mt352_calc_input_freq(state, buf+6);
 
 	if (state->config.no_tuner) {
 		if (fe->ops.tuner_ops.set_params) {
-			fe->ops.tuner_ops.set_params(fe);
+			fe->ops.tuner_ops.set_params(fe, param);
 			if (fe->ops.i2c_gate_ctrl)
 				fe->ops.i2c_gate_ctrl(fe, 0);
 		}
@@ -301,7 +302,7 @@ static int mt352_set_parameters(struct dvb_frontend *fe)
 		_mt352_write(fe, fsm_go, 2);
 	} else {
 		if (fe->ops.tuner_ops.calc_regs) {
-			fe->ops.tuner_ops.calc_regs(fe, buf+8, 5);
+			fe->ops.tuner_ops.calc_regs(fe, param, buf+8, 5);
 			buf[8] <<= 1;
 			_mt352_write(fe, buf, sizeof(buf));
 			_mt352_write(fe, tuner_go, 2);
@@ -311,13 +312,14 @@ static int mt352_set_parameters(struct dvb_frontend *fe)
 	return 0;
 }
 
-static int mt352_get_parameters(struct dvb_frontend* fe)
+static int mt352_get_parameters(struct dvb_frontend* fe,
+				struct dvb_frontend_parameters *param)
 {
-	struct dtv_frontend_properties *op = &fe->dtv_property_cache;
 	struct mt352_state* state = fe->demodulator_priv;
 	u16 tps;
 	u16 div;
 	u8 trl;
+	struct dvb_ofdm_parameters *op = &param->u.ofdm;
 	static const u8 tps_fec_to_api[8] =
 	{
 		FEC_1_2,
@@ -346,16 +348,16 @@ static int mt352_get_parameters(struct dvb_frontend* fe)
 	switch ( (tps >> 13) & 3)
 	{
 		case 0:
-			op->modulation = QPSK;
+			op->constellation = QPSK;
 			break;
 		case 1:
-			op->modulation = QAM_16;
+			op->constellation = QAM_16;
 			break;
 		case 2:
-			op->modulation = QAM_64;
+			op->constellation = QAM_64;
 			break;
 		default:
-			op->modulation = QAM_AUTO;
+			op->constellation = QAM_AUTO;
 			break;
 	}
 
@@ -383,36 +385,36 @@ static int mt352_get_parameters(struct dvb_frontend* fe)
 	switch ( (tps >> 10) & 7)
 	{
 		case 0:
-			op->hierarchy = HIERARCHY_NONE;
+			op->hierarchy_information = HIERARCHY_NONE;
 			break;
 		case 1:
-			op->hierarchy = HIERARCHY_1;
+			op->hierarchy_information = HIERARCHY_1;
 			break;
 		case 2:
-			op->hierarchy = HIERARCHY_2;
+			op->hierarchy_information = HIERARCHY_2;
 			break;
 		case 3:
-			op->hierarchy = HIERARCHY_4;
+			op->hierarchy_information = HIERARCHY_4;
 			break;
 		default:
-			op->hierarchy = HIERARCHY_AUTO;
+			op->hierarchy_information = HIERARCHY_AUTO;
 			break;
 	}
 
-	op->frequency = (500 * (div - IF_FREQUENCYx6)) / 3 * 1000;
+	param->frequency = ( 500 * (div - IF_FREQUENCYx6) ) / 3 * 1000;
 
 	if (trl == 0x72)
-		op->bandwidth_hz = 8000000;
+		op->bandwidth = BANDWIDTH_8_MHZ;
 	else if (trl == 0x64)
-		op->bandwidth_hz = 7000000;
+		op->bandwidth = BANDWIDTH_7_MHZ;
 	else
-		op->bandwidth_hz = 6000000;
+		op->bandwidth = BANDWIDTH_6_MHZ;
 
 
 	if (mt352_read_register(state, STATUS_2) & 0x02)
-		op->inversion = INVERSION_OFF;
+		param->inversion = INVERSION_OFF;
 	else
-		op->inversion = INVERSION_ON;
+		param->inversion = INVERSION_ON;
 
 	return 0;
 }
@@ -567,9 +569,10 @@ error:
 }
 
 static struct dvb_frontend_ops mt352_ops = {
-	.delsys = { SYS_DVBT },
+
 	.info = {
 		.name			= "Zarlink MT352 DVB-T",
+		.type			= FE_OFDM,
 		.frequency_min		= 174000000,
 		.frequency_max		= 862000000,
 		.frequency_stepsize	= 166667,

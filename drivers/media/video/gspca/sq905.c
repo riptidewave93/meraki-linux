@@ -22,7 +22,7 @@
  * History and Acknowledgments
  *
  * The original Linux driver for SQ905 based cameras was written by
- * Marcell Lengyel and furter developed by many other contributors
+ * Marcell Lengyel and furter developed by many other contributers
  * and is available from http://sourceforge.net/projects/sqcam/
  *
  * This driver takes advantage of the reverse engineering work done for
@@ -33,12 +33,9 @@
  * drivers.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #define MODULE_NAME "sq905"
 
 #include <linux/workqueue.h>
-#include <linux/slab.h>
 #include "gspca.h"
 
 MODULE_AUTHOR("Adam Baker <linux@baker-net.org.uk>, "
@@ -125,7 +122,8 @@ static int sq905_command(struct gspca_dev *gspca_dev, u16 index)
 			      SQ905_COMMAND, index, gspca_dev->usb_buf, 1,
 			      SQ905_CMD_TIMEOUT);
 	if (ret < 0) {
-		pr_err("%s: usb_control_msg failed (%d)\n", __func__, ret);
+		PDEBUG(D_ERR, "%s: usb_control_msg failed (%d)",
+			__func__, ret);
 		return ret;
 	}
 
@@ -136,7 +134,8 @@ static int sq905_command(struct gspca_dev *gspca_dev, u16 index)
 			      SQ905_PING, 0, gspca_dev->usb_buf, 1,
 			      SQ905_CMD_TIMEOUT);
 	if (ret < 0) {
-		pr_err("%s: usb_control_msg failed 2 (%d)\n", __func__, ret);
+		PDEBUG(D_ERR, "%s: usb_control_msg failed 2 (%d)",
+			__func__, ret);
 		return ret;
 	}
 
@@ -158,7 +157,7 @@ static int sq905_ack_frame(struct gspca_dev *gspca_dev)
 			      SQ905_READ_DONE, 0, gspca_dev->usb_buf, 1,
 			      SQ905_CMD_TIMEOUT);
 	if (ret < 0) {
-		pr_err("%s: usb_control_msg failed (%d)\n", __func__, ret);
+		PDEBUG(D_ERR, "%s: usb_control_msg failed (%d)", __func__, ret);
 		return ret;
 	}
 
@@ -169,24 +168,20 @@ static int sq905_ack_frame(struct gspca_dev *gspca_dev)
  *  request and read a block of data - see warning on sq905_command.
  */
 static int
-sq905_read_data(struct gspca_dev *gspca_dev, u8 *data, int size, int need_lock)
+sq905_read_data(struct gspca_dev *gspca_dev, u8 *data, int size)
 {
 	int ret;
 	int act_len;
 
 	gspca_dev->usb_buf[0] = '\0';
-	if (need_lock)
-		mutex_lock(&gspca_dev->usb_lock);
 	ret = usb_control_msg(gspca_dev->dev,
 			      usb_sndctrlpipe(gspca_dev->dev, 0),
 			      USB_REQ_SYNCH_FRAME,                /* request */
 			      USB_DIR_OUT | USB_TYPE_VENDOR | USB_RECIP_DEVICE,
 			      SQ905_BULK_READ, size, gspca_dev->usb_buf,
 			      1, SQ905_CMD_TIMEOUT);
-	if (need_lock)
-		mutex_unlock(&gspca_dev->usb_lock);
 	if (ret < 0) {
-		pr_err("%s: usb_control_msg failed (%d)\n", __func__, ret);
+		PDEBUG(D_ERR, "%s: usb_control_msg failed (%d)", __func__, ret);
 		return ret;
 	}
 	ret = usb_bulk_msg(gspca_dev->dev,
@@ -195,7 +190,8 @@ sq905_read_data(struct gspca_dev *gspca_dev, u8 *data, int size, int need_lock)
 
 	/* successful, it returns 0, otherwise  negative */
 	if (ret < 0 || act_len != size) {
-		pr_err("bulk read fail (%d) len %d/%d\n", ret, act_len, size);
+		PDEBUG(D_ERR, "bulk read fail (%d) len %d/%d",
+			ret, act_len, size);
 		return -EIO;
 	}
 	return 0;
@@ -214,9 +210,11 @@ static void sq905_dostream(struct work_struct *work)
 {
 	struct sd *dev = container_of(work, struct sd, work_struct);
 	struct gspca_dev *gspca_dev = &dev->gspca_dev;
+	struct gspca_frame *frame;
 	int bytes_left; /* bytes remaining in current frame. */
 	int data_len;   /* size to use for the next read. */
 	int header_read; /* true if we have already read the frame header. */
+	int discarding; /* true if we failed to get space for frame. */
 	int packet_type;
 	int frame_sz;
 	int ret;
@@ -224,8 +222,9 @@ static void sq905_dostream(struct work_struct *work)
 	u8 *buffer;
 
 	buffer = kmalloc(SQ905_MAX_TRANSFER, GFP_KERNEL | GFP_DMA);
+	mutex_lock(&gspca_dev->usb_lock);
 	if (!buffer) {
-		pr_err("Couldn't allocate USB buffer\n");
+		PDEBUG(D_ERR, "Couldn't allocate USB buffer");
 		goto quit_stream;
 	}
 
@@ -233,22 +232,28 @@ static void sq905_dostream(struct work_struct *work)
 			+ FRAME_HEADER_LEN;
 
 	while (gspca_dev->present && gspca_dev->streaming) {
+		/* Need a short delay to ensure streaming flag was set by
+		 * gspca and to make sure gspca can grab the mutex. */
+		mutex_unlock(&gspca_dev->usb_lock);
+		msleep(1);
+
 		/* request some data and then read it until we have
 		 * a complete frame. */
 		bytes_left = frame_sz;
 		header_read = 0;
+		discarding = 0;
 
-		/* Note we do not check for gspca_dev->streaming here, as
-		   we must finish reading an entire frame, otherwise the
-		   next time we stream we start reading in the middle of a
-		   frame. */
-		while (bytes_left > 0 && gspca_dev->present) {
+		while (bytes_left > 0) {
 			data_len = bytes_left > SQ905_MAX_TRANSFER ?
 				SQ905_MAX_TRANSFER : bytes_left;
-			ret = sq905_read_data(gspca_dev, buffer, data_len, 1);
+			mutex_lock(&gspca_dev->usb_lock);
+			if (!gspca_dev->present)
+				goto quit_stream;
+			ret = sq905_read_data(gspca_dev, buffer, data_len);
 			if (ret < 0)
 				goto quit_stream;
-			PDEBUG(D_PACK,
+			mutex_unlock(&gspca_dev->usb_lock);
+			PDEBUG(D_STREAM,
 				"Got %d bytes out of %d for frame",
 				data_len, bytes_left);
 			bytes_left -= data_len;
@@ -265,30 +270,34 @@ static void sq905_dostream(struct work_struct *work)
 			} else {
 				packet_type = INTER_PACKET;
 			}
-			gspca_frame_add(gspca_dev, packet_type,
-					data, data_len);
-			/* If entire frame fits in one packet we still
-			   need to add a LAST_PACKET */
-			if (packet_type == FIRST_PACKET &&
-			    bytes_left == 0)
-				gspca_frame_add(gspca_dev, LAST_PACKET,
-						NULL, 0);
+			frame = gspca_get_i_frame(gspca_dev);
+			if (frame && !discarding) {
+				frame = gspca_frame_add(gspca_dev, packet_type,
+						frame, data, data_len);
+				/* If entire frame fits in one packet we still
+				   need to add a LAST_PACKET */
+				if (packet_type == FIRST_PACKET &&
+				    bytes_left == 0)
+					frame = gspca_frame_add(gspca_dev,
+							LAST_PACKET,
+							frame, data, 0);
+			} else {
+				discarding = 1;
+			}
 		}
-		if (gspca_dev->present) {
-			/* acknowledge the frame */
-			mutex_lock(&gspca_dev->usb_lock);
-			ret = sq905_ack_frame(gspca_dev);
-			mutex_unlock(&gspca_dev->usb_lock);
-			if (ret < 0)
-				goto quit_stream;
-		}
+		/* acknowledge the frame */
+		mutex_lock(&gspca_dev->usb_lock);
+		if (!gspca_dev->present)
+			goto quit_stream;
+		ret = sq905_ack_frame(gspca_dev);
+		if (ret < 0)
+			goto quit_stream;
 	}
 quit_stream:
-	if (gspca_dev->present) {
-		mutex_lock(&gspca_dev->usb_lock);
+	/* the usb_lock is already acquired */
+	if (gspca_dev->present)
 		sq905_command(gspca_dev, SQ905_CLEAR);
-		mutex_unlock(&gspca_dev->usb_lock);
-	}
+	mutex_unlock(&gspca_dev->usb_lock);
 	kfree(buffer);
 }
 
@@ -337,7 +346,7 @@ static int sd_init(struct gspca_dev *gspca_dev)
 	ret = sq905_command(gspca_dev, SQ905_ID);
 	if (ret < 0)
 		return ret;
-	ret = sq905_read_data(gspca_dev, gspca_dev->usb_buf, 4, 0);
+	ret = sq905_read_data(gspca_dev, gspca_dev->usb_buf, 4);
 	if (ret < 0)
 		return ret;
 	/* usb_buf is allocated with kmalloc so is aligned.
@@ -395,7 +404,7 @@ static int sd_start(struct gspca_dev *gspca_dev)
 }
 
 /* Table of supported USB devices */
-static const struct usb_device_id device_table[] = {
+static const __devinitdata struct usb_device_id device_table[] = {
 	{USB_DEVICE(0x2770, 0x9120)},
 	{}
 };
@@ -432,4 +441,23 @@ static struct usb_driver sd_driver = {
 #endif
 };
 
-module_usb_driver(sd_driver);
+/* -- module insert / remove -- */
+static int __init sd_mod_init(void)
+{
+	int ret;
+
+	ret = usb_register(&sd_driver);
+	if (ret < 0)
+		return ret;
+	PDEBUG(D_PROBE, "registered");
+	return 0;
+}
+
+static void __exit sd_mod_exit(void)
+{
+	usb_deregister(&sd_driver);
+	PDEBUG(D_PROBE, "deregistered");
+}
+
+module_init(sd_mod_init);
+module_exit(sd_mod_exit);

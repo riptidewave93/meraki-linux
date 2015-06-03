@@ -85,8 +85,6 @@ crisv32_pinmux_alloc_fixed(enum fixed_function function)
 	int ret = -EINVAL;
 	char saved[sizeof pins];
 	unsigned long flags;
-	reg_pinmux_rw_hwprot hwprot;
-	reg_clkgen_rw_clk_ctrl clk_ctrl;
 
 	spin_lock_irqsave(&pinmux_lock, flags);
 
@@ -95,8 +93,9 @@ crisv32_pinmux_alloc_fixed(enum fixed_function function)
 
 	crisv32_pinmux_init(); /* must be done before we read rw_hwprot */
 
-	hwprot = REG_RD(pinmux, regi_pinmux, rw_hwprot);
-	clk_ctrl = REG_RD(clkgen, regi_clkgen, rw_clk_ctrl);
+	reg_pinmux_rw_hwprot hwprot = REG_RD(pinmux, regi_pinmux, rw_hwprot);
+	reg_clkgen_rw_clk_ctrl clk_ctrl = REG_RD(clkgen, regi_clkgen,
+		rw_clk_ctrl);
 
 	switch (function) {
 	case pinmux_eth:
@@ -243,7 +242,7 @@ crisv32_pinmux_dealloc(int port, int first_pin, int last_pin)
 
 	crisv32_pinmux_init();
 
-	if (port > PORTS || port < 0)
+	if (port > PORTS)
 		return -EINVAL;
 
 	spin_lock_irqsave(&pinmux_lock, flags);
@@ -263,7 +262,6 @@ crisv32_pinmux_dealloc_fixed(enum fixed_function function)
 	int ret = -EINVAL;
 	char saved[sizeof pins];
 	unsigned long flags;
-	reg_pinmux_rw_hwprot hwprot;
 
 	spin_lock_irqsave(&pinmux_lock, flags);
 
@@ -272,7 +270,7 @@ crisv32_pinmux_dealloc_fixed(enum fixed_function function)
 
 	crisv32_pinmux_init(); /* must be done before we read rw_hwprot */
 
-	hwprot = REG_RD(pinmux, regi_pinmux, rw_hwprot);
+	reg_pinmux_rw_hwprot hwprot = REG_RD(pinmux, regi_pinmux, rw_hwprot);
 
 	switch (function) {
 	case pinmux_eth:

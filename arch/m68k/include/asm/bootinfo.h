@@ -145,7 +145,7 @@ struct bi_record {
 
     /*
      *  Macintosh hardware profile data - unused, see macintosh.h for
-     *  reasonable type values
+     *  resonable type values
      */
 
 #define BI_MAC_VIA1BASE		0x8010	/* Mac VIA1 base address (always present) */

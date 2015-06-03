@@ -358,7 +358,7 @@ mmu_bus_fault:
 1:	btstq	12, $r1		   ; Refill?
 	bpl	2f
 	lsrq	24, $r1     ; Get PGD index (bit 24-31)
-	move.d  [current_pgd], $r0 ; PGD for the current process
+	move.d  [per_cpu__current_pgd], $r0 ; PGD for the current process
 	move.d	[$r0+$r1.d], $r0   ; Get PMD
 	beq	2f
 	nop
@@ -692,7 +692,7 @@ sys_call_table:
 	.long sys_swapon
 	.long sys_reboot
 	.long sys_old_readdir
-	.long sys_old_mmap	/* 90 */
+	.long old_mmap		/* 90 */
 	.long sys_munmap
 	.long sys_truncate
 	.long sys_ftruncate
@@ -771,7 +771,7 @@ sys_call_table:
 	.long sys_ni_syscall	/* sys_vm86 */
 	.long sys_ni_syscall	/* Old sys_query_module */
 	.long sys_poll
-	.long sys_ni_syscall    /* old nfsservctl */
+	.long sys_nfsservctl
 	.long sys_setresgid16	/* 170 */
 	.long sys_getresgid16
 	.long sys_prctl
@@ -937,7 +937,6 @@ sys_call_table:
 	.long sys_inotify_init1
 	.long sys_preadv
 	.long sys_pwritev
-	.long sys_setns			/* 335 */
 
         /*
          * NOTE!! This doesn't have to be exact - we just have

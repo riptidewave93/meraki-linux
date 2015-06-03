@@ -29,7 +29,6 @@
 #include <asm/uaccess.h>
 #include <asm/io.h>
 #include <asm/irq.h>
-#include <asm/page.h>
 #include <asm/param.h>
 #include <asm/pdc.h>
 #include <asm/led.h>
@@ -163,8 +162,11 @@ irqreturn_t __irq_entry timer_interrupt(int irq, void *dev_id)
 		update_process_times(user_mode(get_irq_regs()));
 	}
 
-	if (cpu == 0)
-		xtime_update(ticks_elapsed);
+	if (cpu == 0) {
+		write_seqlock(&xtime_lock);
+		do_timer(ticks_elapsed);
+		write_sequnlock(&xtime_lock);
+	}
 
 	return IRQ_HANDLED;
 }
@@ -199,6 +201,8 @@ static struct clocksource clocksource_cr16 = {
 	.rating			= 300,
 	.read			= read_cr16,
 	.mask			= CLOCKSOURCE_MASK(BITS_PER_LONG),
+	.mult			= 0, /* to be set */
+	.shift			= 22,
 	.flags			= CLOCK_SOURCE_IS_CONTINUOUS,
 };
 
@@ -246,21 +250,9 @@ static int __init rtc_init(void)
 }
 module_init(rtc_init);
 
-void read_persistent_clock(struct timespec *ts)
-{
-	static struct pdc_tod tod_data;
-	if (pdc_tod_read(&tod_data) == 0) {
-		ts->tv_sec = tod_data.tod_sec;
-		ts->tv_nsec = tod_data.tod_usec * 1000;
-	} else {
-		printk(KERN_ERR "Error reading tod clock\n");
-	        ts->tv_sec = 0;
-		ts->tv_nsec = 0;
-	}
-}
-
 void __init time_init(void)
 {
+	static struct pdc_tod tod_data;
 	unsigned long current_cr16_khz;
 
 	clocktick = (100 * PAGE0->mem_10msec) / HZ;
@@ -269,5 +261,22 @@ void __init time_init(void)
 
 	/* register at clocksource framework */
 	current_cr16_khz = PAGE0->mem_10msec/10;  /* kHz */
-	clocksource_register_khz(&clocksource_cr16, current_cr16_khz);
+	clocksource_cr16.mult = clocksource_khz2mult(current_cr16_khz,
+						clocksource_cr16.shift);
+	clocksource_register(&clocksource_cr16);
+
+	if (pdc_tod_read(&tod_data) == 0) {
+		unsigned long flags;
+
+		write_seqlock_irqsave(&xtime_lock, flags);
+		xtime.tv_sec = tod_data.tod_sec;
+		xtime.tv_nsec = tod_data.tod_usec * 1000;
+		set_normalized_timespec(&wall_to_monotonic,
+		                        -xtime.tv_sec, -xtime.tv_nsec);
+		write_sequnlock_irqrestore(&xtime_lock, flags);
+	} else {
+		printk(KERN_ERR "Error reading tod clock\n");
+	        xtime.tv_sec = 0;
+		xtime.tv_nsec = 0;
+	}
 }

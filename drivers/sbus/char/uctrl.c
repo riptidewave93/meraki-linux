@@ -9,7 +9,7 @@
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/slab.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
 #include <linux/miscdevice.h>
@@ -19,6 +19,7 @@
 
 #include <asm/openprom.h>
 #include <asm/oplib.h>
+#include <asm/system.h>
 #include <asm/irq.h>
 #include <asm/io.h>
 #include <asm/pgtable.h>
@@ -71,7 +72,6 @@ struct ts102_regs {
 #define UCTRL_STAT_RXNE_STA        0x04    /* receive FIFO not empty status */
 #define UCTRL_STAT_RXO_STA         0x08    /* receive FIFO overflow status */
 
-static DEFINE_MUTEX(uctrl_mutex);
 static const char *uctrl_extstatus[16] = {
         "main power available",
         "internal battery attached",
@@ -210,10 +210,10 @@ uctrl_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 static int
 uctrl_open(struct inode *inode, struct file *file)
 {
-	mutex_lock(&uctrl_mutex);
+	lock_kernel();
 	uctrl_get_event_status(global_driver);
 	uctrl_get_external_status(global_driver);
-	mutex_unlock(&uctrl_mutex);
+	unlock_kernel();
 	return 0;
 }
 
@@ -347,7 +347,8 @@ static void uctrl_get_external_status(struct uctrl_driver *driver)
 	
 }
 
-static int __devinit uctrl_probe(struct platform_device *op)
+static int __devinit uctrl_probe(struct of_device *op,
+				 const struct of_device_id *match)
 {
 	struct uctrl_driver *p;
 	int err = -ENOMEM;
@@ -366,7 +367,7 @@ static int __devinit uctrl_probe(struct platform_device *op)
 		goto out_free;
 	}
 
-	p->irq = op->archdata.irqs[0];
+	p->irq = op->irqs[0];
 	err = request_irq(p->irq, uctrl_interrupt, 0, "uctrl", p);
 	if (err) {
 		printk(KERN_ERR "uctrl: Unable to register irq.\n");
@@ -381,7 +382,7 @@ static int __devinit uctrl_probe(struct platform_device *op)
 
 	sbus_writel(UCTRL_INTR_RXNE_REQ|UCTRL_INTR_RXNE_MSK, &p->regs->uctrl_intr);
 	printk(KERN_INFO "%s: uctrl regs[0x%p] (irq %d)\n",
-	       op->dev.of_node->full_name, p->regs, p->irq);
+	       op->node->full_name, p->regs, p->irq);
 	uctrl_get_event_status(p);
 	uctrl_get_external_status(p);
 
@@ -402,7 +403,7 @@ out_free:
 	goto out;
 }
 
-static int __devexit uctrl_remove(struct platform_device *op)
+static int __devexit uctrl_remove(struct of_device *op)
 {
 	struct uctrl_driver *p = dev_get_drvdata(&op->dev);
 
@@ -423,17 +424,24 @@ static const struct of_device_id uctrl_match[] = {
 };
 MODULE_DEVICE_TABLE(of, uctrl_match);
 
-static struct platform_driver uctrl_driver = {
-	.driver = {
-		.name = "uctrl",
-		.owner = THIS_MODULE,
-		.of_match_table = uctrl_match,
-	},
+static struct of_platform_driver uctrl_driver = {
+	.name		= "uctrl",
+	.match_table	= uctrl_match,
 	.probe		= uctrl_probe,
 	.remove		= __devexit_p(uctrl_remove),
 };
 
 
-module_platform_driver(uctrl_driver);
+static int __init uctrl_init(void)
+{
+	return of_register_driver(&uctrl_driver, &of_bus_type);
+}
 
+static void __exit uctrl_exit(void)
+{
+	of_unregister_driver(&uctrl_driver);
+}
+
+module_init(uctrl_init);
+module_exit(uctrl_exit);
 MODULE_LICENSE("GPL");

@@ -10,10 +10,8 @@
  *
  */
 
-#include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/platform_device.h>
 #include <linux/leds.h>
 #include <linux/workqueue.h>
@@ -21,7 +19,6 @@
 #include <linux/leds-nu801.h>
 
 #include <asm/gpio.h>
-#include <linux/of_gpio.h>
 
 #define MAX_NAME_LENGTH 24
 #define NUM_COLORS 3
@@ -186,8 +183,6 @@ led_nu801_create_chain(const struct led_nu801_template *template,
 #ifdef CONFIG_LEDS_TRIGGERS
 					template->default_trigger,
 #endif
-					template->led_colors[index % NUM_COLORS] ?
-					template->led_colors[index % NUM_COLORS] :
 					led_nu801_colors[index % NUM_COLORS]);
 		if (ret < 0)
 			goto err_ret_sdi;
@@ -237,77 +232,14 @@ static void led_nu801_delete_chain(struct led_nu801_data *controller)
 	kfree(led_chain);
 }
 
-static struct led_nu801_data * __devinit leds_nu801_create_of(struct platform_device *pdev)
-{
-	struct device_node *np = pdev->dev.of_node, *child;
-	struct led_nu801_data *controllers;
-	int count = 0, ret;
-	int i = 0;
-
-	for_each_child_of_node(np, child)
-		count++;
-	if (!count)
-		return NULL;
-
-	controllers = kzalloc(sizeof(struct led_nu801_data) * count, GFP_KERNEL);
-	if (!controllers)
-		return NULL;
-
-	for_each_child_of_node(np, child) {
-		const char *state;
-		struct led_nu801_template template = {};
-		struct device_node *colors;
-		int jj;
-
-		template.cki = of_get_named_gpio_flags(child, "cki", 0, NULL);
-		template.sdi = of_get_named_gpio_flags(child, "sdi", 0, NULL);
-		if (of_find_property(child, "lei", NULL)) {
-			template.lei = of_get_named_gpio_flags(child, "lei", 0, NULL);
-		} else {
-			template.lei = -1;
-		}
-		of_property_read_u32(child, "ndelay", &template.ndelay);
-		of_property_read_u32(child, "num_leds", &template.num_leds);
-		template.name = of_get_property(child, "label", NULL) ? : child->name;
-		template.default_trigger = of_get_property(child, "default-trigger", NULL);
-
-		jj=0;
-		for_each_child_of_node(child,colors) {
-			template.led_colors[jj] = of_get_property(colors, "label", NULL);
-			state = of_get_property(colors, "state", NULL);
-			if (!strncmp(state,"off",3))
-				template.init_brightness[jj] = LED_OFF;
-			else if (!strncmp(state,"half",4))
-				template.init_brightness[jj] = LED_HALF;
-			else if (!strncmp(state,"full",4))
-				template.init_brightness[jj] = LED_FULL;
-			jj++;
-		}
-
-		ret = led_nu801_create_chain(&template,
-					&controllers[i],
-					&pdev->dev);
-		if (ret < 0)
-			goto err;
-		i++;
-	}
-
-	return controllers;
-
-err:
-	for (i = i - 1; i >= 0; i--)
-		led_nu801_delete_chain(&controllers[i]);
-	kfree(controllers);
-	return NULL;
-}
-
 static int __devinit led_nu801_probe(struct platform_device *pdev)
 {
 	struct led_nu801_platform_data *pdata = pdev->dev.platform_data;
 	struct led_nu801_data *controllers;
 	int i, ret = 0;
 
-	if (pdata && pdata->num_controllers) {
+	if (!pdata)
+		return -EBUSY;
 
 	controllers = kzalloc(sizeof(struct led_nu801_data) *
 			      pdata->num_controllers, GFP_KERNEL);
@@ -320,11 +252,6 @@ static int __devinit led_nu801_probe(struct platform_device *pdev)
 					      &pdev->dev);
 		if (ret < 0)
 			goto err;
-	}
-	} else {
-		controllers = leds_nu801_create_of(pdev);
-		if (!controllers)
-			return -ENODEV;
 	}
 
 	platform_set_drvdata(pdev, controllers);
@@ -356,19 +283,12 @@ static int __devexit led_nu801_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static const struct of_device_id of_numen_leds_match[] = {
-	{ .compatible = "numen,leds-nu801", },
-	{},
-};
-MODULE_DEVICE_TABLE(of, of_pwm_leds_match);
-
 static struct platform_driver led_nu801_driver = {
 	.probe		= led_nu801_probe,
 	.remove		= __devexit_p(led_nu801_remove),
 	.driver		= {
 		.name	= "leds-nu801",
 		.owner	= THIS_MODULE,
-		.of_match_table = of_numen_leds_match,
 	},
 };
 
@@ -385,7 +305,7 @@ static void __exit led_nu801_exit(void)
 module_init(led_nu801_init);
 module_exit(led_nu801_exit);
 
-MODULE_AUTHOR("Kevin Paul Herbert <kph@meraki.net>");
+MODULE_AUTHOR("Kevin Paul Herbert <kph@meraki.net>")
 MODULE_DESCRIPTION("NU801 LED driver");
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("platforms:leds-nu801");

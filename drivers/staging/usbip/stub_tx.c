@@ -17,11 +17,9 @@
  * USA.
  */
 
-#include <linux/kthread.h>
-#include <linux/socket.h>
-
 #include "usbip_common.h"
 #include "stub.h"
+
 
 static void stub_free_priv_and_urb(struct stub_priv *priv)
 {
@@ -70,53 +68,58 @@ void stub_complete(struct urb *urb)
 
 	usbip_dbg_stub_tx("complete! status %d\n", urb->status);
 
+
 	switch (urb->status) {
 	case 0:
 		/* OK */
 		break;
 	case -ENOENT:
-		dev_info(&urb->dev->dev, "stopped by a call to usb_kill_urb() "
-			 "because of cleaning up a virtual connection\n");
+		usbip_uinfo("stopped by a call of usb_kill_urb() because of"
+					"cleaning up a virtual connection\n");
 		return;
 	case -ECONNRESET:
-		dev_info(&urb->dev->dev, "unlinked by a call to "
-			 "usb_unlink_urb()\n");
+		usbip_uinfo("unlinked by a call of usb_unlink_urb()\n");
 		break;
 	case -EPIPE:
-		dev_info(&urb->dev->dev, "endpoint %d is stalled\n",
-			 usb_pipeendpoint(urb->pipe));
+		usbip_uinfo("endpoint %d is stalled\n",
+						usb_pipeendpoint(urb->pipe));
 		break;
 	case -ESHUTDOWN:
-		dev_info(&urb->dev->dev, "device removed?\n");
+		usbip_uinfo("device removed?\n");
 		break;
 	default:
-		dev_info(&urb->dev->dev, "urb completion with non-zero status "
-			 "%d\n", urb->status);
-		break;
+		usbip_uinfo("urb completion with non-zero status %d\n",
+							urb->status);
 	}
 
 	/* link a urb to the queue of tx. */
 	spin_lock_irqsave(&sdev->priv_lock, flags);
+
 	if (priv->unlinking) {
 		stub_enqueue_ret_unlink(sdev, priv->seqnum, urb->status);
 		stub_free_priv_and_urb(priv);
-	} else {
+	} else
 		list_move_tail(&priv->list, &sdev->priv_tx);
-	}
+
+
 	spin_unlock_irqrestore(&sdev->priv_lock, flags);
 
 	/* wake up tx_thread */
 	wake_up(&sdev->tx_waitq);
 }
 
+
+/*-------------------------------------------------------------------------*/
+/* fill PDU */
+
 static inline void setup_base_pdu(struct usbip_header_basic *base,
-				  __u32 command, __u32 seqnum)
+		__u32 command, __u32 seqnum)
 {
-	base->command	= command;
-	base->seqnum	= seqnum;
-	base->devid	= 0;
-	base->ep	= 0;
-	base->direction = 0;
+	base->command = command;
+	base->seqnum  = seqnum;
+	base->devid   = 0;
+	base->ep      = 0;
+	base->direction   = 0;
 }
 
 static void setup_ret_submit_pdu(struct usbip_header *rpdu, struct urb *urb)
@@ -124,15 +127,21 @@ static void setup_ret_submit_pdu(struct usbip_header *rpdu, struct urb *urb)
 	struct stub_priv *priv = (struct stub_priv *) urb->context;
 
 	setup_base_pdu(&rpdu->base, USBIP_RET_SUBMIT, priv->seqnum);
+
 	usbip_pack_pdu(rpdu, urb, USBIP_RET_SUBMIT, 1);
 }
 
 static void setup_ret_unlink_pdu(struct usbip_header *rpdu,
-				 struct stub_unlink *unlink)
+		struct stub_unlink *unlink)
 {
 	setup_base_pdu(&rpdu->base, USBIP_RET_UNLINK, unlink->seqnum);
+
 	rpdu->u.ret_unlink.status = unlink->status;
 }
+
+
+/*-------------------------------------------------------------------------*/
+/* send RET_SUBMIT */
 
 static struct stub_priv *dequeue_from_priv_tx(struct stub_device *sdev)
 {
@@ -191,7 +200,7 @@ static int stub_send_ret_submit(struct stub_device *sdev)
 		/* 1. setup usbip_header */
 		setup_ret_submit_pdu(&pdu_header, urb);
 		usbip_dbg_stub_tx("setup txdata seqnum: %d urb: %p\n",
-				  pdu_header.base.seqnum, urb);
+						pdu_header.base.seqnum, urb);
 		/*usbip_dump_header(pdu_header);*/
 		usbip_header_correct_endian(&pdu_header, 1);
 
@@ -202,14 +211,14 @@ static int stub_send_ret_submit(struct stub_device *sdev)
 
 		/* 2. setup transfer buffer */
 		if (usb_pipein(urb->pipe) &&
-		    usb_pipetype(urb->pipe) != PIPE_ISOCHRONOUS &&
-		    urb->actual_length > 0) {
+				usb_pipetype(urb->pipe) != PIPE_ISOCHRONOUS &&
+					urb->actual_length > 0) {
 			iov[iovnum].iov_base = urb->transfer_buffer;
 			iov[iovnum].iov_len  = urb->actual_length;
 			iovnum++;
 			txsize += urb->actual_length;
 		} else if (usb_pipein(urb->pipe) &&
-			   usb_pipetype(urb->pipe) == PIPE_ISOCHRONOUS) {
+				usb_pipetype(urb->pipe) == PIPE_ISOCHRONOUS) {
 			/*
 			 * For isochronous packets: actual length is the sum of
 			 * the actual length of the individual, packets, but as
@@ -220,23 +229,18 @@ static int stub_send_ret_submit(struct stub_device *sdev)
 
 			int i;
 			for (i = 0; i < urb->number_of_packets; i++) {
-				iov[iovnum].iov_base = urb->transfer_buffer +
-					urb->iso_frame_desc[i].offset;
-				iov[iovnum].iov_len =
-					urb->iso_frame_desc[i].actual_length;
+				iov[iovnum].iov_base = urb->transfer_buffer + urb->iso_frame_desc[i].offset;
+				iov[iovnum].iov_len = urb->iso_frame_desc[i].actual_length;
 				iovnum++;
 				txsize += urb->iso_frame_desc[i].actual_length;
 			}
 
 			if (txsize != sizeof(pdu_header) + urb->actual_length) {
 				dev_err(&sdev->interface->dev,
-					"actual length of urb %d does not "
-					"match iso packet sizes %zu\n",
-					urb->actual_length,
-					txsize-sizeof(pdu_header));
+					"actual length of urb (%d) does not match iso packet sizes (%d)\n",
+					urb->actual_length, txsize-sizeof(pdu_header));
 				kfree(iov);
-				usbip_event_add(&sdev->ud,
-						SDEV_EVENT_ERROR_TCP);
+				usbip_event_add(&sdev->ud, SDEV_EVENT_ERROR_TCP);
 			   return -1;
 			}
 		}
@@ -278,13 +282,19 @@ static int stub_send_ret_submit(struct stub_device *sdev)
 	}
 
 	spin_lock_irqsave(&sdev->priv_lock, flags);
+
 	list_for_each_entry_safe(priv, tmp, &sdev->priv_free, list) {
 		stub_free_priv_and_urb(priv);
 	}
+
 	spin_unlock_irqrestore(&sdev->priv_lock, flags);
 
 	return total_size;
 }
+
+
+/*-------------------------------------------------------------------------*/
+/* send RET_UNLINK */
 
 static struct stub_unlink *dequeue_from_unlink_tx(struct stub_device *sdev)
 {
@@ -303,6 +313,7 @@ static struct stub_unlink *dequeue_from_unlink_tx(struct stub_device *sdev)
 
 	return NULL;
 }
+
 
 static int stub_send_ret_unlink(struct stub_device *sdev)
 {
@@ -344,9 +355,12 @@ static int stub_send_ret_unlink(struct stub_device *sdev)
 			return -1;
 		}
 
+
 		usbip_dbg_stub_tx("send txdata\n");
+
 		total_size += txsize;
 	}
+
 
 	spin_lock_irqsave(&sdev->priv_lock, flags);
 
@@ -360,12 +374,20 @@ static int stub_send_ret_unlink(struct stub_device *sdev)
 	return total_size;
 }
 
-int stub_tx_loop(void *data)
+
+/*-------------------------------------------------------------------------*/
+
+void stub_tx_loop(struct usbip_task *ut)
 {
-	struct usbip_device *ud = data;
+	struct usbip_device *ud = container_of(ut, struct usbip_device, tcp_tx);
 	struct stub_device *sdev = container_of(ud, struct stub_device, ud);
 
-	while (!kthread_should_stop()) {
+	while (1) {
+		if (signal_pending(current)) {
+			usbip_dbg_stub_tx("signal catched\n");
+			break;
+		}
+
 		if (usbip_event_happened(ud))
 			break;
 
@@ -390,10 +412,7 @@ int stub_tx_loop(void *data)
 			break;
 
 		wait_event_interruptible(sdev->tx_waitq,
-					 (!list_empty(&sdev->priv_tx) ||
-					  !list_empty(&sdev->unlink_tx) ||
-					  kthread_should_stop()));
+				(!list_empty(&sdev->priv_tx) ||
+				 !list_empty(&sdev->unlink_tx)));
 	}
-
-	return 0;
 }

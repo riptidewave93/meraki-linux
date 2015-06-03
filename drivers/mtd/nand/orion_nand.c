@@ -21,6 +21,8 @@
 #include <mach/hardware.h>
 #include <plat/orion_nand.h>
 
+static const char *part_probes[] = { "cmdlinepart", NULL };
+
 static void orion_nand_cmd_ctrl(struct mtd_info *mtd, int cmd, unsigned int ctrl)
 {
 	struct nand_chip *nc = mtd->priv;
@@ -56,13 +58,7 @@ static void orion_nand_read_buf(struct mtd_info *mtd, uint8_t *buf, int len)
 	}
 	buf64 = (uint64_t *)buf;
 	while (i < len/8) {
-		/*
-		 * Since GCC has no proper constraint (PR 43518)
-		 * force x variable to r2/r3 registers as ldrd instruction
-		 * requires first register to be even.
-		 */
-		register uint64_t x asm ("r2");
-
+		uint64_t x;
 		asm volatile ("ldrd\t%0, [%1]" : "=&r" (x) : "r" (io_base));
 		buf64[i++] = x;
 	}
@@ -79,6 +75,8 @@ static int __init orion_nand_probe(struct platform_device *pdev)
 	struct resource *res;
 	void __iomem *io_base;
 	int ret = 0;
+	struct mtd_partition *partitions = NULL;
+	int num_part = 0;
 
 	nc = kzalloc(sizeof(struct nand_chip) + sizeof(struct mtd_info), GFP_KERNEL);
 	if (!nc) {
@@ -128,9 +126,17 @@ static int __init orion_nand_probe(struct platform_device *pdev)
 		goto no_dev;
 	}
 
+#ifdef CONFIG_MTD_CMDLINE_PARTS
 	mtd->name = "orion_nand";
-	ret = mtd_device_parse_register(mtd, NULL, NULL, board->parts,
-					board->nr_parts);
+	num_part = parse_mtd_partitions(mtd, part_probes, &partitions, 0);
+#endif
+	/* If cmdline partitions have been passed, let them be used */
+	if (num_part <= 0) {
+		num_part = board->nr_parts;
+		partitions = board->parts;
+	}
+
+	ret = mtd_device_register(mtd, partitions, num_part);
 	if (ret) {
 		nand_release(mtd);
 		goto no_dev;

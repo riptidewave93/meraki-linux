@@ -12,8 +12,8 @@
 #include <linux/types.h>
 #include <linux/sched.h>
 #include <linux/signal.h>
-#include <linux/perf_event.h>
 
+#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/processor.h>
 #include <asm/io.h>
@@ -471,10 +471,10 @@ static int fpu_emulate(u16 code, struct sh_fpu_soft_struct *fregs, struct pt_reg
  *	denormal_to_double - Given denormalized float number,
  *	                     store double float
  *
- *	@fpu: Pointer to sh_fpu_soft structure
+ *	@fpu: Pointer to sh_fpu_hard structure
  *	@n: Index to FP register
  */
-static void denormal_to_double(struct sh_fpu_soft_struct *fpu, int n)
+static void denormal_to_double(struct sh_fpu_hard_struct *fpu, int n)
 {
 	unsigned long du, dl;
 	unsigned long x = fpu->fpul;
@@ -552,13 +552,13 @@ static int ieee_fpe_handler(struct pt_regs *regs)
 	if ((finsn & 0xf1ff) == 0xf0ad) { /* fcnvsd */
 		struct task_struct *tsk = current;
 
-		if ((tsk->thread.xstate->softfpu.fpscr & (1 << 17))) {
+		if ((tsk->thread.fpu.hard.fpscr & (1 << 17))) {
 			/* FPU error */
-			denormal_to_double (&tsk->thread.xstate->softfpu,
+			denormal_to_double (&tsk->thread.fpu.hard,
 					    (finsn >> 8) & 0xf);
-			tsk->thread.xstate->softfpu.fpscr &=
+			tsk->thread.fpu.hard.fpscr &=
 				~(FPSCR_CAUSE_MASK | FPSCR_FLAG_MASK);
-			task_thread_info(tsk)->status |= TS_USEDFPU;
+			set_tsk_thread_flag(tsk, TIF_USEDFPU);
 		} else {
 			info.si_signo = SIGFPE;
 			info.si_errno = 0;
@@ -617,14 +617,12 @@ static void fpu_init(struct sh_fpu_soft_struct *fpu)
 int do_fpu_inst(unsigned short inst, struct pt_regs *regs)
 {
 	struct task_struct *tsk = current;
-	struct sh_fpu_soft_struct *fpu = &(tsk->thread.xstate->softfpu);
+	struct sh_fpu_soft_struct *fpu = &(tsk->thread.fpu.soft);
 
-	perf_sw_event(PERF_COUNT_SW_EMULATION_FAULTS, 1, regs, 0);
-
-	if (!(task_thread_info(tsk)->status & TS_USEDFPU)) {
+	if (!test_tsk_thread_flag(tsk, TIF_USEDFPU)) {
 		/* initialize once. */
 		fpu_init(fpu);
-		task_thread_info(tsk)->status |= TS_USEDFPU;
+		set_tsk_thread_flag(tsk, TIF_USEDFPU);
 	}
 
 	return fpu_emulate(inst, fpu, regs);

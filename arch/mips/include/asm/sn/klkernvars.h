@@ -26,3 +26,4 @@ typedef struct kern_vars_s {
 #endif /* !__ASSEMBLY__ */
 
 #endif /* __ASM_SN_KLKERNVARS_H */
+

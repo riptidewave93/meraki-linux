@@ -12,9 +12,7 @@ static inline int cpu_to_node(int cpu)
 
 #define parent_node(node)	(node)
 
-#define cpumask_of_node(node) ((node) == -1 ?				\
-			       cpu_all_mask :				\
-			       &numa_cpumask_lookup_table[node])
+#define cpumask_of_node(node) (&numa_cpumask_lookup_table[node])
 
 struct pci_bus;
 #ifdef CONFIG_PCI
@@ -65,10 +63,6 @@ static inline int pcibus_to_node(struct pci_bus *pbus)
 #define smt_capable()				(sparc64_multi_core)
 #endif /* CONFIG_SMP */
 
-extern cpumask_t cpu_core_map[NR_CPUS];
-static inline const struct cpumask *cpu_coregroup_mask(int cpu)
-{
-        return &cpu_core_map[cpu];
-}
+#define cpu_coregroup_mask(cpu)			(&cpu_core_map[cpu])
 
 #endif /* _ASM_SPARC64_TOPOLOGY_H */

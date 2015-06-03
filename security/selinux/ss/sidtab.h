@@ -26,8 +26,6 @@ struct sidtab {
 	unsigned int nel;	/* number of elements */
 	unsigned int next_sid;	/* next SID to allocate */
 	unsigned char shutdown;
-#define SIDTAB_CACHE_LEN	3
-	struct sidtab_node *cache[SIDTAB_CACHE_LEN];
 	spinlock_t lock;
 };
 

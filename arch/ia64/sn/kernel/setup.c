@@ -33,9 +33,9 @@
 #include <asm/io.h>
 #include <asm/sal.h>
 #include <asm/machvec.h>
+#include <asm/system.h>
 #include <asm/processor.h>
 #include <asm/vga.h>
-#include <asm/setup.h>
 #include <asm/sn/arch.h>
 #include <asm/sn/addrs.h>
 #include <asm/sn/pda.h>
@@ -71,7 +71,7 @@ EXPORT_SYMBOL(sn_rtc_cycles_per_second);
 DEFINE_PER_CPU(struct sn_hub_info_s, __sn_hub_info);
 EXPORT_PER_CPU_SYMBOL(__sn_hub_info);
 
-DEFINE_PER_CPU(short, __sn_cnodeid_to_nasid[MAX_COMPACT_NODES]);
+DEFINE_PER_CPU(short [MAX_COMPACT_NODES], __sn_cnodeid_to_nasid);
 EXPORT_PER_CPU_SYMBOL(__sn_cnodeid_to_nasid);
 
 DEFINE_PER_CPU(struct nodepda_s *, __sn_nodepda);
@@ -241,7 +241,7 @@ static void __cpuinit sn_check_for_wars(void)
  * Note:  This stuff is duped here because Altix requires the PCDP to
  * locate a usable VGA device due to lack of proper ACPI support.  Structures
  * could be used from drivers/firmware/pcdp.h, but it was decided that moving
- * this file to a more public location just for Altix use was undesirable.
+ * this file to a more public location just for Altix use was undesireable.
  */
 
 struct hcdp_uart_desc {
@@ -507,7 +507,7 @@ static void __init sn_init_pdas(char **cmdline_p)
 	cnodeid_t cnode;
 
 	/*
-	 * Allocate & initialize the nodepda for each node.
+	 * Allocate & initalize the nodepda for each node.
 	 */
 	for_each_online_node(cnode) {
 		nodepdaindr[cnode] =
@@ -592,7 +592,7 @@ void __cpuinit sn_cpu_init(void)
 	/*
 	 * Don't check status. The SAL call is not supported on all PROMs
 	 * but a failure is harmless.
-	 * Architecturally, cpu_init is always called twice on cpu 0. We
+	 * Architechtuallly, cpu_init is always called twice on cpu 0. We
 	 * should set cpu_number on cpu 0 once.
 	 */
 	if (cpuid == 0) {

@@ -35,7 +35,6 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/mutex.h>
-#include <linux/slab.h>
 
 MODULE_AUTHOR("Vojtech Pavlik <vojtech@ucw.cz>");
 MODULE_DESCRIPTION("TurboGraFX parallel port interface driver");
@@ -245,7 +244,6 @@ static struct tgfx __init *tgfx_probe(int parport, int *n_buttons, int n_devs)
 		goto err_free_tgfx;
         }
 
-	parport_put_port(pp);
 	return tgfx;
 
  err_free_dev:

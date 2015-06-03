@@ -90,8 +90,11 @@ static snd_pcm_sframes_t linear_transfer(struct snd_pcm_plugin *plugin,
 			       struct snd_pcm_plugin_channel *dst_channels,
 			       snd_pcm_uframes_t frames)
 {
+	struct linear_priv *data;
+
 	if (snd_BUG_ON(!plugin || !src_channels || !dst_channels))
 		return -ENXIO;
+	data = (struct linear_priv *)plugin->extra_data;
 	if (frames == 0)
 		return 0;
 #ifdef CONFIG_SND_DEBUG
@@ -111,8 +114,7 @@ static snd_pcm_sframes_t linear_transfer(struct snd_pcm_plugin *plugin,
 	return frames;
 }
 
-static void init_data(struct linear_priv *data,
-		      snd_pcm_format_t src_format, snd_pcm_format_t dst_format)
+static void init_data(struct linear_priv *data, int src_format, int dst_format)
 {
 	int src_le, dst_le, src_bytes, dst_bytes;
 
@@ -138,9 +140,9 @@ static void init_data(struct linear_priv *data,
 	if (snd_pcm_format_signed(src_format) !=
 	    snd_pcm_format_signed(dst_format)) {
 		if (dst_le)
-			data->flip = (__force u32)cpu_to_le32(0x80000000);
+			data->flip = cpu_to_le32(0x80000000);
 		else
-			data->flip = (__force u32)cpu_to_be32(0x80000000);
+			data->flip = cpu_to_be32(0x80000000);
 	}
 }
 

@@ -71,14 +71,8 @@
 #define _PAGE_EXT_KERN_WRITE	0x1000	/* EPR4-bit: Kernel space writable */
 #define _PAGE_EXT_KERN_READ	0x2000	/* EPR5-bit: Kernel space readable */
 
-#define _PAGE_EXT_WIRED		0x4000	/* software: Wire TLB entry */
-
 /* Wrapper for extended mode pgprot twiddling */
 #define _PAGE_EXT(x)		((unsigned long long)(x) << 32)
-
-#ifdef CONFIG_X2TLB
-#define _PAGE_PCC_MASK	0x00000000	/* No legacy PTEA support */
-#else
 
 /* software: moves to PTEA.TC (Timing Control) */
 #define _PAGE_PCC_AREA5	0x00000000	/* use BSC registers for area5 */
@@ -93,8 +87,7 @@
 #define _PAGE_PCC_ATR8	0x60000000	/* Attribute Memory space, 8 bit bus */
 #define _PAGE_PCC_ATR16	0x60000001	/* Attribute Memory space, 6 bit bus */
 
-#define _PAGE_PCC_MASK	0xe0000001
-
+#ifndef CONFIG_X2TLB
 /* copy the ptea attributes */
 static inline unsigned long copy_ptea_attributes(unsigned long x)
 {
@@ -115,7 +108,7 @@ static inline unsigned long copy_ptea_attributes(unsigned long x)
 #define _PAGE_CLEAR_FLAGS	(_PAGE_PROTNONE | _PAGE_ACCESSED | _PAGE_FILE)
 #endif
 
-#define _PAGE_FLAGS_HARDWARE_MASK	(phys_addr_mask() & ~(_PAGE_CLEAR_FLAGS))
+#define _PAGE_FLAGS_HARDWARE_MASK	(PHYS_ADDR_MASK & ~(_PAGE_CLEAR_FLAGS))
 
 /* Hardware flags, page size encoding */
 #if !defined(CONFIG_MMU)
@@ -148,14 +141,12 @@ static inline unsigned long copy_ptea_attributes(unsigned long x)
 # elif defined(CONFIG_HUGETLB_PAGE_SIZE_64MB)
 #  define _PAGE_SZHUGE	(_PAGE_EXT_ESZ2 | _PAGE_EXT_ESZ3)
 # endif
-# define _PAGE_WIRED	(_PAGE_EXT(_PAGE_EXT_WIRED))
 #else
 # if defined(CONFIG_HUGETLB_PAGE_SIZE_64K)
 #  define _PAGE_SZHUGE	(_PAGE_SZ1)
 # elif defined(CONFIG_HUGETLB_PAGE_SIZE_1MB)
 #  define _PAGE_SZHUGE	(_PAGE_SZ0 | _PAGE_SZ1)
 # endif
-# define _PAGE_WIRED	(0)
 #endif
 
 /*
@@ -167,7 +158,7 @@ static inline unsigned long copy_ptea_attributes(unsigned long x)
 #endif
 
 /*
- * Mask of bits that are to be preserved across pgprot changes.
+ * Mask of bits that are to be preserved accross pgprot changes.
  */
 #define _PAGE_CHG_MASK \
 	(PTE_MASK | _PAGE_ACCESSED | _PAGE_CACHABLE | \
@@ -236,7 +227,13 @@ static inline unsigned long copy_ptea_attributes(unsigned long x)
 					   _PAGE_EXT_KERN_EXEC))
 
 #define PAGE_KERNEL_PCC(slot, type) \
-			__pgprot(0)
+			__pgprot(_PAGE_PRESENT | _PAGE_DIRTY | \
+				 _PAGE_ACCESSED | _PAGE_FLAGS_HARD | \
+				 _PAGE_EXT(_PAGE_EXT_KERN_READ | \
+					   _PAGE_EXT_KERN_WRITE | \
+					   _PAGE_EXT_KERN_EXEC) \
+				 (slot ? _PAGE_PCC_AREA5 : _PAGE_PCC_AREA6) | \
+				 (type))
 
 #elif defined(CONFIG_MMU) /* SH-X TLB */
 #define PAGE_NONE	__pgprot(_PAGE_PROTNONE | _PAGE_CACHABLE | \
@@ -377,6 +374,8 @@ PTE_BIT_FUNC(low, mkold, &= ~_PAGE_ACCESSED);
 PTE_BIT_FUNC(low, mkyoung, |= _PAGE_ACCESSED);
 PTE_BIT_FUNC(low, mkspecial, |= _PAGE_SPECIAL);
 
+#define __HAVE_ARCH_PTE_SPECIAL
+
 /*
  * Macro and implementation to make a page protection as uncachable.
  */
@@ -426,7 +425,10 @@ static inline pte_t pte_modify(pte_t pte, pgprot_t newprot)
 #define pte_offset_kernel(dir, address) \
 	((pte_t *) pmd_page_vaddr(*(dir)) + pte_index(address))
 #define pte_offset_map(dir, address)		pte_offset_kernel(dir, address)
+#define pte_offset_map_nested(dir, address)	pte_offset_kernel(dir, address)
+
 #define pte_unmap(pte)		do { } while (0)
+#define pte_unmap_nested(pte)	do { } while (0)
 
 #ifdef CONFIG_X2TLB
 #define pte_ERROR(e) \

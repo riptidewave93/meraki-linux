@@ -18,7 +18,10 @@
 #include <linux/interrupt.h>
 #include <linux/err.h>
 #include <linux/amba/bus.h>
-#include <linux/io.h>
+
+#include <asm/io.h>
+#include <asm/irq.h>
+#include <asm/sizes.h>
 
 #include <sound/core.h>
 #include <sound/initval.h>
@@ -27,10 +30,9 @@
 #include <sound/pcm_params.h>
 
 #include "aaci.h"
+#include "devdma.h"
 
 #define DRIVER_NAME	"aaci-pl041"
-
-#define FRAME_PERIOD_US	21
 
 /*
  * PM support is not complete.  Turn it off.
@@ -50,11 +52,7 @@ static void aaci_ac97_select_codec(struct aaci *aaci, struct snd_ac97 *ac97)
 	if (v & SLFR_1RXV)
 		readl(aaci->base + AACI_SL1RX);
 
-	if (maincr != readl(aaci->base + AACI_MAINCR)) {
-		writel(maincr, aaci->base + AACI_MAINCR);
-		readl(aaci->base + AACI_MAINCR);
-		udelay(1);
-	}
+	writel(maincr, aaci->base + AACI_MAINCR);
 }
 
 /*
@@ -70,8 +68,8 @@ static void aaci_ac97_write(struct snd_ac97 *ac97, unsigned short reg,
 			    unsigned short val)
 {
 	struct aaci *aaci = ac97->private_data;
-	int timeout;
 	u32 v;
+	int timeout = 5000;
 
 	if (ac97->num >= 4)
 		return;
@@ -87,17 +85,14 @@ static void aaci_ac97_write(struct snd_ac97 *ac97, unsigned short reg,
 	writel(val << 4, aaci->base + AACI_SL2TX);
 	writel(reg << 12, aaci->base + AACI_SL1TX);
 
-	/* Initially, wait one frame period */
-	udelay(FRAME_PERIOD_US);
-
-	/* And then wait an additional eight frame periods for it to be sent */
-	timeout = FRAME_PERIOD_US * 8;
+	/*
+	 * Wait for the transmission of both slots to complete.
+	 */
 	do {
-		udelay(1);
 		v = readl(aaci->base + AACI_SLFR);
 	} while ((v & (SLFR_1TXB|SLFR_2TXB)) && --timeout);
 
-	if (v & (SLFR_1TXB|SLFR_2TXB))
+	if (!timeout)
 		dev_err(&aaci->dev->dev,
 			"timeout waiting for write to complete\n");
 
@@ -110,8 +105,9 @@ static void aaci_ac97_write(struct snd_ac97 *ac97, unsigned short reg,
 static unsigned short aaci_ac97_read(struct snd_ac97 *ac97, unsigned short reg)
 {
 	struct aaci *aaci = ac97->private_data;
-	int timeout, retries = 10;
 	u32 v;
+	int timeout = 5000;
+	int retries = 10;
 
 	if (ac97->num >= 4)
 		return ~0;
@@ -125,34 +121,35 @@ static unsigned short aaci_ac97_read(struct snd_ac97 *ac97, unsigned short reg)
 	 */
 	writel((reg << 12) | (1 << 19), aaci->base + AACI_SL1TX);
 
-	/* Initially, wait one frame period */
-	udelay(FRAME_PERIOD_US);
-
-	/* And then wait an additional eight frame periods for it to be sent */
-	timeout = FRAME_PERIOD_US * 8;
+	/*
+	 * Wait for the transmission to complete.
+	 */
 	do {
-		udelay(1);
 		v = readl(aaci->base + AACI_SLFR);
 	} while ((v & SLFR_1TXB) && --timeout);
 
-	if (v & SLFR_1TXB) {
+	if (!timeout) {
 		dev_err(&aaci->dev->dev, "timeout on slot 1 TX busy\n");
 		v = ~0;
 		goto out;
 	}
 
-	/* Now wait for the response frame */
-	udelay(FRAME_PERIOD_US);
+	/*
+	 * Give the AC'97 codec more than enough time
+	 * to respond. (42us = ~2 frames at 48kHz.)
+	 */
+	udelay(42);
 
-	/* And then wait an additional eight frame periods for data */
-	timeout = FRAME_PERIOD_US * 8;
+	/*
+	 * Wait for slot 2 to indicate data.
+	 */
+	timeout = 5000;
 	do {
-		udelay(1);
 		cond_resched();
 		v = readl(aaci->base + AACI_SLFR) & (SLFR_1RXV|SLFR_2RXV);
 	} while ((v != (SLFR_1RXV|SLFR_2RXV)) && --timeout);
 
-	if (v != (SLFR_1RXV|SLFR_2RXV)) {
+	if (!timeout) {
 		dev_err(&aaci->dev->dev, "timeout on RX valid\n");
 		v = ~0;
 		goto out;
@@ -179,16 +176,14 @@ static unsigned short aaci_ac97_read(struct snd_ac97 *ac97, unsigned short reg)
 	return v;
 }
 
-static inline void
-aaci_chan_wait_ready(struct aaci_runtime *aacirun, unsigned long mask)
+static inline void aaci_chan_wait_ready(struct aaci_runtime *aacirun)
 {
 	u32 val;
 	int timeout = 5000;
 
 	do {
-		udelay(1);
 		val = readl(aacirun->base + AACI_SR);
-	} while (val & mask && timeout--);
+	} while (val & (SR_TXB|SR_RXB) && timeout--);
 }
 
 
@@ -210,7 +205,6 @@ static void aaci_fifo_irq(struct aaci *aaci, int channel, u32 mask)
 
 	if (mask & ISR_RXINTR) {
 		struct aaci_runtime *aacirun = &aaci->capture;
-		bool period_elapsed = false;
 		void *ptr;
 
 		if (!aacirun->substream || !aacirun->start) {
@@ -218,17 +212,18 @@ static void aaci_fifo_irq(struct aaci *aaci, int channel, u32 mask)
 			writel(0, aacirun->base + AACI_IE);
 			return;
 		}
-
-		spin_lock(&aacirun->lock);
-
 		ptr = aacirun->ptr;
+
 		do {
-			unsigned int len = aacirun->fifo_bytes;
+			unsigned int len = aacirun->fifosz;
 			u32 val;
 
 			if (aacirun->bytes <= 0) {
 				aacirun->bytes += aacirun->period;
-				period_elapsed = true;
+				aacirun->ptr = ptr;
+				spin_unlock(&aaci->lock);
+				snd_pcm_period_elapsed(aacirun->substream);
+				spin_lock(&aaci->lock);
 			}
 			if (!(aacirun->cr & CR_EN))
 				break;
@@ -254,13 +249,7 @@ static void aaci_fifo_irq(struct aaci *aaci, int channel, u32 mask)
 					ptr = aacirun->start;
 			}
 		} while(1);
-
 		aacirun->ptr = ptr;
-
-		spin_unlock(&aacirun->lock);
-
-		if (period_elapsed)
-			snd_pcm_period_elapsed(aacirun->substream);
 	}
 
 	if (mask & ISR_URINTR) {
@@ -270,7 +259,6 @@ static void aaci_fifo_irq(struct aaci *aaci, int channel, u32 mask)
 
 	if (mask & ISR_TXINTR) {
 		struct aaci_runtime *aacirun = &aaci->playback;
-		bool period_elapsed = false;
 		void *ptr;
 
 		if (!aacirun->substream || !aacirun->start) {
@@ -279,16 +267,17 @@ static void aaci_fifo_irq(struct aaci *aaci, int channel, u32 mask)
 			return;
 		}
 
-		spin_lock(&aacirun->lock);
-
 		ptr = aacirun->ptr;
 		do {
-			unsigned int len = aacirun->fifo_bytes;
+			unsigned int len = aacirun->fifosz;
 			u32 val;
 
 			if (aacirun->bytes <= 0) {
 				aacirun->bytes += aacirun->period;
-				period_elapsed = true;
+				aacirun->ptr = ptr;
+				spin_unlock(&aaci->lock);
+				snd_pcm_period_elapsed(aacirun->substream);
+				spin_lock(&aaci->lock);
 			}
 			if (!(aacirun->cr & CR_EN))
 				break;
@@ -316,11 +305,6 @@ static void aaci_fifo_irq(struct aaci *aaci, int channel, u32 mask)
 		} while (1);
 
 		aacirun->ptr = ptr;
-
-		spin_unlock(&aacirun->lock);
-
-		if (period_elapsed)
-			snd_pcm_period_elapsed(aacirun->substream);
 	}
 }
 
@@ -330,6 +314,7 @@ static irqreturn_t aaci_irq(int irq, void *devid)
 	u32 mask;
 	int i;
 
+	spin_lock(&aaci->lock);
 	mask = readl(aaci->base + AACI_ALLINTS);
 	if (mask) {
 		u32 m = mask;
@@ -339,6 +324,7 @@ static irqreturn_t aaci_irq(int irq, void *devid)
 			}
 		}
 	}
+	spin_unlock(&aaci->lock);
 
 	return mask ? IRQ_HANDLED : IRQ_NONE;
 }
@@ -348,6 +334,63 @@ static irqreturn_t aaci_irq(int irq, void *devid)
 /*
  * ALSA support.
  */
+
+struct aaci_stream {
+	unsigned char codec_idx;
+	unsigned char rate_idx;
+};
+
+static struct aaci_stream aaci_streams[] = {
+	[ACSTREAM_FRONT] = {
+		.codec_idx	= 0,
+		.rate_idx	= AC97_RATES_FRONT_DAC,
+	},
+	[ACSTREAM_SURROUND] = {
+		.codec_idx	= 0,
+		.rate_idx	= AC97_RATES_SURR_DAC,
+	},
+	[ACSTREAM_LFE] = {
+		.codec_idx	= 0,
+		.rate_idx	= AC97_RATES_LFE_DAC,
+	},
+};
+
+static inline unsigned int aaci_rate_mask(struct aaci *aaci, int streamid)
+{
+	struct aaci_stream *s = aaci_streams + streamid;
+	return aaci->ac97_bus->codec[s->codec_idx]->rates[s->rate_idx];
+}
+
+static unsigned int rate_list[] = {
+	5512, 8000, 11025, 16000, 22050, 32000, 44100,
+	48000, 64000, 88200, 96000, 176400, 192000
+};
+
+/*
+ * Double-rate rule: we can support double rate iff channels == 2
+ *  (unimplemented)
+ */
+static int
+aaci_rule_rate_by_channels(struct snd_pcm_hw_params *p, struct snd_pcm_hw_rule *rule)
+{
+	struct aaci *aaci = rule->private;
+	unsigned int rate_mask = SNDRV_PCM_RATE_8000_48000|SNDRV_PCM_RATE_5512;
+	struct snd_interval *c = hw_param_interval(p, SNDRV_PCM_HW_PARAM_CHANNELS);
+
+	switch (c->max) {
+	case 6:
+		rate_mask &= aaci_rate_mask(aaci, ACSTREAM_LFE);
+	case 4:
+		rate_mask &= aaci_rate_mask(aaci, ACSTREAM_SURROUND);
+	case 2:
+		rate_mask &= aaci_rate_mask(aaci, ACSTREAM_FRONT);
+	}
+
+	return snd_interval_list(hw_param_interval(p, rule->var),
+				 ARRAY_SIZE(rate_list), rate_list,
+				 rate_mask);
+}
+
 static struct snd_pcm_hardware aaci_hw_info = {
 	.info			= SNDRV_PCM_INFO_MMAP |
 				  SNDRV_PCM_INFO_MMAP_VALID |
@@ -361,9 +404,12 @@ static struct snd_pcm_hardware aaci_hw_info = {
 	 */
 	.formats		= SNDRV_PCM_FMTBIT_S16_LE,
 
-	/* rates are setup from the AC'97 codec */
+	/* should this be continuous or knot? */
+	.rates			= SNDRV_PCM_RATE_CONTINUOUS,
+	.rate_max		= 48000,
+	.rate_min		= 4000,
 	.channels_min		= 2,
-	.channels_max		= 2,
+	.channels_max		= 6,
 	.buffer_bytes_max	= 64 * 1024,
 	.period_bytes_min	= 256,
 	.period_bytes_max	= PAGE_SIZE,
@@ -371,84 +417,45 @@ static struct snd_pcm_hardware aaci_hw_info = {
 	.periods_max		= PAGE_SIZE / 16,
 };
 
-/*
- * We can support two and four channel audio.  Unfortunately
- * six channel audio requires a non-standard channel ordering:
- *   2 -> FL(3), FR(4)
- *   4 -> FL(3), FR(4), SL(7), SR(8)
- *   6 -> FL(3), FR(4), SL(7), SR(8), C(6), LFE(9) (required)
- *        FL(3), FR(4), C(6), SL(7), SR(8), LFE(9) (actual)
- * This requires an ALSA configuration file to correct.
- */
-static int aaci_rule_channels(struct snd_pcm_hw_params *p,
-	struct snd_pcm_hw_rule *rule)
-{
-	static unsigned int channel_list[] = { 2, 4, 6 };
-	struct aaci *aaci = rule->private;
-	unsigned int mask = 1 << 0, slots;
-
-	/* pcms[0] is the our 5.1 PCM instance. */
-	slots = aaci->ac97_bus->pcms[0].r[0].slots;
-	if (slots & (1 << AC97_SLOT_PCM_SLEFT)) {
-		mask |= 1 << 1;
-		if (slots & (1 << AC97_SLOT_LFE))
-			mask |= 1 << 2;
-	}
-
-	return snd_interval_list(hw_param_interval(p, rule->var),
-				 ARRAY_SIZE(channel_list), channel_list, mask);
-}
-
-static int aaci_pcm_open(struct snd_pcm_substream *substream)
+static int __aaci_pcm_open(struct aaci *aaci,
+			   struct snd_pcm_substream *substream,
+			   struct aaci_runtime *aacirun)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
-	struct aaci *aaci = substream->private_data;
-	struct aaci_runtime *aacirun;
-	int ret = 0;
-
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		aacirun = &aaci->playback;
-	} else {
-		aacirun = &aaci->capture;
-	}
+	int ret;
 
 	aacirun->substream = substream;
 	runtime->private_data = aacirun;
 	runtime->hw = aaci_hw_info;
-	runtime->hw.rates = aacirun->pcm->rates;
-	snd_pcm_limit_hw_rates(runtime);
-
-	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
-		runtime->hw.channels_max = 6;
-
-		/* Add rule describing channel dependency. */
-		ret = snd_pcm_hw_rule_add(substream->runtime, 0,
-					  SNDRV_PCM_HW_PARAM_CHANNELS,
-					  aaci_rule_channels, aaci,
-					  SNDRV_PCM_HW_PARAM_CHANNELS, -1);
-		if (ret)
-			return ret;
-
-		if (aacirun->pcm->r[1].slots)
-			snd_ac97_pcm_double_rate_rules(runtime);
-	}
 
 	/*
-	 * ALSA wants the byte-size of the FIFOs.  As we only support
-	 * 16-bit samples, this is twice the FIFO depth irrespective
-	 * of whether it's in compact mode or not.
+	 * FIXME: ALSA specifies fifo_size in bytes.  If we're in normal
+	 * mode, each 32-bit word contains one sample.  If we're in
+	 * compact mode, each 32-bit word contains two samples, effectively
+	 * halving the FIFO size.  However, we don't know for sure which
+	 * we'll be using at this point.  We set this to the lower limit.
 	 */
-	runtime->hw.fifo_size = aaci->fifo_depth * 2;
+	runtime->hw.fifo_size = aaci->fifosize * 2;
 
-	mutex_lock(&aaci->irq_lock);
-	if (!aaci->users++) {
-		ret = request_irq(aaci->dev->irq[0], aaci_irq,
-			   IRQF_SHARED, DRIVER_NAME, aaci);
-		if (ret != 0)
-			aaci->users--;
-	}
-	mutex_unlock(&aaci->irq_lock);
+	/*
+	 * Add rule describing hardware rate dependency
+	 * on the number of channels.
+	 */
+	ret = snd_pcm_hw_rule_add(runtime, 0, SNDRV_PCM_HW_PARAM_RATE,
+				  aaci_rule_rate_by_channels, aaci,
+				  SNDRV_PCM_HW_PARAM_CHANNELS,
+				  SNDRV_PCM_HW_PARAM_RATE, -1);
+	if (ret)
+		goto out;
 
+	ret = request_irq(aaci->dev->irq[0], aaci_irq, IRQF_SHARED|IRQF_DISABLED,
+			  DRIVER_NAME, aaci);
+	if (ret)
+		goto out;
+
+	return 0;
+
+ out:
 	return ret;
 }
 
@@ -464,11 +471,7 @@ static int aaci_pcm_close(struct snd_pcm_substream *substream)
 	WARN_ON(aacirun->cr & CR_EN);
 
 	aacirun->substream = NULL;
-
-	mutex_lock(&aaci->irq_lock);
-	if (!--aaci->users)
-		free_irq(aaci->dev->irq[0], aaci);
-	mutex_unlock(&aaci->irq_lock);
+	free_irq(aaci->dev->irq[0], aaci);
 
 	return 0;
 }
@@ -489,25 +492,15 @@ static int aaci_pcm_hw_free(struct snd_pcm_substream *substream)
 	/*
 	 * Clear out the DMA and any allocated buffers.
 	 */
-	snd_pcm_lib_free_pages(substream);
+	devdma_hw_free(NULL, substream);
 
 	return 0;
 }
 
-/* Channel to slot mask */
-static const u32 channels_to_slotmask[] = {
-	[2] = CR_SL3 | CR_SL4,
-	[4] = CR_SL3 | CR_SL4 | CR_SL7 | CR_SL8,
-	[6] = CR_SL3 | CR_SL4 | CR_SL7 | CR_SL8 | CR_SL6 | CR_SL9,
-};
-
 static int aaci_pcm_hw_params(struct snd_pcm_substream *substream,
+			      struct aaci_runtime *aacirun,
 			      struct snd_pcm_hw_params *params)
 {
-	struct aaci_runtime *aacirun = substream->runtime->private_data;
-	unsigned int channels = params_channels(params);
-	unsigned int rate = params_rate(params);
-	int dbl = rate > 48000;
 	int err;
 
 	aaci_pcm_hw_free(substream);
@@ -516,30 +509,26 @@ static int aaci_pcm_hw_params(struct snd_pcm_substream *substream,
 		aacirun->pcm_open = 0;
 	}
 
-	/* channels is already limited to 2, 4, or 6 by aaci_rule_channels */
-	if (dbl && channels != 2)
-		return -EINVAL;
+	err = devdma_hw_alloc(NULL, substream,
+			      params_buffer_bytes(params));
+	if (err < 0)
+		goto out;
 
-	err = snd_pcm_lib_malloc_pages(substream,
-				       params_buffer_bytes(params));
-	if (err >= 0) {
-		struct aaci *aaci = substream->private_data;
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK)
+		err = snd_ac97_pcm_open(aacirun->pcm, params_rate(params),
+					params_channels(params),
+					aacirun->pcm->r[0].slots);
+	else
+		err = snd_ac97_pcm_open(aacirun->pcm, params_rate(params),
+					params_channels(params),
+					aacirun->pcm->r[0].slots);
 
-		err = snd_ac97_pcm_open(aacirun->pcm, rate, channels,
-					aacirun->pcm->r[dbl].slots);
+	if (err)
+		goto out;
 
-		aacirun->pcm_open = err == 0;
-		aacirun->cr = CR_FEN | CR_COMPACT | CR_SZ16;
-		aacirun->cr |= channels_to_slotmask[channels + dbl * 2];
+	aacirun->pcm_open = 1;
 
-		/*
-		 * fifo_bytes is the number of bytes we transfer to/from
-		 * the FIFO, including padding.  So that's x4.  As we're
-		 * in compact mode, the FIFO is half the size.
-		 */
-		aacirun->fifo_bytes = aaci->fifo_depth * 4 / 2;
-	}
-
+ out:
 	return err;
 }
 
@@ -548,11 +537,11 @@ static int aaci_pcm_prepare(struct snd_pcm_substream *substream)
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct aaci_runtime *aacirun = runtime->private_data;
 
-	aacirun->period	= snd_pcm_lib_period_bytes(substream);
-	aacirun->start	= runtime->dma_area;
-	aacirun->end	= aacirun->start + snd_pcm_lib_buffer_bytes(substream);
+	aacirun->start	= (void *)runtime->dma_area;
+	aacirun->end	= aacirun->start + runtime->dma_bytes;
 	aacirun->ptr	= aacirun->start;
-	aacirun->bytes	= aacirun->period;
+	aacirun->period	=
+	aacirun->bytes	= frames_to_bytes(runtime, runtime->period_size);
 
 	return 0;
 }
@@ -566,10 +555,104 @@ static snd_pcm_uframes_t aaci_pcm_pointer(struct snd_pcm_substream *substream)
 	return bytes_to_frames(runtime, bytes);
 }
 
+static int aaci_pcm_mmap(struct snd_pcm_substream *substream, struct vm_area_struct *vma)
+{
+	return devdma_mmap(NULL, substream, vma);
+}
+
 
 /*
  * Playback specific ALSA stuff
  */
+static const u32 channels_to_txmask[] = {
+	[2] = CR_SL3 | CR_SL4,
+	[4] = CR_SL3 | CR_SL4 | CR_SL7 | CR_SL8,
+	[6] = CR_SL3 | CR_SL4 | CR_SL7 | CR_SL8 | CR_SL6 | CR_SL9,
+};
+
+/*
+ * We can support two and four channel audio.  Unfortunately
+ * six channel audio requires a non-standard channel ordering:
+ *   2 -> FL(3), FR(4)
+ *   4 -> FL(3), FR(4), SL(7), SR(8)
+ *   6 -> FL(3), FR(4), SL(7), SR(8), C(6), LFE(9) (required)
+ *        FL(3), FR(4), C(6), SL(7), SR(8), LFE(9) (actual)
+ * This requires an ALSA configuration file to correct.
+ */
+static unsigned int channel_list[] = { 2, 4, 6 };
+
+static int
+aaci_rule_channels(struct snd_pcm_hw_params *p, struct snd_pcm_hw_rule *rule)
+{
+	struct aaci *aaci = rule->private;
+	unsigned int chan_mask = 1 << 0, slots;
+
+	/*
+	 * pcms[0] is the our 5.1 PCM instance.
+	 */
+	slots = aaci->ac97_bus->pcms[0].r[0].slots;
+	if (slots & (1 << AC97_SLOT_PCM_SLEFT)) {
+		chan_mask |= 1 << 1;
+		if (slots & (1 << AC97_SLOT_LFE))
+			chan_mask |= 1 << 2;
+	}
+
+	return snd_interval_list(hw_param_interval(p, rule->var),
+				 ARRAY_SIZE(channel_list), channel_list,
+				 chan_mask);
+}
+
+static int aaci_pcm_open(struct snd_pcm_substream *substream)
+{
+	struct aaci *aaci = substream->private_data;
+	int ret;
+
+	/*
+	 * Add rule describing channel dependency.
+	 */
+	ret = snd_pcm_hw_rule_add(substream->runtime, 0,
+				  SNDRV_PCM_HW_PARAM_CHANNELS,
+				  aaci_rule_channels, aaci,
+				  SNDRV_PCM_HW_PARAM_CHANNELS, -1);
+	if (ret)
+		return ret;
+
+	if (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) {
+		ret = __aaci_pcm_open(aaci, substream, &aaci->playback);
+	} else {
+		ret = __aaci_pcm_open(aaci, substream, &aaci->capture);
+	}
+	return ret;
+}
+
+static int aaci_pcm_playback_hw_params(struct snd_pcm_substream *substream,
+				       struct snd_pcm_hw_params *params)
+{
+	struct aaci *aaci = substream->private_data;
+	struct aaci_runtime *aacirun = substream->runtime->private_data;
+	unsigned int channels = params_channels(params);
+	int ret;
+
+	WARN_ON(channels >= ARRAY_SIZE(channels_to_txmask) ||
+		!channels_to_txmask[channels]);
+
+	ret = aaci_pcm_hw_params(substream, aacirun, params);
+
+	/*
+	 * Enable FIFO, compact mode, 16 bits per sample.
+	 * FIXME: double rate slots?
+	 */
+	if (ret >= 0) {
+		aacirun->cr = CR_FEN | CR_COMPACT | CR_SZ16;
+		aacirun->cr |= channels_to_txmask[channels];
+
+		aacirun->fifosz	= aaci->fifosize * 4;
+		if (aacirun->cr & CR_COMPACT)
+			aacirun->fifosz >>= 1;
+	}
+	return ret;
+}
+
 static void aaci_pcm_playback_stop(struct aaci_runtime *aacirun)
 {
 	u32 ie;
@@ -578,7 +661,7 @@ static void aaci_pcm_playback_stop(struct aaci_runtime *aacirun)
 	ie &= ~(IE_URIE|IE_TXIE);
 	writel(ie, aacirun->base + AACI_IE);
 	aacirun->cr &= ~CR_EN;
-	aaci_chan_wait_ready(aacirun, SR_TXB);
+	aaci_chan_wait_ready(aacirun);
 	writel(aacirun->cr, aacirun->base + AACI_TXCR);
 }
 
@@ -586,7 +669,7 @@ static void aaci_pcm_playback_start(struct aaci_runtime *aacirun)
 {
 	u32 ie;
 
-	aaci_chan_wait_ready(aacirun, SR_TXB);
+	aaci_chan_wait_ready(aacirun);
 	aacirun->cr |= CR_EN;
 
 	ie = readl(aacirun->base + AACI_IE);
@@ -597,12 +680,12 @@ static void aaci_pcm_playback_start(struct aaci_runtime *aacirun)
 
 static int aaci_pcm_playback_trigger(struct snd_pcm_substream *substream, int cmd)
 {
+	struct aaci *aaci = substream->private_data;
 	struct aaci_runtime *aacirun = substream->runtime->private_data;
 	unsigned long flags;
 	int ret = 0;
 
-	spin_lock_irqsave(&aacirun->lock, flags);
-
+	spin_lock_irqsave(&aaci->lock, flags);
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
 		aaci_pcm_playback_start(aacirun);
@@ -629,8 +712,7 @@ static int aaci_pcm_playback_trigger(struct snd_pcm_substream *substream, int cm
 	default:
 		ret = -EINVAL;
 	}
-
-	spin_unlock_irqrestore(&aacirun->lock, flags);
+	spin_unlock_irqrestore(&aaci->lock, flags);
 
 	return ret;
 }
@@ -639,18 +721,42 @@ static struct snd_pcm_ops aaci_playback_ops = {
 	.open		= aaci_pcm_open,
 	.close		= aaci_pcm_close,
 	.ioctl		= snd_pcm_lib_ioctl,
-	.hw_params	= aaci_pcm_hw_params,
+	.hw_params	= aaci_pcm_playback_hw_params,
 	.hw_free	= aaci_pcm_hw_free,
 	.prepare	= aaci_pcm_prepare,
 	.trigger	= aaci_pcm_playback_trigger,
 	.pointer	= aaci_pcm_pointer,
+	.mmap		= aaci_pcm_mmap,
 };
+
+static int aaci_pcm_capture_hw_params(struct snd_pcm_substream *substream,
+				      struct snd_pcm_hw_params *params)
+{
+	struct aaci *aaci = substream->private_data;
+	struct aaci_runtime *aacirun = substream->runtime->private_data;
+	int ret;
+
+	ret = aaci_pcm_hw_params(substream, aacirun, params);
+
+	if (ret >= 0) {
+		aacirun->cr = CR_FEN | CR_COMPACT | CR_SZ16;
+
+		/* Line in record: slot 3 and 4 */
+		aacirun->cr |= CR_SL3 | CR_SL4;
+
+		aacirun->fifosz = aaci->fifosize * 4;
+
+		if (aacirun->cr & CR_COMPACT)
+			aacirun->fifosz >>= 1;
+	}
+	return ret;
+}
 
 static void aaci_pcm_capture_stop(struct aaci_runtime *aacirun)
 {
 	u32 ie;
 
-	aaci_chan_wait_ready(aacirun, SR_RXB);
+	aaci_chan_wait_ready(aacirun);
 
 	ie = readl(aacirun->base + AACI_IE);
 	ie &= ~(IE_ORIE | IE_RXIE);
@@ -665,7 +771,7 @@ static void aaci_pcm_capture_start(struct aaci_runtime *aacirun)
 {
 	u32 ie;
 
-	aaci_chan_wait_ready(aacirun, SR_RXB);
+	aaci_chan_wait_ready(aacirun);
 
 #ifdef DEBUG
 	/* RX Timeout value: bits 28:17 in RXCR */
@@ -682,11 +788,12 @@ static void aaci_pcm_capture_start(struct aaci_runtime *aacirun)
 
 static int aaci_pcm_capture_trigger(struct snd_pcm_substream *substream, int cmd)
 {
+	struct aaci *aaci = substream->private_data;
 	struct aaci_runtime *aacirun = substream->runtime->private_data;
 	unsigned long flags;
 	int ret = 0;
 
-	spin_lock_irqsave(&aacirun->lock, flags);
+	spin_lock_irqsave(&aaci->lock, flags);
 
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
@@ -715,7 +822,7 @@ static int aaci_pcm_capture_trigger(struct snd_pcm_substream *substream, int cmd
 		ret = -EINVAL;
 	}
 
-	spin_unlock_irqrestore(&aacirun->lock, flags);
+	spin_unlock_irqrestore(&aaci->lock, flags);
 
 	return ret;
 }
@@ -742,11 +849,12 @@ static struct snd_pcm_ops aaci_capture_ops = {
 	.open		= aaci_pcm_open,
 	.close		= aaci_pcm_close,
 	.ioctl		= snd_pcm_lib_ioctl,
-	.hw_params	= aaci_pcm_hw_params,
+	.hw_params	= aaci_pcm_capture_hw_params,
 	.hw_free	= aaci_pcm_hw_free,
 	.prepare	= aaci_pcm_capture_prepare,
 	.trigger	= aaci_pcm_capture_trigger,
 	.pointer	= aaci_pcm_pointer,
+	.mmap		= aaci_pcm_mmap,
 };
 
 /*
@@ -798,12 +906,6 @@ static struct ac97_pcm ac97_defs[] __devinitdata = {
 					  (1 << AC97_SLOT_PCM_SRIGHT) |
 					  (1 << AC97_SLOT_LFE),
 			},
-			[1] = {
-				.slots	= (1 << AC97_SLOT_PCM_LEFT) |
-					  (1 << AC97_SLOT_PCM_RIGHT) |
-					  (1 << AC97_SLOT_PCM_LEFT_0) |
-					  (1 << AC97_SLOT_PCM_RIGHT_0),
-			},
 		},
 	},
 	[1] = {	/* PCM in */
@@ -839,6 +941,7 @@ static int __devinit aaci_probe_ac97(struct aaci *aaci)
 	struct snd_ac97 *ac97;
 	int ret;
 
+	writel(0, aaci->base + AC97_POWERDOWN);
 	/*
 	 * Assert AACIRESET for 2us
 	 */
@@ -850,7 +953,7 @@ static int __devinit aaci_probe_ac97(struct aaci *aaci)
 	 * Give the AC'97 codec more than enough time
 	 * to wake up. (42us = ~2 frames at 48kHz.)
 	 */
-	udelay(FRAME_PERIOD_US * 2);
+	udelay(42);
 
 	ret = snd_ac97_bus(aaci->card, 0, &aaci_bus_ops, aaci, &ac97_bus);
 	if (ret)
@@ -909,13 +1012,13 @@ static struct aaci * __devinit aaci_init_card(struct amba_device *dev)
 	strlcpy(card->driver, DRIVER_NAME, sizeof(card->driver));
 	strlcpy(card->shortname, "ARM AC'97 Interface", sizeof(card->shortname));
 	snprintf(card->longname, sizeof(card->longname),
-		 "%s PL%03x rev%u at 0x%08llx, irq %d",
-		 card->shortname, amba_part(dev), amba_rev(dev),
-		 (unsigned long long)dev->res.start, dev->irq[0]);
+		 "%s at 0x%016llx, irq %d",
+		 card->shortname, (unsigned long long)dev->res.start,
+		 dev->irq[0]);
 
 	aaci = card->private_data;
 	mutex_init(&aaci->ac97_sem);
-	mutex_init(&aaci->irq_lock);
+	spin_lock_init(&aaci->lock);
 	aaci->card = card;
 	aaci->dev = dev;
 
@@ -941,8 +1044,6 @@ static int __devinit aaci_init_pcm(struct aaci *aaci)
 
 		snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_PLAYBACK, &aaci_playback_ops);
 		snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &aaci_capture_ops);
-		snd_pcm_lib_preallocate_pages_for_all(pcm, SNDRV_DMA_TYPE_DEV,
-						      NULL, 0, 64 * 1024);
 	}
 
 	return ret;
@@ -953,10 +1054,6 @@ static unsigned int __devinit aaci_size_fifo(struct aaci *aaci)
 	struct aaci_runtime *aacirun = &aaci->playback;
 	int i;
 
-	/*
-	 * Enable the channel, but don't assign it to any slots, so
-	 * it won't empty onto the AC'97 link.
-	 */
 	writel(CR_FEN | CR_SZ16 | CR_EN, aacirun->base + AACI_TXCR);
 
 	for (i = 0; !(readl(aacirun->base + AACI_SR) & SR_TXFF) && i < 4096; i++)
@@ -970,12 +1067,10 @@ static unsigned int __devinit aaci_size_fifo(struct aaci *aaci)
 	 * disabling the channel doesn't clear the FIFO.
 	 */
 	writel(aaci->maincr & ~MAINCR_IE, aaci->base + AACI_MAINCR);
-	readl(aaci->base + AACI_MAINCR);
-	udelay(1);
 	writel(aaci->maincr, aaci->base + AACI_MAINCR);
 
 	/*
-	 * If we hit 4096 entries, we failed.  Go back to the specified
+	 * If we hit 4096, we failed.  Go back to the specified
 	 * fifo depth.
 	 */
 	if (i == 4096)
@@ -984,8 +1079,7 @@ static unsigned int __devinit aaci_size_fifo(struct aaci *aaci)
 	return i;
 }
 
-static int __devinit aaci_probe(struct amba_device *dev,
-	const struct amba_id *id)
+static int __devinit aaci_probe(struct amba_device *dev, struct amba_id *id)
 {
 	struct aaci *aaci;
 	int ret, i;
@@ -1009,14 +1103,12 @@ static int __devinit aaci_probe(struct amba_device *dev,
 	/*
 	 * Playback uses AACI channel 0
 	 */
-	spin_lock_init(&aaci->playback.lock);
 	aaci->playback.base = aaci->base + AACI_CSCH1;
 	aaci->playback.fifo = aaci->base + AACI_DR1;
 
 	/*
 	 * Capture uses AACI channel 0
 	 */
-	spin_lock_init(&aaci->capture.lock);
 	aaci->capture.base = aaci->base + AACI_CSCH1;
 	aaci->capture.fifo = aaci->base + AACI_DR1;
 
@@ -1030,23 +1122,18 @@ static int __devinit aaci_probe(struct amba_device *dev,
 
 	writel(0x1fff, aaci->base + AACI_INTCLR);
 	writel(aaci->maincr, aaci->base + AACI_MAINCR);
-	/*
-	 * Fix: ac97 read back fail errors by reading
-	 * from any arbitrary aaci register.
-	 */
-	readl(aaci->base + AACI_CSCH1);
+
 	ret = aaci_probe_ac97(aaci);
 	if (ret)
 		goto out;
 
 	/*
 	 * Size the FIFOs (must be multiple of 16).
-	 * This is the number of entries in the FIFO.
 	 */
-	aaci->fifo_depth = aaci_size_fifo(aaci);
-	if (aaci->fifo_depth & 15) {
-		printk(KERN_WARNING "AACI: FIFO depth %d not supported\n",
-		       aaci->fifo_depth);
+	aaci->fifosize = aaci_size_fifo(aaci);
+	if (aaci->fifosize & 15) {
+		printk(KERN_WARNING "AACI: fifosize = %d not supported\n",
+		       aaci->fifosize);
 		ret = -ENODEV;
 		goto out;
 	}
@@ -1059,8 +1146,8 @@ static int __devinit aaci_probe(struct amba_device *dev,
 
 	ret = snd_card_register(aaci->card);
 	if (ret == 0) {
-		dev_info(&dev->dev, "%s\n", aaci->card->longname);
-		dev_info(&dev->dev, "FIFO %u entries\n", aaci->fifo_depth);
+		dev_info(&dev->dev, "%s, fifo %d\n", aaci->card->longname,
+			 aaci->fifosize);
 		amba_set_drvdata(dev, aaci->card);
 		return ret;
 	}
@@ -1097,8 +1184,6 @@ static struct amba_id aaci_ids[] = {
 	{ 0, 0 },
 };
 
-MODULE_DEVICE_TABLE(amba, aaci_ids);
-
 static struct amba_driver aaci_driver = {
 	.drv		= {
 		.name	= DRIVER_NAME,
@@ -1110,7 +1195,18 @@ static struct amba_driver aaci_driver = {
 	.id_table	= aaci_ids,
 };
 
-module_amba_driver(aaci_driver);
+static int __init aaci_init(void)
+{
+	return amba_driver_register(&aaci_driver);
+}
+
+static void __exit aaci_exit(void)
+{
+	amba_driver_unregister(&aaci_driver);
+}
+
+module_init(aaci_init);
+module_exit(aaci_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("ARM PrimeCell PL041 Advanced Audio CODEC Interface driver");

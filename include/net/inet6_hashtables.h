@@ -15,7 +15,7 @@
 #define _INET6_HASHTABLES_H
 
 
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
 #include <linux/in6.h>
 #include <linux/ipv6.h>
 #include <linux/types.h>
@@ -28,16 +28,16 @@
 
 struct inet_hashinfo;
 
+/* I have no idea if this is a good hash for v6 or not. -DaveM */
 static inline unsigned int inet6_ehashfn(struct net *net,
 				const struct in6_addr *laddr, const u16 lport,
 				const struct in6_addr *faddr, const __be16 fport)
 {
-	u32 ports = (((u32)lport) << 16) | (__force u32)fport;
+	u32 ports = (lport ^ (__force u16)fport);
 
 	return jhash_3words((__force u32)laddr->s6_addr32[3],
-			    ipv6_addr_jhash(faddr),
-			    ports,
-			    inet_ehash_secret + net_hash_mix(net));
+			    (__force u32)faddr->s6_addr32[3],
+			    ports, inet_ehash_secret + net_hash_mix(net));
 }
 
 static inline int inet6_sk_ehashfn(const struct sock *sk)
@@ -46,14 +46,14 @@ static inline int inet6_sk_ehashfn(const struct sock *sk)
 	const struct ipv6_pinfo *np = inet6_sk(sk);
 	const struct in6_addr *laddr = &np->rcv_saddr;
 	const struct in6_addr *faddr = &np->daddr;
-	const __u16 lport = inet->inet_num;
-	const __be16 fport = inet->inet_dport;
+	const __u16 lport = inet->num;
+	const __be16 fport = inet->dport;
 	struct net *net = sock_net(sk);
 
 	return inet6_ehashfn(net, laddr, lport, faddr, fport);
 }
 
-extern int __inet6_hash(struct sock *sk, struct inet_timewait_sock *twp);
+extern void __inet6_hash(struct sock *sk);
 
 /*
  * Sockets in TCP_CLOSE state are _always_ taken out of the hash, so
@@ -110,5 +110,5 @@ extern struct sock *inet6_lookup(struct net *net, struct inet_hashinfo *hashinfo
 				 const struct in6_addr *saddr, const __be16 sport,
 				 const struct in6_addr *daddr, const __be16 dport,
 				 const int dif);
-#endif /* IS_ENABLED(CONFIG_IPV6) */
+#endif /* defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE) */
 #endif /* _INET6_HASHTABLES_H */

@@ -222,7 +222,6 @@ static const struct file_operations bfin_otp_fops = {
 	.unlocked_ioctl = bfin_otp_ioctl,
 	.read           = bfin_otp_read,
 	.write          = bfin_otp_write,
-	.llseek		= default_llseek,
 };
 
 static struct miscdevice bfin_otp_misc_device = {

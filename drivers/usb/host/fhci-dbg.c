@@ -20,7 +20,7 @@
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 #include <linux/usb.h>
-#include <linux/usb/hcd.h>
+#include "../core/hcd.h"
 #include "fhci.h"
 
 void fhci_dbg_isr(struct fhci_hcd *fhci, int usb_er)

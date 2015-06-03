@@ -4,7 +4,7 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/delay.h>
@@ -14,7 +14,6 @@
 #include <linux/interrupt.h>
 #include <linux/list.h>
 #include <linux/init.h>
-#include <linux/bitmap.h>
 
 #include <asm/hypervisor.h>
 #include <asm/iommu.h>
@@ -790,20 +789,16 @@ static void send_events(struct ldc_channel *lp, unsigned int event_mask)
 static irqreturn_t ldc_rx(int irq, void *dev_id)
 {
 	struct ldc_channel *lp = dev_id;
-	unsigned long orig_state, flags;
+	unsigned long orig_state, hv_err, flags;
 	unsigned int event_mask;
 
 	spin_lock_irqsave(&lp->lock, flags);
 
 	orig_state = lp->chan_state;
-
-	/* We should probably check for hypervisor errors here and
-	 * reset the LDC channel if we get one.
-	 */
-	sun4v_ldc_rx_get_state(lp->id,
-			       &lp->rx_head,
-			       &lp->rx_tail,
-			       &lp->chan_state);
+	hv_err = sun4v_ldc_rx_get_state(lp->id,
+					&lp->rx_head,
+					&lp->rx_tail,
+					&lp->chan_state);
 
 	ldcdbg(RX, "RX state[0x%02lx:0x%02lx] head[0x%04lx] tail[0x%04lx]\n",
 	       orig_state, lp->chan_state, lp->rx_head, lp->rx_tail);
@@ -908,20 +903,16 @@ out:
 static irqreturn_t ldc_tx(int irq, void *dev_id)
 {
 	struct ldc_channel *lp = dev_id;
-	unsigned long flags, orig_state;
+	unsigned long flags, hv_err, orig_state;
 	unsigned int event_mask = 0;
 
 	spin_lock_irqsave(&lp->lock, flags);
 
 	orig_state = lp->chan_state;
-
-	/* We should probably check for hypervisor errors here and
-	 * reset the LDC channel if we get one.
-	 */
-	sun4v_ldc_tx_get_state(lp->id,
-			       &lp->tx_head,
-			       &lp->tx_tail,
-			       &lp->chan_state);
+	hv_err = sun4v_ldc_tx_get_state(lp->id,
+					&lp->tx_head,
+					&lp->tx_tail,
+					&lp->chan_state);
 
 	ldcdbg(TX, " TX state[0x%02lx:0x%02lx] head[0x%04lx] tail[0x%04lx]\n",
 	       orig_state, lp->chan_state, lp->tx_head, lp->tx_tail);
@@ -1339,7 +1330,7 @@ int ldc_connect(struct ldc_channel *lp)
 	if (!(lp->flags & LDC_FLAG_ALLOCED_QUEUES) ||
 	    !(lp->flags & LDC_FLAG_REGISTERED_QUEUES) ||
 	    lp->hs_state != LDC_HS_OPEN)
-		err = ((lp->hs_state > LDC_HS_OPEN) ? 0 : -EINVAL);
+		err = -EINVAL;
 	else
 		err = start_handshake(lp);
 
@@ -1884,7 +1875,7 @@ EXPORT_SYMBOL(ldc_read);
 static long arena_alloc(struct ldc_iommu *iommu, unsigned long npages)
 {
 	struct iommu_arena *arena = &iommu->arena;
-	unsigned long n, start, end, limit;
+	unsigned long n, i, start, end, limit;
 	int pass;
 
 	limit = arena->limit;
@@ -1892,7 +1883,7 @@ static long arena_alloc(struct ldc_iommu *iommu, unsigned long npages)
 	pass = 0;
 
 again:
-	n = bitmap_find_next_zero_area(arena->map, limit, start, npages, 0);
+	n = find_next_zero_bit(arena->map, limit, start);
 	end = n + npages;
 	if (unlikely(end >= limit)) {
 		if (likely(pass < 1)) {
@@ -1905,7 +1896,16 @@ again:
 			return -1;
 		}
 	}
-	bitmap_set(arena->map, n, npages);
+
+	for (i = n; i < end; i++) {
+		if (test_bit(i, arena->map)) {
+			start = i + 1;
+			goto again;
+		}
+	}
+
+	for (i = n; i < end; i++)
+		__set_bit(i, arena->map);
 
 	arena->hint = end;
 

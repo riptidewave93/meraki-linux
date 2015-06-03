@@ -24,109 +24,35 @@
  */
 
 /* We calculate the autogain at the end of the transfer of a frame, at this
-   moment a frame with the old settings is being captured and transmitted. So
-   if we adjust the gain or exposure we must ignore atleast the next frame for
-   the new settings to come into effect before doing any other adjustments. */
-#define PAC_AUTOGAIN_IGNORE_FRAMES	2
+   moment a frame with the old settings is being transmitted, and a frame is
+   being captured with the old settings. So if we adjust the autogain we must
+   ignore atleast the 2 next frames for the new settings to come into effect
+   before doing any other adjustments */
+#define PAC_AUTOGAIN_IGNORE_FRAMES	3
 
 static const unsigned char pac_sof_marker[5] =
 		{ 0xff, 0xff, 0x00, 0xff, 0x96 };
 
-/*
-   The following state machine finds the SOF marker sequence
-   0xff, 0xff, 0x00, 0xff, 0x96 in a byte stream.
-
-	   +----------+
-	   | 0: START |<---------------\
-	   +----------+<-\             |
-	     |       \---/otherwise    |
-	     v 0xff                    |
-	   +----------+ otherwise      |
-	   |     1    |--------------->*
-	   |          |                ^
-	   +----------+                |
-	     |                         |
-	     v 0xff                    |
-	   +----------+<-\0xff         |
-	/->|          |--/             |
-	|  |     2    |--------------->*
-	|  |          | otherwise      ^
-	|  +----------+                |
-	|    |                         |
-	|    v 0x00                    |
-	|  +----------+                |
-	|  |     3    |                |
-	|  |          |--------------->*
-	|  +----------+ otherwise      ^
-	|    |                         |
-   0xff |    v 0xff                    |
-	|  +----------+                |
-	\--|     4    |                |
-	   |          |----------------/
-	   +----------+ otherwise
-	     |
-	     v 0x96
-	   +----------+
-	   |  FOUND   |
-	   +----------+
-*/
-
-static unsigned char *pac_find_sof(u8 *sof_read,
+static unsigned char *pac_find_sof(struct gspca_dev *gspca_dev,
 					unsigned char *m, int len)
 {
+	struct sd *sd = (struct sd *) gspca_dev;
 	int i;
 
 	/* Search for the SOF marker (fixed part) in the header */
 	for (i = 0; i < len; i++) {
-		switch (*sof_read) {
-		case 0:
-			if (m[i] == 0xff)
-				*sof_read = 1;
-			break;
-		case 1:
-			if (m[i] == 0xff)
-				*sof_read = 2;
-			else
-				*sof_read = 0;
-			break;
-		case 2:
-			switch (m[i]) {
-			case 0x00:
-				*sof_read = 3;
-				break;
-			case 0xff:
-				/* stay in this state */
-				break;
-			default:
-				*sof_read = 0;
-			}
-			break;
-		case 3:
-			if (m[i] == 0xff)
-				*sof_read = 4;
-			else
-				*sof_read = 0;
-			break;
-		case 4:
-			switch (m[i]) {
-			case 0x96:
-				/* Pattern found */
+		if (m[i] == pac_sof_marker[sd->sof_read]) {
+			sd->sof_read++;
+			if (sd->sof_read == sizeof(pac_sof_marker)) {
 				PDEBUG(D_FRAM,
 					"SOF found, bytes to analyze: %u."
 					" Frame starts at byte #%u",
 					len, i + 1);
-				*sof_read = 0;
+				sd->sof_read = 0;
 				return m + i + 1;
-				break;
-			case 0xff:
-				*sof_read = 2;
-				break;
-			default:
-				*sof_read = 0;
 			}
-			break;
-		default:
-			*sof_read = 0;
+		} else {
+			sd->sof_read = 0;
 		}
 	}
 

@@ -65,8 +65,6 @@
 #define ACPI_VIDEO_HID			"LNXVIDEO"
 #define ACPI_BAY_HID			"LNXIOBAY"
 #define ACPI_DOCK_HID			"LNXDOCK"
-/* Quirk for broken IBM BIOSes */
-#define ACPI_SMBUS_IBM_HID		"SMBUSIBM"
 
 /*
  * For fixed hardware buttons, we fabricate acpi_devices with HID
@@ -104,8 +102,8 @@ int acpi_pci_bind_root(struct acpi_device *device);
 
 /* Arch-defined function to add a bus to the system */
 
-struct pci_bus *pci_acpi_scan_root(struct acpi_pci_root *root);
-void pci_acpi_crs_quirks(void);
+struct pci_bus *pci_acpi_scan_root(struct acpi_device *device, int domain,
+				   int bus);
 
 /* --------------------------------------------------------------------------
                                     Processor
@@ -114,6 +112,8 @@ void pci_acpi_crs_quirks(void);
 #define ACPI_PROCESSOR_LIMIT_NONE	0x00
 #define ACPI_PROCESSOR_LIMIT_INCREMENT	0x01
 #define ACPI_PROCESSOR_LIMIT_DECREMENT	0x02
+
+int acpi_processor_set_thermal_limit(acpi_handle handle, int type);
 
 /*--------------------------------------------------------------------------
                                   Dock Station
@@ -128,7 +128,7 @@ extern int is_dock_device(acpi_handle handle);
 extern int register_dock_notifier(struct notifier_block *nb);
 extern void unregister_dock_notifier(struct notifier_block *nb);
 extern int register_hotplug_dock_device(acpi_handle handle,
-					const struct acpi_dock_ops *ops,
+					struct acpi_dock_ops *ops,
 					void *context);
 extern void unregister_hotplug_dock_device(acpi_handle handle);
 #else
@@ -144,7 +144,7 @@ static inline void unregister_dock_notifier(struct notifier_block *nb)
 {
 }
 static inline int register_hotplug_dock_device(acpi_handle handle,
-					       const struct acpi_dock_ops *ops,
+					       struct acpi_dock_ops *ops,
 					       void *context)
 {
 	return -ENODEV;

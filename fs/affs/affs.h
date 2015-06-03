@@ -136,7 +136,7 @@ extern int	affs_remove_header(struct dentry *dentry);
 extern u32	affs_checksum_block(struct super_block *sb, struct buffer_head *bh);
 extern void	affs_fix_checksum(struct super_block *sb, struct buffer_head *bh);
 extern void	secs_to_datestamp(time_t secs, struct affs_date *ds);
-extern umode_t	prot_to_mode(u32 prot);
+extern mode_t	prot_to_mode(u32 prot);
 extern void	mode_to_prot(struct inode *inode);
 extern void	affs_error(struct super_block *sb, const char *function, const char *fmt, ...);
 extern void	affs_warning(struct super_block *sb, const char *function, const char *fmt, ...);
@@ -156,8 +156,8 @@ extern void	affs_free_bitmap(struct super_block *sb);
 extern int	affs_hash_name(struct super_block *sb, const u8 *name, unsigned int len);
 extern struct dentry *affs_lookup(struct inode *dir, struct dentry *dentry, struct nameidata *);
 extern int	affs_unlink(struct inode *dir, struct dentry *dentry);
-extern int	affs_create(struct inode *dir, struct dentry *dentry, umode_t mode, struct nameidata *);
-extern int	affs_mkdir(struct inode *dir, struct dentry *dentry, umode_t mode);
+extern int	affs_create(struct inode *dir, struct dentry *dentry, int mode, struct nameidata *);
+extern int	affs_mkdir(struct inode *dir, struct dentry *dentry, int mode);
 extern int	affs_rmdir(struct inode *dir, struct dentry *dentry);
 extern int	affs_link(struct dentry *olddentry, struct inode *dir,
 			  struct dentry *dentry);
@@ -171,18 +171,18 @@ extern int	affs_rename(struct inode *old_dir, struct dentry *old_dentry,
 extern unsigned long		 affs_parent_ino(struct inode *dir);
 extern struct inode		*affs_new_inode(struct inode *dir);
 extern int			 affs_notify_change(struct dentry *dentry, struct iattr *attr);
-extern void			 affs_evict_inode(struct inode *inode);
+extern void			 affs_delete_inode(struct inode *inode);
+extern void			 affs_clear_inode(struct inode *inode);
 extern struct inode		*affs_iget(struct super_block *sb,
 					unsigned long ino);
-extern int			 affs_write_inode(struct inode *inode,
-					struct writeback_control *wbc);
+extern int			 affs_write_inode(struct inode *inode, int);
 extern int			 affs_add_entry(struct inode *dir, struct inode *inode, struct dentry *dentry, s32 type);
 
 /* file.c */
 
 void		affs_free_prealloc(struct inode *inode);
 extern void	affs_truncate(struct inode *);
-int		affs_file_fsync(struct file *, loff_t, loff_t, int);
+int		affs_file_fsync(struct file *, struct dentry *, int);
 
 /* dir.c */
 
@@ -201,7 +201,6 @@ extern const struct address_space_operations	 affs_aops;
 extern const struct address_space_operations	 affs_aops_ofs;
 
 extern const struct dentry_operations	 affs_dentry_operations;
-extern const struct dentry_operations	 affs_intl_dentry_operations;
 
 static inline void
 affs_set_blocksize(struct super_block *sb, int size)

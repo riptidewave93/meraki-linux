@@ -44,7 +44,6 @@
 #define ATOM_CMD_SETSCLK	0x0A
 #define ATOM_CMD_SETMCLK	0x0B
 #define ATOM_CMD_SETPCLK	0x0C
-#define ATOM_CMD_SPDFANCNTL	0x39
 
 #define ATOM_DATA_FWI_PTR	0xC
 #define ATOM_DATA_IIO_PTR	0x32
@@ -92,7 +91,6 @@
 #define ATOM_WS_AND_MASK	0x45
 #define ATOM_WS_FB_WINDOW	0x46
 #define ATOM_WS_ATTRIBUTES	0x47
-#define ATOM_WS_REGPTR  	0x48
 
 #define ATOM_IIO_NOP		0
 #define ATOM_IIO_START		1
@@ -114,8 +112,6 @@ struct card_info {
 	struct drm_device *dev;
 	void (* reg_write)(struct card_info *, uint32_t, uint32_t);   /*  filled by driver */
         uint32_t (* reg_read)(struct card_info *, uint32_t);          /*  filled by driver */
-	void (* ioreg_write)(struct card_info *, uint32_t, uint32_t);   /*  filled by driver */
-        uint32_t (* ioreg_read)(struct card_info *, uint32_t);          /*  filled by driver */
 	void (* mc_write)(struct card_info *, uint32_t, uint32_t);   /*  filled by driver */
         uint32_t (* mc_read)(struct card_info *, uint32_t);          /*  filled by driver */
 	void (* pll_write)(struct card_info *, uint32_t, uint32_t);   /*  filled by driver */
@@ -124,7 +120,6 @@ struct card_info {
 
 struct atom_context {
 	struct card_info *card;
-	struct mutex mutex;
 	void *bios;
 	uint32_t cmd_table, data_table;
 	uint16_t *iio;
@@ -137,21 +132,16 @@ struct atom_context {
 	uint8_t shift;
 	int cs_equal, cs_above;
 	int io_mode;
-	uint32_t *scratch;
-	int scratch_size_bytes;
 };
 
 extern int atom_debug;
 
 struct atom_context *atom_parse(struct card_info *, void *);
-int atom_execute_table(struct atom_context *, int, uint32_t *);
+void atom_execute_table(struct atom_context *, int, uint32_t *);
 int atom_asic_init(struct atom_context *);
 void atom_destroy(struct atom_context *);
-bool atom_parse_data_header(struct atom_context *ctx, int index, uint16_t *size,
-			    uint8_t *frev, uint8_t *crev, uint16_t *data_start);
-bool atom_parse_cmd_header(struct atom_context *ctx, int index,
-			   uint8_t *frev, uint8_t *crev);
-int atom_allocate_fb_scratch(struct atom_context *ctx);
+void atom_parse_data_header(struct atom_context *ctx, int index, uint16_t *size, uint8_t *frev, uint8_t *crev, uint16_t *data_start);
+void atom_parse_cmd_header(struct atom_context *ctx, int index, uint8_t *frev, uint8_t *crev);
 #include "atom-types.h"
 #include "atombios.h"
 #include "ObjectID.h"

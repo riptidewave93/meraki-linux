@@ -22,7 +22,6 @@
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/pci.h>
-#include <linux/module.h>
 #include <sound/core.h>
 #include "hda_codec.h"
 #include "hda_local.h"
@@ -41,7 +40,7 @@ struct ca0110_spec {
 	hda_nid_t dig_out;
 	hda_nid_t dig_in;
 	unsigned int num_inputs;
-	char input_labels[AUTO_PIN_LAST][32];
+	const char *input_labels[AUTO_PIN_LAST];
 	struct hda_pcm pcm_rec[2];	/* PCM information */
 };
 
@@ -135,7 +134,7 @@ static int ca0110_capture_pcm_cleanup(struct hda_pcm_stream *hinfo,
 /*
  */
 
-static const char * const dirstr[2] = { "Playback", "Capture" };
+static char *dirstr[2] = { "Playback", "Capture" };
 
 static int _add_switch(struct hda_codec *codec, hda_nid_t nid, const char *pfx,
 		       int chan, int dir)
@@ -145,7 +144,7 @@ static int _add_switch(struct hda_codec *codec, hda_nid_t nid, const char *pfx,
 	struct snd_kcontrol_new knew =
 		HDA_CODEC_MUTE_MONO(namestr, nid, chan, 0, type);
 	sprintf(namestr, "%s %s Switch", pfx, dirstr[dir]);
-	return snd_hda_ctl_add(codec, nid, snd_ctl_new1(&knew, codec));
+	return snd_hda_ctl_add(codec, snd_ctl_new1(&knew, codec));
 }
 
 static int _add_volume(struct hda_codec *codec, hda_nid_t nid, const char *pfx,
@@ -156,7 +155,7 @@ static int _add_volume(struct hda_codec *codec, hda_nid_t nid, const char *pfx,
 	struct snd_kcontrol_new knew =
 		HDA_CODEC_VOLUME_MONO(namestr, nid, chan, 0, type);
 	sprintf(namestr, "%s %s Volume", pfx, dirstr[dir]);
-	return snd_hda_ctl_add(codec, nid, snd_ctl_new1(&knew, codec));
+	return snd_hda_ctl_add(codec, snd_ctl_new1(&knew, codec));
 }
 
 #define add_out_switch(codec, nid, pfx)	_add_switch(codec, nid, pfx, 3, 0)
@@ -172,7 +171,7 @@ static int ca0110_build_controls(struct hda_codec *codec)
 {
 	struct ca0110_spec *spec = codec->spec;
 	struct auto_pin_cfg *cfg = &spec->autocfg;
-	static const char * const prefix[AUTO_CFG_MAX_OUTS] = {
+	static char *prefix[AUTO_CFG_MAX_OUTS] = {
 		"Front", "Surround", NULL, "Side", "Multi"
 	};
 	hda_nid_t mutenid;
@@ -241,8 +240,7 @@ static int ca0110_build_controls(struct hda_codec *codec)
 	}
 
 	if (spec->dig_out) {
-		err = snd_hda_create_spdif_out_ctls(codec, spec->dig_out,
-						    spec->dig_out);
+		err = snd_hda_create_spdif_out_ctls(codec, spec->dig_out);
 		if (err < 0)
 			return err;
 		err = snd_hda_create_spdif_share_sw(codec, &spec->multiout);
@@ -261,7 +259,7 @@ static int ca0110_build_controls(struct hda_codec *codec)
 
 /*
  */
-static const struct hda_pcm_stream ca0110_pcm_analog_playback = {
+static struct hda_pcm_stream ca0110_pcm_analog_playback = {
 	.substreams = 1,
 	.channels_min = 2,
 	.channels_max = 8,
@@ -272,7 +270,7 @@ static const struct hda_pcm_stream ca0110_pcm_analog_playback = {
 	},
 };
 
-static const struct hda_pcm_stream ca0110_pcm_analog_capture = {
+static struct hda_pcm_stream ca0110_pcm_analog_capture = {
 	.substreams = 1,
 	.channels_min = 2,
 	.channels_max = 2,
@@ -282,7 +280,7 @@ static const struct hda_pcm_stream ca0110_pcm_analog_capture = {
 	},
 };
 
-static const struct hda_pcm_stream ca0110_pcm_digital_playback = {
+static struct hda_pcm_stream ca0110_pcm_digital_playback = {
 	.substreams = 1,
 	.channels_min = 2,
 	.channels_max = 2,
@@ -293,7 +291,7 @@ static const struct hda_pcm_stream ca0110_pcm_digital_playback = {
 	},
 };
 
-static const struct hda_pcm_stream ca0110_pcm_digital_capture = {
+static struct hda_pcm_stream ca0110_pcm_digital_capture = {
 	.substreams = 1,
 	.channels_min = 2,
 	.channels_max = 2,
@@ -391,7 +389,7 @@ static void ca0110_free(struct hda_codec *codec)
 	kfree(codec->spec);
 }
 
-static const struct hda_codec_ops ca0110_patch_ops = {
+static struct hda_codec_ops ca0110_patch_ops = {
 	.build_controls = ca0110_build_controls,
 	.build_pcms = ca0110_build_pcms,
 	.init = ca0110_init,
@@ -470,15 +468,13 @@ static void parse_input(struct hda_codec *codec)
 			spec->dig_in = nid;
 			continue;
 		}
-		for (j = 0; j < cfg->num_inputs; j++)
-			if (cfg->inputs[j].pin == pin)
+		for (j = 0; j < AUTO_PIN_LAST; j++)
+			if (cfg->input_pins[j] == pin)
 				break;
-		if (j >= cfg->num_inputs)
+		if (j >= AUTO_PIN_LAST)
 			continue;
 		spec->input_pins[n] = pin;
-		snd_hda_get_pin_label(codec, pin, cfg,
-				      spec->input_labels[n],
-				      sizeof(spec->input_labels[n]), NULL);
+		spec->input_labels[n] = auto_pin_cfg_labels[j];
 		spec->adcs[n] = nid;
 		n++;
 	}
@@ -493,7 +489,7 @@ static void parse_digital(struct hda_codec *codec)
 	if (cfg->dig_outs &&
 	    snd_hda_get_connections(codec, cfg->dig_out_pins[0],
 				    &spec->dig_out, 1) == 1)
-		spec->multiout.dig_out_nid = spec->dig_out;
+		spec->multiout.dig_out_nid = cfg->dig_out_pins[0];
 }
 
 static int ca0110_parse_auto_config(struct hda_codec *codec)
@@ -543,7 +539,7 @@ static int patch_ca0110(struct hda_codec *codec)
 /*
  * patch entries
  */
-static const struct hda_codec_preset snd_hda_preset_ca0110[] = {
+static struct hda_codec_preset snd_hda_preset_ca0110[] = {
 	{ .id = 0x1102000a, .name = "CA0110-IBG", .patch = patch_ca0110 },
 	{ .id = 0x1102000b, .name = "CA0110-IBG", .patch = patch_ca0110 },
 	{ .id = 0x1102000d, .name = "SB0880 X-Fi", .patch = patch_ca0110 },

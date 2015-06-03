@@ -1,6 +1,5 @@
 #include <linux/notifier.h>
 
-#include <xen/xen.h>
 #include <xen/xenbus.h>
 
 #include <asm/xen/hypervisor.h>
@@ -30,8 +29,7 @@ static int vcpu_online(unsigned int cpu)
 	sprintf(dir, "cpu/%u", cpu);
 	err = xenbus_scanf(XBT_NIL, dir, "availability", "%s", state);
 	if (err != 1) {
-		if (!xen_initial_domain())
-			printk(KERN_ERR "XENBUS: Unable to read cpu state\n");
+		printk(KERN_ERR "XENBUS: Unable to read cpu state\n");
 		return err;
 	}
 
@@ -88,7 +86,7 @@ static int setup_cpu_watcher(struct notifier_block *notifier,
 	for_each_possible_cpu(cpu) {
 		if (vcpu_online(cpu) == 0) {
 			(void)cpu_down(cpu);
-			set_cpu_present(cpu, false);
+			cpu_clear(cpu, cpu_present_map);
 		}
 	}
 

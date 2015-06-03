@@ -39,7 +39,6 @@
 #define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/ip.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/skbuff.h>
@@ -150,9 +149,10 @@ static int ip_vs_dh_init_svc(struct ip_vs_service *svc)
 	/* allocate the DH table for this service */
 	tbl = kmalloc(sizeof(struct ip_vs_dh_bucket)*IP_VS_DH_TAB_SIZE,
 		      GFP_ATOMIC);
-	if (tbl == NULL)
+	if (tbl == NULL) {
+		pr_err("%s(): no memory\n", __func__);
 		return -ENOMEM;
-
+	}
 	svc->sched_data = tbl;
 	IP_VS_DBG(6, "DH hash table (memory=%Zdbytes) allocated for "
 		  "current service\n",

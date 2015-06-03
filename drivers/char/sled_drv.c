@@ -134,7 +134,7 @@ void set_led_yellow(void)
     write_w83627_reg(0x07, 0xF4, (read_w83627_reg(0x07, 0xF4) & 0xFC) | 0x01); //rxF1[1]=0
 }
 
-static long sled_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static int sled_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
 {
     switch (cmd) {
         case IOCTL_LED_SET_STATUS:
@@ -159,9 +159,7 @@ static long sled_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
     return 0;
 }
 static const struct file_operations sled_fops = {
-    .owner = THIS_MODULE,
-    .unlocked_ioctl = sled_ioctl,
-    .compat_ioctl = sled_ioctl,
+    .ioctl      = sled_ioctl,
     .open       = sled_open,
     .release    = sled_release,
 };
@@ -169,7 +167,6 @@ static const struct file_operations sled_fops = {
 static struct miscdevice sled_miscdev = {
 	.fops		= &sled_fops,
 	.nodename	= "sled_drv",
-	.minor		= MISC_DYNAMIC_MINOR,
 };
 
 

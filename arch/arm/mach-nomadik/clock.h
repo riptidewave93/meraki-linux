@@ -11,5 +11,4 @@
 struct clk {
 	unsigned long		rate;
 };
-
-int __init clk_init(void);
+extern int nmdk_clk_create(struct clk *clk, const char *dev_id);

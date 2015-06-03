@@ -16,11 +16,10 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/i2c.h>
-#include <linux/i2c/mcs.h>
+#include <linux/i2c/mcs5000_ts.h>
 #include <linux/interrupt.h>
 #include <linux/input.h>
 #include <linux/irq.h>
-#include <linux/slab.h>
 
 /* Registers */
 #define MCS5000_TS_STATUS		0x00
@@ -105,7 +104,7 @@ enum mcs5000_ts_read_offset {
 struct mcs5000_ts_data {
 	struct i2c_client *client;
 	struct input_dev *input_dev;
-	const struct mcs_platform_data *platform_data;
+	const struct mcs5000_ts_platform_data *platform_data;
 };
 
 static irqreturn_t mcs5000_ts_interrupt(int irq, void *dev_id)
@@ -164,7 +163,7 @@ static irqreturn_t mcs5000_ts_interrupt(int irq, void *dev_id)
 
 static void mcs5000_ts_phys_init(struct mcs5000_ts_data *data)
 {
-	const struct mcs_platform_data *platform_data =
+	const struct mcs5000_ts_platform_data *platform_data =
 		data->platform_data;
 	struct i2c_client *client = data->client;
 
@@ -256,32 +255,31 @@ static int __devexit mcs5000_ts_remove(struct i2c_client *client)
 	free_irq(client->irq, data);
 	input_unregister_device(data->input_dev);
 	kfree(data);
+	i2c_set_clientdata(client, NULL);
 
 	return 0;
 }
 
 #ifdef CONFIG_PM
-static int mcs5000_ts_suspend(struct device *dev)
+static int mcs5000_ts_suspend(struct i2c_client *client, pm_message_t mesg)
 {
-	struct i2c_client *client = to_i2c_client(dev);
-
 	/* Touch sleep mode */
 	i2c_smbus_write_byte_data(client, MCS5000_TS_OP_MODE, OP_MODE_SLEEP);
 
 	return 0;
 }
 
-static int mcs5000_ts_resume(struct device *dev)
+static int mcs5000_ts_resume(struct i2c_client *client)
 {
-	struct i2c_client *client = to_i2c_client(dev);
 	struct mcs5000_ts_data *data = i2c_get_clientdata(client);
 
 	mcs5000_ts_phys_init(data);
 
 	return 0;
 }
-
-static SIMPLE_DEV_PM_OPS(mcs5000_ts_pm, mcs5000_ts_suspend, mcs5000_ts_resume);
+#else
+#define mcs5000_ts_suspend	NULL
+#define mcs5000_ts_resume	NULL
 #endif
 
 static const struct i2c_device_id mcs5000_ts_id[] = {
@@ -293,16 +291,26 @@ MODULE_DEVICE_TABLE(i2c, mcs5000_ts_id);
 static struct i2c_driver mcs5000_ts_driver = {
 	.probe		= mcs5000_ts_probe,
 	.remove		= __devexit_p(mcs5000_ts_remove),
+	.suspend	= mcs5000_ts_suspend,
+	.resume		= mcs5000_ts_resume,
 	.driver = {
 		.name = "mcs5000_ts",
-#ifdef CONFIG_PM
-		.pm   = &mcs5000_ts_pm,
-#endif
 	},
 	.id_table	= mcs5000_ts_id,
 };
 
-module_i2c_driver(mcs5000_ts_driver);
+static int __init mcs5000_ts_init(void)
+{
+	return i2c_add_driver(&mcs5000_ts_driver);
+}
+
+static void __exit mcs5000_ts_exit(void)
+{
+	i2c_del_driver(&mcs5000_ts_driver);
+}
+
+module_init(mcs5000_ts_init);
+module_exit(mcs5000_ts_exit);
 
 /* Module information */
 MODULE_AUTHOR("Joonyoung Shim <jy0922.shim@samsung.com>");

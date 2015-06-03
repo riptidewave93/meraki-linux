@@ -20,8 +20,6 @@
  */
 
 #include <linux/init.h>
-#include <linux/export.h>
-#include <linux/slab.h>
 #include <sound/core.h>
 #include "seq_system.h"
 #include "seq_timer.h"

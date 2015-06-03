@@ -1,7 +1,6 @@
 /* Core PCI functionality used only by PCI hotplug */
 
 #include <linux/pci.h>
-#include <linux/export.h>
 #include "pci.h"
 
 

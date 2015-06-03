@@ -32,19 +32,17 @@ fw-shipped-$(CONFIG_ADAPTEC_STARFIRE) += adaptec/starfire_rx.bin \
 					 adaptec/starfire_tx.bin
 fw-shipped-$(CONFIG_ATARI_DSP56K) += dsp56k/bootstrap.bin
 fw-shipped-$(CONFIG_ATM_AMBASSADOR) += atmsar11.fw
-fw-shipped-$(CONFIG_BNX2X) += bnx2x/bnx2x-e1-6.2.9.0.fw \
-			      bnx2x/bnx2x-e1h-6.2.9.0.fw \
-			      bnx2x/bnx2x-e2-6.2.9.0.fw
-fw-shipped-$(CONFIG_BNX2) += bnx2/bnx2-mips-09-6.2.1a.fw \
-			     bnx2/bnx2-rv2p-09-6.0.17.fw \
-			     bnx2/bnx2-rv2p-09ax-6.0.17.fw \
-			     bnx2/bnx2-mips-06-6.2.1.fw \
-			     bnx2/bnx2-rv2p-06-6.0.15.fw
+fw-shipped-$(CONFIG_BNX2X) += bnx2x-e1-5.0.21.0.fw bnx2x-e1h-5.0.21.0.fw
+fw-shipped-$(CONFIG_BNX2) += bnx2/bnx2-mips-09-5.0.0.j3.fw \
+			     bnx2/bnx2-rv2p-09-5.0.0.j3.fw \
+			     bnx2/bnx2-rv2p-09ax-5.0.0.j3.fw \
+			     bnx2/bnx2-mips-06-5.0.0.j3.fw \
+			     bnx2/bnx2-rv2p-06-5.0.0.j3.fw
 fw-shipped-$(CONFIG_CASSINI) += sun/cassini.bin
 fw-shipped-$(CONFIG_COMPUTONE) += intelliport2.bin
 fw-shipped-$(CONFIG_CHELSIO_T3) += cxgb3/t3b_psram-1.1.0.bin \
 				   cxgb3/t3c_psram-1.1.0.bin \
-				   cxgb3/t3fw-7.10.0.bin \
+				   cxgb3/t3fw-7.4.0.bin \
 				   cxgb3/ael2005_opt_edc.bin \
 				   cxgb3/ael2005_twx_edc.bin \
 				   cxgb3/ael2020_twx_edc.bin
@@ -71,8 +69,7 @@ fw-shipped-$(CONFIG_E100) += e100/d101m_ucode.bin e100/d101s_ucode.bin \
 fw-shipped-$(CONFIG_MYRI_SBUS) += myricom/lanai.bin
 fw-shipped-$(CONFIG_PCMCIA_PCNET) += cis/LA-PCM.cis cis/PCMLM28.cis \
 				     cis/DP83903.cis cis/NE2K.cis \
-				     cis/tamarack.cis cis/PE-200.cis \
-				     cis/PE520.cis
+				     cis/tamarack.cis cis/PE-200.cis
 fw-shipped-$(CONFIG_PCMCIA_3C589) += cis/3CXEM556.cis
 fw-shipped-$(CONFIG_PCMCIA_3C574) += cis/3CCFEM556.cis
 fw-shipped-$(CONFIG_SERIAL_8250_CS) += cis/MT5634ZLX.cis cis/RS-COM-2P.cis \
@@ -85,7 +82,6 @@ fw-shipped-$(CONFIG_SCSI_ADVANSYS) += advansys/mcode.bin advansys/38C1600.bin \
 fw-shipped-$(CONFIG_SCSI_QLOGIC_1280) += qlogic/1040.bin qlogic/1280.bin \
 					 qlogic/12160.bin
 fw-shipped-$(CONFIG_SCSI_QLOGICPTI) += qlogic/isp1000.bin
-fw-shipped-$(CONFIG_INFINIBAND_QIB) += qlogic/sd7220.fw
 fw-shipped-$(CONFIG_SMCTR) += tr_smctr.bin
 fw-shipped-$(CONFIG_SND_KORG1212) += korg/k1212.dsp
 fw-shipped-$(CONFIG_SND_MAESTRO3) += ess/maestro3_assp_kernel.fw \

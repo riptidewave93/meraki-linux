@@ -24,10 +24,8 @@
 
 #ifdef CONFIG_IPIPE
 
-#include <asm/bitsperlong.h>
-#include <mach/irq.h>
-
 #define IPIPE_NR_XIRQS		NR_IRQS
+#define IPIPE_IRQ_ISHIFT	5	/* 2^5 for 32bits arch. */
 
 /* Blackfin-specific, per-cpu pipeline status */
 #define IPIPE_SYNCDEFER_FLAG	15
@@ -44,31 +42,34 @@
 #define IPIPE_EVENT_INIT	(IPIPE_FIRST_EVENT + 4)
 #define IPIPE_EVENT_EXIT	(IPIPE_FIRST_EVENT + 5)
 #define IPIPE_EVENT_CLEANUP	(IPIPE_FIRST_EVENT + 6)
-#define IPIPE_EVENT_RETURN	(IPIPE_FIRST_EVENT + 7)
-#define IPIPE_LAST_EVENT	IPIPE_EVENT_RETURN
+#define IPIPE_LAST_EVENT	IPIPE_EVENT_CLEANUP
 #define IPIPE_NR_EVENTS		(IPIPE_LAST_EVENT + 1)
 
 #define IPIPE_TIMER_IRQ		IRQ_CORETMR
-
-#define __IPIPE_FEATURE_SYSINFO_V2	1
 
 #ifndef __ASSEMBLY__
 
 extern unsigned long __ipipe_root_status; /* Alias to ipipe_root_cpudom_var(status) */
 
-void __ipipe_stall_root(void);
+#define __ipipe_stall_root()						\
+	do {								\
+		volatile unsigned long *p = &__ipipe_root_status;	\
+		set_bit(0, p);						\
+	} while (0)
 
-unsigned long __ipipe_test_and_stall_root(void);
+#define __ipipe_test_and_stall_root()					\
+	({								\
+		volatile unsigned long *p = &__ipipe_root_status;	\
+		test_and_set_bit(0, p);					\
+	})
 
-unsigned long __ipipe_test_root(void);
-
-void __ipipe_lock_root(void);
-
-void __ipipe_unlock_root(void);
+#define __ipipe_test_root()					\
+	({							\
+		const unsigned long *p = &__ipipe_root_status;	\
+		test_bit(0, p);					\
+	})
 
 #endif /* !__ASSEMBLY__ */
-
-#define __IPIPE_FEATURE_SYSINFO_V2	1
 
 #endif /* CONFIG_IPIPE */
 

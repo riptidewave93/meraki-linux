@@ -17,7 +17,7 @@
 #include <asm/cache.h>
 #include <asm/tlb.h>
 
-void __cpuinit cpu_probe(void)
+int __init detect_cpu_and_cache_system(void)
 {
 	unsigned long long cir;
 
@@ -72,4 +72,6 @@ void __cpuinit cpu_probe(void)
 
 	/* Setup some I/D TLB defaults */
 	sh64_tlb_init();
+
+	return 0;
 }

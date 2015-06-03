@@ -1,6 +1,8 @@
 /*
  *  arch/arm/plat-mxc/include/mach/uncompress.h
  *
+ *
+ *
  *  Copyright (C) 1999 ARM Limited
  *  Copyright (C) Shane Nay (shane@minirl.com)
  *
@@ -13,15 +15,20 @@
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
  * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307  USA
  */
 #ifndef __ASM_ARCH_MXC_UNCOMPRESS_H__
 #define __ASM_ARCH_MXC_UNCOMPRESS_H__
 
 #define __MXC_BOOT_UNCOMPRESS
 
+#include <mach/hardware.h>
 #include <asm/mach-types.h>
 
-unsigned long uart_base;
+static unsigned long uart_base;
 
 #define UART(x) (*(volatile unsigned long *)(uart_base + (x)))
 
@@ -53,19 +60,13 @@ static void putc(int ch)
 	UART(TXR) = ch;
 }
 
-static inline void flush(void)
-{
-}
+#define flush() do { } while (0)
 
 #define MX1_UART1_BASE_ADDR	0x00206000
 #define MX25_UART1_BASE_ADDR	0x43f90000
 #define MX2X_UART1_BASE_ADDR	0x1000a000
 #define MX3X_UART1_BASE_ADDR	0x43F90000
 #define MX3X_UART2_BASE_ADDR	0x43F94000
-#define MX3X_UART5_BASE_ADDR	0x43FB4000
-#define MX51_UART1_BASE_ADDR	0x73fbc000
-#define MX50_UART1_BASE_ADDR	0x53fbc000
-#define MX53_UART1_BASE_ADDR	0x53fbc000
 
 static __inline__ void __arch_decomp_setup(unsigned long arch_id)
 {
@@ -82,9 +83,6 @@ static __inline__ void __arch_decomp_setup(unsigned long arch_id)
 	case MACH_TYPE_MX27ADS:
 	case MACH_TYPE_PCM038:
 	case MACH_TYPE_MX21ADS:
-	case MACH_TYPE_PCA100:
-	case MACH_TYPE_MXT_TD60:
-	case MACH_TYPE_IMX27IPCAM:
 		uart_base = MX2X_UART1_BASE_ADDR;
 		break;
 	case MACH_TYPE_MX31LITE:
@@ -96,30 +94,10 @@ static __inline__ void __arch_decomp_setup(unsigned long arch_id)
 	case MACH_TYPE_MX31ADS:
 	case MACH_TYPE_MX35_3DS:
 	case MACH_TYPE_PCM043:
-	case MACH_TYPE_LILLY1131:
-	case MACH_TYPE_VPR200:
-	case MACH_TYPE_EUKREA_CPUIMX35SD:
 		uart_base = MX3X_UART1_BASE_ADDR;
 		break;
 	case MACH_TYPE_MAGX_ZN5:
 		uart_base = MX3X_UART2_BASE_ADDR;
-		break;
-	case MACH_TYPE_BUG:
-		uart_base = MX3X_UART5_BASE_ADDR;
-		break;
-	case MACH_TYPE_MX51_BABBAGE:
-	case MACH_TYPE_EUKREA_CPUIMX51SD:
-	case MACH_TYPE_MX51_3DS:
-		uart_base = MX51_UART1_BASE_ADDR;
-		break;
-	case MACH_TYPE_MX50_RDP:
-		uart_base = MX50_UART1_BASE_ADDR;
-		break;
-	case MACH_TYPE_MX53_EVK:
-	case MACH_TYPE_MX53_LOCO:
-	case MACH_TYPE_MX53_SMD:
-	case MACH_TYPE_MX53_ARD:
-		uart_base = MX53_UART1_BASE_ADDR;
 		break;
 	default:
 		break;

@@ -2,14 +2,13 @@
 #include <linux/kernel.h>
 #include <linux/of.h>
 #include <linux/init.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/mod_devicetable.h>
 #include <linux/slab.h>
 #include <linux/errno.h>
 #include <linux/irq.h>
 #include <linux/of_device.h>
 #include <linux/of_platform.h>
-#include <asm/spitfire.h>
 
 #include "of_device_common.h"
 
@@ -311,10 +310,10 @@ static int __init use_1to1_mapping(struct device_node *pp)
 
 static int of_resource_verbose;
 
-static void __init build_device_resources(struct platform_device *op,
+static void __init build_device_resources(struct of_device *op,
 					  struct device *parent)
 {
-	struct platform_device *p_op;
+	struct of_device *p_op;
 	struct of_bus *bus;
 	int na, ns;
 	int index, num_reg;
@@ -323,11 +322,11 @@ static void __init build_device_resources(struct platform_device *op,
 	if (!parent)
 		return;
 
-	p_op = to_platform_device(parent);
-	bus = of_match_bus(p_op->dev.of_node);
-	bus->count_cells(op->dev.of_node, &na, &ns);
+	p_op = to_of_device(parent);
+	bus = of_match_bus(p_op->node);
+	bus->count_cells(op->node, &na, &ns);
 
-	preg = of_get_property(op->dev.of_node, bus->addr_prop_name, &num_reg);
+	preg = of_get_property(op->node, bus->addr_prop_name, &num_reg);
 	if (!preg || num_reg == 0)
 		return;
 
@@ -341,18 +340,16 @@ static void __init build_device_resources(struct platform_device *op,
 	if (num_reg > PROMREG_MAX) {
 		printk(KERN_WARNING "%s: Too many regs (%d), "
 		       "limiting to %d.\n",
-		       op->dev.of_node->full_name, num_reg, PROMREG_MAX);
+		       op->node->full_name, num_reg, PROMREG_MAX);
 		num_reg = PROMREG_MAX;
 	}
 
-	op->resource = op->archdata.resource;
-	op->num_resources = num_reg;
 	for (index = 0; index < num_reg; index++) {
 		struct resource *r = &op->resource[index];
 		u32 addr[OF_MAX_ADDR_CELLS];
 		const u32 *reg = (preg + (index * ((na + ns) * 4)));
-		struct device_node *dp = op->dev.of_node;
-		struct device_node *pp = p_op->dev.of_node;
+		struct device_node *dp = op->node;
+		struct device_node *pp = p_op->node;
 		struct of_bus *pbus, *dbus;
 		u64 size, result = OF_BAD_ADDR;
 		unsigned long flags;
@@ -400,7 +397,7 @@ static void __init build_device_resources(struct platform_device *op,
 
 		if (of_resource_verbose)
 			printk("%s reg[%d] -> %llx\n",
-			       op->dev.of_node->full_name, index,
+			       op->node->full_name, index,
 			       result);
 
 		if (result != OF_BAD_ADDR) {
@@ -411,7 +408,7 @@ static void __init build_device_resources(struct platform_device *op,
 			r->end = result + size - 1;
 			r->flags = flags;
 		}
-		r->name = op->dev.of_node->name;
+		r->name = op->node->name;
 	}
 }
 
@@ -460,7 +457,7 @@ apply_interrupt_map(struct device_node *dp, struct device_node *pp,
 		 *
 		 * Handle this by deciding that, if we didn't get a
 		 * match in the parent's 'interrupt-map', and the
-		 * parent is an IRQ translator, then use the parent as
+		 * parent is an IRQ translater, then use the parent as
 		 * our IRQ controller.
 		 */
 		if (pp->irq_trans)
@@ -529,11 +526,11 @@ static unsigned int __init pci_irq_swizzle(struct device_node *dp,
 
 static int of_irq_verbose;
 
-static unsigned int __init build_one_device_irq(struct platform_device *op,
+static unsigned int __init build_one_device_irq(struct of_device *op,
 						struct device *parent,
 						unsigned int irq)
 {
-	struct device_node *dp = op->dev.of_node;
+	struct device_node *dp = op->node;
 	struct device_node *pp, *ip;
 	unsigned int orig_irq = irq;
 	int nid;
@@ -578,7 +575,7 @@ static unsigned int __init build_one_device_irq(struct platform_device *op,
 
 			if (of_irq_verbose)
 				printk("%s: Apply [%s:%x] imap --> [%s:%x]\n",
-				       op->dev.of_node->full_name,
+				       op->node->full_name,
 				       pp->full_name, this_orig_irq,
 				       (iret ? iret->full_name : "NULL"), irq);
 
@@ -597,7 +594,7 @@ static unsigned int __init build_one_device_irq(struct platform_device *op,
 				if (of_irq_verbose)
 					printk("%s: PCI swizzle [%s] "
 					       "%x --> %x\n",
-					       op->dev.of_node->full_name,
+					       op->node->full_name,
 					       pp->full_name, this_orig_irq,
 					       irq);
 
@@ -614,28 +611,27 @@ static unsigned int __init build_one_device_irq(struct platform_device *op,
 	if (!ip)
 		return orig_irq;
 
-	irq = ip->irq_trans->irq_build(op->dev.of_node, irq,
+	irq = ip->irq_trans->irq_build(op->node, irq,
 				       ip->irq_trans->data);
 	if (of_irq_verbose)
 		printk("%s: Apply IRQ trans [%s] %x --> %x\n",
-		      op->dev.of_node->full_name, ip->full_name, orig_irq, irq);
+		       op->node->full_name, ip->full_name, orig_irq, irq);
 
 out:
 	nid = of_node_to_nid(dp);
 	if (nid != -1) {
-		cpumask_t numa_mask;
+		cpumask_t numa_mask = *cpumask_of_node(nid);
 
-		cpumask_copy(&numa_mask, cpumask_of_node(nid));
 		irq_set_affinity(irq, &numa_mask);
 	}
 
 	return irq;
 }
 
-static struct platform_device * __init scan_one_device(struct device_node *dp,
+static struct of_device * __init scan_one_device(struct device_node *dp,
 						 struct device *parent)
 {
-	struct platform_device *op = kzalloc(sizeof(*op), GFP_KERNEL);
+	struct of_device *op = kzalloc(sizeof(*op), GFP_KERNEL);
 	const unsigned int *irq;
 	struct dev_archdata *sd;
 	int len, i;
@@ -644,36 +640,43 @@ static struct platform_device * __init scan_one_device(struct device_node *dp,
 		return NULL;
 
 	sd = &op->dev.archdata;
+	sd->prom_node = dp;
 	sd->op = op;
 
-	op->dev.of_node = dp;
+	op->node = dp;
+
+	op->clock_freq = of_getintprop_default(dp, "clock-frequency",
+					       (25*1000*1000));
+	op->portid = of_getintprop_default(dp, "upa-portid", -1);
+	if (op->portid == -1)
+		op->portid = of_getintprop_default(dp, "portid", -1);
 
 	irq = of_get_property(dp, "interrupts", &len);
 	if (irq) {
-		op->archdata.num_irqs = len / 4;
+		op->num_irqs = len / 4;
 
 		/* Prevent overrunning the op->irqs[] array.  */
-		if (op->archdata.num_irqs > PROMINTR_MAX) {
+		if (op->num_irqs > PROMINTR_MAX) {
 			printk(KERN_WARNING "%s: Too many irqs (%d), "
 			       "limiting to %d.\n",
-			       dp->full_name, op->archdata.num_irqs, PROMINTR_MAX);
-			op->archdata.num_irqs = PROMINTR_MAX;
+			       dp->full_name, op->num_irqs, PROMINTR_MAX);
+			op->num_irqs = PROMINTR_MAX;
 		}
-		memcpy(op->archdata.irqs, irq, op->archdata.num_irqs * 4);
+		memcpy(op->irqs, irq, op->num_irqs * 4);
 	} else {
-		op->archdata.num_irqs = 0;
+		op->num_irqs = 0;
 	}
 
 	build_device_resources(op, parent);
-	for (i = 0; i < op->archdata.num_irqs; i++)
-		op->archdata.irqs[i] = build_one_device_irq(op, parent, op->archdata.irqs[i]);
+	for (i = 0; i < op->num_irqs; i++)
+		op->irqs[i] = build_one_device_irq(op, parent, op->irqs[i]);
 
 	op->dev.parent = parent;
-	op->dev.bus = &platform_bus_type;
+	op->dev.bus = &of_platform_bus_type;
 	if (!parent)
 		dev_set_name(&op->dev, "root");
 	else
-		dev_set_name(&op->dev, "%08x", dp->phandle);
+		dev_set_name(&op->dev, "%08x", dp->node);
 
 	if (of_device_register(op)) {
 		printk("%s: Could not register of device.\n",
@@ -688,7 +691,7 @@ static struct platform_device * __init scan_one_device(struct device_node *dp,
 static void __init scan_tree(struct device_node *dp, struct device *parent)
 {
 	while (dp) {
-		struct platform_device *op = scan_one_device(dp, parent);
+		struct of_device *op = scan_one_device(dp, parent);
 
 		if (op)
 			scan_tree(dp->child, &op->dev);
@@ -697,19 +700,30 @@ static void __init scan_tree(struct device_node *dp, struct device *parent)
 	}
 }
 
-static int __init scan_of_devices(void)
+static void __init scan_of_devices(void)
 {
 	struct device_node *root = of_find_node_by_path("/");
-	struct platform_device *parent;
+	struct of_device *parent;
 
 	parent = scan_one_device(root, NULL);
 	if (!parent)
-		return 0;
+		return;
 
 	scan_tree(root->child, &parent->dev);
-	return 0;
 }
-postcore_initcall(scan_of_devices);
+
+static int __init of_bus_driver_init(void)
+{
+	int err;
+
+	err = of_bus_type_init(&of_platform_bus_type, "of");
+	if (!err)
+		scan_of_devices();
+
+	return err;
+}
+
+postcore_initcall(of_bus_driver_init);
 
 static int __init of_debug(char *str)
 {

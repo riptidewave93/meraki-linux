@@ -31,13 +31,11 @@
  *		Jeff Garzik	:	PCI cleanups
  *		Tigran Aivazian	:	Restructured wdtpci_init_one() to handle
  *					failures
- *		Joel Becker	:	Added WDIOC_GET/SETTIMEOUT
+ *		Joel Becker 	:	Added WDIOC_GET/SETTIMEOUT
  *		Zwane Mwaikambo	:	Magic char closing, locking changes,
  *					cleanups
  *		Matt Domsch	:	nowayout module option
  */
-
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include <linux/interrupt.h>
 #include <linux/module.h>
@@ -55,9 +53,25 @@
 #include <linux/io.h>
 #include <linux/uaccess.h>
 
+#include <asm/system.h>
 
 #define WDT_IS_PCI
 #include "wd501p.h"
+
+#define PFX "wdt_pci: "
+
+/*
+ * Until Access I/O gets their application for a PCI vendor ID approved,
+ * I don't think that it's appropriate to move these constants into the
+ * regular pci_ids.h file. -- JPN 2000/01/18
+ */
+
+#ifndef PCI_VENDOR_ID_ACCESSIO
+#define PCI_VENDOR_ID_ACCESSIO 0x494f
+#endif
+#ifndef PCI_DEVICE_ID_WDG_CSM
+#define PCI_DEVICE_ID_WDG_CSM 0x22c0
+#endif
 
 /* We can only use 1 card due to the /dev/watchdog restriction */
 static int dev_count;
@@ -79,8 +93,8 @@ MODULE_PARM_DESC(heartbeat,
 		"Watchdog heartbeat in seconds. (0<heartbeat<65536, default="
 				__MODULE_STRING(WD_TIMO) ")");
 
-static bool nowayout = WATCHDOG_NOWAYOUT;
-module_param(nowayout, bool, 0);
+static int nowayout = WATCHDOG_NOWAYOUT;
+module_param(nowayout, int, 0);
 MODULE_PARM_DESC(nowayout,
 		"Watchdog cannot be stopped once started (default="
 				__MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
@@ -311,32 +325,33 @@ static irqreturn_t wdtpci_interrupt(int irq, void *dev_id)
 	status = inb(WDT_SR);
 	udelay(8);
 
-	pr_crit("status %d\n", status);
+	printk(KERN_CRIT PFX "status %d\n", status);
 
 	if (type == 501) {
 		if (!(status & WDC_SR_TGOOD)) {
-			pr_crit("Overheat alarm (%d)\n", inb(WDT_RT));
+			printk(KERN_CRIT PFX "Overheat alarm.(%d)\n",
+								inb(WDT_RT));
 			udelay(8);
 		}
 		if (!(status & WDC_SR_PSUOVER))
-			pr_crit("PSU over voltage\n");
+			printk(KERN_CRIT PFX "PSU over voltage.\n");
 		if (!(status & WDC_SR_PSUUNDR))
-			pr_crit("PSU under voltage\n");
+			printk(KERN_CRIT PFX "PSU under voltage.\n");
 		if (tachometer) {
 			if (!(status & WDC_SR_FANGOOD))
-				pr_crit("Possible fan fault\n");
+				printk(KERN_CRIT PFX "Possible fan fault.\n");
 		}
 	}
 	if (!(status & WDC_SR_WCCR)) {
 #ifdef SOFTWARE_REBOOT
 #ifdef ONLY_TESTING
-		pr_crit("Would Reboot\n");
+		printk(KERN_CRIT PFX "Would Reboot.\n");
 #else
-		pr_crit("Initiating system reboot\n");
+		printk(KERN_CRIT PFX "Initiating system reboot.\n");
 		emergency_restart(NULL);
 #endif
 #else
-		pr_crit("Reset in 5ms\n");
+		printk(KERN_CRIT PFX "Reset in 5ms.\n");
 #endif
 	}
 	spin_unlock(&wdtpci_lock);
@@ -397,7 +412,7 @@ static long wdtpci_ioctl(struct file *file, unsigned int cmd,
 	int new_heartbeat;
 	int status;
 
-	struct watchdog_info ident = {
+	static struct watchdog_info ident = {
 		.options =		WDIOF_SETTIMEOUT|
 					WDIOF_MAGICCLOSE|
 					WDIOF_KEEPALIVEPING,
@@ -482,7 +497,7 @@ static int wdtpci_release(struct inode *inode, struct file *file)
 	if (expect_close == 42) {
 		wdtpci_stop();
 	} else {
-		pr_crit("Unexpected close, not stopping timer!\n");
+		printk(KERN_CRIT PFX "Unexpected close, not stopping timer!");
 		wdtpci_ping();
 	}
 	expect_close = 0;
@@ -612,79 +627,84 @@ static int __devinit wdtpci_init_one(struct pci_dev *dev,
 
 	dev_count++;
 	if (dev_count > 1) {
-		pr_err("This driver only supports one device\n");
+		printk(KERN_ERR PFX "This driver only supports one device\n");
 		return -ENODEV;
 	}
 
 	if (type != 500 && type != 501) {
-		pr_err("unknown card type '%d'\n", type);
+		printk(KERN_ERR PFX "unknown card type '%d'.\n", type);
 		return -ENODEV;
 	}
 
 	if (pci_enable_device(dev)) {
-		pr_err("Not possible to enable PCI Device\n");
+		printk(KERN_ERR PFX "Not possible to enable PCI Device\n");
 		return -ENODEV;
 	}
 
 	if (pci_resource_start(dev, 2) == 0x0000) {
-		pr_err("No I/O-Address for card detected\n");
+		printk(KERN_ERR PFX "No I/O-Address for card detected\n");
 		ret = -ENODEV;
 		goto out_pci;
 	}
 
 	if (pci_request_region(dev, 2, "wdt_pci")) {
-		pr_err("I/O address 0x%llx already in use\n",
-		       (unsigned long long)pci_resource_start(dev, 2));
+		printk(KERN_ERR PFX "I/O address 0x%llx already in use\n",
+			(unsigned long long)pci_resource_start(dev, 2));
 		goto out_pci;
 	}
 
 	irq = dev->irq;
 	io = pci_resource_start(dev, 2);
 
-	if (request_irq(irq, wdtpci_interrupt, IRQF_SHARED,
+	if (request_irq(irq, wdtpci_interrupt, IRQF_DISABLED | IRQF_SHARED,
 			 "wdt_pci", &wdtpci_miscdev)) {
-		pr_err("IRQ %d is not free\n", irq);
+		printk(KERN_ERR PFX "IRQ %d is not free\n", irq);
 		goto out_reg;
 	}
 
-	pr_info("PCI-WDT500/501 (PCI-WDG-CSM) driver 0.10 at 0x%llx (Interrupt %d)\n",
-		(unsigned long long)io, irq);
+	printk(KERN_INFO
+	 "PCI-WDT500/501 (PCI-WDG-CSM) driver 0.10 at 0x%llx (Interrupt %d)\n",
+					(unsigned long long)io, irq);
 
 	/* Check that the heartbeat value is within its range;
 	   if not reset to the default */
 	if (wdtpci_set_heartbeat(heartbeat)) {
 		wdtpci_set_heartbeat(WD_TIMO);
-		pr_info("heartbeat value must be 0 < heartbeat < 65536, using %d\n",
-			WD_TIMO);
+		printk(KERN_INFO PFX
+		  "heartbeat value must be 0 < heartbeat < 65536, using %d\n",
+								WD_TIMO);
 	}
 
 	ret = register_reboot_notifier(&wdtpci_notifier);
 	if (ret) {
-		pr_err("cannot register reboot notifier (err=%d)\n", ret);
+		printk(KERN_ERR PFX
+			"cannot register reboot notifier (err=%d)\n", ret);
 		goto out_irq;
 	}
 
 	if (type == 501) {
 		ret = misc_register(&temp_miscdev);
 		if (ret) {
-			pr_err("cannot register miscdev on minor=%d (err=%d)\n",
-			       TEMP_MINOR, ret);
+			printk(KERN_ERR PFX
+			"cannot register miscdev on minor=%d (err=%d)\n",
+							TEMP_MINOR, ret);
 			goto out_rbt;
 		}
 	}
 
 	ret = misc_register(&wdtpci_miscdev);
 	if (ret) {
-		pr_err("cannot register miscdev on minor=%d (err=%d)\n",
-		       WATCHDOG_MINOR, ret);
+		printk(KERN_ERR PFX
+			"cannot register miscdev on minor=%d (err=%d)\n",
+						WATCHDOG_MINOR, ret);
 		goto out_misc;
 	}
 
-	pr_info("initialized. heartbeat=%d sec (nowayout=%d)\n",
+	printk(KERN_INFO PFX "initialized. heartbeat=%d sec (nowayout=%d)\n",
 		heartbeat, nowayout);
 	if (type == 501)
-		pr_info("Fan Tachometer is %s\n",
-			tachometer ? "Enabled" : "Disabled");
+		printk(KERN_INFO "wdt: Fan Tachometer is %s\n",
+				(tachometer ? "Enabled" : "Disabled"));
 
 	ret = 0;
 out:
@@ -720,10 +740,10 @@ static void __devexit wdtpci_remove_one(struct pci_dev *pdev)
 }
 
 
-static DEFINE_PCI_DEVICE_TABLE(wdtpci_pci_tbl) = {
+static struct pci_device_id wdtpci_pci_tbl[] = {
 	{
 		.vendor	   = PCI_VENDOR_ID_ACCESSIO,
-		.device	   = PCI_DEVICE_ID_ACCESSIO_WDG_CSM,
+		.device	   = PCI_DEVICE_ID_WDG_CSM,
 		.subvendor = PCI_ANY_ID,
 		.subdevice = PCI_ANY_ID,
 	},
@@ -757,7 +777,7 @@ static void __exit wdtpci_cleanup(void)
 
 
 /**
- *	wdtpci_init:
+ * 	wdtpci_init:
  *
  *	Set up the WDT watchdog board. All we have to do is grab the
  *	resources we require and bitch if anyone beat us to them.

@@ -69,7 +69,12 @@ static inline void _tlbil_va(unsigned long address, unsigned int pid,
 }
 #endif /* CONIFG_8xx */
 
-#if defined(CONFIG_PPC_BOOK3E) || defined(CONFIG_PPC_47x)
+/*
+ * As of today, we don't support tlbivax broadcast on any
+ * implementation. When that becomes the case, this will be
+ * an extern.
+ */
+#ifdef CONFIG_PPC_BOOK3E
 extern void _tlbivax_bcast(unsigned long address, unsigned int pid,
 			   unsigned int tsize, unsigned int ind);
 #else
@@ -93,13 +98,23 @@ extern void _tlbia(void);
 
 #ifdef CONFIG_PPC32
 
+struct tlbcam {
+	u32	MAS0;
+	u32	MAS1;
+	u32	MAS2;
+	u32	MAS3;
+	u32	MAS7;
+};
+
 extern void mapin_ram(void);
 extern int map_page(unsigned long va, phys_addr_t pa, int flags);
 extern void setbat(int index, unsigned long virt, phys_addr_t phys,
 		   unsigned int size, int flags);
+extern void settlbcam(int index, unsigned long virt, phys_addr_t phys,
+		      unsigned int size, int flags, unsigned int pid);
+extern void invalidate_tlbcam_entry(int index);
 
 extern int __map_without_bats;
-extern int __allow_ioremap_reserved;
 extern unsigned long ioremap_base;
 extern unsigned int rtas_data, rtas_size;
 
@@ -121,45 +136,24 @@ extern phys_addr_t total_lowmem;
 extern phys_addr_t memstart_addr;
 extern phys_addr_t lowmem_end_addr;
 
-#ifdef CONFIG_WII
-extern unsigned long wii_hole_start;
-extern unsigned long wii_hole_size;
-
-extern unsigned long wii_mmu_mapin_mem2(unsigned long top);
-extern void wii_memory_fixups(void);
-#endif
-
 /* ...and now those things that may be slightly different between processor
  * architectures.  -- Dan
  */
 #if defined(CONFIG_8xx)
 #define MMU_init_hw()		do { } while(0)
-#define mmu_mapin_ram(top)	(0UL)
+#define mmu_mapin_ram()		(0UL)
 
 #elif defined(CONFIG_4xx)
 extern void MMU_init_hw(void);
-extern unsigned long mmu_mapin_ram(unsigned long top);
+extern unsigned long mmu_mapin_ram(void);
 
-#elif defined(CONFIG_PPC_FSL_BOOK3E)
-extern unsigned long map_mem_in_cams(unsigned long ram, int max_cam_idx);
-extern unsigned long calc_cam_sz(unsigned long ram, unsigned long virt,
-				 phys_addr_t phys);
-#ifdef CONFIG_PPC32
+#elif defined(CONFIG_FSL_BOOKE)
 extern void MMU_init_hw(void);
-extern unsigned long mmu_mapin_ram(unsigned long top);
+extern unsigned long mmu_mapin_ram(void);
 extern void adjust_total_lowmem(void);
-#endif
-extern void loadcam_entry(unsigned int index);
 
-struct tlbcam {
-	u32	MAS0;
-	u32	MAS1;
-	unsigned long	MAS2;
-	u32	MAS3;
-	u32	MAS7;
-};
 #elif defined(CONFIG_PPC32)
 /* anything 32-bit except 4xx or 8xx */
 extern void MMU_init_hw(void);
-extern unsigned long mmu_mapin_ram(unsigned long top);
+extern unsigned long mmu_mapin_ram(void);
 #endif

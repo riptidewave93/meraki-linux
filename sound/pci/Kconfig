@@ -1,10 +1,5 @@
 # ALSA PCI drivers
 
-config SND_TEA575X
-	tristate
-	depends on SND_FM801_TEA575X_BOOL || SND_ES1968_RADIO || RADIO_SF16FMR2 || RADIO_MAXIRADIO
-	default SND_FM801 || SND_ES1968 || RADIO_SF16FMR2 || RADIO_MAXIRADIO
-
 menuconfig SND_PCI
 	bool "PCI sound devices"
 	depends on PCI
@@ -30,7 +25,6 @@ config SND_ALS300
 	select SND_PCM
 	select SND_AC97_CODEC
 	select SND_OPL3_LIB
-	select ZONE_DMA
 	help
 	  Say 'Y' or 'M' to include support for Avance Logic ALS300/ALS300+
 
@@ -55,7 +49,6 @@ config SND_ALI5451
 	tristate "ALi M5451 PCI Audio Controller"
 	select SND_MPU401_UART
 	select SND_AC97_CODEC
-	select ZONE_DMA
 	help
 	  Say Y here to include support for the integrated AC97 sound
 	  device on motherboards using the ALi M5451 Audio Controller
@@ -64,18 +57,6 @@ config SND_ALI5451
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called snd-ali5451.
-
-config SND_ASIHPI
-	tristate "AudioScience ASIxxxx"
-	depends on X86
-	select FW_LOADER
-	select SND_PCM
-	select SND_HWDEP
-	help
-	  Say Y here to include support for AudioScience ASI sound cards.
-
-	  To compile this driver as a module, choose M here: the module
-	  will be called snd-asihpi.
 
 config SND_ATIIXP
 	tristate "ATI IXP AC97 Controller"
@@ -159,16 +140,9 @@ config SND_AZT3328
 	select SND_MPU401_UART
 	select SND_PCM
 	select SND_RAWMIDI
-	select SND_AC97_CODEC
-	select ZONE_DMA
 	help
 	  Say Y here to include support for Aztech AZF3328 (PCI168)
 	  soundcards.
-
-	  Supported features: AC97-"conformant" mixer, MPU401/OPL3, analog I/O
-	  (16bit/8bit, many sample rates [<= 66.2kHz], NO hardware mixing),
-	  Digital Enhanced Game Port, 1.024MHz multimedia sequencer timer,
-	  ext. codec (I2S port), onboard amp (4W/4Ohms/ch), suspend/resume.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called snd-azt3328.
@@ -221,28 +195,23 @@ config SND_CMIPCI
 
 config SND_OXYGEN_LIB
         tristate
-
-config SND_OXYGEN
-	tristate "C-Media 8786, 8787, 8788 (Oxygen)"
-	select SND_OXYGEN_LIB
 	select SND_PCM
 	select SND_MPU401_UART
+
+config SND_OXYGEN
+	tristate "C-Media 8788 (Oxygen)"
+	select SND_OXYGEN_LIB
 	help
 	  Say Y here to include support for sound cards based on the
 	  C-Media CMI8788 (Oxygen HD Audio) chip:
 	   * Asound A-8788
-	   * Asus Xonar DG
 	   * AuzenTech X-Meridian
-	   * AuzenTech X-Meridian 2G
 	   * Bgears b-Enspirer
 	   * Club3D Theatron DTS
 	   * HT-Omega Claro (plus)
 	   * HT-Omega Claro halo (XT)
-	   * Kuroutoshikou CMI8787-HG2PCI
 	   * Razer Barracuda AC-1
 	   * Sondigo Inferno
-	   * TempoTec/MediaTek HiFier Fantasia
-	   * TempoTec/MediaTek HiFier Serenade
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called snd-oxygen.
@@ -466,7 +435,6 @@ config SND_EMU10K1
 	select SND_HWDEP
 	select SND_RAWMIDI
 	select SND_AC97_CODEC
-	select ZONE_DMA
 	help
 	  Say Y to include support for Sound Blaster PCI 512, Live!,
 	  Audigy and E-mu APS (partially supported) soundcards.
@@ -482,7 +450,6 @@ config SND_EMU10K1X
 	tristate "Emu10k1X (Dell OEM Version)"
 	select SND_AC97_CODEC
 	select SND_RAWMIDI
-	select ZONE_DMA
 	help
 	  Say Y here to include support for the Dell OEM version of the
 	  Sound Blaster Live!.
@@ -516,7 +483,6 @@ config SND_ES1938
 	select SND_OPL3_LIB
 	select SND_MPU401_UART
 	select SND_AC97_CODEC
-	select ZONE_DMA
 	help
 	  Say Y here to include support for soundcards based on ESS Solo-1
 	  (ES1938, ES1946, ES1969) chips.
@@ -528,31 +494,12 @@ config SND_ES1968
 	tristate "ESS ES1968/1978 (Maestro-1/2/2E)"
 	select SND_MPU401_UART
 	select SND_AC97_CODEC
-	select ZONE_DMA
 	help
 	  Say Y here to include support for soundcards based on ESS Maestro
 	  1/2/2E chips.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called snd-es1968.
-
-config SND_ES1968_INPUT
-	bool "Enable input device for es1968 volume buttons"
-	depends on SND_ES1968
-	depends on INPUT=y || INPUT=SND_ES1968
-	help
-	  If you say Y here, you will get an input device which reports
-	  keypresses for the volume buttons connected to the es1968 chip.
-	  If you say N the buttons will directly control the master volume.
-	  It is recommended to say Y.
-
-config SND_ES1968_RADIO
-	bool "Enable TEA5757 radio tuner support for es1968"
-	depends on SND_ES1968
-	depends on VIDEO_V4L2=y || VIDEO_V4L2=SND_ES1968
-	help
-	  Say Y here to include support for TEA5757 radio tuner integrated on
-	  some MediaForte cards (e.g. SF64-PCE2).
 
 config SND_FM801
 	tristate "ForteMedia FM801"
@@ -572,8 +519,13 @@ config SND_FM801_TEA575X_BOOL
 	depends on VIDEO_V4L2=y || VIDEO_V4L2=SND_FM801
 	help
 	  Say Y here to include support for soundcards based on the ForteMedia
-	  FM801 chip with a TEA5757 tuner (MediaForte SF256-PCS, SF256-PCP and
-	  SF64-PCR) into the snd-fm801 driver.
+	  FM801 chip with a TEA5757 tuner connected to GPIO1-3 pins (Media
+	  Forte SF256-PCS-02) into the snd-fm801 driver.
+
+config SND_FM801_TEA575X
+	tristate
+	depends on SND_FM801_TEA575X_BOOL
+	default SND_FM801
 
 source "sound/pci/hda/Kconfig"
 
@@ -593,23 +545,31 @@ comment "Don't forget to add built-in firmwares for HDSP driver"
 	depends on SND_HDSP=y
 
 config SND_HDSPM
-	tristate "RME Hammerfall DSP MADI/RayDAT/AIO"
+	tristate "RME Hammerfall DSP MADI"
 	select SND_HWDEP
 	select SND_RAWMIDI
 	select SND_PCM
 	help
-	  Say Y here to include support for RME Hammerfall DSP MADI,
-	  RayDAT and AIO soundcards.
+	  Say Y here to include support for RME Hammerfall DSP MADI
+	  soundcards.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called snd-hdspm.
+
+config SND_HIFIER
+	tristate "TempoTec HiFier Fantasia"
+	select SND_OXYGEN_LIB
+	help
+	  Say Y here to include support for the MediaTek/TempoTec HiFier
+	  Fantasia sound card.
+
+	  To compile this driver as a module, choose M here: the module
+	  will be called snd-hifier.
 
 config SND_ICE1712
 	tristate "ICEnsemble ICE1712 (Envy24)"
 	select SND_MPU401_UART
 	select SND_AC97_CODEC
-	select BITREVERSE
-	select ZONE_DMA
 	help
 	  Say Y here to include support for soundcards based on the
 	  ICE1712 (Envy24) chip.
@@ -674,15 +634,6 @@ config SND_KORG1212
 	  To compile this driver as a module, choose M here: the module
 	  will be called snd-korg1212.
 
-config SND_LOLA
-	tristate "Digigram Lola"
-	select SND_PCM
-	help
-	  Say Y to include support for Digigram Lola boards.
-
-	  To compile this driver as a module, choose M here: the module
-	  will be called snd-lola.
-
 config SND_LX6464ES
 	tristate "Digigram LX6464ES"
 	select SND_PCM
@@ -696,23 +647,12 @@ config SND_LX6464ES
 config SND_MAESTRO3
 	tristate "ESS Allegro/Maestro3"
 	select SND_AC97_CODEC
-	select ZONE_DMA
 	help
 	  Say Y here to include support for soundcards based on ESS Maestro 3
 	  (Allegro) chips.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called snd-maestro3.
-
-config SND_MAESTRO3_INPUT
-	bool "Enable input device for maestro3 volume buttons"
-	depends on SND_MAESTRO3
-	depends on INPUT=y || INPUT=SND_MAESTRO3
-	help
-	  If you say Y here, you will get an input device which reports
-	  keypresses for the volume buttons connected to the maestro3 chip.
-	  If you say N the buttons will directly control the master volume.
-	  It is recommended to say Y.
 
 config SND_MIXART
 	tristate "Digigram miXart"
@@ -791,7 +731,6 @@ config SND_SIS7019
 	tristate "SiS 7019 Audio Accelerator"
 	depends on X86 && !X86_64
 	select SND_AC97_CODEC
-	select ZONE_DMA
 	help
 	  Say Y here to include support for the SiS 7019 Audio Accelerator.
 
@@ -803,7 +742,6 @@ config SND_SONICVIBES
 	select SND_OPL3_LIB
 	select SND_MPU401_UART
 	select SND_AC97_CODEC
-	select ZONE_DMA
 	help
 	  Say Y here to include support for soundcards based on the S3
 	  SonicVibes chip.
@@ -815,7 +753,6 @@ config SND_TRIDENT
 	tristate "Trident 4D-Wave DX/NX; SiS 7018"
 	select SND_MPU401_UART
 	select SND_AC97_CODEC
-	select ZONE_DMA
 	help
 	  Say Y here to include support for soundcards based on Trident
 	  4D-Wave DX/NX or SiS 7018 chips.
@@ -845,17 +782,13 @@ config SND_VIA82XX_MODEM
 	  will be called snd-via82xx-modem.
 
 config SND_VIRTUOSO
-	tristate "Asus Virtuoso 66/100/200 (Xonar)"
+	tristate "Asus Virtuoso 100/200 (Xonar)"
 	select SND_OXYGEN_LIB
-	select SND_PCM
-	select SND_MPU401_UART
-	select SND_JACK if INPUT=y || INPUT=SND
 	help
 	  Say Y here to include support for sound cards based on the
-	  Asus AV66/AV100/AV200 chips, i.e., Xonar D1, DX, D2, D2X, DS,
+	  Asus AV100/AV200 chips, i.e., Xonar D1, DX, D2, D2X,
 	  Essence ST (Deluxe), and Essence STX.
-	  Support for the HDAV1.3 (Deluxe) and HDAV1.3 Slim is experimental;
-	  for the Xense, missing.
+	  Support for the HDAV1.3 (Deluxe) is very experimental.
 
 	  To compile this driver as a module, choose M here: the module
 	  will be called snd-virtuoso.

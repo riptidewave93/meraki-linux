@@ -17,51 +17,22 @@
  */
 
 #include <linux/serial_reg.h>
-
-#include <mach/serial.h>
-
 #define UART_SHIFT	2
 
-		.pushsection .data
-davinci_uart_phys:	.word	0
-davinci_uart_virt:	.word	0
-		.popsection
-
-		.macro addruart, rp, rv, tmp
-
-		/* Use davinci_uart_phys/virt if already configured */
-10:		adr	\rp, 99f		@ get effective addr of 99f
-		ldr	\rv, [\rp]		@ get absolute addr of 99f
-		sub	\rv, \rv, \rp		@ offset between the two
-		ldr	\rp, [\rp, #4]		@ abs addr of omap_uart_phys
-		sub	\tmp, \rp, \rv		@ make it effective
-		ldr	\rp, [\tmp, #0]		@ davinci_uart_phys
-		ldr	\rv, [\tmp, #4]		@ davinci_uart_virt
-		cmp	\rp, #0			@ is port configured?
-		cmpne	\rv, #0
-		bne	100f			@ already configured
-
-		/* Check the debug UART address set in uncompress.h */
-		and	\rp, pc, #0xff000000
-		ldr	\rv, =DAVINCI_UART_INFO_OFS
-		add	\rp, \rp, \rv
-
-		/* Copy uart phys address from decompressor uart info */
-		ldr	\rv, [\rp, #0]
-		str	\rv, [\tmp, #0]
-
-		/* Copy uart virt address from decompressor uart info */
-		ldr	\rv, [\rp, #4]
-		str	\rv, [\tmp, #4]
-
-		b	10b
-
-		.align
-99:		.word	.
-		.word	davinci_uart_phys
-		.ltorg
-
-100:
+		.macro addruart, rx
+		mrc	p15, 0, \rx, c1, c0
+		tst	\rx, #1			@ MMU enabled?
+		moveq	\rx, #0x01000000	@ physical base address
+		movne	\rx, #0xfe000000	@ virtual base
+#if defined(CONFIG_ARCH_DAVINCI_DA8XX) && defined(CONFIG_ARCH_DAVINCI_DMx)
+#error Cannot enable DaVinci and DA8XX platforms concurrently
+#elif defined(CONFIG_MACH_DAVINCI_DA830_EVM) || \
+	defined(CONFIG_MACH_DAVINCI_DA850_EVM)
+		orr	\rx, \rx, #0x00d00000	@ physical base address
+		orr	\rx, \rx, #0x0000d000	@ of UART 2
+#else
+		orr	\rx, \rx, #0x00c20000   @ UART 0
+#endif
 		.endm
 
 		.macro	senduart,rd,rx

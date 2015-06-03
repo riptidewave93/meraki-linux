@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -53,34 +53,26 @@ ACPI_MODULE_NAME("utinit")
 /* Local prototypes */
 static void acpi_ut_terminate(void);
 
-#if (!ACPI_REDUCED_HARDWARE)
-
-static void acpi_ut_free_gpe_lists(void);
-
-#else
-
-#define acpi_ut_free_gpe_lists()
-#endif				/* !ACPI_REDUCED_HARDWARE */
-
-#if (!ACPI_REDUCED_HARDWARE)
 /******************************************************************************
  *
- * FUNCTION:    acpi_ut_free_gpe_lists
+ * FUNCTION:    acpi_ut_terminate
  *
  * PARAMETERS:  none
  *
  * RETURN:      none
  *
- * DESCRIPTION: Free global GPE lists
+ * DESCRIPTION: Free global memory
  *
  ******************************************************************************/
 
-static void acpi_ut_free_gpe_lists(void)
+static void acpi_ut_terminate(void)
 {
 	struct acpi_gpe_block_info *gpe_block;
 	struct acpi_gpe_block_info *next_gpe_block;
 	struct acpi_gpe_xrupt_info *gpe_xrupt_info;
 	struct acpi_gpe_xrupt_info *next_gpe_xrupt_info;
+
+	ACPI_FUNCTION_TRACE(ut_terminate);
 
 	/* Free global GPE blocks and related info structures */
 
@@ -99,27 +91,7 @@ static void acpi_ut_free_gpe_lists(void)
 		ACPI_FREE(gpe_xrupt_info);
 		gpe_xrupt_info = next_gpe_xrupt_info;
 	}
-}
-#endif				/* !ACPI_REDUCED_HARDWARE */
 
-/******************************************************************************
- *
- * FUNCTION:    acpi_ut_terminate
- *
- * PARAMETERS:  none
- *
- * RETURN:      none
- *
- * DESCRIPTION: Free global memory
- *
- ******************************************************************************/
-
-static void acpi_ut_terminate(void)
-{
-	ACPI_FUNCTION_TRACE(ut_terminate);
-
-	acpi_ut_free_gpe_lists();
-	acpi_ut_delete_address_lists();
 	return_VOID;
 }
 
@@ -145,10 +117,6 @@ void acpi_ut_subsystem_shutdown(void)
 	/* Close the acpi_event Handling */
 
 	acpi_ev_terminate();
-
-	/* Delete any dynamic _OSI interfaces */
-
-	acpi_ut_interface_terminate();
 #endif
 
 	/* Close the Namespace */

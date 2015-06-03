@@ -14,7 +14,6 @@
 #include <linux/module.h>
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
-#include <linux/slab.h>
 #include <net/datalink.h>
 #include <net/llc.h>
 #include <net/psnap.h>
@@ -147,6 +146,7 @@ struct datalink_proto *register_snap_client(const unsigned char *desc,
 out:
 	spin_unlock_bh(&snap_lock);
 
+	synchronize_net();
 	return proto;
 }
 

@@ -50,15 +50,12 @@
  * be incorporated into the next SCTP release.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/ip.h>
 #include <linux/ipv6.h>
 #include <linux/net.h>
 #include <linux/inet.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/inet_ecn.h>
 #include <linux/skbuff.h>
@@ -393,7 +390,8 @@ sctp_disposition_t sctp_sf_do_5_1B_init(const struct sctp_endpoint *ep,
 		goto nomem_init;
 
 	/* The call, sctp_process_init(), can fail on memory allocation.  */
-	if (!sctp_process_init(new_asoc, chunk, sctp_source(chunk),
+	if (!sctp_process_init(new_asoc, chunk->chunk_hdr->type,
+			       sctp_source(chunk),
 			       (sctp_init_chunk_t *)chunk->chunk_hdr,
 			       GFP_ATOMIC))
 		goto nomem_init;
@@ -550,7 +548,7 @@ sctp_disposition_t sctp_sf_do_5_1C_ack(const struct sctp_endpoint *ep,
 		 *
 		 * This means that if we only want to abort associations
 		 * in an authenticated way (i.e AUTH+ABORT), then we
-		 * can't destroy this association just because the packet
+		 * can't destroy this association just becuase the packet
 		 * was malformed.
 		 */
 		if (sctp_auth_recv_cid(SCTP_CID_ABORT, asoc))
@@ -724,7 +722,7 @@ sctp_disposition_t sctp_sf_do_5_1D_ce(const struct sctp_endpoint *ep,
 	 */
 	peer_init = &chunk->subh.cookie_hdr->c.peer_init[0];
 
-	if (!sctp_process_init(new_asoc, chunk,
+	if (!sctp_process_init(new_asoc, chunk->chunk_hdr->type,
 			       &chunk->subh.cookie_hdr->c.peer_addr,
 			       peer_init, GFP_ATOMIC))
 		goto nomem_init;
@@ -749,6 +747,7 @@ sctp_disposition_t sctp_sf_do_5_1D_ce(const struct sctp_endpoint *ep,
 
 		/* Make sure that we and the peer are AUTH capable */
 		if (!sctp_auth_enable || !new_asoc->peer.auth_capable) {
+			kfree_skb(chunk->auth_chunk);
 			sctp_association_free(new_asoc);
 			return sctp_sf_pdiscard(ep, asoc, type, arg, commands);
 		}
@@ -943,9 +942,18 @@ static sctp_disposition_t sctp_sf_heartbeat(const struct sctp_endpoint *ep,
 {
 	struct sctp_transport *transport = (struct sctp_transport *) arg;
 	struct sctp_chunk *reply;
+	sctp_sender_hb_info_t hbinfo;
+	size_t paylen = 0;
+
+	hbinfo.param_hdr.type = SCTP_PARAM_HEARTBEAT_INFO;
+	hbinfo.param_hdr.length = htons(sizeof(sctp_sender_hb_info_t));
+	hbinfo.daddr = transport->ipaddr;
+	hbinfo.sent_at = jiffies;
+	hbinfo.hb_nonce = transport->hb_nonce;
 
 	/* Send a heartbeat to our peer.  */
-	reply = sctp_make_heartbeat(asoc, transport);
+	paylen = sizeof(sctp_sender_hb_info_t);
+	reply = sctp_make_heartbeat(asoc, transport, &hbinfo, paylen);
 	if (!reply)
 		return SCTP_DISPOSITION_NOMEM;
 
@@ -991,15 +999,14 @@ sctp_disposition_t sctp_sf_sendbeat_8_3(const struct sctp_endpoint *ep,
 				sctp_sf_heartbeat(ep, asoc, type, arg,
 						  commands))
 			return SCTP_DISPOSITION_NOMEM;
-
 		/* Set transport error counter and association error counter
 		 * when sending heartbeat.
 		 */
+		sctp_add_cmd_sf(commands, SCTP_CMD_TRANSPORT_IDLE,
+				SCTP_TRANSPORT(transport));
 		sctp_add_cmd_sf(commands, SCTP_CMD_TRANSPORT_HB_SENT,
 				SCTP_TRANSPORT(transport));
 	}
-	sctp_add_cmd_sf(commands, SCTP_CMD_TRANSPORT_IDLE,
-			SCTP_TRANSPORT(transport));
 	sctp_add_cmd_sf(commands, SCTP_CMD_HB_TIMER_UPDATE,
 			SCTP_TRANSPORT(transport));
 
@@ -1132,16 +1139,18 @@ sctp_disposition_t sctp_sf_backbeat_8_3(const struct sctp_endpoint *ep,
 	if (unlikely(!link)) {
 		if (from_addr.sa.sa_family == AF_INET6) {
 			if (net_ratelimit())
-				pr_warn("%s association %p could not find address %pI6\n",
-					__func__,
-					asoc,
-					&from_addr.v6.sin6_addr);
+				printk(KERN_WARNING
+				    "%s association %p could not find address %pI6\n",
+				    __func__,
+				    asoc,
+				    &from_addr.v6.sin6_addr);
 		} else {
 			if (net_ratelimit())
-				pr_warn("%s association %p could not find address %pI4\n",
-					__func__,
-					asoc,
-					&from_addr.v4.sin_addr.s_addr);
+				printk(KERN_WARNING
+				    "%s association %p could not find address %pI4\n",
+				    __func__,
+				    asoc,
+				    &from_addr.v4.sin_addr.s_addr);
 		}
 		return SCTP_DISPOSITION_DISCARD;
 	}
@@ -1224,18 +1233,6 @@ out:
 	return 0;
 }
 
-static bool list_has_sctp_addr(const struct list_head *list,
-			       union sctp_addr *ipaddr)
-{
-	struct sctp_transport *addr;
-
-	list_for_each_entry(addr, list, transports) {
-		if (sctp_cmp_addr_exact(ipaddr, &addr->ipaddr))
-			return true;
-	}
-
-	return false;
-}
 /* A restart is occurring, check to make sure no new addresses
  * are being added as we may be under a takeover attack.
  */
@@ -1244,10 +1241,10 @@ static int sctp_sf_check_restart_addrs(const struct sctp_association *new_asoc,
 				       struct sctp_chunk *init,
 				       sctp_cmd_seq_t *commands)
 {
-	struct sctp_transport *new_addr;
-	int ret = 1;
+	struct sctp_transport *new_addr, *addr;
+	int found;
 
-	/* Implementor's Guide - Section 5.2.2
+	/* Implementor's Guide - Sectin 5.2.2
 	 * ...
 	 * Before responding the endpoint MUST check to see if the
 	 * unexpected INIT adds new addresses to the association. If new
@@ -1258,19 +1255,31 @@ static int sctp_sf_check_restart_addrs(const struct sctp_association *new_asoc,
 	/* Search through all current addresses and make sure
 	 * we aren't adding any new ones.
 	 */
+	new_addr = NULL;
+	found = 0;
+
 	list_for_each_entry(new_addr, &new_asoc->peer.transport_addr_list,
-			    transports) {
-		if (!list_has_sctp_addr(&asoc->peer.transport_addr_list,
-					&new_addr->ipaddr)) {
-			sctp_sf_send_restart_abort(&new_addr->ipaddr, init,
-						   commands);
-			ret = 0;
-			break;
+			transports) {
+		found = 0;
+		list_for_each_entry(addr, &asoc->peer.transport_addr_list,
+				transports) {
+			if (sctp_cmp_addr_exact(&new_addr->ipaddr,
+						&addr->ipaddr)) {
+				found = 1;
+				break;
+			}
 		}
+		if (!found)
+			break;
+	}
+
+	/* If a new address was added, ABORT the sender. */
+	if (!found && new_addr) {
+		sctp_sf_send_restart_abort(&new_addr->ipaddr, init, commands);
 	}
 
 	/* Return success if all addresses were found. */
-	return ret;
+	return found;
 }
 
 /* Populate the verification/tie tags based on overlapping INIT
@@ -1456,7 +1465,8 @@ static sctp_disposition_t sctp_sf_do_unexpected_init(
 	 * Verification Tag and Peers Verification tag into a reserved
 	 * place (local tie-tag and per tie-tag) within the state cookie.
 	 */
-	if (!sctp_process_init(new_asoc, chunk, sctp_source(chunk),
+	if (!sctp_process_init(new_asoc, chunk->chunk_hdr->type,
+			       sctp_source(chunk),
 			       (sctp_init_chunk_t *)chunk->chunk_hdr,
 			       GFP_ATOMIC))
 		goto nomem;
@@ -1537,7 +1547,7 @@ cleanup:
 }
 
 /*
- * Handle simultaneous INIT.
+ * Handle simultanous INIT.
  * This means we started an INIT and then we got an INIT request from
  * our peer.
  *
@@ -1685,7 +1695,8 @@ static sctp_disposition_t sctp_sf_do_dupcook_a(const struct sctp_endpoint *ep,
 	 */
 	peer_init = &chunk->subh.cookie_hdr->c.peer_init[0];
 
-	if (!sctp_process_init(new_asoc, chunk, sctp_source(chunk), peer_init,
+	if (!sctp_process_init(new_asoc, chunk->chunk_hdr->type,
+			       sctp_source(chunk), peer_init,
 			       GFP_ATOMIC))
 		goto nomem;
 
@@ -1712,7 +1723,7 @@ static sctp_disposition_t sctp_sf_do_dupcook_a(const struct sctp_endpoint *ep,
 
 		err = sctp_make_op_error(asoc, chunk,
 					 SCTP_ERROR_COOKIE_IN_SHUTDOWN,
-					 NULL, 0, 0);
+					 NULL, 0);
 		if (err)
 			sctp_add_cmd_sf(commands, SCTP_CMD_REPLY,
 					SCTP_CHUNK(err));
@@ -1720,20 +1731,10 @@ static sctp_disposition_t sctp_sf_do_dupcook_a(const struct sctp_endpoint *ep,
 		return SCTP_DISPOSITION_CONSUME;
 	}
 
-	/* For now, stop pending T3-rtx and SACK timers, fail any unsent/unacked
-	 * data. Consider the optional choice of resending of this data.
+	/* For now, fail any unsent/unacked data.  Consider the optional
+	 * choice of resending of this data.
 	 */
-	sctp_add_cmd_sf(commands, SCTP_CMD_T3_RTX_TIMERS_STOP, SCTP_NULL());
-	sctp_add_cmd_sf(commands, SCTP_CMD_TIMER_STOP,
-			SCTP_TO(SCTP_EVENT_TIMEOUT_SACK));
 	sctp_add_cmd_sf(commands, SCTP_CMD_PURGE_OUTQUEUE, SCTP_NULL());
-
-	/* Stop pending T4-rto timer, teardown ASCONF queue, ASCONF-ACK queue
-	 * and ASCONF-ACK cache.
-	 */
-	sctp_add_cmd_sf(commands, SCTP_CMD_TIMER_STOP,
-			SCTP_TO(SCTP_EVENT_TIMEOUT_T4_RTO));
-	sctp_add_cmd_sf(commands, SCTP_CMD_PURGE_ASCONF_QUEUE, SCTP_NULL());
 
 	repl = sctp_make_cookie_ack(new_asoc, chunk);
 	if (!repl)
@@ -1780,7 +1781,8 @@ static sctp_disposition_t sctp_sf_do_dupcook_b(const struct sctp_endpoint *ep,
 	 * side effects--it is safe to run them here.
 	 */
 	peer_init = &chunk->subh.cookie_hdr->c.peer_init[0];
-	if (!sctp_process_init(new_asoc, chunk, sctp_source(chunk), peer_init,
+	if (!sctp_process_init(new_asoc, chunk->chunk_hdr->type,
+			       sctp_source(chunk), peer_init,
 			       GFP_ATOMIC))
 		goto nomem;
 
@@ -2084,7 +2086,7 @@ sctp_disposition_t sctp_sf_shutdown_pending_abort(
 	 * RFC 2960, Section 3.3.7
 	 *    If an endpoint receives an ABORT with a format error or for an
 	 *    association that doesn't exist, it MUST silently discard it.
-	 * Because the length is "invalid", we can't really discard just
+	 * Becasue the length is "invalid", we can't really discard just
 	 * as we do not know its true length.  So, to be safe, discard the
 	 * packet.
 	 */
@@ -2125,7 +2127,7 @@ sctp_disposition_t sctp_sf_shutdown_sent_abort(const struct sctp_endpoint *ep,
 	 * RFC 2960, Section 3.3.7
 	 *    If an endpoint receives an ABORT with a format error or for an
 	 *    association that doesn't exist, it MUST silently discard it.
-	 * Because the length is "invalid", we can't really discard just
+	 * Becasue the length is "invalid", we can't really discard just
 	 * as we do not know its true length.  So, to be safe, discard the
 	 * packet.
 	 */
@@ -2386,7 +2388,7 @@ sctp_disposition_t sctp_sf_do_9_1_abort(const struct sctp_endpoint *ep,
 	 * RFC 2960, Section 3.3.7
 	 *    If an endpoint receives an ABORT with a format error or for an
 	 *    association that doesn't exist, it MUST silently discard it.
-	 * Because the length is "invalid", we can't really discard just
+	 * Becasue the length is "invalid", we can't really discard just
 	 * as we do not know its true length.  So, to be safe, discard the
 	 * packet.
 	 */
@@ -2417,15 +2419,8 @@ static sctp_disposition_t __sctp_sf_do_9_1_abort(const struct sctp_endpoint *ep,
 
 	/* See if we have an error cause code in the chunk.  */
 	len = ntohs(chunk->chunk_hdr->length);
-	if (len >= sizeof(struct sctp_chunkhdr) + sizeof(struct sctp_errhdr)) {
-
-		sctp_errhdr_t *err;
-		sctp_walk_errors(err, chunk->chunk_hdr);
-		if ((void *)err != (void *)chunk->chunk_end)
-			return sctp_sf_pdiscard(ep, asoc, type, arg, commands);
-
+	if (len >= sizeof(struct sctp_chunkhdr) + sizeof(struct sctp_errhdr))
 		error = ((sctp_errhdr_t *)chunk->skb->data)->cause;
-	}
 
 	sctp_add_cmd_sf(commands, SCTP_CMD_SET_SK_ERR, SCTP_ERROR(ECONNRESET));
 	/* ASSOC_FAILED will DELETE_TCB. */
@@ -2460,7 +2455,7 @@ sctp_disposition_t sctp_sf_cookie_wait_abort(const struct sctp_endpoint *ep,
 	 * RFC 2960, Section 3.3.7
 	 *    If an endpoint receives an ABORT with a format error or for an
 	 *    association that doesn't exist, it MUST silently discard it.
-	 * Because the length is "invalid", we can't really discard just
+	 * Becasue the length is "invalid", we can't really discard just
 	 * as we do not know its true length.  So, to be safe, discard the
 	 * packet.
 	 */
@@ -2882,7 +2877,6 @@ sctp_disposition_t sctp_sf_eat_data_6_2(const struct sctp_endpoint *ep,
 					sctp_cmd_seq_t *commands)
 {
 	struct sctp_chunk *chunk = arg;
-	sctp_arg_t force = SCTP_NOFORCE();
 	int error;
 
 	if (!sctp_vtag_verify(chunk, asoc)) {
@@ -2916,9 +2910,6 @@ sctp_disposition_t sctp_sf_eat_data_6_2(const struct sctp_endpoint *ep,
 		BUG();
 	}
 
-	if (chunk->chunk_hdr->flags & SCTP_DATA_SACK_IMM)
-		force = SCTP_FORCE();
-
 	if (asoc->autoclose) {
 		sctp_add_cmd_sf(commands, SCTP_CMD_TIMER_RESTART,
 				SCTP_TO(SCTP_EVENT_TIMEOUT_AUTOCLOSE));
@@ -2947,7 +2938,7 @@ sctp_disposition_t sctp_sf_eat_data_6_2(const struct sctp_endpoint *ep,
 	 * more aggressive than the following algorithms allow.
 	 */
 	if (chunk->end_of_packet)
-		sctp_add_cmd_sf(commands, SCTP_CMD_GEN_SACK, force);
+		sctp_add_cmd_sf(commands, SCTP_CMD_GEN_SACK, SCTP_NOFORCE());
 
 	return SCTP_DISPOSITION_CONSUME;
 
@@ -2972,7 +2963,7 @@ discard_force:
 
 discard_noforce:
 	if (chunk->end_of_packet)
-		sctp_add_cmd_sf(commands, SCTP_CMD_GEN_SACK, force);
+		sctp_add_cmd_sf(commands, SCTP_CMD_GEN_SACK, SCTP_NOFORCE());
 
 	return SCTP_DISPOSITION_DISCARD;
 consume:
@@ -3216,7 +3207,6 @@ sctp_disposition_t sctp_sf_operr_notify(const struct sctp_endpoint *ep,
 					sctp_cmd_seq_t *commands)
 {
 	struct sctp_chunk *chunk = arg;
-	sctp_errhdr_t *err;
 
 	if (!sctp_vtag_verify(chunk, asoc))
 		return sctp_sf_pdiscard(ep, asoc, type, arg, commands);
@@ -3225,10 +3215,6 @@ sctp_disposition_t sctp_sf_operr_notify(const struct sctp_endpoint *ep,
 	if (!sctp_chunk_length_valid(chunk, sizeof(sctp_operr_chunk_t)))
 		return sctp_sf_violation_chunklen(ep, asoc, type, arg,
 						  commands);
-	sctp_walk_errors(err, chunk->chunk_hdr);
-	if ((void *)err != (void *)chunk->chunk_end)
-		return sctp_sf_violation_paramlen(ep, asoc, type, arg,
-						  (void *)err, commands);
 
 	sctp_add_cmd_sf(commands, SCTP_CMD_PROCESS_OPERR,
 			SCTP_CHUNK(chunk));
@@ -3337,10 +3323,8 @@ sctp_disposition_t sctp_sf_ootb(const struct sctp_endpoint *ep,
 	struct sctp_chunk *chunk = arg;
 	struct sk_buff *skb = chunk->skb;
 	sctp_chunkhdr_t *ch;
-	sctp_errhdr_t *err;
 	__u8 *ch_end;
 	int ootb_shut_ack = 0;
-	int ootb_cookie_ack = 0;
 
 	SCTP_INC_STATS(SCTP_MIB_OUTOFBLUES);
 
@@ -3365,23 +3349,6 @@ sctp_disposition_t sctp_sf_ootb(const struct sctp_endpoint *ep,
 		if (SCTP_CID_ABORT == ch->type)
 			return sctp_sf_pdiscard(ep, asoc, type, arg, commands);
 
-		/* RFC 8.4, 7) If the packet contains a "Stale cookie" ERROR
-		 * or a COOKIE ACK the SCTP Packet should be silently
-		 * discarded.
-		 */
-
-		if (SCTP_CID_COOKIE_ACK == ch->type)
-			ootb_cookie_ack = 1;
-
-		if (SCTP_CID_ERROR == ch->type) {
-			sctp_walk_errors(err, ch) {
-				if (SCTP_ERROR_STALE_COOKIE == err->cause) {
-					ootb_cookie_ack = 1;
-					break;
-				}
-			}
-		}
-
 		/* Report violation if chunk len overflows */
 		ch_end = ((__u8 *)ch) + WORD_ROUND(ntohs(ch->length));
 		if (ch_end > skb_tail_pointer(skb))
@@ -3393,8 +3360,6 @@ sctp_disposition_t sctp_sf_ootb(const struct sctp_endpoint *ep,
 
 	if (ootb_shut_ack)
 		return sctp_sf_shut_8_4_5(ep, asoc, type, arg, commands);
-	else if (ootb_cookie_ack)
-		return sctp_sf_pdiscard(ep, asoc, type, arg, commands);
 	else
 		return sctp_sf_tabort_8_4_8(ep, asoc, type, arg, commands);
 }
@@ -3616,15 +3581,10 @@ sctp_disposition_t sctp_sf_do_asconf(const struct sctp_endpoint *ep,
 	 * To do this properly, we'll set the destination address of the chunk
 	 * and at the transmit time, will try look up the transport to use.
 	 * Since ASCONFs may be bundled, the correct transport may not be
-	 * created until we process the entire packet, thus this workaround.
+	 * created untill we process the entire packet, thus this workaround.
 	 */
 	asconf_ack->dest = chunk->source;
 	sctp_add_cmd_sf(commands, SCTP_CMD_REPLY, SCTP_CHUNK(asconf_ack));
-	if (asoc->new_transport) {
-	        sctp_sf_heartbeat(ep, asoc, type, asoc->new_transport,
-                    commands);
-		((struct sctp_association *)asoc)->new_transport = NULL;
-	}
 
 	return SCTP_DISPOSITION_CONSUME;
 }
@@ -3898,7 +3858,7 @@ gen_shutdown:
 }
 
 /*
- * SCTP-AUTH Section 6.3 Receiving authenticated chukns
+ * SCTP-AUTH Section 6.3 Receving authenticated chukns
  *
  *    The receiver MUST use the HMAC algorithm indicated in the HMAC
  *    Identifier field.  If this algorithm was not specified by the
@@ -4021,32 +3981,31 @@ sctp_disposition_t sctp_sf_eat_auth(const struct sctp_endpoint *ep,
 	auth_hdr = (struct sctp_authhdr *)chunk->skb->data;
 	error = sctp_sf_authenticate(ep, asoc, type, chunk);
 	switch (error) {
-	case SCTP_IERROR_AUTH_BAD_HMAC:
-		/* Generate the ERROR chunk and discard the rest
-		 * of the packet
-		 */
-		err_chunk = sctp_make_op_error(asoc, chunk,
-					       SCTP_ERROR_UNSUP_HMAC,
-					       &auth_hdr->hmac_id,
-					       sizeof(__u16), 0);
-		if (err_chunk) {
-			sctp_add_cmd_sf(commands, SCTP_CMD_REPLY,
-					SCTP_CHUNK(err_chunk));
-		}
-		/* Fall Through */
-	case SCTP_IERROR_AUTH_BAD_KEYID:
-	case SCTP_IERROR_BAD_SIG:
-		return sctp_sf_pdiscard(ep, asoc, type, arg, commands);
-
-	case SCTP_IERROR_PROTO_VIOLATION:
-		return sctp_sf_violation_chunklen(ep, asoc, type, arg,
-						  commands);
-
-	case SCTP_IERROR_NOMEM:
-		return SCTP_DISPOSITION_NOMEM;
-
-	default:			/* Prevent gcc warnings */
-		break;
+		case SCTP_IERROR_AUTH_BAD_HMAC:
+			/* Generate the ERROR chunk and discard the rest
+			 * of the packet
+			 */
+			err_chunk = sctp_make_op_error(asoc, chunk,
+							SCTP_ERROR_UNSUP_HMAC,
+							&auth_hdr->hmac_id,
+							sizeof(__u16));
+			if (err_chunk) {
+				sctp_add_cmd_sf(commands, SCTP_CMD_REPLY,
+						SCTP_CHUNK(err_chunk));
+			}
+			/* Fall Through */
+		case SCTP_IERROR_AUTH_BAD_KEYID:
+		case SCTP_IERROR_BAD_SIG:
+			return sctp_sf_pdiscard(ep, asoc, type, arg, commands);
+			break;
+		case SCTP_IERROR_PROTO_VIOLATION:
+			return sctp_sf_violation_chunklen(ep, asoc, type, arg,
+							  commands);
+			break;
+		case SCTP_IERROR_NOMEM:
+			return SCTP_DISPOSITION_NOMEM;
+		default:
+			break;
 	}
 
 	if (asoc->active_key_id != ntohs(auth_hdr->shkey_id)) {
@@ -4121,8 +4080,7 @@ sctp_disposition_t sctp_sf_unk_chunk(const struct sctp_endpoint *ep,
 		hdr = unk_chunk->chunk_hdr;
 		err_chunk = sctp_make_op_error(asoc, unk_chunk,
 					       SCTP_ERROR_UNKNOWN_CHUNK, hdr,
-					       WORD_ROUND(ntohs(hdr->length)),
-					       0);
+					       WORD_ROUND(ntohs(hdr->length)));
 		if (err_chunk) {
 			sctp_add_cmd_sf(commands, SCTP_CMD_REPLY,
 					SCTP_CHUNK(err_chunk));
@@ -4141,8 +4099,7 @@ sctp_disposition_t sctp_sf_unk_chunk(const struct sctp_endpoint *ep,
 		hdr = unk_chunk->chunk_hdr;
 		err_chunk = sctp_make_op_error(asoc, unk_chunk,
 					       SCTP_ERROR_UNKNOWN_CHUNK, hdr,
-					       WORD_ROUND(ntohs(hdr->length)),
-					       0);
+					       WORD_ROUND(ntohs(hdr->length)));
 		if (err_chunk) {
 			sctp_add_cmd_sf(commands, SCTP_CMD_REPLY,
 					SCTP_CHUNK(err_chunk));
@@ -4275,7 +4232,7 @@ static sctp_disposition_t sctp_sf_abort_violation(
 	 *
 	 * This means that if we only want to abort associations
 	 * in an authenticated way (i.e AUTH+ABORT), then we
-	 * can't destroy this association just because the packet
+	 * can't destroy this association just becuase the packet
 	 * was malformed.
 	 */
 	if (sctp_auth_recv_cid(SCTP_CID_ABORT, asoc))
@@ -4387,9 +4344,8 @@ static sctp_disposition_t sctp_sf_violation_chunklen(
 
 /*
  * Handle a protocol violation when the parameter length is invalid.
- * If the length is smaller than the minimum length of a given parameter,
- * or accumulated length in multi parameters exceeds the end of the chunk,
- * the length is considered as invalid.
+ * "Invalid" length is identified as smaller than the minimal length a
+ * given parameter can be.
  */
 static sctp_disposition_t sctp_sf_violation_paramlen(
 				     const struct sctp_endpoint *ep,
@@ -4447,9 +4403,9 @@ static sctp_disposition_t sctp_sf_violation_ctsn(
 }
 
 /* Handle protocol violation of an invalid chunk bundling.  For example,
- * when we have an association and we receive bundled INIT-ACK, or
+ * when we have an association and we recieve bundled INIT-ACK, or
  * SHUDOWN-COMPLETE, our peer is clearly violationg the "MUST NOT bundle"
- * statement from the specs.  Additionally, there might be an attacker
+ * statement from the specs.  Additinally, there might be an attacker
  * on the path and we may not want to continue this communication.
  */
 static sctp_disposition_t sctp_sf_violation_chunk(
@@ -5101,30 +5057,6 @@ sctp_disposition_t sctp_sf_ignore_primitive(
  ***************************************************************************/
 
 /*
- * When the SCTP stack has no more user data to send or retransmit, this
- * notification is given to the user. Also, at the time when a user app
- * subscribes to this event, if there is no data to be sent or
- * retransmit, the stack will immediately send up this notification.
- */
-sctp_disposition_t sctp_sf_do_no_pending_tsn(
-	const struct sctp_endpoint *ep,
-	const struct sctp_association *asoc,
-	const sctp_subtype_t type,
-	void *arg,
-	sctp_cmd_seq_t *commands)
-{
-	struct sctp_ulpevent *event;
-
-	event = sctp_ulpevent_make_sender_dry_event(asoc, GFP_ATOMIC);
-	if (!event)
-		return SCTP_DISPOSITION_NOMEM;
-
-	sctp_add_cmd_sf(commands, SCTP_CMD_EVENT_ULP, SCTP_ULPEVENT(event));
-
-	return SCTP_DISPOSITION_CONSUME;
-}
-
-/*
  * Start the shutdown negotiation.
  *
  * From Section 9.2:
@@ -5168,7 +5100,7 @@ sctp_disposition_t sctp_sf_do_9_2_start_shutdown(
 	 * The sender of the SHUTDOWN MAY also start an overall guard timer
 	 * 'T5-shutdown-guard' to bound the overall time for shutdown sequence.
 	 */
-	sctp_add_cmd_sf(commands, SCTP_CMD_TIMER_RESTART,
+	sctp_add_cmd_sf(commands, SCTP_CMD_TIMER_START,
 			SCTP_TO(SCTP_EVENT_TIMEOUT_T5_SHUTDOWN_GUARD));
 
 	if (asoc->autoclose)
@@ -5313,28 +5245,14 @@ sctp_disposition_t sctp_sf_do_6_3_3_rtx(const struct sctp_endpoint *ep,
 	SCTP_INC_STATS(SCTP_MIB_T3_RTX_EXPIREDS);
 
 	if (asoc->overall_error_count >= asoc->max_retrans) {
-		if (asoc->state == SCTP_STATE_SHUTDOWN_PENDING) {
-			/*
-			 * We are here likely because the receiver had its rwnd
-			 * closed for a while and we have not been able to
-			 * transmit the locally queued data within the maximum
-			 * retransmission attempts limit.  Start the T5
-			 * shutdown guard timer to give the receiver one last
-			 * chance and some additional time to recover before
-			 * aborting.
-			 */
-			sctp_add_cmd_sf(commands, SCTP_CMD_TIMER_START_ONCE,
-				SCTP_TO(SCTP_EVENT_TIMEOUT_T5_SHUTDOWN_GUARD));
-		} else {
-			sctp_add_cmd_sf(commands, SCTP_CMD_SET_SK_ERR,
-					SCTP_ERROR(ETIMEDOUT));
-			/* CMD_ASSOC_FAILED calls CMD_DELETE_TCB. */
-			sctp_add_cmd_sf(commands, SCTP_CMD_ASSOC_FAILED,
-					SCTP_PERR(SCTP_ERROR_NO_ERROR));
-			SCTP_INC_STATS(SCTP_MIB_ABORTEDS);
-			SCTP_DEC_STATS(SCTP_MIB_CURRESTAB);
-			return SCTP_DISPOSITION_DELETE_TCB;
-		}
+		sctp_add_cmd_sf(commands, SCTP_CMD_SET_SK_ERR,
+				SCTP_ERROR(ETIMEDOUT));
+		/* CMD_ASSOC_FAILED calls CMD_DELETE_TCB. */
+		sctp_add_cmd_sf(commands, SCTP_CMD_ASSOC_FAILED,
+				SCTP_PERR(SCTP_ERROR_NO_ERROR));
+		SCTP_INC_STATS(SCTP_MIB_ABORTEDS);
+		SCTP_DEC_STATS(SCTP_MIB_CURRESTAB);
+		return SCTP_DISPOSITION_DELETE_TCB;
 	}
 
 	/* E1) For the destination address for which the timer
@@ -6145,8 +6063,7 @@ static int sctp_eat_data(const struct sctp_association *asoc,
 
 		err = sctp_make_op_error(asoc, chunk, SCTP_ERROR_INV_STRM,
 					 &data_hdr->stream,
-					 sizeof(data_hdr->stream),
-					 sizeof(u16));
+					 sizeof(data_hdr->stream));
 		if (err)
 			sctp_add_cmd_sf(commands, SCTP_CMD_REPLY,
 					SCTP_CHUNK(err));

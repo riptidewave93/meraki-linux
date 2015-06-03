@@ -8,6 +8,7 @@
 
 #include <linux/slab.h>
 #include <linux/pagemap.h>
+#include <linux/smp_lock.h>
 
 #include "isofs.h"
 #include "rock.h"
@@ -288,16 +289,12 @@ eio:
 	goto out;
 }
 
-#define RR_REGARD_XA 1
-#define RR_RELOC_DE 2
-
 static int
 parse_rock_ridge_inode_internal(struct iso_directory_record *de,
-				struct inode *inode, int flags)
+				struct inode *inode, int regard_xa)
 {
 	int symlink_len = 0;
 	int cnt, sig;
-	unsigned int reloc_block;
 	struct inode *reloc;
 	struct rock_ridge *rr;
 	int rootflag;
@@ -309,7 +306,7 @@ parse_rock_ridge_inode_internal(struct iso_directory_record *de,
 
 	init_rock_state(&rs, inode);
 	setup_rock_ridge(de, inode, &rs);
-	if (flags & RR_REGARD_XA) {
+	if (regard_xa) {
 		rs.chr += 14;
 		rs.len -= 14;
 		if (rs.len < 0)
@@ -367,7 +364,7 @@ repeat:
 			break;
 		case SIG('P', 'X'):
 			inode->i_mode = isonum_733(rr->u.PX.mode);
-			set_nlink(inode, isonum_733(rr->u.PX.n_links));
+			inode->i_nlink = isonum_733(rr->u.PX.n_links);
 			inode->i_uid = isonum_733(rr->u.PX.uid);
 			inode->i_gid = isonum_733(rr->u.PX.gid);
 			break;
@@ -489,28 +486,18 @@ repeat:
 					"relocated directory\n");
 			goto out;
 		case SIG('C', 'L'):
-			if (flags & RR_RELOC_DE) {
-				printk(KERN_ERR
-				       "ISOFS: Recursive directory relocation "
-				       "is not supported\n");
-				goto eio;
-			}
-			reloc_block = isonum_733(rr->u.CL.location);
-			if (reloc_block == ISOFS_I(inode)->i_iget5_block &&
-			    ISOFS_I(inode)->i_iget5_offset == 0) {
-				printk(KERN_ERR
-				       "ISOFS: Directory relocation points to "
-				       "itself\n");
-				goto eio;
-			}
-			ISOFS_I(inode)->i_first_extent = reloc_block;
-			reloc = isofs_iget_reloc(inode->i_sb, reloc_block, 0);
+			ISOFS_I(inode)->i_first_extent =
+			    isonum_733(rr->u.CL.location);
+			reloc =
+			    isofs_iget(inode->i_sb,
+				       ISOFS_I(inode)->i_first_extent,
+				       0);
 			if (IS_ERR(reloc)) {
 				ret = PTR_ERR(reloc);
 				goto out;
 			}
 			inode->i_mode = reloc->i_mode;
-			set_nlink(inode, reloc->i_nlink);
+			inode->i_nlink = reloc->i_nlink;
 			inode->i_uid = reloc->i_uid;
 			inode->i_gid = reloc->i_gid;
 			inode->i_rdev = reloc->i_rdev;
@@ -531,7 +518,8 @@ repeat:
 			if (algo == SIG('p', 'z')) {
 				int block_shift =
 					isonum_711(&rr->u.ZF.parms[1]);
-				if (block_shift > 17) {
+				if (block_shift < PAGE_CACHE_SHIFT
+						|| block_shift > 17) {
 					printk(KERN_WARNING "isofs: "
 						"Can't handle ZF block "
 						"size of 2^%d\n",
@@ -651,11 +639,9 @@ static char *get_symlink_chunk(char *rpnt, struct rock_ridge *rr, char *plimit)
 	return rpnt;
 }
 
-int parse_rock_ridge_inode(struct iso_directory_record *de, struct inode *inode,
-			   int relocated)
+int parse_rock_ridge_inode(struct iso_directory_record *de, struct inode *inode)
 {
-	int flags = relocated ? RR_RELOC_DE : 0;
-	int result = parse_rock_ridge_inode_internal(de, inode, flags);
+	int result = parse_rock_ridge_inode_internal(de, inode, 0);
 
 	/*
 	 * if rockridge flag was reset and we didn't look for attributes
@@ -663,8 +649,7 @@ int parse_rock_ridge_inode(struct iso_directory_record *de, struct inode *inode,
 	 */
 	if ((ISOFS_SB(inode->i_sb)->s_rock_offset == -1)
 	    && (ISOFS_SB(inode->i_sb)->s_rock == 2)) {
-		result = parse_rock_ridge_inode_internal(de, inode,
-							 flags | RR_REGARD_XA);
+		result = parse_rock_ridge_inode_internal(de, inode, 14);
 	}
 	return result;
 }
@@ -677,7 +662,6 @@ static int rock_ridge_symlink_readpage(struct file *file, struct page *page)
 {
 	struct inode *inode = page->mapping->host;
 	struct iso_inode_info *ei = ISOFS_I(inode);
-	struct isofs_sb_info *sbi = ISOFS_SB(inode->i_sb);
 	char *link = kmap(page);
 	unsigned long bufsize = ISOFS_BUFFER_SIZE(inode);
 	struct buffer_head *bh;
@@ -690,11 +674,12 @@ static int rock_ridge_symlink_readpage(struct file *file, struct page *page)
 	struct rock_state rs;
 	int ret;
 
-	if (!sbi->s_rock)
+	if (!ISOFS_SB(inode->i_sb)->s_rock)
 		goto error;
 
 	init_rock_state(&rs, inode);
 	block = ei->i_iget5_block;
+	lock_kernel();
 	bh = sb_bread(inode->i_sb, block);
 	if (!bh)
 		goto out_noread;
@@ -764,6 +749,7 @@ repeat:
 		goto fail;
 	brelse(bh);
 	*rpnt = '\0';
+	unlock_kernel();
 	SetPageUptodate(page);
 	kunmap(page);
 	unlock_page(page);
@@ -780,6 +766,7 @@ out_bad_span:
 	printk("symlink spans iso9660 blocks\n");
 fail:
 	brelse(bh);
+	unlock_kernel();
 error:
 	SetPageError(page);
 	kunmap(page);

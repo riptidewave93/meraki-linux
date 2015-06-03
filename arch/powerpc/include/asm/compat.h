@@ -7,8 +7,7 @@
 #include <linux/types.h>
 #include <linux/sched.h>
 
-#define COMPAT_USER_HZ		100
-#define COMPAT_UTS_MACHINE	"ppc\0\0"
+#define COMPAT_USER_HZ	100
 
 typedef u32		compat_size_t;
 typedef s32		compat_ssize_t;
@@ -100,8 +99,7 @@ struct compat_statfs {
 	compat_fsid_t	f_fsid;
 	int		f_namelen;	/* SunOS ignores this field. */
 	int		f_frsize;
-	int		f_flags;
-	int		f_spare[4];
+	int		f_spare[5];
 };
 
 #define COMPAT_RLIM_OLD_INFINITY	0x7fffffff
@@ -141,10 +139,10 @@ static inline void __user *arch_compat_alloc_user_space(long len)
 	unsigned long usp = regs->gpr[1];
 
 	/*
-	 * We can't access below the stack pointer in the 32bit ABI and
+	 * We cant access below the stack pointer in the 32bit ABI and
 	 * can access 288 bytes in the 64bit ABI
 	 */
-	if (!is_32bit_task())
+	if (!(test_thread_flag(TIF_32BIT)))
 		usp -= 288;
 
 	return (void __user *) (usp - len);
@@ -214,7 +212,7 @@ struct compat_shmid64_ds {
 
 static inline int is_compat_task(void)
 {
-	return is_32bit_task();
+	return test_thread_flag(TIF_32BIT);
 }
 
 #endif /* __KERNEL__ */

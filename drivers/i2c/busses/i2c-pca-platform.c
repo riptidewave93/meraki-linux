@@ -23,9 +23,9 @@
 #include <linux/i2c-algo-pca.h>
 #include <linux/i2c-pca-platform.h>
 #include <linux/gpio.h>
-#include <linux/io.h>
 
 #include <asm/irq.h>
+#include <asm/io.h>
 
 struct i2c_pca_pf_data {
 	void __iomem			*reg_base;
@@ -286,8 +286,20 @@ static struct platform_driver i2c_pca_pf_driver = {
 	},
 };
 
-module_platform_driver(i2c_pca_pf_driver);
+static int __init i2c_pca_pf_init(void)
+{
+	return platform_driver_register(&i2c_pca_pf_driver);
+}
+
+static void __exit i2c_pca_pf_exit(void)
+{
+	platform_driver_unregister(&i2c_pca_pf_driver);
+}
 
 MODULE_AUTHOR("Wolfram Sang <w.sang@pengutronix.de>");
 MODULE_DESCRIPTION("I2C-PCA9564/PCA9665 platform driver");
 MODULE_LICENSE("GPL");
+
+module_init(i2c_pca_pf_init);
+module_exit(i2c_pca_pf_exit);
+

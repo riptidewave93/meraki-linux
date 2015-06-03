@@ -12,7 +12,6 @@
 #include <linux/sched.h>
 #include <linux/seq_file.h>
 #include <linux/debugfs.h>
-#include <linux/slab.h>
 #include <linux/hash.h>
 
 #define ODEBUG_HASH_BITS	14
@@ -27,14 +26,14 @@
 
 struct debug_bucket {
 	struct hlist_head	list;
-	raw_spinlock_t		lock;
+	spinlock_t		lock;
 };
 
 static struct debug_bucket	obj_hash[ODEBUG_HASH_SIZE];
 
 static struct debug_obj		obj_static_pool[ODEBUG_POOL_SIZE] __initdata;
 
-static DEFINE_RAW_SPINLOCK(pool_lock);
+static DEFINE_SPINLOCK(pool_lock);
 
 static HLIST_HEAD(obj_pool);
 
@@ -97,10 +96,10 @@ static int fill_pool(void)
 		if (!new)
 			return obj_pool_free;
 
-		raw_spin_lock_irqsave(&pool_lock, flags);
+		spin_lock_irqsave(&pool_lock, flags);
 		hlist_add_head(&new->node, &obj_pool);
 		obj_pool_free++;
-		raw_spin_unlock_irqrestore(&pool_lock, flags);
+		spin_unlock_irqrestore(&pool_lock, flags);
 	}
 	return obj_pool_free;
 }
@@ -134,14 +133,13 @@ alloc_object(void *addr, struct debug_bucket *b, struct debug_obj_descr *descr)
 {
 	struct debug_obj *obj = NULL;
 
-	raw_spin_lock(&pool_lock);
+	spin_lock(&pool_lock);
 	if (obj_pool.first) {
 		obj	    = hlist_entry(obj_pool.first, typeof(*obj), node);
 
 		obj->object = addr;
 		obj->descr  = descr;
 		obj->state  = ODEBUG_STATE_NONE;
-		obj->astate = 0;
 		hlist_del(&obj->node);
 
 		hlist_add_head(&obj->node, &b->list);
@@ -154,7 +152,7 @@ alloc_object(void *addr, struct debug_bucket *b, struct debug_obj_descr *descr)
 		if (obj_pool_free < obj_pool_min_free)
 			obj_pool_min_free = obj_pool_free;
 	}
-	raw_spin_unlock(&pool_lock);
+	spin_unlock(&pool_lock);
 
 	return obj;
 }
@@ -167,7 +165,7 @@ static void free_obj_work(struct work_struct *work)
 	struct debug_obj *obj;
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&pool_lock, flags);
+	spin_lock_irqsave(&pool_lock, flags);
 	while (obj_pool_free > ODEBUG_POOL_SIZE) {
 		obj = hlist_entry(obj_pool.first, typeof(*obj), node);
 		hlist_del(&obj->node);
@@ -176,11 +174,11 @@ static void free_obj_work(struct work_struct *work)
 		 * We release pool_lock across kmem_cache_free() to
 		 * avoid contention on pool_lock.
 		 */
-		raw_spin_unlock_irqrestore(&pool_lock, flags);
+		spin_unlock_irqrestore(&pool_lock, flags);
 		kmem_cache_free(obj_cache, obj);
-		raw_spin_lock_irqsave(&pool_lock, flags);
+		spin_lock_irqsave(&pool_lock, flags);
 	}
-	raw_spin_unlock_irqrestore(&pool_lock, flags);
+	spin_unlock_irqrestore(&pool_lock, flags);
 }
 
 /*
@@ -192,7 +190,7 @@ static void free_object(struct debug_obj *obj)
 	unsigned long flags;
 	int sched = 0;
 
-	raw_spin_lock_irqsave(&pool_lock, flags);
+	spin_lock_irqsave(&pool_lock, flags);
 	/*
 	 * schedule work when the pool is filled and the cache is
 	 * initialized:
@@ -202,7 +200,7 @@ static void free_object(struct debug_obj *obj)
 	hlist_add_head(&obj->node, &obj_pool);
 	obj_pool_free++;
 	obj_pool_used--;
-	raw_spin_unlock_irqrestore(&pool_lock, flags);
+	spin_unlock_irqrestore(&pool_lock, flags);
 	if (sched)
 		schedule_work(&debug_obj_work);
 }
@@ -223,9 +221,9 @@ static void debug_objects_oom(void)
 	printk(KERN_WARNING "ODEBUG: Out of memory. ODEBUG disabled\n");
 
 	for (i = 0; i < ODEBUG_HASH_SIZE; i++, db++) {
-		raw_spin_lock_irqsave(&db->lock, flags);
+		spin_lock_irqsave(&db->lock, flags);
 		hlist_move_list(&db->list, &freelist);
-		raw_spin_unlock_irqrestore(&db->lock, flags);
+		spin_unlock_irqrestore(&db->lock, flags);
 
 		/* Now free them */
 		hlist_for_each_entry_safe(obj, node, tmp, &freelist, node) {
@@ -249,17 +247,12 @@ static struct debug_bucket *get_bucket(unsigned long addr)
 
 static void debug_print_object(struct debug_obj *obj, char *msg)
 {
-	struct debug_obj_descr *descr = obj->descr;
 	static int limit;
 
-	if (limit < 5 && descr != descr_test) {
-		void *hint = descr->debug_hint ?
-			descr->debug_hint(obj->object) : NULL;
+	if (limit < 5 && obj->descr != descr_test) {
 		limit++;
-		WARN(1, KERN_ERR "ODEBUG: %s %s (active state %u) "
-				 "object type: %s hint: %pS\n",
-			msg, obj_states[obj->state], obj->astate,
-			descr->name, hint);
+		WARN(1, KERN_ERR "ODEBUG: %s %s object type: %s\n", msg,
+		       obj_states[obj->state], obj->descr->name);
 	}
 	debug_objects_warnings++;
 }
@@ -268,16 +261,12 @@ static void debug_print_object(struct debug_obj *obj, char *msg)
  * Try to repair the damage, so we have a better chance to get useful
  * debug output.
  */
-static int
+static void
 debug_object_fixup(int (*fixup)(void *addr, enum debug_obj_state state),
 		   void * addr, enum debug_obj_state state)
 {
-	int fixed = 0;
-
 	if (fixup)
-		fixed = fixup(addr, state);
-	debug_objects_fixups += fixed;
-	return fixed;
+		debug_objects_fixups += fixup(addr, state);
 }
 
 static void debug_object_is_on_stack(void *addr, int onstack)
@@ -314,14 +303,14 @@ __debug_object_init(void *addr, struct debug_obj_descr *descr, int onstack)
 
 	db = get_bucket((unsigned long) addr);
 
-	raw_spin_lock_irqsave(&db->lock, flags);
+	spin_lock_irqsave(&db->lock, flags);
 
 	obj = lookup_object(addr, db);
 	if (!obj) {
 		obj = alloc_object(addr, db, descr);
 		if (!obj) {
 			debug_objects_enabled = 0;
-			raw_spin_unlock_irqrestore(&db->lock, flags);
+			spin_unlock_irqrestore(&db->lock, flags);
 			debug_objects_oom();
 			return;
 		}
@@ -338,7 +327,7 @@ __debug_object_init(void *addr, struct debug_obj_descr *descr, int onstack)
 	case ODEBUG_STATE_ACTIVE:
 		debug_print_object(obj, "init");
 		state = obj->state;
-		raw_spin_unlock_irqrestore(&db->lock, flags);
+		spin_unlock_irqrestore(&db->lock, flags);
 		debug_object_fixup(descr->fixup_init, addr, state);
 		return;
 
@@ -349,7 +338,7 @@ __debug_object_init(void *addr, struct debug_obj_descr *descr, int onstack)
 		break;
 	}
 
-	raw_spin_unlock_irqrestore(&db->lock, flags);
+	spin_unlock_irqrestore(&db->lock, flags);
 }
 
 /**
@@ -390,16 +379,13 @@ void debug_object_activate(void *addr, struct debug_obj_descr *descr)
 	struct debug_bucket *db;
 	struct debug_obj *obj;
 	unsigned long flags;
-	struct debug_obj o = { .object = addr,
-			       .state = ODEBUG_STATE_NOTAVAILABLE,
-			       .descr = descr };
 
 	if (!debug_objects_enabled)
 		return;
 
 	db = get_bucket((unsigned long) addr);
 
-	raw_spin_lock_irqsave(&db->lock, flags);
+	spin_lock_irqsave(&db->lock, flags);
 
 	obj = lookup_object(addr, db);
 	if (obj) {
@@ -412,7 +398,7 @@ void debug_object_activate(void *addr, struct debug_obj_descr *descr)
 		case ODEBUG_STATE_ACTIVE:
 			debug_print_object(obj, "activate");
 			state = obj->state;
-			raw_spin_unlock_irqrestore(&db->lock, flags);
+			spin_unlock_irqrestore(&db->lock, flags);
 			debug_object_fixup(descr->fixup_activate, addr, state);
 			return;
 
@@ -422,19 +408,18 @@ void debug_object_activate(void *addr, struct debug_obj_descr *descr)
 		default:
 			break;
 		}
-		raw_spin_unlock_irqrestore(&db->lock, flags);
+		spin_unlock_irqrestore(&db->lock, flags);
 		return;
 	}
 
-	raw_spin_unlock_irqrestore(&db->lock, flags);
+	spin_unlock_irqrestore(&db->lock, flags);
 	/*
 	 * This happens when a static object is activated. We
 	 * let the type specific code decide whether this is
 	 * true or not.
 	 */
-	if (debug_object_fixup(descr->fixup_activate, addr,
-			   ODEBUG_STATE_NOTAVAILABLE))
-		debug_print_object(&o, "activate");
+	debug_object_fixup(descr->fixup_activate, addr,
+			   ODEBUG_STATE_NOTAVAILABLE);
 }
 
 /**
@@ -453,7 +438,7 @@ void debug_object_deactivate(void *addr, struct debug_obj_descr *descr)
 
 	db = get_bucket((unsigned long) addr);
 
-	raw_spin_lock_irqsave(&db->lock, flags);
+	spin_lock_irqsave(&db->lock, flags);
 
 	obj = lookup_object(addr, db);
 	if (obj) {
@@ -461,10 +446,7 @@ void debug_object_deactivate(void *addr, struct debug_obj_descr *descr)
 		case ODEBUG_STATE_INIT:
 		case ODEBUG_STATE_INACTIVE:
 		case ODEBUG_STATE_ACTIVE:
-			if (!obj->astate)
-				obj->state = ODEBUG_STATE_INACTIVE;
-			else
-				debug_print_object(obj, "deactivate");
+			obj->state = ODEBUG_STATE_INACTIVE;
 			break;
 
 		case ODEBUG_STATE_DESTROYED:
@@ -481,7 +463,7 @@ void debug_object_deactivate(void *addr, struct debug_obj_descr *descr)
 		debug_print_object(&o, "deactivate");
 	}
 
-	raw_spin_unlock_irqrestore(&db->lock, flags);
+	spin_unlock_irqrestore(&db->lock, flags);
 }
 
 /**
@@ -501,7 +483,7 @@ void debug_object_destroy(void *addr, struct debug_obj_descr *descr)
 
 	db = get_bucket((unsigned long) addr);
 
-	raw_spin_lock_irqsave(&db->lock, flags);
+	spin_lock_irqsave(&db->lock, flags);
 
 	obj = lookup_object(addr, db);
 	if (!obj)
@@ -516,7 +498,7 @@ void debug_object_destroy(void *addr, struct debug_obj_descr *descr)
 	case ODEBUG_STATE_ACTIVE:
 		debug_print_object(obj, "destroy");
 		state = obj->state;
-		raw_spin_unlock_irqrestore(&db->lock, flags);
+		spin_unlock_irqrestore(&db->lock, flags);
 		debug_object_fixup(descr->fixup_destroy, addr, state);
 		return;
 
@@ -527,7 +509,7 @@ void debug_object_destroy(void *addr, struct debug_obj_descr *descr)
 		break;
 	}
 out_unlock:
-	raw_spin_unlock_irqrestore(&db->lock, flags);
+	spin_unlock_irqrestore(&db->lock, flags);
 }
 
 /**
@@ -547,7 +529,7 @@ void debug_object_free(void *addr, struct debug_obj_descr *descr)
 
 	db = get_bucket((unsigned long) addr);
 
-	raw_spin_lock_irqsave(&db->lock, flags);
+	spin_lock_irqsave(&db->lock, flags);
 
 	obj = lookup_object(addr, db);
 	if (!obj)
@@ -557,102 +539,17 @@ void debug_object_free(void *addr, struct debug_obj_descr *descr)
 	case ODEBUG_STATE_ACTIVE:
 		debug_print_object(obj, "free");
 		state = obj->state;
-		raw_spin_unlock_irqrestore(&db->lock, flags);
+		spin_unlock_irqrestore(&db->lock, flags);
 		debug_object_fixup(descr->fixup_free, addr, state);
 		return;
 	default:
 		hlist_del(&obj->node);
-		raw_spin_unlock_irqrestore(&db->lock, flags);
+		spin_unlock_irqrestore(&db->lock, flags);
 		free_object(obj);
 		return;
 	}
 out_unlock:
-	raw_spin_unlock_irqrestore(&db->lock, flags);
-}
-
-/**
- * debug_object_assert_init - debug checks when object should be init-ed
- * @addr:	address of the object
- * @descr:	pointer to an object specific debug description structure
- */
-void debug_object_assert_init(void *addr, struct debug_obj_descr *descr)
-{
-	struct debug_bucket *db;
-	struct debug_obj *obj;
-	unsigned long flags;
-
-	if (!debug_objects_enabled)
-		return;
-
-	db = get_bucket((unsigned long) addr);
-
-	raw_spin_lock_irqsave(&db->lock, flags);
-
-	obj = lookup_object(addr, db);
-	if (!obj) {
-		struct debug_obj o = { .object = addr,
-				       .state = ODEBUG_STATE_NOTAVAILABLE,
-				       .descr = descr };
-
-		raw_spin_unlock_irqrestore(&db->lock, flags);
-		/*
-		 * Maybe the object is static.  Let the type specific
-		 * code decide what to do.
-		 */
-		if (debug_object_fixup(descr->fixup_assert_init, addr,
-				       ODEBUG_STATE_NOTAVAILABLE))
-			debug_print_object(&o, "assert_init");
-		return;
-	}
-
-	raw_spin_unlock_irqrestore(&db->lock, flags);
-}
-
-/**
- * debug_object_active_state - debug checks object usage state machine
- * @addr:	address of the object
- * @descr:	pointer to an object specific debug description structure
- * @expect:	expected state
- * @next:	state to move to if expected state is found
- */
-void
-debug_object_active_state(void *addr, struct debug_obj_descr *descr,
-			  unsigned int expect, unsigned int next)
-{
-	struct debug_bucket *db;
-	struct debug_obj *obj;
-	unsigned long flags;
-
-	if (!debug_objects_enabled)
-		return;
-
-	db = get_bucket((unsigned long) addr);
-
-	raw_spin_lock_irqsave(&db->lock, flags);
-
-	obj = lookup_object(addr, db);
-	if (obj) {
-		switch (obj->state) {
-		case ODEBUG_STATE_ACTIVE:
-			if (obj->astate == expect)
-				obj->astate = next;
-			else
-				debug_print_object(obj, "active_state");
-			break;
-
-		default:
-			debug_print_object(obj, "active_state");
-			break;
-		}
-	} else {
-		struct debug_obj o = { .object = addr,
-				       .state = ODEBUG_STATE_NOTAVAILABLE,
-				       .descr = descr };
-
-		debug_print_object(&o, "active_state");
-	}
-
-	raw_spin_unlock_irqrestore(&db->lock, flags);
+	spin_unlock_irqrestore(&db->lock, flags);
 }
 
 #ifdef CONFIG_DEBUG_OBJECTS_FREE
@@ -678,7 +575,7 @@ static void __debug_check_no_obj_freed(const void *address, unsigned long size)
 
 repeat:
 		cnt = 0;
-		raw_spin_lock_irqsave(&db->lock, flags);
+		spin_lock_irqsave(&db->lock, flags);
 		hlist_for_each_entry_safe(obj, node, tmp, &db->list, node) {
 			cnt++;
 			oaddr = (unsigned long) obj->object;
@@ -690,7 +587,7 @@ repeat:
 				debug_print_object(obj, "free");
 				descr = obj->descr;
 				state = obj->state;
-				raw_spin_unlock_irqrestore(&db->lock, flags);
+				spin_unlock_irqrestore(&db->lock, flags);
 				debug_object_fixup(descr->fixup_free,
 						   (void *) oaddr, state);
 				goto repeat;
@@ -700,7 +597,7 @@ repeat:
 				break;
 			}
 		}
-		raw_spin_unlock_irqrestore(&db->lock, flags);
+		spin_unlock_irqrestore(&db->lock, flags);
 
 		/* Now free them */
 		hlist_for_each_entry_safe(obj, node, tmp, &freelist, node) {
@@ -818,9 +715,17 @@ static int __init fixup_activate(void *addr, enum debug_obj_state state)
 		if (obj->static_init == 1) {
 			debug_object_init(obj, &descr_type_test);
 			debug_object_activate(obj, &descr_type_test);
-			return 0;
+			/*
+			 * Real code should return 0 here ! This is
+			 * not a fixup of some bad behaviour. We
+			 * merily call the debug_init function to keep
+			 * track of the object.
+			 */
+			return 1;
+		} else {
+			/* Real code needs to emit a warning here */
 		}
-		return 1;
+		return 0;
 
 	case ODEBUG_STATE_ACTIVE:
 		debug_object_deactivate(obj, &descr_type_test);
@@ -868,7 +773,7 @@ static int __init fixup_free(void *addr, enum debug_obj_state state)
 	}
 }
 
-static int __init
+static int
 check_results(void *addr, enum debug_obj_state state, int fixups, int warnings)
 {
 	struct debug_bucket *db;
@@ -878,7 +783,7 @@ check_results(void *addr, enum debug_obj_state state, int fixups, int warnings)
 
 	db = get_bucket((unsigned long) addr);
 
-	raw_spin_lock_irqsave(&db->lock, flags);
+	spin_lock_irqsave(&db->lock, flags);
 
 	obj = lookup_object(addr, db);
 	if (!obj && state != ODEBUG_STATE_NONE) {
@@ -902,7 +807,7 @@ check_results(void *addr, enum debug_obj_state state, int fixups, int warnings)
 	}
 	res = 0;
 out:
-	raw_spin_unlock_irqrestore(&db->lock, flags);
+	spin_unlock_irqrestore(&db->lock, flags);
 	if (res)
 		debug_objects_enabled = 0;
 	return res;
@@ -959,7 +864,7 @@ static void __init debug_objects_selftest(void)
 
 	obj.static_init = 1;
 	debug_object_activate(&obj, &descr_type_test);
-	if (check_results(&obj, ODEBUG_STATE_ACTIVE, fixups, warnings))
+	if (check_results(&obj, ODEBUG_STATE_ACTIVE, ++fixups, warnings))
 		goto out;
 	debug_object_init(&obj, &descr_type_test);
 	if (check_results(&obj, ODEBUG_STATE_INIT, ++fixups, ++warnings))
@@ -1002,7 +907,7 @@ void __init debug_objects_early_init(void)
 	int i;
 
 	for (i = 0; i < ODEBUG_HASH_SIZE; i++)
-		raw_spin_lock_init(&obj_hash[i].lock);
+		spin_lock_init(&obj_hash[i].lock);
 
 	for (i = 0; i < ODEBUG_POOL_SIZE; i++)
 		hlist_add_head(&obj_static_pool[i].node, &obj_pool);
@@ -1011,7 +916,7 @@ void __init debug_objects_early_init(void)
 /*
  * Convert the statically allocated objects to dynamic ones:
  */
-static int __init debug_objects_replace_static_objects(void)
+static int debug_objects_replace_static_objects(void)
 {
 	struct debug_bucket *db = obj_hash;
 	struct hlist_node *node, *tmp;

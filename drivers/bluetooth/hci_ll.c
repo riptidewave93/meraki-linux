@@ -74,7 +74,7 @@ enum hcill_states_e {
 
 struct hcill_cmd {
 	u8 cmd;
-} __packed;
+} __attribute__((packed));
 
 struct ll_struct {
 	unsigned long rx_state;
@@ -125,7 +125,7 @@ static int ll_open(struct hci_uart *hu)
 
 	BT_DBG("hu %p", hu);
 
-	ll = kzalloc(sizeof(*ll), GFP_KERNEL);
+	ll = kzalloc(sizeof(*ll), GFP_ATOMIC);
 	if (!ll)
 		return -ENOMEM;
 
@@ -207,7 +207,7 @@ static void ll_device_want_to_wakeup(struct hci_uart *hu)
 		/*
 		 * This state means that both the host and the BRF chip
 		 * have simultaneously sent a wake-up-indication packet.
-		 * Traditionally, in this case, receiving a wake-up-indication
+		 * Traditionaly, in this case, receiving a wake-up-indication
 		 * was enough and an additional wake-up-ack wasn't needed.
 		 * This has changed with the BRF6350, which does require an
 		 * explicit wake-up-ack. Other BRF versions, which do not
@@ -348,7 +348,7 @@ static int ll_enqueue(struct hci_uart *hu, struct sk_buff *skb)
 
 static inline int ll_check_data_len(struct ll_struct *ll, int len)
 {
-	int room = skb_tailroom(ll->rx_skb);
+	register int room = skb_tailroom(ll->rx_skb);
 
 	BT_DBG("len %d room %d", len, room);
 
@@ -374,11 +374,11 @@ static inline int ll_check_data_len(struct ll_struct *ll, int len)
 static int ll_recv(struct hci_uart *hu, void *data, int count)
 {
 	struct ll_struct *ll = hu->priv;
-	char *ptr;
+	register char *ptr;
 	struct hci_event_hdr *eh;
 	struct hci_acl_hdr   *ah;
 	struct hci_sco_hdr   *sh;
-	int len, type, dlen;
+	register int len, type, dlen;
 
 	BT_DBG("hu %p count %d rx_state %ld rx_count %ld", hu, count, ll->rx_state, ll->rx_count);
 
@@ -402,7 +402,7 @@ static int ll_recv(struct hci_uart *hu, void *data, int count)
 				continue;
 
 			case HCILL_W4_EVENT_HDR:
-				eh = hci_event_hdr(ll->rx_skb);
+				eh = (struct hci_event_hdr *) ll->rx_skb->data;
 
 				BT_DBG("Event header: evt 0x%2.2x plen %d", eh->evt, eh->plen);
 
@@ -410,7 +410,7 @@ static int ll_recv(struct hci_uart *hu, void *data, int count)
 				continue;
 
 			case HCILL_W4_ACL_HDR:
-				ah = hci_acl_hdr(ll->rx_skb);
+				ah = (struct hci_acl_hdr *) ll->rx_skb->data;
 				dlen = __le16_to_cpu(ah->dlen);
 
 				BT_DBG("ACL header: dlen %d", dlen);
@@ -419,7 +419,7 @@ static int ll_recv(struct hci_uart *hu, void *data, int count)
 				continue;
 
 			case HCILL_W4_SCO_HDR:
-				sh = hci_sco_hdr(ll->rx_skb);
+				sh = (struct hci_sco_hdr *) ll->rx_skb->data;
 
 				BT_DBG("SCO header: dlen %d", sh->dlen);
 
@@ -481,7 +481,7 @@ static int ll_recv(struct hci_uart *hu, void *data, int count)
 			hu->hdev->stat.err_rx++;
 			ptr++; count--;
 			continue;
-		}
+		};
 
 		ptr++; count--;
 
@@ -491,7 +491,7 @@ static int ll_recv(struct hci_uart *hu, void *data, int count)
 			BT_ERR("Can't allocate mem for new packet");
 			ll->rx_state = HCILL_W4_PACKET_TYPE;
 			ll->rx_count = 0;
-			return -ENOMEM;
+			return 0;
 		}
 
 		ll->rx_skb->dev = (void *) hu->hdev;
@@ -517,7 +517,7 @@ static struct hci_uart_proto llp = {
 	.flush		= ll_flush,
 };
 
-int __init ll_init(void)
+int ll_init(void)
 {
 	int err = hci_uart_register_proto(&llp);
 
@@ -529,7 +529,7 @@ int __init ll_init(void)
 	return err;
 }
 
-int __exit ll_deinit(void)
+int ll_deinit(void)
 {
 	return hci_uart_unregister_proto(&llp);
 }

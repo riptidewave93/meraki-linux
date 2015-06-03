@@ -11,60 +11,79 @@
 #include <linux/err.h>
 #include <linux/kernel.h>
 #include <linux/inetdevice.h>
-#include <linux/if_tunnel.h>
 #include <net/dst.h>
 #include <net/xfrm.h>
 #include <net/ip.h>
 
+static struct dst_ops xfrm4_dst_ops;
 static struct xfrm_policy_afinfo xfrm4_policy_afinfo;
 
-static struct dst_entry *__xfrm4_dst_lookup(struct net *net, struct flowi4 *fl4,
-					    int tos,
-					    const xfrm_address_t *saddr,
-					    const xfrm_address_t *daddr)
-{
-	struct rtable *rt;
-
-	memset(fl4, 0, sizeof(*fl4));
-	fl4->daddr = daddr->a4;
-	fl4->flowi4_tos = tos;
-	if (saddr)
-		fl4->saddr = saddr->a4;
-
-	rt = __ip_route_output_key(net, fl4);
-	if (!IS_ERR(rt))
-		return &rt->dst;
-
-	return ERR_CAST(rt);
-}
-
 static struct dst_entry *xfrm4_dst_lookup(struct net *net, int tos,
-					  const xfrm_address_t *saddr,
-					  const xfrm_address_t *daddr)
+					  xfrm_address_t *saddr,
+					  xfrm_address_t *daddr)
 {
-	struct flowi4 fl4;
+	struct flowi fl = {
+		.nl_u = {
+			.ip4_u = {
+				.tos = tos,
+				.daddr = daddr->a4,
+			},
+		},
+	};
+	struct dst_entry *dst;
+	struct rtable *rt;
+	int err;
 
-	return __xfrm4_dst_lookup(net, &fl4, tos, saddr, daddr);
+	if (saddr)
+		fl.fl4_src = saddr->a4;
+
+	err = __ip_route_output_key(net, &rt, &fl);
+	dst = &rt->u.dst;
+	if (err)
+		dst = ERR_PTR(err);
+	return dst;
 }
 
 static int xfrm4_get_saddr(struct net *net,
 			   xfrm_address_t *saddr, xfrm_address_t *daddr)
 {
 	struct dst_entry *dst;
-	struct flowi4 fl4;
+	struct rtable *rt;
 
-	dst = __xfrm4_dst_lookup(net, &fl4, 0, NULL, daddr);
+	dst = xfrm4_dst_lookup(net, 0, NULL, daddr);
 	if (IS_ERR(dst))
 		return -EHOSTUNREACH;
 
-	saddr->a4 = fl4.saddr;
+	rt = (struct rtable *)dst;
+	saddr->a4 = rt->rt_src;
 	dst_release(dst);
 	return 0;
 }
 
-static int xfrm4_get_tos(const struct flowi *fl)
+static struct dst_entry *
+__xfrm4_find_bundle(struct flowi *fl, struct xfrm_policy *policy)
 {
-	return IPTOS_RT_MASK & fl->u.ip4.flowi4_tos; /* Strip ECN bits */
+	struct dst_entry *dst;
+
+	read_lock_bh(&policy->lock);
+	for (dst = policy->bundles; dst; dst = dst->next) {
+		struct xfrm_dst *xdst = (struct xfrm_dst *)dst;
+		if (xdst->u.rt.fl.oif == fl->oif &&	/*XXX*/
+		    xdst->u.rt.fl.fl4_dst == fl->fl4_dst &&
+		    xdst->u.rt.fl.fl4_src == fl->fl4_src &&
+                    !((xdst->u.rt.fl.fl4_tos ^ fl->fl4_tos) & IPTOS_RT_MASK) &&
+		    xfrm_bundle_ok(policy, xdst, fl, AF_INET, 0)) {
+			dst_clone(dst);
+			break;
+		}
+	}
+	read_unlock_bh(&policy->lock);
+	return dst;
+}
+
+static int xfrm4_get_tos(struct flowi *fl)
+{
+	return IPTOS_RT_MASK & fl->fl4_tos; /* Strip ECN bits */
 }
 
 static int xfrm4_init_path(struct xfrm_dst *path, struct dst_entry *dst,
@@ -74,21 +93,18 @@ static int xfrm4_init_path(struct xfrm_dst *path, struct dst_entry *dst,
 }
 
 static int xfrm4_fill_dst(struct xfrm_dst *xdst, struct net_device *dev,
-			  const struct flowi *fl)
+			  struct flowi *fl)
 {
 	struct rtable *rt = (struct rtable *)xdst->route;
-	const struct flowi4 *fl4 = &fl->u.ip4;
 
-	xdst->u.rt.rt_key_dst = fl4->daddr;
-	xdst->u.rt.rt_key_src = fl4->saddr;
-	xdst->u.rt.rt_key_tos = fl4->flowi4_tos;
-	xdst->u.rt.rt_route_iif = fl4->flowi4_iif;
-	xdst->u.rt.rt_iif = fl4->flowi4_iif;
-	xdst->u.rt.rt_oif = fl4->flowi4_oif;
-	xdst->u.rt.rt_mark = fl4->flowi4_mark;
+	xdst->u.rt.fl = *fl;
 
 	xdst->u.dst.dev = dev;
 	dev_hold(dev);
+
+	xdst->u.rt.idev = in_dev_get(dev);
+	if (!xdst->u.rt.idev)
+		return -ENODEV;
 
 	xdst->u.rt.peer = rt->peer;
 	if (rt->peer)
@@ -110,15 +126,12 @@ static int xfrm4_fill_dst(struct xfrm_dst *xdst, struct net_device *dev,
 static void
 _decode_session4(struct sk_buff *skb, struct flowi *fl, int reverse)
 {
-	const struct iphdr *iph = ip_hdr(skb);
+	struct iphdr *iph = ip_hdr(skb);
 	u8 *xprth = skb_network_header(skb) + iph->ihl * 4;
-	struct flowi4 *fl4 = &fl->u.ip4;
 	struct rtable *rt = skb_rtable(skb);
 
-	memset(fl4, 0, sizeof(struct flowi4));
-	fl4->flowi4_mark = skb->mark;
-
-	if (!ip_is_fragment(iph)) {
+	memset(fl, 0, sizeof(struct flowi));
+	if (!(iph->frag_off & htons(IP_MF | IP_OFFSET))) {
 		switch (iph->protocol) {
 		case IPPROTO_UDP:
 		case IPPROTO_UDPLITE:
@@ -129,8 +142,8 @@ _decode_session4(struct sk_buff *skb, struct flowi *fl, int reverse)
 			    pskb_may_pull(skb, xprth + 4 - skb->data)) {
 				__be16 *ports = (__be16 *)xprth;
 
-				fl4->fl4_sport = ports[!!reverse];
-				fl4->fl4_dport = ports[!reverse];
+				fl->fl_ip_sport = ports[!!reverse];
+				fl->fl_ip_dport = ports[!reverse];
 			}
 			break;
 
@@ -138,8 +151,8 @@ _decode_session4(struct sk_buff *skb, struct flowi *fl, int reverse)
 			if (pskb_may_pull(skb, xprth + 2 - skb->data)) {
 				u8 *icmp = xprth;
 
-				fl4->fl4_icmp_type = icmp[0];
-				fl4->fl4_icmp_code = icmp[1];
+				fl->fl_icmp_type = icmp[0];
+				fl->fl_icmp_code = icmp[1];
 			}
 			break;
 
@@ -147,7 +160,7 @@ _decode_session4(struct sk_buff *skb, struct flowi *fl, int reverse)
 			if (pskb_may_pull(skb, xprth + 4 - skb->data)) {
 				__be32 *ehdr = (__be32 *)xprth;
 
-				fl4->fl4_ipsec_spi = ehdr[0];
+				fl->fl_ipsec_spi = ehdr[0];
 			}
 			break;
 
@@ -155,7 +168,7 @@ _decode_session4(struct sk_buff *skb, struct flowi *fl, int reverse)
 			if (pskb_may_pull(skb, xprth + 8 - skb->data)) {
 				__be32 *ah_hdr = (__be32*)xprth;
 
-				fl4->fl4_ipsec_spi = ah_hdr[1];
+				fl->fl_ipsec_spi = ah_hdr[1];
 			}
 			break;
 
@@ -163,47 +176,31 @@ _decode_session4(struct sk_buff *skb, struct flowi *fl, int reverse)
 			if (pskb_may_pull(skb, xprth + 4 - skb->data)) {
 				__be16 *ipcomp_hdr = (__be16 *)xprth;
 
-				fl4->fl4_ipsec_spi = htonl(ntohs(ipcomp_hdr[1]));
+				fl->fl_ipsec_spi = htonl(ntohs(ipcomp_hdr[1]));
 			}
 			break;
-
-		case IPPROTO_GRE:
-			if (pskb_may_pull(skb, xprth + 12 - skb->data)) {
-				__be16 *greflags = (__be16 *)xprth;
-				__be32 *gre_hdr = (__be32 *)xprth;
-
-				if (greflags[0] & GRE_KEY) {
-					if (greflags[0] & GRE_CSUM)
-						gre_hdr++;
-					fl4->fl4_gre_key = gre_hdr[1];
-				}
-			}
-			break;
-
 		default:
-			fl4->fl4_ipsec_spi = 0;
+			fl->fl_ipsec_spi = 0;
 			break;
 		}
 	}
-	fl4->flowi4_proto = iph->protocol;
-	fl4->daddr = reverse ? iph->saddr : iph->daddr;
-	fl4->saddr = reverse ? iph->daddr : iph->saddr;
-	fl4->flowi4_tos = iph->tos;
+	fl->proto = iph->protocol;
+	fl->fl4_dst = reverse ? iph->saddr : iph->daddr;
+	fl->fl4_src = reverse ? iph->daddr : iph->saddr;
+	fl->fl4_tos = iph->tos;
 	/* Set the flow output interface so xfrm policy selectors can use it. */
 	if (reverse) {
-		fl4->flowi4_oif = skb->skb_iif ?: dev_net(skb->dev)->loopback_dev->ifindex;
+		fl->oif = skb->iif ?: dev_net(skb->dev)->loopback_dev->ifindex;
 	} else {
 		if (rt)
-			fl4->flowi4_oif = rt->dst.dev->ifindex;
+			fl->oif = rt->u.dst.dev->ifindex;
 	}
 }
 
 static inline int xfrm4_garbage_collect(struct dst_ops *ops)
 {
-	struct net *net = container_of(ops, struct net, xfrm.xfrm4_dst_ops);
-
-	xfrm4_policy_afinfo.garbage_collect(net);
-	return (dst_entries_get_slow(ops) > ops->gc_thresh * 2);
+	xfrm4_policy_afinfo.garbage_collect(&init_net);
+	return (atomic_read(&xfrm4_dst_ops.entries) > xfrm4_dst_ops.gc_thresh*2);
 }
 
 static void xfrm4_update_pmtu(struct dst_entry *dst, u32 mtu)
@@ -218,19 +215,36 @@ static void xfrm4_dst_destroy(struct dst_entry *dst)
 {
 	struct xfrm_dst *xdst = (struct xfrm_dst *)dst;
 
-	dst_destroy_metrics_generic(dst);
-
+	if (likely(xdst->u.rt.idev))
+		in_dev_put(xdst->u.rt.idev);
 	if (likely(xdst->u.rt.peer))
 		inet_putpeer(xdst->u.rt.peer);
-
 	xfrm_dst_destroy(xdst);
 }
 
 static void xfrm4_dst_ifdown(struct dst_entry *dst, struct net_device *dev,
 			     int unregister)
 {
+	struct xfrm_dst *xdst;
+
 	if (!unregister)
 		return;
+
+	xdst = (struct xfrm_dst *)dst;
+	if (xdst->u.rt.idev->dev == dev) {
+		struct in_device *loopback_idev =
+			in_dev_get(dev_net(dev)->loopback_dev);
+		BUG_ON(!loopback_idev);
+
+		do {
+			in_dev_put(xdst->u.rt.idev);
+			xdst->u.rt.idev = loopback_idev;
+			in_dev_hold(loopback_idev);
+			xdst = (struct xfrm_dst *)xdst->u.dst.child;
+		} while (xdst->u.dst.xfrm);
+
+		__in_dev_put(loopback_idev);
+	}
 
 	xfrm_dst_ifdown(dst, dev);
 }
@@ -240,11 +254,11 @@ static struct dst_ops xfrm4_dst_ops = {
 	.protocol =		cpu_to_be16(ETH_P_IP),
 	.gc =			xfrm4_garbage_collect,
 	.update_pmtu =		xfrm4_update_pmtu,
-	.cow_metrics =		dst_cow_metrics_generic,
 	.destroy =		xfrm4_dst_destroy,
 	.ifdown =		xfrm4_dst_ifdown,
 	.local_out =		__ip_local_out,
 	.gc_thresh =		1024,
+	.entries =		ATOMIC_INIT(0),
 };
 
 static struct xfrm_policy_afinfo xfrm4_policy_afinfo = {
@@ -252,18 +266,19 @@ static struct xfrm_policy_afinfo xfrm4_policy_afinfo = {
 	.dst_ops =		&xfrm4_dst_ops,
 	.dst_lookup =		xfrm4_dst_lookup,
 	.get_saddr =		xfrm4_get_saddr,
+	.find_bundle = 		__xfrm4_find_bundle,
 	.decode_session =	_decode_session4,
 	.get_tos =		xfrm4_get_tos,
 	.init_path =		xfrm4_init_path,
 	.fill_dst =		xfrm4_fill_dst,
-	.blackhole_route =	ipv4_blackhole_route,
 };
 
 #ifdef CONFIG_SYSCTL
 static struct ctl_table xfrm4_policy_table[] = {
 	{
+		.ctl_name       = CTL_UNNUMBERED,
 		.procname       = "xfrm4_gc_thresh",
-		.data           = &init_net.xfrm.xfrm4_dst_ops.gc_thresh,
+		.data           = &xfrm4_dst_ops.gc_thresh,
 		.maxlen         = sizeof(int),
 		.mode           = 0644,
 		.proc_handler   = proc_dointvec,
@@ -290,6 +305,8 @@ static void __exit xfrm4_policy_fini(void)
 
 void __init xfrm4_init(int rt_max_size)
 {
+	xfrm4_state_init();
+	xfrm4_policy_init();
 	/*
 	 * Select a default value for the gc_thresh based on the main route
 	 * table hash size.  It seems to me the worst case scenario is when
@@ -301,10 +318,6 @@ void __init xfrm4_init(int rt_max_size)
 	 * and start cleaning when were 1/2 full
 	 */
 	xfrm4_dst_ops.gc_thresh = rt_max_size/2;
-	dst_entries_init(&xfrm4_dst_ops);
-
-	xfrm4_state_init();
-	xfrm4_policy_init();
 #ifdef CONFIG_SYSCTL
 	sysctl_hdr = register_net_sysctl_table(&init_net, net_ipv4_ctl_path,
 						xfrm4_policy_table);

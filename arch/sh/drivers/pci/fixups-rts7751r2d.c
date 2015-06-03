@@ -15,7 +15,7 @@
 #include <mach/lboxre2.h>
 #include <mach/r2d.h>
 #include "pci-sh4.h"
-#include <generated/machtypes.h>
+#include <asm/machtypes.h>
 
 #define PCIMCR_MRSET_OFF	0xBFFFFFFF
 #define PCIMCR_RFSH_OFF		0xFFFFFFFB
@@ -31,7 +31,7 @@ static char lboxre2_irq_tab[] __initdata = {
 	IRQ_ETH0, IRQ_ETH1, IRQ_INTA, IRQ_INTD,
 };
 
-int __init pcibios_map_platform_irq(const struct pci_dev *pdev, u8 slot, u8 pin)
+int __init pcibios_map_platform_irq(struct pci_dev *pdev, u8 slot, u8 pin)
 {
 	if (mach_is_lboxre2())
 		return lboxre2_irq_tab[slot];
@@ -43,7 +43,7 @@ int pci_fixup_pcic(struct pci_channel *chan)
 {
 	unsigned long bcr1, mcr;
 
-	bcr1 = __raw_readl(SH7751_BCR1);
+	bcr1 = ctrl_inl(SH7751_BCR1);
 	bcr1 |= 0x40080000;	/* Enable Bit 19 BREQEN, set PCIC to slave */
 	pci_write_reg(chan, bcr1, SH4_PCIBCR1);
 
@@ -54,7 +54,7 @@ int pci_fixup_pcic(struct pci_channel *chan)
 	pci_write_reg(chan, 0xfb900047, SH7751_PCICONF1);
 	pci_write_reg(chan, 0xab000001, SH7751_PCICONF4);
 
-	mcr = __raw_readl(SH7751_MCR);
+	mcr = ctrl_inl(SH7751_MCR);
 	mcr = (mcr & PCIMCR_MRSET_OFF) & PCIMCR_RFSH_OFF;
 	pci_write_reg(chan, mcr, SH4_PCIMCR);
 

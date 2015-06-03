@@ -76,8 +76,8 @@
 #define COPYRIGHT	"Copyright (c) 1999-2008 " MODULEAUTHOR
 #endif
 
-#define MPT_LINUX_VERSION_COMMON	"3.04.20"
-#define MPT_LINUX_PACKAGE_NAME		"@(#)mptlinux-3.04.20"
+#define MPT_LINUX_VERSION_COMMON	"3.04.12"
+#define MPT_LINUX_PACKAGE_NAME		"@(#)mptlinux-3.04.12"
 #define WHAT_MAGIC_STRING		"@" "(" "#" ")"
 
 #define show_mptmod_ver(s,ver)  \
@@ -89,7 +89,6 @@
  */
 #define MPT_MAX_ADAPTERS		18
 #define MPT_MAX_PROTOCOL_DRIVERS	16
-#define MPT_MAX_CALLBACKNAME_LEN	49
 #define MPT_MAX_BUS			1	/* Do not change */
 #define MPT_MAX_FC_DEVICES		255
 #define MPT_MAX_SCSI_DEVICES		16
@@ -397,8 +396,6 @@ typedef struct _VirtTarget {
 	u8			 raidVolume;	/* set, if RAID Volume */
 	u8			 type;		/* byte 0 of Inquiry data */
 	u8			 deleted;	/* target in process of being removed */
-	u8			 inDMD;		/* currently in the device
-						   removal delay timer */
 	u32			 num_luns;
 } VirtTarget;
 
@@ -419,6 +416,31 @@ typedef struct _VirtDevice {
 #define MPT_TARGET_FLAGS_SAF_TE_ISSUED	0x20
 #define MPT_TARGET_FLAGS_RAID_COMPONENT	0x40
 #define MPT_TARGET_FLAGS_LED_ON		0x80
+
+/*
+ *	/proc/mpt interface
+ */
+typedef struct {
+	const char	*name;
+	mode_t		 mode;
+	int		 pad;
+	read_proc_t	*read_proc;
+	write_proc_t	*write_proc;
+} mpt_proc_entry_t;
+
+#define MPT_PROC_READ_RETURN(buf,start,offset,request,eof,len) \
+do { \
+	len -= offset;			\
+	if (len < request) {		\
+		*eof = 1;		\
+		if (len <= 0)		\
+			return 0;	\
+	} else				\
+		len = request;		\
+	*start = buf + offset;		\
+	return len;			\
+} while (0)
+
 
 /*
  *	IOCTL structure and associated defines
@@ -555,47 +577,9 @@ struct mptfc_rport_info
 	u8		flags;
 };
 
-/*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
-
-/*
- * MPT_SCSI_HOST defines - Used by the IOCTL and the SCSI drivers
- * Private to the driver.
- */
-
-#define MPT_HOST_BUS_UNKNOWN		(0xFF)
-#define MPT_HOST_TOO_MANY_TM		(0x05)
-#define MPT_HOST_NVRAM_INVALID		(0xFFFFFFFF)
-#define MPT_HOST_NO_CHAIN		(0xFFFFFFFF)
-#define MPT_NVRAM_MASK_TIMEOUT		(0x000000FF)
-#define MPT_NVRAM_SYNC_MASK		(0x0000FF00)
-#define MPT_NVRAM_SYNC_SHIFT		(8)
-#define MPT_NVRAM_DISCONNECT_ENABLE	(0x00010000)
-#define MPT_NVRAM_ID_SCAN_ENABLE	(0x00020000)
-#define MPT_NVRAM_LUN_SCAN_ENABLE	(0x00040000)
-#define MPT_NVRAM_TAG_QUEUE_ENABLE	(0x00080000)
-#define MPT_NVRAM_WIDE_DISABLE		(0x00100000)
-#define MPT_NVRAM_BOOT_CHOICE		(0x00200000)
-
-typedef enum {
-	FC,
-	SPI,
-	SAS
-} BUS_TYPE;
-
-typedef struct _MPT_SCSI_HOST {
-	struct _MPT_ADAPTER		 *ioc;
-	ushort			  sel_timeout[MPT_MAX_FC_DEVICES];
-	char			  *info_kbuf;
-	long			  last_queue_full;
-	u16			  spi_pending;
-	struct list_head	  target_reset_list;
-} MPT_SCSI_HOST;
-
 typedef void (*MPT_ADD_SGE)(void *pAddr, u32 flagslength, dma_addr_t dma_addr);
 typedef void (*MPT_ADD_CHAIN)(void *pAddr, u8 next, u16 length,
 		dma_addr_t dma_addr);
-typedef void (*MPT_SCHEDULE_TARGET_RESET)(void *ioc);
-typedef void (*MPT_FLUSH_RUNNING_CMDS)(MPT_SCSI_HOST *hd);
 
 /*
  *  Adapter Structure - pci_dev specific. Maximum: MPT_MAX_ADAPTERS
@@ -617,12 +601,12 @@ typedef struct _MPT_ADAPTER
 	u16			 nvdata_version_default;
 	int			 debug_level;
 	u8			 io_missing_delay;
-	u16			 device_missing_delay;
+	u8			 device_missing_delay;
 	SYSIF_REGS __iomem	*chip;		/* == c8817000 (mmap) */
 	SYSIF_REGS __iomem	*pio_chip;	/* Programmed IO (downloadboot) */
 	u8			 bus_type;
-	u32			 mem_phys;	/* == f4020000 (mmap) */
-	u32			 pio_mem_phys;	/* Programmed IO (downloadboot) */
+	resource_size_t		 mem_phys;	/* == f4020000 (mmap) */
+	resource_size_t		 pio_mem_phys;	/* Programmed IO (downloadboot) */
 	int			 mem_size;	/* mmap memory size */
 	int			 number_of_buses;
 	int			 devices_per_bus;
@@ -754,10 +738,6 @@ typedef struct _MPT_ADAPTER
 	int			 taskmgmt_in_progress;
 	u8			 taskmgmt_quiesce_io;
 	u8			 ioc_reset_in_progress;
-	u8			 reset_status;
-	u8			 wait_on_reset_completion;
-	MPT_SCHEDULE_TARGET_RESET schedule_target_reset;
-	MPT_FLUSH_RUNNING_CMDS schedule_dead_ioc_flush_running_cmds;
 	struct work_struct	 sas_persist_task;
 
 	struct work_struct	 fc_setup_reset_work;
@@ -871,6 +851,19 @@ typedef struct _MPT_LOCAL_REPLY {
 	u32	pad;
 } MPT_LOCAL_REPLY;
 
+#define MPT_HOST_BUS_UNKNOWN		(0xFF)
+#define MPT_HOST_TOO_MANY_TM		(0x05)
+#define MPT_HOST_NVRAM_INVALID		(0xFFFFFFFF)
+#define MPT_HOST_NO_CHAIN		(0xFFFFFFFF)
+#define MPT_NVRAM_MASK_TIMEOUT		(0x000000FF)
+#define MPT_NVRAM_SYNC_MASK		(0x0000FF00)
+#define MPT_NVRAM_SYNC_SHIFT		(8)
+#define MPT_NVRAM_DISCONNECT_ENABLE	(0x00010000)
+#define MPT_NVRAM_ID_SCAN_ENABLE	(0x00020000)
+#define MPT_NVRAM_LUN_SCAN_ENABLE	(0x00040000)
+#define MPT_NVRAM_TAG_QUEUE_ENABLE	(0x00080000)
+#define MPT_NVRAM_WIDE_DISABLE		(0x00100000)
+#define MPT_NVRAM_BOOT_CHOICE		(0x00200000)
 
 /* The TM_STATE variable is used to provide strict single threading of TM
  * requests as well as communicate TM error conditions.
@@ -878,6 +871,21 @@ typedef struct _MPT_LOCAL_REPLY {
 #define TM_STATE_NONE          (0)
 #define	TM_STATE_IN_PROGRESS   (1)
 #define	TM_STATE_ERROR	       (2)
+
+typedef enum {
+	FC,
+	SPI,
+	SAS
+} BUS_TYPE;
+
+typedef struct _MPT_SCSI_HOST {
+	MPT_ADAPTER		 *ioc;
+	ushort			  sel_timeout[MPT_MAX_FC_DEVICES];
+	char 			  *info_kbuf;
+	long			  last_queue_full;
+	u16			  spi_pending;
+	struct list_head	  target_reset_list;
+} MPT_SCSI_HOST;
 
 /*=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=*/
 /*
@@ -914,8 +922,7 @@ extern void	 mpt_detach(struct pci_dev *pdev);
 extern int	 mpt_suspend(struct pci_dev *pdev, pm_message_t state);
 extern int	 mpt_resume(struct pci_dev *pdev);
 #endif
-extern u8	 mpt_register(MPT_CALLBACK cbfunc, MPT_DRIVER_CLASS dclass,
-		char *func_name);
+extern u8	 mpt_register(MPT_CALLBACK cbfunc, MPT_DRIVER_CLASS dclass);
 extern void	 mpt_deregister(u8 cb_idx);
 extern int	 mpt_event_register(u8 cb_idx, MPT_EVHANDLER ev_cbfunc);
 extern void	 mpt_event_deregister(u8 cb_idx);
@@ -933,7 +940,6 @@ extern int	 mpt_verify_adapter(int iocid, MPT_ADAPTER **iocpp);
 extern u32	 mpt_GetIocState(MPT_ADAPTER *ioc, int cooked);
 extern void	 mpt_print_ioc_summary(MPT_ADAPTER *ioc, char *buf, int *size, int len, int showlan);
 extern int	 mpt_HardResetHandler(MPT_ADAPTER *ioc, int sleepFlag);
-extern int	 mpt_Soft_Hard_ResetHandler(MPT_ADAPTER *ioc, int sleepFlag);
 extern int	 mpt_config(MPT_ADAPTER *ioc, CONFIGPARMS *cfg);
 extern int	 mpt_alloc_fw_memory(MPT_ADAPTER *ioc, int size);
 extern void	 mpt_free_fw_memory(MPT_ADAPTER *ioc);

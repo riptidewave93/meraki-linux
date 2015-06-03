@@ -15,10 +15,11 @@ enum xt_connbytes_direction {
 	XT_CONNBYTES_DIR_BOTH,
 };
 
-struct xt_connbytes_info {
+struct xt_connbytes_info
+{
 	struct {
-		__aligned_u64 from;	/* count to be matched */
-		__aligned_u64 to;	/* count to be matched */
+		aligned_u64 from;	/* count to be matched */
+		aligned_u64 to;		/* count to be matched */
 	} count;
 	__u8 what;		/* ipt_connbytes_what */
 	__u8 direction;	/* ipt_connbytes_direction */

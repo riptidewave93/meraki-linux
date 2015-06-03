@@ -17,9 +17,17 @@
 
 #include <asm/uaccess.h>
 #include <linux/time.h>
-#include "reiserfs.h"
+#include <linux/reiserfs_fs.h>
 #include <linux/buffer_head.h>
 #include <linux/kernel.h>
+
+#ifdef CONFIG_REISERFS_CHECK
+
+struct tree_balance *cur_tb = NULL;	/* detects whether more than one
+					   copy of tb exists as a means
+					   of checking whether schedule
+					   is interrupting do_balance */
+#endif
 
 static inline void buffer_info_init_left(struct tree_balance *tb,
                                          struct buffer_info *bi)
@@ -1832,12 +1840,11 @@ static int check_before_balancing(struct tree_balance *tb)
 {
 	int retval = 0;
 
-	if (REISERFS_SB(tb->tb_sb)->cur_tb) {
+	if (cur_tb) {
 		reiserfs_panic(tb->tb_sb, "vs-12335", "suspect that schedule "
 			       "occurred based on cur_tb not being null at "
 			       "this point in code. do_balance cannot properly "
-			       "handle concurrent tree accesses on a same "
-			       "mount point.");
+			       "handle schedule occurring while it runs.");
 	}
 
 	/* double check that buffers that we will modify are unlocked. (fix_nodes should already have
@@ -1979,7 +1986,7 @@ static inline void do_balance_starts(struct tree_balance *tb)
 	     "check");*/
 	RFALSE(check_before_balancing(tb), "PAP-12340: locked buffers in TB");
 #ifdef CONFIG_REISERFS_CHECK
-	REISERFS_SB(tb->tb_sb)->cur_tb = tb;
+	cur_tb = tb;
 #endif
 }
 
@@ -1989,7 +1996,7 @@ static inline void do_balance_completed(struct tree_balance *tb)
 #ifdef CONFIG_REISERFS_CHECK
 	check_leaf_level(tb);
 	check_internal_levels(tb);
-	REISERFS_SB(tb->tb_sb)->cur_tb = NULL;
+	cur_tb = NULL;
 #endif
 
 	/* reiserfs_free_block is no longer schedule safe.  So, we need to

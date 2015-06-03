@@ -30,8 +30,8 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/types.h>
-#include <linux/slab.h>
 #include <linux/pci.h>
+#include <linux/workqueue.h>
 #include "../pci.h"
 #include "pciehp.h"
 
@@ -49,7 +49,7 @@ static int queue_interrupt_event(struct slot *p_slot, u32 event_type)
 	info->p_slot = p_slot;
 	INIT_WORK(&info->work, interrupt_event_handler);
 
-	queue_work(p_slot->wq, &info->work);
+	schedule_work(&info->work);
 
 	return 0;
 }
@@ -142,9 +142,23 @@ u8 pciehp_handle_power_fault(struct slot *p_slot)
 
 	/* power fault */
 	ctrl_dbg(ctrl, "Power fault interrupt received\n");
-	ctrl_err(ctrl, "Power fault on slot %s\n", slot_name(p_slot));
-	event_type = INT_POWER_FAULT;
-	ctrl_info(ctrl, "Power fault bit %x set\n", 0);
+
+	if (!pciehp_query_power_fault(p_slot)) {
+		/*
+		 * power fault Cleared
+		 */
+		ctrl_info(ctrl, "Power fault cleared on Slot(%s)\n",
+			  slot_name(p_slot));
+		event_type = INT_POWER_FAULT_CLEAR;
+	} else {
+		/*
+		 *   power fault
+		 */
+		ctrl_info(ctrl, "Power fault on Slot(%s)\n", slot_name(p_slot));
+		event_type = INT_POWER_FAULT;
+		ctrl_info(ctrl, "Power fault bit %x set\n", 0);
+	}
+
 	queue_interrupt_event(p_slot, event_type);
 
 	return 1;
@@ -210,12 +224,13 @@ static int board_added(struct slot *p_slot)
 	retval = pciehp_check_link_status(ctrl);
 	if (retval) {
 		ctrl_err(ctrl, "Failed to check link status\n");
-		goto err_exit;
+		set_slot_off(ctrl, p_slot);
+		return retval;
 	}
 
 	/* Check for a power fault */
-	if (ctrl->power_fault_detected || pciehp_query_power_fault(p_slot)) {
-		ctrl_err(ctrl, "Power fault on slot %s\n", slot_name(p_slot));
+	if (pciehp_query_power_fault(p_slot)) {
+		ctrl_dbg(ctrl, "Power fault detected\n");
 		retval = -EIO;
 		goto err_exit;
 	}
@@ -341,12 +356,30 @@ void pciehp_queue_pushbutton_work(struct work_struct *work)
 		p_slot->state = POWERON_STATE;
 		break;
 	default:
-		kfree(info);
 		goto out;
 	}
-	queue_work(p_slot->wq, &info->work);
+	queue_work(pciehp_wq, &info->work);
  out:
 	mutex_unlock(&p_slot->lock);
+}
+
+static int update_slot_info(struct slot *slot)
+{
+	struct hotplug_slot_info *info;
+	int result;
+
+	info = kmalloc(sizeof(*info), GFP_KERNEL);
+	if (!info)
+		return -ENOMEM;
+
+	pciehp_get_power_status(slot, &info->power_status);
+	pciehp_get_attention_status(slot, &info->attention_status);
+	pciehp_get_latch_status(slot, &info->latch_status);
+	pciehp_get_adapter_status(slot, &info->adapter_status);
+
+	result = pci_hp_change_slot_info(slot->hotplug_slot, info);
+	kfree (info);
+	return result;
 }
 
 /*
@@ -377,7 +410,7 @@ static void handle_button_press_event(struct slot *p_slot)
 		if (ATTN_LED(ctrl))
 			pciehp_set_attention_status(p_slot, 0);
 
-		queue_delayed_work(p_slot->wq, &p_slot->work, 5*HZ);
+		schedule_delayed_work(&p_slot->work, 5*HZ);
 		break;
 	case BLINKINGOFF_STATE:
 	case BLINKINGON_STATE:
@@ -409,6 +442,7 @@ static void handle_button_press_event(struct slot *p_slot)
 		 * to hot-add or hot-remove is undergoing
 		 */
 		ctrl_info(ctrl, "Button ignore on Slot(%s)\n", slot_name(p_slot));
+		update_slot_info(p_slot);
 		break;
 	default:
 		ctrl_warn(ctrl, "Not a valid state\n");
@@ -439,7 +473,7 @@ static void handle_surprise_event(struct slot *p_slot)
 	else
 		p_slot->state = POWERON_STATE;
 
-	queue_work(p_slot->wq, &info->work);
+	queue_work(pciehp_wq, &info->work);
 }
 
 static void interrupt_event_handler(struct work_struct *work)
@@ -466,9 +500,11 @@ static void interrupt_event_handler(struct work_struct *work)
 		if (!HP_SUPR_RM(ctrl))
 			break;
 		ctrl_dbg(ctrl, "Surprise Removal\n");
+		update_slot_info(p_slot);
 		handle_surprise_event(p_slot);
 		break;
 	default:
+		update_slot_info(p_slot);
 		break;
 	}
 	mutex_unlock(&p_slot->lock);
@@ -511,6 +547,9 @@ int pciehp_enable_slot(struct slot *p_slot)
 	if (rc) {
 		pciehp_get_latch_status(p_slot, &getstatus);
 	}
+
+	update_slot_info(p_slot);
+
 	return rc;
 }
 
@@ -551,7 +590,10 @@ int pciehp_disable_slot(struct slot *p_slot)
 		}
 	}
 
-	return remove_board(p_slot);
+	ret = remove_board(p_slot);
+	update_slot_info(p_slot);
+
+	return ret;
 }
 
 int pciehp_sysfs_enable_slot(struct slot *p_slot)

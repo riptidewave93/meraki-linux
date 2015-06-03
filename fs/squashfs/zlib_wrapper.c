@@ -24,7 +24,6 @@
 
 #include <linux/mutex.h>
 #include <linux/buffer_head.h>
-#include <linux/slab.h>
 #include <linux/zlib.h>
 #include <linux/vmalloc.h>
 
@@ -81,6 +80,12 @@ static int zlib_uncompress(struct squashfs_sb_info *msblk, void **buffer,
 			wait_on_buffer(bh[k]);
 			if (!buffer_uptodate(bh[k]))
 				goto release_mutex;
+
+			if (avail == 0) {
+				offset = 0;
+				put_bh(bh[k++]);
+				continue;
+			}
 
 			stream->next_in = bh[k]->b_data + offset;
 			stream->avail_in = avail;

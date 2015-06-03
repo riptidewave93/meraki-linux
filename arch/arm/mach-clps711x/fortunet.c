@@ -39,6 +39,7 @@ struct meminfo memmap = {
 		{
 			.start	= 0xC0000000,
 			.size	= 0x01000000,
+			.node	= 0
 		},
 	},
 };
@@ -57,7 +58,8 @@ typedef struct tag_IMAGE_PARAMS
 #define IMAGE_PARAMS_PHYS	0xC01F0000
 
 static void __init
-fortunet_fixup(struct tag *tags, char **cmdline, struct meminfo *mi)
+fortunet_fixup(struct machine_desc *desc, struct tag *tags,
+		 char **cmdline, struct meminfo *mi)
 {
 	IMAGE_PARAMS *ip = phys_to_virt(IMAGE_PARAMS_PHYS);
 	*cmdline = phys_to_virt(ip->command_line);
@@ -74,9 +76,11 @@ fortunet_fixup(struct tag *tags, char **cmdline, struct meminfo *mi)
 
 MACHINE_START(FORTUNET, "ARM-FortuNet")
 	/* Maintainer: FortuNet Inc. */
+	.phys_io	= 0x80000000,
+	.io_pg_offst	= ((0xf0000000) >> 18) & 0xfffc,
+	.boot_params	= 0x00000000,
 	.fixup		= fortunet_fixup,
 	.map_io		= clps711x_map_io,
 	.init_irq	= clps711x_init_irq,
 	.timer		= &clps711x_timer,
-	.restart	= clps711x_restart,
 MACHINE_END

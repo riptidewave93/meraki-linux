@@ -179,7 +179,7 @@ static int __init faulty_init(void)
     /*
      * Register your minor
      */
-    printk("Trying to register dev faulty etc\n");
+    printk("Trying to register dev faulty etc");
 
     faulty_miscdev.minor = minor;
 

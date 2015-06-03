@@ -20,13 +20,10 @@
  *	2000-11-14	Henner Eisen	dev_hold/put, NETDEV_GOING_DOWN support
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/socket.h>
 #include <linux/in.h>
-#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/net.h>
@@ -35,6 +32,7 @@
 #include <linux/if_arp.h>
 #include <linux/skbuff.h>
 #include <net/sock.h>
+#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <linux/mm.h>
 #include <linux/interrupt.h>
@@ -47,7 +45,7 @@
 
 #include <net/x25device.h>
 
-static const u8 bcast_addr[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
+static char bcast_addr[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
 /* If this number is made larger, check that the temporary string buffer
  * in lapbeth_new_device is large enough to store the probe device name.*/
@@ -140,7 +138,7 @@ static int lapbeth_data_indication(struct net_device *dev, struct sk_buff *skb)
 		return NET_RX_DROP;
 
 	ptr  = skb->data;
-	*ptr = X25_IFACE_DATA;
+	*ptr = 0x00;
 
 	skb->protocol = x25_type_trans(skb, dev);
 	return netif_rx(skb);
@@ -162,15 +160,17 @@ static netdev_tx_t lapbeth_xmit(struct sk_buff *skb,
 		goto drop;
 
 	switch (skb->data[0]) {
-	case X25_IFACE_DATA:
+	case 0x00:
 		break;
-	case X25_IFACE_CONNECT:
+	case 0x01:
 		if ((err = lapb_connect_request(dev)) != LAPB_OK)
-			pr_err("lapb_connect_request error: %d\n", err);
+			printk(KERN_ERR "lapbeth: lapb_connect_request "
+			       "error: %d\n", err);
 		goto drop;
-	case X25_IFACE_DISCONNECT:
+	case 0x02:
 		if ((err = lapb_disconnect_request(dev)) != LAPB_OK)
-			pr_err("lapb_disconnect_request err: %d\n", err);
+			printk(KERN_ERR "lapbeth: lapb_disconnect_request "
+			       "err: %d\n", err);
 		/* Fall thru */
 	default:
 		goto drop;
@@ -179,7 +179,7 @@ static netdev_tx_t lapbeth_xmit(struct sk_buff *skb,
 	skb_pull(skb, 1);
 
 	if ((err = lapb_data_request(dev, skb)) != LAPB_OK) {
-		pr_err("lapb_data_request error - %d\n", err);
+		printk(KERN_ERR "lapbeth: lapb_data_request error - %d\n", err);
 		goto drop;
 	}
 out:
@@ -219,12 +219,12 @@ static void lapbeth_connected(struct net_device *dev, int reason)
 	struct sk_buff *skb = dev_alloc_skb(1);
 
 	if (!skb) {
-		pr_err("out of memory\n");
+		printk(KERN_ERR "lapbeth: out of memory\n");
 		return;
 	}
 
 	ptr  = skb_put(skb, 1);
-	*ptr = X25_IFACE_CONNECT;
+	*ptr = 0x01;
 
 	skb->protocol = x25_type_trans(skb, dev);
 	netif_rx(skb);
@@ -236,12 +236,12 @@ static void lapbeth_disconnected(struct net_device *dev, int reason)
 	struct sk_buff *skb = dev_alloc_skb(1);
 
 	if (!skb) {
-		pr_err("out of memory\n");
+		printk(KERN_ERR "lapbeth: out of memory\n");
 		return;
 	}
 
 	ptr  = skb_put(skb, 1);
-	*ptr = X25_IFACE_DISCONNECT;
+	*ptr = 0x02;
 
 	skb->protocol = x25_type_trans(skb, dev);
 	netif_rx(skb);
@@ -258,13 +258,14 @@ static int lapbeth_set_mac_address(struct net_device *dev, void *addr)
 }
 
 
-static const struct lapb_register_struct lapbeth_callbacks = {
+static struct lapb_register_struct lapbeth_callbacks = {
 	.connect_confirmation    = lapbeth_connected,
 	.connect_indication      = lapbeth_connected,
 	.disconnect_confirmation = lapbeth_disconnected,
 	.disconnect_indication   = lapbeth_disconnected,
 	.data_indication         = lapbeth_data_indication,
 	.data_transmit           = lapbeth_data_transmit,
+
 };
 
 /*
@@ -275,7 +276,7 @@ static int lapbeth_open(struct net_device *dev)
 	int err;
 
 	if ((err = lapb_register(dev, &lapbeth_callbacks)) != LAPB_OK) {
-		pr_err("lapb_register error: %d\n", err);
+		printk(KERN_ERR "lapbeth: lapb_register error - %d\n", err);
 		return -ENODEV;
 	}
 
@@ -290,7 +291,7 @@ static int lapbeth_close(struct net_device *dev)
 	netif_stop_queue(dev);
 
 	if ((err = lapb_unregister(dev)) != LAPB_OK)
-		pr_err("lapb_unregister error: %d\n", err);
+		printk(KERN_ERR "lapbeth: lapb_unregister error - %d\n", err);
 
 	return 0;
 }
@@ -335,6 +336,10 @@ static int lapbeth_new_device(struct net_device *dev)
 
 	dev_hold(dev);
 	lapbeth->ethdev = dev;
+
+	rc = dev_alloc_name(ndev, ndev->name);
+	if (rc < 0) 
+		goto fail;
 
 	rc = -EIO;
 	if (register_netdevice(ndev))

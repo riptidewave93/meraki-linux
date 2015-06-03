@@ -13,7 +13,6 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/zorro.h>
-#include <linux/slab.h>
 
 #include <asm/amigahw.h>
 #include <asm/amigaints.h>
@@ -69,7 +68,6 @@ static struct zorro_device_id zorro7xx_zorro_tbl[] __devinitdata = {
 	},
 	{ 0 }
 };
-MODULE_DEVICE_TABLE(zorro, zorro7xx_zorro_tbl);
 
 static int __devinit zorro7xx_init_one(struct zorro_dev *z,
 				       const struct zorro_device_id *ent)

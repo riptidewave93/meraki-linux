@@ -36,10 +36,11 @@
 #include <linux/sysfs.h>
 
 /* Addresses to scan */
-static const unsigned short normal_i2c[] = { 0x2a, 0x4c, 0x4d, 0x4e, 0x4f,
-					     I2C_CLIENT_END };
+static unsigned short normal_i2c[] = { 0x2a, 0x4c, 0x4d, 0x4e, 0x4f,
+				       I2C_CLIENT_END };
 
-enum chips { tmp421, tmp422, tmp423 };
+/* Insmod parameters */
+I2C_CLIENT_INSMOD_3(tmp421, tmp422, tmp423);
 
 /* The TMP421 registers */
 #define TMP421_CONFIG_REG_1			0x09
@@ -157,7 +158,7 @@ static ssize_t show_fault(struct device *dev,
 		return sprintf(buf, "0\n");
 }
 
-static umode_t tmp421_is_visible(struct kobject *kobj, struct attribute *a,
+static mode_t tmp421_is_visible(struct kobject *kobj, struct attribute *a,
 				int n)
 {
 	struct device *dev = container_of(kobj, struct device, kobj);
@@ -224,39 +225,42 @@ static int tmp421_init_client(struct i2c_client *client)
 	return 0;
 }
 
-static int tmp421_detect(struct i2c_client *client,
+static int tmp421_detect(struct i2c_client *client, int kind,
 			 struct i2c_board_info *info)
 {
-	enum chips kind;
 	struct i2c_adapter *adapter = client->adapter;
 	const char *names[] = { "TMP421", "TMP422", "TMP423" };
-	u8 reg;
 
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -ENODEV;
 
-	reg = i2c_smbus_read_byte_data(client, TMP421_MANUFACTURER_ID_REG);
-	if (reg != TMP421_MANUFACTURER_ID)
-		return -ENODEV;
+	if (kind <= 0) {
+		u8 reg;
 
-	reg = i2c_smbus_read_byte_data(client, TMP421_DEVICE_ID_REG);
-	switch (reg) {
-	case TMP421_DEVICE_ID:
-		kind = tmp421;
-		break;
-	case TMP422_DEVICE_ID:
-		kind = tmp422;
-		break;
-	case TMP423_DEVICE_ID:
-		kind = tmp423;
-		break;
-	default:
-		return -ENODEV;
+		reg = i2c_smbus_read_byte_data(client,
+					       TMP421_MANUFACTURER_ID_REG);
+		if (reg != TMP421_MANUFACTURER_ID)
+			return -ENODEV;
+
+		reg = i2c_smbus_read_byte_data(client,
+					       TMP421_DEVICE_ID_REG);
+		switch (reg) {
+		case TMP421_DEVICE_ID:
+			kind = tmp421;
+			break;
+		case TMP422_DEVICE_ID:
+			kind = tmp422;
+			break;
+		case TMP423_DEVICE_ID:
+			kind = tmp423;
+			break;
+		default:
+			return -ENODEV;
+		}
 	}
-
-	strlcpy(info->type, tmp421_id[kind].name, I2C_NAME_SIZE);
+	strlcpy(info->type, tmp421_id[kind - 1].name, I2C_NAME_SIZE);
 	dev_info(&adapter->dev, "Detected TI %s chip at 0x%02x\n",
-		 names[kind], client->addr);
+		 names[kind - 1], client->addr);
 
 	return 0;
 }
@@ -295,6 +299,7 @@ exit_remove:
 	sysfs_remove_group(&client->dev.kobj, &tmp421_group);
 
 exit_free:
+	i2c_set_clientdata(client, NULL);
 	kfree(data);
 
 	return err;
@@ -307,6 +312,7 @@ static int tmp421_remove(struct i2c_client *client)
 	hwmon_device_unregister(data->hwmon_dev);
 	sysfs_remove_group(&client->dev.kobj, &tmp421_group);
 
+	i2c_set_clientdata(client, NULL);
 	kfree(data);
 
 	return 0;
@@ -321,12 +327,23 @@ static struct i2c_driver tmp421_driver = {
 	.remove = tmp421_remove,
 	.id_table = tmp421_id,
 	.detect = tmp421_detect,
-	.address_list = normal_i2c,
+	.address_data = &addr_data,
 };
 
-module_i2c_driver(tmp421_driver);
+static int __init tmp421_init(void)
+{
+	return i2c_add_driver(&tmp421_driver);
+}
+
+static void __exit tmp421_exit(void)
+{
+	i2c_del_driver(&tmp421_driver);
+}
 
 MODULE_AUTHOR("Andre Prendel <andre.prendel@gmx.de>");
 MODULE_DESCRIPTION("Texas Instruments TMP421/422/423 temperature sensor"
 		   " driver");
 MODULE_LICENSE("GPL");
+
+module_init(tmp421_init);
+module_exit(tmp421_exit);

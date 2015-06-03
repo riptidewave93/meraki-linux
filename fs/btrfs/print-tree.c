@@ -158,7 +158,8 @@ static void print_extent_ref_v0(struct extent_buffer *eb, int slot)
 void btrfs_print_leaf(struct btrfs_root *root, struct extent_buffer *l)
 {
 	int i;
-	u32 type, nr;
+	u32 type;
+	u32 nr = btrfs_header_nritems(l);
 	struct btrfs_item *item;
 	struct btrfs_root_item *ri;
 	struct btrfs_dir_item *di;
@@ -170,11 +171,6 @@ void btrfs_print_leaf(struct btrfs_root *root, struct extent_buffer *l)
 	struct btrfs_dev_extent *dev_extent;
 	struct btrfs_key key;
 	struct btrfs_key found_key;
-
-	if (!l)
-		return;
-
-	nr = btrfs_header_nritems(l);
 
 	printk(KERN_INFO "leaf %llu total ptrs %d free space %d\n",
 		(unsigned long long)btrfs_header_bytenr(l), nr,
@@ -264,7 +260,6 @@ void btrfs_print_leaf(struct btrfs_root *root, struct extent_buffer *l)
 #else
 			BUG();
 #endif
-			break;
 		case BTRFS_BLOCK_GROUP_ITEM_KEY:
 			bi = btrfs_item_ptr(l, i,
 					    struct btrfs_block_group_item);

@@ -22,9 +22,7 @@
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/concat.h>
 #include <linux/of.h>
-#include <linux/of_address.h>
 #include <linux/of_platform.h>
-#include <linux/slab.h>
 
 struct of_flash_list {
 	struct mtd_info *mtd;
@@ -34,11 +32,59 @@ struct of_flash_list {
 
 struct of_flash {
 	struct mtd_info		*cmtd;
+	struct mtd_partition	*parts;
 	int list_size; /* number of elements in of_flash_list */
 	struct of_flash_list	list[0];
 };
 
-static int of_flash_remove(struct platform_device *dev)
+#define OF_FLASH_PARTS(info)	((info)->parts)
+static int parse_obsolete_partitions(struct of_device *dev,
+				     struct of_flash *info,
+				     struct device_node *dp)
+{
+	int i, plen, nr_parts;
+	const struct {
+		__be32 offset, len;
+	} *part;
+	const char *names;
+
+	part = of_get_property(dp, "partitions", &plen);
+	if (!part)
+		return 0; /* No partitions found */
+
+	dev_warn(&dev->dev, "Device tree uses obsolete partition map binding\n");
+
+	nr_parts = plen / sizeof(part[0]);
+
+	info->parts = kzalloc(nr_parts * sizeof(*info->parts), GFP_KERNEL);
+	if (!info->parts)
+		return -ENOMEM;
+
+	names = of_get_property(dp, "partition-names", &plen);
+
+	for (i = 0; i < nr_parts; i++) {
+		info->parts[i].offset = be32_to_cpu(part->offset);
+		info->parts[i].size   = be32_to_cpu(part->len) & ~1;
+		if (be32_to_cpu(part->len) & 1) /* bit 0 set signifies read only partition */
+			info->parts[i].mask_flags = MTD_WRITEABLE;
+
+		if (names && (plen > 0)) {
+			int len = strlen(names) + 1;
+
+			info->parts[i].name = (char *)names;
+			plen -= len;
+			names += len;
+		} else {
+			info->parts[i].name = "unnamed";
+		}
+
+		part++;
+	}
+
+	return nr_parts;
+}
+
+static int of_flash_remove(struct of_device *dev)
 {
 	struct of_flash *info;
 	int i;
@@ -53,8 +99,11 @@ static int of_flash_remove(struct platform_device *dev)
 		mtd_concat_destroy(info->cmtd);
 	}
 
-	if (info->cmtd)
+	if (info->cmtd) {
+		if (OF_FLASH_PARTS(info))
+			kfree(OF_FLASH_PARTS(info));
 		mtd_device_unregister(info->cmtd);
+	}
 
 	for (i = 0; i < info->list_size; i++) {
 		if (info->list[i].mtd)
@@ -77,10 +126,10 @@ static int of_flash_remove(struct platform_device *dev)
 /* Helper function to handle probing of the obsolete "direct-mapped"
  * compatible binding, which has an extra "probe-type" property
  * describing the type of flash probe necessary. */
-static struct mtd_info * __devinit obsolete_probe(struct platform_device *dev,
+static struct mtd_info * __devinit obsolete_probe(struct of_device *dev,
 						  struct map_info *map)
 {
-	struct device_node *dp = dev->dev.of_node;
+	struct device_node *dp = dev->node;
 	const char *of_probe;
 	struct mtd_info *mtd;
 	static const char *rom_probe_types[]
@@ -114,8 +163,7 @@ static struct mtd_info * __devinit obsolete_probe(struct platform_device *dev,
    specifies the list of partition probers to use. If none is given then the
    default is use. These take precedence over other device tree
    information. */
-static const char *part_probe_types_def[] = { "cmdlinepart", "RedBoot",
-					"ofpart", "ofoldpart", NULL };
+static const char *part_probe_types_def[] = { "cmdlinepart", "RedBoot", NULL };
 static const char ** __devinit of_get_probes(struct device_node *dp)
 {
 	const char *cp;
@@ -151,15 +199,14 @@ static void __devinit of_free_probes(const char **probes)
 		kfree(probes);
 }
 
-static struct of_device_id of_flash_match[];
-static int __devinit of_flash_probe(struct platform_device *dev)
+static int __devinit of_flash_probe(struct of_device *dev,
+				    const struct of_device_id *match)
 {
 	const char **part_probe_types;
-	const struct of_device_id *match;
-	struct device_node *dp = dev->dev.of_node;
+	struct device_node *dp = dev->node;
 	struct resource res;
 	struct of_flash *info;
-	const char *probe_type;
+	const char *probe_type = match->data;
 	const __be32 *width;
 	int err;
 	int i;
@@ -168,12 +215,6 @@ static int __devinit of_flash_probe(struct platform_device *dev)
 	int reg_tuple_size;
 	struct mtd_info **mtd_list = NULL;
 	resource_size_t res_size;
-	struct mtd_part_parser_data ppdata;
-
-	match = of_match_device(of_flash_match, &dev->dev);
-	if (!match)
-		return -EINVAL;
-	probe_type = match->data;
 
 	reg_tuple_size = (of_n_addr_cells(dp) + of_n_size_cells(dp)) * sizeof(u32);
 
@@ -186,7 +227,7 @@ static int __devinit of_flash_probe(struct platform_device *dev)
 	p = of_get_property(dp, "reg", &count);
 	if (count % reg_tuple_size != 0) {
 		dev_err(&dev->dev, "Malformed reg property on %s\n",
-				dev->dev.of_node->full_name);
+				dev->node->full_name);
 		err = -EINVAL;
 		goto err_flash_remove;
 	}
@@ -282,11 +323,28 @@ static int __devinit of_flash_probe(struct platform_device *dev)
 	if (err)
 		goto err_out;
 
-	ppdata.of_node = dp;
 	part_probe_types = of_get_probes(dp);
-	mtd_device_parse_register(info->cmtd, part_probe_types, &ppdata,
-			NULL, 0);
+	err = parse_mtd_partitions(info->cmtd, part_probe_types,
+				   &info->parts, 0);
+	if (err < 0) {
+		of_free_probes(part_probe_types);
+		goto err_out;
+	}
 	of_free_probes(part_probe_types);
+
+	if (err == 0) {
+		err = of_mtd_parse_partitions(&dev->dev, dp, &info->parts);
+		if (err < 0)
+			goto err_out;
+	}
+
+	if (err == 0) {
+		err = parse_obsolete_partitions(dev, info, dp);
+		if (err < 0)
+			goto err_out;
+	}
+
+	mtd_device_register(info->cmtd, info->parts, err);
 
 	kfree(mtd_list);
 
@@ -328,17 +386,25 @@ static struct of_device_id of_flash_match[] = {
 };
 MODULE_DEVICE_TABLE(of, of_flash_match);
 
-static struct platform_driver of_flash_driver = {
-	.driver = {
-		.name = "of-flash",
-		.owner = THIS_MODULE,
-		.of_match_table = of_flash_match,
-	},
+static struct of_platform_driver of_flash_driver = {
+	.name		= "of-flash",
+	.match_table	= of_flash_match,
 	.probe		= of_flash_probe,
 	.remove		= of_flash_remove,
 };
 
-module_platform_driver(of_flash_driver);
+static int __init of_flash_init(void)
+{
+	return of_register_platform_driver(&of_flash_driver);
+}
+
+static void __exit of_flash_exit(void)
+{
+	of_unregister_platform_driver(&of_flash_driver);
+}
+
+module_init(of_flash_init);
+module_exit(of_flash_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Vitaly Wool <vwool@ru.mvista.com>");

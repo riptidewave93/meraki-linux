@@ -24,7 +24,7 @@
  *
  * RPIPE
  *
- *   Targeted at different downstream endpoints
+ *   Targetted at different downstream endpoints
  *
  *   Descriptor: use to config the remote pipe.
  *
@@ -49,7 +49,7 @@
  *
  *  USB Stack port number    4 (1 based)
  *  WUSB code port index     3 (0 based)
- *  USB Address             5 (2 based -- 0 is for default, 1 for root hub)
+ *  USB Addresss             5 (2 based -- 0 is for default, 1 for root hub)
  *
  *  Now, because we don't use the concept as default address exactly
  *  like the (wired) USB code does, we need to kind of skip it. So we
@@ -58,10 +58,8 @@
  *  destination address.
  */
 #include <linux/init.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <linux/bitmap.h>
-#include <linux/slab.h>
-#include <linux/export.h>
 
 #include "wusbhc.h"
 #include "wa-hc.h"
@@ -332,10 +330,7 @@ static int rpipe_aim(struct wa_rpipe *rpipe, struct wahc *wa,
 	/* FIXME: compute so seg_size > ep->maxpktsize */
 	rpipe->descr.wBlocks = cpu_to_le16(16);		/* given */
 	/* ep0 maxpktsize is 0x200 (WUSB1.0[4.8.1]) */
-	if (usb_endpoint_xfer_isoc(&ep->desc))
-		rpipe->descr.wMaxPacketSize = epcd->wOverTheAirPacketSize;
-	else
-		rpipe->descr.wMaxPacketSize = ep->desc.wMaxPacketSize;
+	rpipe->descr.wMaxPacketSize = cpu_to_le16(ep->desc.wMaxPacketSize);
 	rpipe->descr.bHSHubAddress = 0;			/* reserved: zero */
 	rpipe->descr.bHSHubPort = wusb_port_no_to_idx(urb->dev->portnum);
 	/* FIXME: use maximum speed as supported or recommended by device */

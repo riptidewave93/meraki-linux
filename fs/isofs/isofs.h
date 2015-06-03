@@ -50,14 +50,14 @@ struct isofs_sb_info {
 	unsigned int  s_uid_set:1;
 	unsigned int  s_gid_set:1;
 
-	umode_t s_fmode;
-	umode_t s_dmode;
+	mode_t s_fmode;
+	mode_t s_dmode;
 	gid_t s_gid;
 	uid_t s_uid;
 	struct nls_table *s_nls_iocharset; /* Native language support table */
 };
 
-#define ISOFS_INVALID_MODE ((umode_t) -1)
+#define ISOFS_INVALID_MODE ((mode_t) -1)
 
 static inline struct isofs_sb_info *ISOFS_SB(struct super_block *sb)
 {
@@ -107,7 +107,7 @@ extern int iso_date(char *, int);
 
 struct inode;		/* To make gcc happy */
 
-extern int parse_rock_ridge_inode(struct iso_directory_record *, struct inode *, int relocated);
+extern int parse_rock_ridge_inode(struct iso_directory_record *, struct inode *);
 extern int get_rock_ridge_filename(struct iso_directory_record *, char *, struct inode *);
 extern int isofs_name_translate(struct iso_directory_record *, char *, struct inode *);
 
@@ -118,24 +118,9 @@ extern struct dentry *isofs_lookup(struct inode *, struct dentry *, struct namei
 extern struct buffer_head *isofs_bread(struct inode *, sector_t);
 extern int isofs_get_blocks(struct inode *, sector_t, struct buffer_head **, unsigned long);
 
-struct inode *__isofs_iget(struct super_block *sb,
-			   unsigned long block,
-			   unsigned long offset,
-			   int relocated);
-
-static inline struct inode *isofs_iget(struct super_block *sb,
-				       unsigned long block,
-				       unsigned long offset)
-{
-	return __isofs_iget(sb, block, offset, 0);
-}
-
-static inline struct inode *isofs_iget_reloc(struct super_block *sb,
-					     unsigned long block,
-					     unsigned long offset)
-{
-	return __isofs_iget(sb, block, offset, 1);
-}
+extern struct inode *isofs_iget(struct super_block *sb,
+                                unsigned long block,
+                                unsigned long offset);
 
 /* Because the inode number is no longer relevant to finding the
  * underlying meta-data for an inode, we are free to choose a more

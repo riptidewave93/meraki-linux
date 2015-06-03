@@ -47,23 +47,23 @@
 #ifndef _P80211MKMETASTRUCT_H
 #define _P80211MKMETASTRUCT_H
 
-struct p80211msg_dot11req_mibget {
+typedef struct p80211msg_dot11req_mibget {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
 	p80211item_unk392_t mibattribute;
 	p80211item_uint32_t resultcode;
-} __packed;
+} __attribute__ ((packed)) p80211msg_dot11req_mibget_t;
 
-struct p80211msg_dot11req_mibset {
+typedef struct p80211msg_dot11req_mibset {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
 	p80211item_unk392_t mibattribute;
 	p80211item_uint32_t resultcode;
-} __packed;
+} __attribute__ ((packed)) p80211msg_dot11req_mibset_t;
 
-struct p80211msg_dot11req_scan {
+typedef struct p80211msg_dot11req_scan {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
@@ -81,9 +81,9 @@ struct p80211msg_dot11req_scan {
 	p80211item_uint32_t resultcode;
 	p80211item_uint32_t numbss;
 	p80211item_uint32_t append;
-} __packed;
+} __attribute__ ((packed)) p80211msg_dot11req_scan_t;
 
-struct p80211msg_dot11req_scan_results {
+typedef struct p80211msg_dot11req_scan_results {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
@@ -113,7 +113,6 @@ struct p80211msg_dot11req_scan_results {
 	p80211item_uint32_t cfpollable;
 	p80211item_uint32_t cfpollreq;
 	p80211item_uint32_t privacy;
-	p80211item_uint32_t capinfo;
 	p80211item_uint32_t basicrate1;
 	p80211item_uint32_t basicrate2;
 	p80211item_uint32_t basicrate3;
@@ -130,9 +129,9 @@ struct p80211msg_dot11req_scan_results {
 	p80211item_uint32_t supprate6;
 	p80211item_uint32_t supprate7;
 	p80211item_uint32_t supprate8;
-} __packed;
+} __attribute__ ((packed)) p80211msg_dot11req_scan_results_t;
 
-struct p80211msg_dot11req_start {
+typedef struct p80211msg_dot11req_start {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
@@ -168,17 +167,17 @@ struct p80211msg_dot11req_start {
 	p80211item_uint32_t operationalrate7;
 	p80211item_uint32_t operationalrate8;
 	p80211item_uint32_t resultcode;
-} __packed;
+} __attribute__ ((packed)) p80211msg_dot11req_start_t;
 
-struct p80211msg_lnxreq_ifstate {
+typedef struct p80211msg_lnxreq_ifstate {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
 	p80211item_uint32_t ifstate;
 	p80211item_uint32_t resultcode;
-} __packed;
+} __attribute__ ((packed)) p80211msg_lnxreq_ifstate_t;
 
-struct p80211msg_lnxreq_wlansniff {
+typedef struct p80211msg_lnxreq_wlansniff {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
@@ -190,18 +189,18 @@ struct p80211msg_lnxreq_wlansniff {
 	p80211item_uint32_t stripfcs;
 	p80211item_uint32_t packet_trunc;
 	p80211item_uint32_t resultcode;
-} __packed;
+} __attribute__ ((packed)) p80211msg_lnxreq_wlansniff_t;
 
-struct p80211msg_lnxreq_hostwep {
+typedef struct p80211msg_lnxreq_hostwep {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
 	p80211item_uint32_t resultcode;
 	p80211item_uint32_t decrypt;
 	p80211item_uint32_t encrypt;
-} __packed;
+} __attribute__ ((packed)) p80211msg_lnxreq_hostwep_t;
 
-struct p80211msg_lnxreq_commsquality {
+typedef struct p80211msg_lnxreq_commsquality {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
@@ -210,10 +209,9 @@ struct p80211msg_lnxreq_commsquality {
 	p80211item_uint32_t link;
 	p80211item_uint32_t level;
 	p80211item_uint32_t noise;
-	p80211item_uint32_t txrate;
-} __packed;
+} __attribute__ ((packed)) p80211msg_lnxreq_commsquality_t;
 
-struct p80211msg_lnxreq_autojoin {
+typedef struct p80211msg_lnxreq_autojoin {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
@@ -221,26 +219,26 @@ struct p80211msg_lnxreq_autojoin {
 	u8 pad_19D[3];
 	p80211item_uint32_t authtype;
 	p80211item_uint32_t resultcode;
-} __packed;
+} __attribute__ ((packed)) p80211msg_lnxreq_autojoin_t;
 
-struct p80211msg_p2req_readpda {
+typedef struct p80211msg_p2req_readpda {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
 	p80211item_unk1024_t pda;
 	p80211item_uint32_t resultcode;
-} __packed;
+} __attribute__ ((packed)) p80211msg_p2req_readpda_t;
 
-struct p80211msg_p2req_ramdl_state {
+typedef struct p80211msg_p2req_ramdl_state {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
 	p80211item_uint32_t enable;
 	p80211item_uint32_t exeaddr;
 	p80211item_uint32_t resultcode;
-} __packed;
+} __attribute__ ((packed)) p80211msg_p2req_ramdl_state_t;
 
-struct p80211msg_p2req_ramdl_write {
+typedef struct p80211msg_p2req_ramdl_write {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
@@ -248,17 +246,17 @@ struct p80211msg_p2req_ramdl_write {
 	p80211item_uint32_t len;
 	p80211item_unk4096_t data;
 	p80211item_uint32_t resultcode;
-} __packed;
+} __attribute__ ((packed)) p80211msg_p2req_ramdl_write_t;
 
-struct p80211msg_p2req_flashdl_state {
+typedef struct p80211msg_p2req_flashdl_state {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
 	p80211item_uint32_t enable;
 	p80211item_uint32_t resultcode;
-} __packed;
+} __attribute__ ((packed)) p80211msg_p2req_flashdl_state_t;
 
-struct p80211msg_p2req_flashdl_write {
+typedef struct p80211msg_p2req_flashdl_write {
 	u32 msgcode;
 	u32 msglen;
 	u8 devname[WLAN_DEVNAMELEN_MAX];
@@ -266,6 +264,6 @@ struct p80211msg_p2req_flashdl_write {
 	p80211item_uint32_t len;
 	p80211item_unk4096_t data;
 	p80211item_uint32_t resultcode;
-} __packed;
+} __attribute__ ((packed)) p80211msg_p2req_flashdl_write_t;
 
 #endif

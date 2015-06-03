@@ -13,7 +13,6 @@
 #include <linux/mutex.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
-#include <linux/module.h>
 #include <linux/err.h>
 #include <linux/gpio.h>
 #include <linux/leds.h>
@@ -308,7 +307,8 @@ static int add_children(struct i2c_client *client)
 	for (i = 0; i < ARRAY_SIZE(config_inputs); i++) {
 		int gpio = dm355evm_msp_gpio.base + config_inputs[i].offset;
 
-		gpio_request_one(gpio, GPIOF_IN, config_inputs[i].label);
+		gpio_request(gpio, config_inputs[i].label);
+		gpio_direction_input(gpio);
 
 		/* make it easy for userspace to see these */
 		gpio_export(gpio, false);

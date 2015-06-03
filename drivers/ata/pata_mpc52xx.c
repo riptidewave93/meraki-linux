@@ -16,7 +16,7 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/gfp.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/libata.h>
 #include <linux/of_platform.h>
@@ -64,13 +64,13 @@ struct mpc52xx_ata_priv {
 
 
 /* ATAPI-4 PIO specs (in ns) */
-static const u16 ataspec_t0[5]		= {600, 383, 240, 180, 120};
-static const u16 ataspec_t1[5]		= { 70,  50,  30,  30,  25};
-static const u16 ataspec_t2_8[5]	= {290, 290, 290,  80,  70};
-static const u16 ataspec_t2_16[5]	= {165, 125, 100,  80,  70};
-static const u16 ataspec_t2i[5]		= {  0,   0,   0,  70,  25};
-static const u16 ataspec_t4[5]		= { 30,  20,  15,  10,  10};
-static const u16 ataspec_ta[5]		= { 35,  35,  35,  35,  35};
+static const int ataspec_t0[5]    = {600, 383, 240, 180, 120};
+static const int ataspec_t1[5]    = { 70,  50,  30,  30,  25};
+static const int ataspec_t2_8[5]  = {290, 290, 290,  80,  70};
+static const int ataspec_t2_16[5] = {165, 125, 100,  80,  70};
+static const int ataspec_t2i[5]   = {  0,   0,   0,  70,  25};
+static const int ataspec_t4[5]    = { 30,  20,  15,  10,  10};
+static const int ataspec_ta[5]    = { 35,  35,  35,  35,  35};
 
 #define CALC_CLKCYC(c,v) ((((v)+(c)-1)/(c)))
 
@@ -78,13 +78,13 @@ static const u16 ataspec_ta[5]		= { 35,  35,  35,  35,  35};
 
 /* ATAPI-4 MDMA specs (in clocks) */
 struct mdmaspec {
-	u8 t0M;
-	u8 td;
-	u8 th;
-	u8 tj;
-	u8 tkw;
-	u8 tm;
-	u8 tn;
+	u32 t0M;
+	u32 td;
+	u32 th;
+	u32 tj;
+	u32 tkw;
+	u32 tm;
+	u32 tn;
 };
 
 static const struct mdmaspec mdmaspec66[3] = {
@@ -101,23 +101,23 @@ static const struct mdmaspec mdmaspec132[3] = {
 
 /* ATAPI-4 UDMA specs (in clocks) */
 struct udmaspec {
-	u8 tcyc;
-	u8 t2cyc;
-	u8 tds;
-	u8 tdh;
-	u8 tdvs;
-	u8 tdvh;
-	u8 tfs;
-	u8 tli;
-	u8 tmli;
-	u8 taz;
-	u8 tzah;
-	u8 tenv;
-	u8 tsr;
-	u8 trfs;
-	u8 trp;
-	u8 tack;
-	u8 tss;
+	u32 tcyc;
+	u32 t2cyc;
+	u32 tds;
+	u32 tdh;
+	u32 tdvs;
+	u32 tdvh;
+	u32 tfs;
+	u32 tli;
+	u32 tmli;
+	u32 taz;
+	u32 tzah;
+	u32 tenv;
+	u32 tsr;
+	u32 trfs;
+	u32 trp;
+	u32 tack;
+	u32 tss;
 };
 
 static const struct udmaspec udmaspec66[6] = {
@@ -270,7 +270,7 @@ mpc52xx_ata_compute_pio_timings(struct mpc52xx_ata_priv *priv, int dev, int pio)
 {
 	struct mpc52xx_ata_timings *timing = &priv->timings[dev];
 	unsigned int ipb_period = priv->ipb_period;
-	u32 t0, t1, t2_8, t2_16, t2i, t4, ta;
+	unsigned int t0, t1, t2_8, t2_16, t2i, t4, ta;
 
 	if ((pio < 0) || (pio > 4))
 		return -EINVAL;
@@ -299,8 +299,8 @@ mpc52xx_ata_compute_mdma_timings(struct mpc52xx_ata_priv *priv, int dev,
 	if (speed < 0 || speed > 2)
 		return -EINVAL;
 
-	t->mdma1 = ((u32)s->t0M << 24) | ((u32)s->td << 16) | ((u32)s->tkw << 8) | s->tm;
-	t->mdma2 = ((u32)s->th << 24) | ((u32)s->tj << 16) | ((u32)s->tn << 8);
+	t->mdma1 = (s->t0M << 24) | (s->td << 16) | (s->tkw << 8) | (s->tm);
+	t->mdma2 = (s->th << 24) | (s->tj << 16) | (s->tn << 8);
 	t->using_udma = 0;
 
 	return 0;
@@ -316,11 +316,11 @@ mpc52xx_ata_compute_udma_timings(struct mpc52xx_ata_priv *priv, int dev,
 	if (speed < 0 || speed > 2)
 		return -EINVAL;
 
-	t->udma1 = ((u32)s->t2cyc << 24) | ((u32)s->tcyc << 16) | ((u32)s->tds << 8) | s->tdh;
-	t->udma2 = ((u32)s->tdvs << 24) | ((u32)s->tdvh << 16) | ((u32)s->tfs << 8) | s->tli;
-	t->udma3 = ((u32)s->tmli << 24) | ((u32)s->taz << 16) | ((u32)s->tenv << 8) | s->tsr;
-	t->udma4 = ((u32)s->tss << 24) | ((u32)s->trfs << 16) | ((u32)s->trp << 8) | s->tack;
-	t->udma5 = (u32)s->tzah << 24;
+	t->udma1 = (s->t2cyc << 24) | (s->tcyc << 16) | (s->tds << 8) | s->tdh;
+	t->udma2 = (s->tdvs << 24) | (s->tdvh << 16) | (s->tfs << 8) | s->tli;
+	t->udma3 = (s->tmli << 24) | (s->taz << 16) | (s->tenv << 8) | s->tsr;
+	t->udma4 = (s->tss << 24) | (s->trfs << 16) | (s->trp << 8) | s->tack;
+	t->udma5 = (s->tzah << 24);
 	t->using_udma = 1;
 
 	return 0;
@@ -659,7 +659,7 @@ mpc52xx_ata_init_one(struct device *dev, struct mpc52xx_ata_priv *priv,
 	ata_port_desc(ap, "ata_regs 0x%lx", raw_ata_regs);
 
 	/* activate host */
-	return ata_host_activate(host, priv->ata_irq, ata_bmdma_interrupt, 0,
+	return ata_host_activate(host, priv->ata_irq, ata_sff_interrupt, 0,
 				 &mpc52xx_ata_sht);
 }
 
@@ -680,21 +680,21 @@ mpc52xx_ata_remove_one(struct device *dev)
 /* ======================================================================== */
 
 static int __devinit
-mpc52xx_ata_probe(struct platform_device *op)
+mpc52xx_ata_probe(struct of_device *op, const struct of_device_id *match)
 {
 	unsigned int ipb_freq;
 	struct resource res_mem;
 	int ata_irq = 0;
 	struct mpc52xx_ata __iomem *ata_regs;
 	struct mpc52xx_ata_priv *priv = NULL;
-	int rv, task_irq;
+	int rv, ret, task_irq = 0;
 	int mwdma_mask = 0, udma_mask = 0;
 	const __be32 *prop;
 	int proplen;
-	struct bcom_task *dmatsk;
+	struct bcom_task *dmatsk = NULL;
 
 	/* Get ipb frequency */
-	ipb_freq = mpc5xxx_get_bus_frequency(op->dev.of_node);
+	ipb_freq = mpc5xxx_get_bus_frequency(op->node);
 	if (!ipb_freq) {
 		dev_err(&op->dev, "could not determine IPB bus frequency\n");
 		return -ENODEV;
@@ -702,7 +702,7 @@ mpc52xx_ata_probe(struct platform_device *op)
 
 	/* Get device base address from device tree, request the region
 	 * and ioremap it. */
-	rv = of_address_to_resource(op->dev.of_node, 0, &res_mem);
+	rv = of_address_to_resource(op->node, 0, &res_mem);
 	if (rv) {
 		dev_err(&op->dev, "could not determine device base address\n");
 		return rv;
@@ -717,7 +717,8 @@ mpc52xx_ata_probe(struct platform_device *op)
 	ata_regs = devm_ioremap(&op->dev, res_mem.start, sizeof(*ata_regs));
 	if (!ata_regs) {
 		dev_err(&op->dev, "error mapping device registers\n");
-		return -ENOMEM;
+		rv = -ENOMEM;
+		goto err;
 	}
 
 	/*
@@ -734,14 +735,14 @@ mpc52xx_ata_probe(struct platform_device *op)
 	 * The MPC5200 ATA controller supports MWDMA modes 0, 1 and 2 and
 	 * UDMA modes 0, 1 and 2.
 	 */
-	prop = of_get_property(op->dev.of_node, "mwdma-mode", &proplen);
+	prop = of_get_property(op->node, "mwdma-mode", &proplen);
 	if ((prop) && (proplen >= 4))
 		mwdma_mask = ATA_MWDMA2 & ((1 << (*prop + 1)) - 1);
-	prop = of_get_property(op->dev.of_node, "udma-mode", &proplen);
+	prop = of_get_property(op->node, "udma-mode", &proplen);
 	if ((prop) && (proplen >= 4))
 		udma_mask = ATA_UDMA2 & ((1 << (*prop + 1)) - 1);
 
-	ata_irq = irq_of_parse_and_map(op->dev.of_node, 0);
+	ata_irq = irq_of_parse_and_map(op->node, 0);
 	if (ata_irq == NO_IRQ) {
 		dev_err(&op->dev, "error mapping irq\n");
 		return -EINVAL;
@@ -752,7 +753,7 @@ mpc52xx_ata_probe(struct platform_device *op)
 	if (!priv) {
 		dev_err(&op->dev, "error allocating private structure\n");
 		rv = -ENOMEM;
-		goto err1;
+		goto err;
 	}
 
 	priv->ipb_period = 1000000000 / (ipb_freq / 1000);
@@ -775,15 +776,15 @@ mpc52xx_ata_probe(struct platform_device *op)
 	if (!dmatsk) {
 		dev_err(&op->dev, "bestcomm initialization failed\n");
 		rv = -ENOMEM;
-		goto err1;
+		goto err;
 	}
 
 	task_irq = bcom_get_task_irq(dmatsk);
-	rv = devm_request_irq(&op->dev, task_irq, &mpc52xx_ata_task_irq, 0,
+	ret = request_irq(task_irq, &mpc52xx_ata_task_irq, IRQF_DISABLED,
 				"ATA task", priv);
-	if (rv) {
+	if (ret) {
 		dev_err(&op->dev, "error requesting DMA IRQ\n");
-		goto err2;
+		goto err;
 	}
 	priv->dmatsk = dmatsk;
 
@@ -791,7 +792,7 @@ mpc52xx_ata_probe(struct platform_device *op)
 	rv = mpc52xx_ata_hw_init(priv);
 	if (rv) {
 		dev_err(&op->dev, "error initializing hardware\n");
-		goto err2;
+		goto err;
 	}
 
 	/* Register ourselves to libata */
@@ -799,21 +800,28 @@ mpc52xx_ata_probe(struct platform_device *op)
 				  mwdma_mask, udma_mask);
 	if (rv) {
 		dev_err(&op->dev, "error registering with ATA layer\n");
-		goto err2;
+		goto err;
 	}
 
 	return 0;
 
- err2:
-	irq_dispose_mapping(task_irq);
-	bcom_ata_release(dmatsk);
- err1:
-	irq_dispose_mapping(ata_irq);
+ err:
+	devm_release_mem_region(&op->dev, res_mem.start, sizeof(*ata_regs));
+	if (ata_irq)
+		irq_dispose_mapping(ata_irq);
+	if (task_irq)
+		irq_dispose_mapping(task_irq);
+	if (dmatsk)
+		bcom_ata_release(dmatsk);
+	if (ata_regs)
+		devm_iounmap(&op->dev, ata_regs);
+	if (priv)
+		devm_kfree(&op->dev, priv);
 	return rv;
 }
 
 static int
-mpc52xx_ata_remove(struct platform_device *op)
+mpc52xx_ata_remove(struct of_device *op)
 {
 	struct mpc52xx_ata_priv *priv;
 	int task_irq;
@@ -827,6 +835,12 @@ mpc52xx_ata_remove(struct platform_device *op)
 	bcom_ata_release(priv->dmatsk);
 	irq_dispose_mapping(priv->ata_irq);
 
+	/* Clear up IO allocations */
+	devm_iounmap(&op->dev, priv->ata_regs);
+	devm_release_mem_region(&op->dev, priv->ata_regs_pa,
+				sizeof(*priv->ata_regs));
+	devm_kfree(&op->dev, priv);
+
 	return 0;
 }
 
@@ -834,7 +848,7 @@ mpc52xx_ata_remove(struct platform_device *op)
 #ifdef CONFIG_PM
 
 static int
-mpc52xx_ata_suspend(struct platform_device *op, pm_message_t state)
+mpc52xx_ata_suspend(struct of_device *op, pm_message_t state)
 {
 	struct ata_host *host = dev_get_drvdata(&op->dev);
 
@@ -842,7 +856,7 @@ mpc52xx_ata_suspend(struct platform_device *op, pm_message_t state)
 }
 
 static int
-mpc52xx_ata_resume(struct platform_device *op)
+mpc52xx_ata_resume(struct of_device *op)
 {
 	struct ata_host *host = dev_get_drvdata(&op->dev);
 	struct mpc52xx_ata_priv *priv = host->private_data;
@@ -869,7 +883,10 @@ static struct of_device_id mpc52xx_ata_of_match[] = {
 };
 
 
-static struct platform_driver mpc52xx_ata_of_platform_driver = {
+static struct of_platform_driver mpc52xx_ata_of_platform_driver = {
+	.owner		= THIS_MODULE,
+	.name		= DRV_NAME,
+	.match_table	= mpc52xx_ata_of_match,
 	.probe		= mpc52xx_ata_probe,
 	.remove		= mpc52xx_ata_remove,
 #ifdef CONFIG_PM
@@ -879,11 +896,29 @@ static struct platform_driver mpc52xx_ata_of_platform_driver = {
 	.driver		= {
 		.name	= DRV_NAME,
 		.owner	= THIS_MODULE,
-		.of_match_table = mpc52xx_ata_of_match,
 	},
 };
 
-module_platform_driver(mpc52xx_ata_of_platform_driver);
+
+/* ======================================================================== */
+/* Module                                                                   */
+/* ======================================================================== */
+
+static int __init
+mpc52xx_ata_init(void)
+{
+	printk(KERN_INFO "ata: MPC52xx IDE/ATA libata driver\n");
+	return of_register_platform_driver(&mpc52xx_ata_of_platform_driver);
+}
+
+static void __exit
+mpc52xx_ata_exit(void)
+{
+	of_unregister_platform_driver(&mpc52xx_ata_of_platform_driver);
+}
+
+module_init(mpc52xx_ata_init);
+module_exit(mpc52xx_ata_exit);
 
 MODULE_AUTHOR("Sylvain Munaut <tnt@246tNt.com>");
 MODULE_DESCRIPTION("Freescale MPC52xx IDE/ATA libata driver");

@@ -5,7 +5,7 @@
  ******************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -159,7 +159,7 @@ void acpi_ns_remove_node(struct acpi_namespace_node *node)
 
 	ACPI_FUNCTION_TRACE_PTR(ns_remove_node, node);
 
-	parent_node = node->parent;
+	parent_node = acpi_ns_get_parent_node(node);
 
 	prev_node = NULL;
 	next_node = parent_node->child;
@@ -168,20 +168,29 @@ void acpi_ns_remove_node(struct acpi_namespace_node *node)
 
 	while (next_node != node) {
 		prev_node = next_node;
-		next_node = next_node->peer;
+		next_node = prev_node->peer;
 	}
 
 	if (prev_node) {
 
 		/* Node is not first child, unlink it */
 
-		prev_node->peer = node->peer;
+		prev_node->peer = next_node->peer;
+		if (next_node->flags & ANOBJ_END_OF_PEER_LIST) {
+			prev_node->flags |= ANOBJ_END_OF_PEER_LIST;
+		}
 	} else {
-		/*
-		 * Node is first child (has no previous peer).
-		 * Link peer list to parent
-		 */
-		parent_node->child = node->peer;
+		/* Node is first child (has no previous peer) */
+
+		if (next_node->flags & ANOBJ_END_OF_PEER_LIST) {
+
+			/* No peers at all */
+
+			parent_node->child = NULL;
+		} else {	/* Link peer list to parent */
+
+			parent_node->child = next_node->peer;
+		}
 	}
 
 	/* Delete the node and any attached objects */
@@ -219,42 +228,33 @@ void acpi_ns_install_node(struct acpi_walk_state *walk_state, struct acpi_namesp
 
 	ACPI_FUNCTION_TRACE(ns_install_node);
 
+	/*
+	 * Get the owner ID from the Walk state. The owner ID is used to track
+	 * table deletion and deletion of objects created by methods.
+	 */
 	if (walk_state) {
-		/*
-		 * Get the owner ID from the Walk state. The owner ID is used to
-		 * track table deletion and deletion of objects created by methods.
-		 */
 		owner_id = walk_state->owner_id;
-
-		if ((walk_state->method_desc) &&
-		    (parent_node != walk_state->method_node)) {
-			/*
-			 * A method is creating a new node that is not a child of the
-			 * method (it is non-local). Mark the executing method as having
-			 * modified the namespace. This is used for cleanup when the
-			 * method exits.
-			 */
-			walk_state->method_desc->method.info_flags |=
-			    ACPI_METHOD_MODIFIED_NAMESPACE;
-		}
 	}
 
 	/* Link the new entry into the parent and existing children */
 
-	node->peer = NULL;
-	node->parent = parent_node;
 	child_node = parent_node->child;
-
 	if (!child_node) {
 		parent_node->child = node;
+		node->flags |= ANOBJ_END_OF_PEER_LIST;
+		node->peer = parent_node;
 	} else {
-		/* Add node to the end of the peer list */
-
-		while (child_node->peer) {
+		while (!(child_node->flags & ANOBJ_END_OF_PEER_LIST)) {
 			child_node = child_node->peer;
 		}
 
 		child_node->peer = node;
+
+		/* Clear end-of-list flag */
+
+		child_node->flags &= ~ANOBJ_END_OF_PEER_LIST;
+		node->flags |= ANOBJ_END_OF_PEER_LIST;
+		node->peer = parent_node;
 	}
 
 	/* Init the new entry */
@@ -288,8 +288,9 @@ void acpi_ns_install_node(struct acpi_walk_state *walk_state, struct acpi_namesp
 
 void acpi_ns_delete_children(struct acpi_namespace_node *parent_node)
 {
+	struct acpi_namespace_node *child_node;
 	struct acpi_namespace_node *next_node;
-	struct acpi_namespace_node *node_to_delete;
+	u8 flags;
 
 	ACPI_FUNCTION_TRACE_PTR(ns_delete_children, parent_node);
 
@@ -297,26 +298,37 @@ void acpi_ns_delete_children(struct acpi_namespace_node *parent_node)
 		return_VOID;
 	}
 
+	/* If no children, all done! */
+
+	child_node = parent_node->child;
+	if (!child_node) {
+		return_VOID;
+	}
+
 	/* Deallocate all children at this level */
 
-	next_node = parent_node->child;
-	while (next_node) {
+	do {
+
+		/* Get the things we need */
+
+		next_node = child_node->peer;
+		flags = child_node->flags;
 
 		/* Grandchildren should have all been deleted already */
 
-		if (next_node->child) {
+		if (child_node->child) {
 			ACPI_ERROR((AE_INFO, "Found a grandchild! P=%p C=%p",
-				    parent_node, next_node));
+				    parent_node, child_node));
 		}
 
 		/*
 		 * Delete this child node and move on to the next child in the list.
 		 * No need to unlink the node since we are deleting the entire branch.
 		 */
-		node_to_delete = next_node;
-		next_node = next_node->peer;
-		acpi_ns_delete_node(node_to_delete);
-	};
+		acpi_ns_delete_node(child_node);
+		child_node = next_node;
+
+	} while (!(flags & ANOBJ_END_OF_PEER_LIST));
 
 	/* Clear the parent's child pointer */
 
@@ -341,18 +353,10 @@ void acpi_ns_delete_namespace_subtree(struct acpi_namespace_node *parent_node)
 {
 	struct acpi_namespace_node *child_node = NULL;
 	u32 level = 1;
-	acpi_status status;
 
 	ACPI_FUNCTION_TRACE(ns_delete_namespace_subtree);
 
 	if (!parent_node) {
-		return_VOID;
-	}
-
-	/* Lock namespace for possible update */
-
-	status = acpi_ut_acquire_mutex(ACPI_MTX_NAMESPACE);
-	if (ACPI_FAILURE(status)) {
 		return_VOID;
 	}
 
@@ -401,11 +405,10 @@ void acpi_ns_delete_namespace_subtree(struct acpi_namespace_node *parent_node)
 
 			/* Move up the tree to the grandparent */
 
-			parent_node = parent_node->parent;
+			parent_node = acpi_ns_get_parent_node(parent_node);
 		}
 	}
 
-	(void)acpi_ut_release_mutex(ACPI_MTX_NAMESPACE);
 	return_VOID;
 }
 
@@ -507,7 +510,7 @@ void acpi_ns_delete_namespace_by_owner(acpi_owner_id owner_id)
 
 			/* Move up the tree to the grandparent */
 
-			parent_node = parent_node->parent;
+			parent_node = acpi_ns_get_parent_node(parent_node);
 		}
 	}
 

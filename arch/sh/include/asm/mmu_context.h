@@ -158,7 +158,7 @@ static inline void enable_mmu(void)
 	unsigned int cpu = smp_processor_id();
 
 	/* Enable MMU */
-	__raw_writel(MMU_CONTROL_INIT, MMUCR);
+	ctrl_outl(MMU_CONTROL_INIT, MMUCR);
 	ctrl_barrier();
 
 	if (asid_cache(cpu) == NO_CONTEXT)
@@ -171,9 +171,9 @@ static inline void disable_mmu(void)
 {
 	unsigned long cr;
 
-	cr = __raw_readl(MMUCR);
+	cr = ctrl_inl(MMUCR);
 	cr &= ~MMU_CONTROL_INIT;
-	__raw_writel(cr, MMUCR);
+	ctrl_outl(cr, MMUCR);
 
 	ctrl_barrier();
 }

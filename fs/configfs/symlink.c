@@ -27,7 +27,6 @@
 #include <linux/fs.h>
 #include <linux/module.h>
 #include <linux/namei.h>
-#include <linux/slab.h>
 
 #include <linux/configfs.h>
 #include "configfs_internal.h"
@@ -110,22 +109,20 @@ out:
 
 
 static int get_target(const char *symname, struct path *path,
-		      struct config_item **target, struct super_block *sb)
+		      struct config_item **target)
 {
 	int ret;
 
 	ret = kern_path(symname, LOOKUP_FOLLOW|LOOKUP_DIRECTORY, path);
 	if (!ret) {
-		if (path->dentry->d_sb == sb) {
+		if (path->dentry->d_sb == configfs_sb) {
 			*target = configfs_get_config_item(path->dentry);
 			if (!*target) {
 				ret = -ENOENT;
 				path_put(path);
 			}
-		} else {
+		} else
 			ret = -EPERM;
-			path_put(path);
-		}
 	}
 
 	return ret;
@@ -140,6 +137,10 @@ int configfs_symlink(struct inode *dir, struct dentry *dentry, const char *symna
 	struct config_item *parent_item;
 	struct config_item *target_item = NULL;
 	struct config_item_type *type;
+
+	ret = -EPERM;  /* What lack-of-symlink returns */
+	if (dentry->d_parent == configfs_sb->s_root)
+		goto out;
 
 	sd = dentry->d_parent->d_fsdata;
 	/*
@@ -158,7 +159,7 @@ int configfs_symlink(struct inode *dir, struct dentry *dentry, const char *symna
 	    !type->ct_item_ops->allow_link)
 		goto out_put;
 
-	ret = get_target(symname, &path, &target_item, dentry->d_sb);
+	ret = get_target(symname, &path, &target_item);
 	if (ret)
 		goto out_put;
 
@@ -193,6 +194,8 @@ int configfs_unlink(struct inode *dir, struct dentry *dentry)
 	ret = -EPERM;  /* What lack-of-symlink returns */
 	if (!(sd->s_type & CONFIGFS_ITEM_LINK))
 		goto out;
+
+	BUG_ON(dentry->d_parent == configfs_sb->s_root);
 
 	sl = sd->s_element;
 

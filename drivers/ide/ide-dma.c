@@ -29,9 +29,7 @@
  */
 
 #include <linux/types.h>
-#include <linux/gfp.h>
 #include <linux/kernel.h>
-#include <linux/export.h>
 #include <linux/ide.h>
 #include <linux/scatterlist.h>
 #include <linux/dma-mapping.h>
@@ -450,6 +448,7 @@ ide_startstop_t ide_dma_timeout_retry(ide_drive_t *drive, int error)
 	ide_hwif_t *hwif = drive->hwif;
 	const struct ide_dma_ops *dma_ops = hwif->dma_ops;
 	struct ide_cmd *cmd = &hwif->cmd;
+	struct request *rq;
 	ide_startstop_t ret = ide_stopped;
 
 	/*
@@ -487,10 +486,13 @@ ide_startstop_t ide_dma_timeout_retry(ide_drive_t *drive, int error)
 	ide_dma_off_quietly(drive);
 
 	/*
-	 * make sure request is sane
+	 * un-busy drive etc and make sure request is sane
 	 */
-	if (hwif->rq)
-		hwif->rq->errors = 0;
+	rq = hwif->rq;
+	if (rq) {
+		hwif->rq = NULL;
+		rq->errors = 0;
+	}
 	return ret;
 }
 

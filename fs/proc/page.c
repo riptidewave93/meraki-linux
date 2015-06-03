@@ -8,7 +8,6 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/hugetlb.h>
-#include <linux/kernel-page-flags.h>
 #include <asm/uaccess.h>
 #include "internal.h"
 
@@ -40,7 +39,7 @@ static ssize_t kpagecount_read(struct file *file, char __user *buf,
 			ppage = pfn_to_page(pfn);
 		else
 			ppage = NULL;
-		if (!ppage || PageSlab(ppage))
+		if (!ppage)
 			pcount = 0;
 		else
 			pcount = page_mapcount(ppage);
@@ -72,12 +71,52 @@ static const struct file_operations proc_kpagecount_operations = {
  * physical page flags.
  */
 
+/* These macros are used to decouple internal flags from exported ones */
+
+#define KPF_LOCKED		0
+#define KPF_ERROR		1
+#define KPF_REFERENCED		2
+#define KPF_UPTODATE		3
+#define KPF_DIRTY		4
+#define KPF_LRU			5
+#define KPF_ACTIVE		6
+#define KPF_SLAB		7
+#define KPF_WRITEBACK		8
+#define KPF_RECLAIM		9
+#define KPF_BUDDY		10
+
+/* 11-20: new additions in 2.6.31 */
+#define KPF_MMAP		11
+#define KPF_ANON		12
+#define KPF_SWAPCACHE		13
+#define KPF_SWAPBACKED		14
+#define KPF_COMPOUND_HEAD	15
+#define KPF_COMPOUND_TAIL	16
+#define KPF_HUGE		17
+#define KPF_UNEVICTABLE		18
+#define KPF_HWPOISON		19
+#define KPF_NOPAGE		20
+
+#define KPF_KSM			21
+
+/* kernel hacking assistances
+ * WARNING: subject to change, never rely on them!
+ */
+#define KPF_RESERVED		32
+#define KPF_MLOCKED		33
+#define KPF_MAPPEDTODISK	34
+#define KPF_PRIVATE		35
+#define KPF_PRIVATE_2		36
+#define KPF_OWNER_PRIVATE	37
+#define KPF_ARCH		38
+#define KPF_UNCACHED		39
+
 static inline u64 kpf_copy_bit(u64 kflags, int ubit, int kbit)
 {
 	return ((kflags >> kbit) & 1) << ubit;
 }
 
-u64 stable_page_flags(struct page *page)
+static u64 get_uflags(struct page *page)
 {
 	u64 k;
 	u64 u;
@@ -115,26 +154,16 @@ u64 stable_page_flags(struct page *page)
 		u |= 1 << KPF_COMPOUND_TAIL;
 	if (PageHuge(page))
 		u |= 1 << KPF_HUGE;
-	/*
-	 * PageTransCompound can be true for non-huge compound pages (slab
-	 * pages or pages allocated by drivers with __GFP_COMP) because it
-	 * just checks PG_head/PG_tail, so we need to check PageLRU to make
-	 * sure a given page is a thp, not a non-huge compound page.
-	 */
-	else if (PageTransCompound(page) && PageLRU(compound_trans_head(page)))
-		u |= 1 << KPF_THP;
-
-	/*
-	 * Caveats on high order pages: page->_count will only be set
-	 * -1 on the head page; SLUB/SLQB do the same for PG_slab;
-	 * SLOB won't set PG_slab at all on compound pages.
-	 */
-	if (PageBuddy(page))
-		u |= 1 << KPF_BUDDY;
 
 	u |= kpf_copy_bit(k, KPF_LOCKED,	PG_locked);
 
+	/*
+	 * Caveats on high order pages:
+	 * PG_buddy will only be set on the head page; SLUB/SLQB do the same
+	 * for PG_slab; SLOB won't set PG_slab at all on compound pages.
+	 */
 	u |= kpf_copy_bit(k, KPF_SLAB,		PG_slab);
+	u |= kpf_copy_bit(k, KPF_BUDDY,		PG_buddy);
 
 	u |= kpf_copy_bit(k, KPF_ERROR,		PG_error);
 	u |= kpf_copy_bit(k, KPF_DIRTY,		PG_dirty);
@@ -156,7 +185,7 @@ u64 stable_page_flags(struct page *page)
 	u |= kpf_copy_bit(k, KPF_HWPOISON,	PG_hwpoison);
 #endif
 
-#ifdef CONFIG_ARCH_USES_PG_UNCACHED
+#ifdef CONFIG_IA64_UNCACHED_ALLOCATOR
 	u |= kpf_copy_bit(k, KPF_UNCACHED,	PG_uncached);
 #endif
 
@@ -190,7 +219,7 @@ static ssize_t kpageflags_read(struct file *file, char __user *buf,
 		else
 			ppage = NULL;
 
-		if (put_user(stable_page_flags(ppage), out)) {
+		if (put_user(get_uflags(ppage), out)) {
 			ret = -EFAULT;
 			break;
 		}

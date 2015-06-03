@@ -43,10 +43,10 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/pci.h>
-#include <linux/module.h>
+#include <linux/slab.h>
+#include <linux/moduleparam.h>
 #include <linux/firmware.h>
 #include <linux/io.h>
-#include <linux/slab.h>
 #include <sound/core.h>
 #include <sound/info.h>
 #include <sound/control.h>
@@ -55,7 +55,7 @@
 #include <sound/pcm_params.h>
 #include <sound/asoundef.h>
 #include <sound/initval.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include "echoaudio.h"
 
 MODULE_FIRMWARE("ea/loader_dsp.fw");
@@ -69,7 +69,7 @@ static const struct firmware card_fw[] = {
 	{0, "indigo_iox_dsp.fw"}
 };
 
-static DEFINE_PCI_DEVICE_TABLE(snd_echo_ids) = {
+static struct pci_device_id snd_echo_ids[] = {
 	{0x1057, 0x3410, 0xECC0, 0x00D0, 0, 0, 0},	/* Indigo IOx */
 	{0,}
 };

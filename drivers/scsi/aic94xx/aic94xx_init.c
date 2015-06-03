@@ -30,7 +30,6 @@
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/firmware.h>
-#include <linux/slab.h>
 
 #include <scsi/scsi_host.h>
 
@@ -68,6 +67,7 @@ static struct scsi_host_template aic94xx_sht = {
 	.queuecommand		= sas_queuecommand,
 	.target_alloc		= sas_target_alloc,
 	.slave_configure	= sas_slave_configure,
+	.slave_destroy		= sas_slave_destroy,
 	.scan_finished		= asd_scan_finished,
 	.scan_start		= asd_scan_start,
 	.change_queue_depth	= sas_change_queue_depth,
@@ -81,6 +81,7 @@ static struct scsi_host_template aic94xx_sht = {
 	.use_clustering		= ENABLE_CLUSTERING,
 	.eh_device_reset_handler	= sas_eh_device_reset_handler,
 	.eh_bus_reset_handler	= sas_eh_bus_reset_handler,
+	.slave_alloc		= sas_slave_alloc,
 	.target_destroy		= sas_target_destroy,
 	.ioctl			= sas_ioctl,
 };
@@ -484,7 +485,7 @@ static ssize_t asd_show_update_bios(struct device *dev,
 			flash_error_table[i].reason);
 }
 
-static DEVICE_ATTR(update_bios, S_IRUGO|S_IWUSR,
+static DEVICE_ATTR(update_bios, S_IRUGO|S_IWUGO,
 	asd_show_update_bios, asd_store_update_bios);
 
 static int asd_create_dev_attrs(struct asd_ha_struct *asd_ha)
@@ -686,9 +687,9 @@ static int asd_register_sas_ha(struct asd_ha_struct *asd_ha)
 {
 	int i;
 	struct asd_sas_phy   **sas_phys =
-		kcalloc(ASD_MAX_PHYS, sizeof(*sas_phys), GFP_KERNEL);
+		kmalloc(ASD_MAX_PHYS * sizeof(struct asd_sas_phy), GFP_KERNEL);
 	struct asd_sas_port  **sas_ports =
-		kcalloc(ASD_MAX_PHYS, sizeof(*sas_ports), GFP_KERNEL);
+		kmalloc(ASD_MAX_PHYS * sizeof(struct asd_sas_port), GFP_KERNEL);
 
 	if (!sas_phys || !sas_ports) {
 		kfree(sas_phys);
@@ -970,7 +971,7 @@ static int asd_scan_finished(struct Scsi_Host *shost, unsigned long time)
 	if (time < HZ)
 		return 0;
 	/* Wait for discovery to finish */
-	sas_drain_work(SHOST_TO_SAS_HA(shost));
+	scsi_flush_work(shost);
 	return 1;
 }
 
@@ -1008,8 +1009,6 @@ static struct sas_domain_function_template aic94xx_transport_functions = {
 	.lldd_clear_nexus_ha	= asd_clear_nexus_ha,
 
 	.lldd_control_phy	= asd_control_phy,
-
-	.lldd_ata_set_dmamode	= asd_set_dmamode,
 };
 
 static const struct pci_device_id aic94xx_pci_table[] __devinitdata = {

@@ -15,44 +15,35 @@
 #include <linux/syscalls.h>
 
 #include <asm/checksum.h>
-#include <asm/cacheflush.h>
 #include <linux/io.h>
 #include <asm/page.h>
-#include <linux/ftrace.h>
+#include <asm/system.h>
 #include <linux/uaccess.h>
 
-extern char *_ebss;
-EXPORT_SYMBOL_GPL(_ebss);
-
-#ifdef CONFIG_FUNCTION_TRACER
-extern void _mcount(void);
-EXPORT_SYMBOL(_mcount);
-#endif
-
 /*
- * Assembly functions that may be used (directly or indirectly) by modules
+ * libgcc functions - functions that are used internally by the
+ * compiler... (prototypes are not correct though, but that
+ * doesn't really matter since they're not versioned).
  */
-EXPORT_SYMBOL(__copy_tofrom_user);
-EXPORT_SYMBOL(__strncpy_user);
-
-#ifdef CONFIG_OPT_LIB_ASM
-EXPORT_SYMBOL(memcpy);
-EXPORT_SYMBOL(memmove);
-#endif
-
-#ifdef CONFIG_MMU
-EXPORT_SYMBOL(empty_zero_page);
-#endif
-
-EXPORT_SYMBOL(mbc);
-
+extern void __ashldi3(void);
+EXPORT_SYMBOL(__ashldi3);
+extern void __ashrdi3(void);
+EXPORT_SYMBOL(__ashrdi3);
 extern void __divsi3(void);
 EXPORT_SYMBOL(__divsi3);
+extern void __lshrdi3(void);
+EXPORT_SYMBOL(__lshrdi3);
 extern void __modsi3(void);
 EXPORT_SYMBOL(__modsi3);
 extern void __mulsi3(void);
 EXPORT_SYMBOL(__mulsi3);
+extern void __muldi3(void);
+EXPORT_SYMBOL(__muldi3);
+extern void __ucmpdi2(void);
+EXPORT_SYMBOL(__ucmpdi2);
 extern void __udivsi3(void);
 EXPORT_SYMBOL(__udivsi3);
 extern void __umodsi3(void);
 EXPORT_SYMBOL(__umodsi3);
+extern char *_ebss;
+EXPORT_SYMBOL_GPL(_ebss);

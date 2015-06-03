@@ -41,7 +41,7 @@ int par_io_init(struct device_node *np)
 	ret = of_address_to_resource(np, 0, &res);
 	if (ret)
 		return ret;
-	par_io = ioremap(res.start, resource_size(&res));
+	par_io = ioremap(res.start, res.end - res.start + 1);
 
 	num_ports = of_get_property(np, "num-ports", NULL);
 	if (num_ports)
@@ -157,13 +157,13 @@ int par_io_of_config(struct device_node *np)
 	const unsigned int *pio_map;
 
 	if (par_io == NULL) {
-		printk(KERN_ERR "par_io not initialized\n");
+		printk(KERN_ERR "par_io not initialized \n");
 		return -1;
 	}
 
 	ph = of_get_property(np, "pio-handle", NULL);
 	if (ph == NULL) {
-		printk(KERN_ERR "pio-handle not available\n");
+		printk(KERN_ERR "pio-handle not available \n");
 		return -1;
 	}
 
@@ -171,12 +171,12 @@ int par_io_of_config(struct device_node *np)
 
 	pio_map = of_get_property(pio, "pio-map", &pio_map_len);
 	if (pio_map == NULL) {
-		printk(KERN_ERR "pio-map is not set!\n");
+		printk(KERN_ERR "pio-map is not set! \n");
 		return -1;
 	}
 	pio_map_len /= sizeof(unsigned int);
 	if ((pio_map_len % 6) != 0) {
-		printk(KERN_ERR "pio-map format wrong!\n");
+		printk(KERN_ERR "pio-map format wrong! \n");
 		return -1;
 	}
 

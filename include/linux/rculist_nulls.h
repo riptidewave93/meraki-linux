@@ -37,12 +37,6 @@ static inline void hlist_nulls_del_init_rcu(struct hlist_nulls_node *n)
 	}
 }
 
-#define hlist_nulls_first_rcu(head) \
-	(*((struct hlist_nulls_node __rcu __force **)&(head)->first))
-
-#define hlist_nulls_next_rcu(node) \
-	(*((struct hlist_nulls_node __rcu __force **)&(node)->next))
-
 /**
  * hlist_nulls_del_rcu - deletes entry from hash list without re-initialization
  * @n: the element to delete from the hash list.
@@ -65,7 +59,7 @@ static inline void hlist_nulls_del_init_rcu(struct hlist_nulls_node *n)
 static inline void hlist_nulls_del_rcu(struct hlist_nulls_node *n)
 {
 	__hlist_nulls_del(n);
-	n->pprev = LIST_POISON2;
+	n->pprev = (struct hlist_nulls_node **)LIST_POISON2;
 }
 
 /**
@@ -94,7 +88,7 @@ static inline void hlist_nulls_add_head_rcu(struct hlist_nulls_node *n,
 
 	n->next = first;
 	n->pprev = &h->first;
-	rcu_assign_pointer(hlist_nulls_first_rcu(h), n);
+	rcu_assign_pointer(h->first, n);
 	if (!is_a_nulls(first))
 		first->pprev = &n->next;
 }
@@ -105,17 +99,12 @@ static inline void hlist_nulls_add_head_rcu(struct hlist_nulls_node *n,
  * @head:	the head for your list.
  * @member:	the name of the hlist_nulls_node within the struct.
  *
- * The barrier() is needed to make sure compiler doesn't cache first element [1],
- * as this loop can be restarted [2]
- * [1] Documentation/atomic_ops.txt around line 114
- * [2] Documentation/RCU/rculist_nulls.txt around line 146
  */
-#define hlist_nulls_for_each_entry_rcu(tpos, pos, head, member)			\
-	for (({barrier();}),							\
-	     pos = rcu_dereference_raw(hlist_nulls_first_rcu(head));		\
-		(!is_a_nulls(pos)) &&						\
+#define hlist_nulls_for_each_entry_rcu(tpos, pos, head, member) \
+	for (pos = rcu_dereference((head)->first);			 \
+		(!is_a_nulls(pos)) &&			\
 		({ tpos = hlist_nulls_entry(pos, typeof(*tpos), member); 1; }); \
-		pos = rcu_dereference_raw(hlist_nulls_next_rcu(pos)))
+		pos = rcu_dereference(pos->next))
 
 #endif
 #endif

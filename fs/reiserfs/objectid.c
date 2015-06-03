@@ -5,7 +5,8 @@
 #include <linux/string.h>
 #include <linux/random.h>
 #include <linux/time.h>
-#include "reiserfs.h"
+#include <linux/reiserfs_fs.h>
+#include <linux/reiserfs_fs_sb.h>
 
 // find where objectid map starts
 #define objectid_map(s,rs) (old_format_only (s) ? \

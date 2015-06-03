@@ -18,7 +18,6 @@
 #include <linux/rtc.h>
 #include <linux/interrupt.h>
 #include <linux/ioctl.h>
-#include <linux/slab.h>
 
 #include <mach/board.h>
 #include <mach/at91_rtt.h>
@@ -57,7 +56,6 @@ struct sam9_rtc {
 	void __iomem		*rtt;
 	struct rtc_device	*rtcdev;
 	u32			imr;
-	void __iomem		*gpbr;
 };
 
 #define rtt_readl(rtc, field) \
@@ -66,9 +64,9 @@ struct sam9_rtc {
 	__raw_writel((val), (rtc)->rtt + AT91_RTT_ ## field)
 
 #define gpbr_readl(rtc) \
-	__raw_readl((rtc)->gpbr)
+	at91_sys_read(AT91_GPBR + 4 * CONFIG_RTC_DRV_AT91SAM9_GPBR)
 #define gpbr_writel(rtc, val) \
-	__raw_writel((val), (rtc)->gpbr)
+	at91_sys_write(AT91_GPBR + 4 * CONFIG_RTC_DRV_AT91SAM9_GPBR, (val))
 
 /*
  * Read current time and date in RTC
@@ -163,7 +161,7 @@ static int at91_rtc_readalarm(struct device *dev, struct rtc_wkalrm *alrm)
 	if (offset == 0)
 		return -EILSEQ;
 
-	memset(alrm, 0, sizeof(*alrm));
+	memset(alrm, 0, sizeof(alrm));
 	if (alarm != ALARM_DISABLED && offset != 0) {
 		rtc_time_to_tm(offset + alarm, tm);
 
@@ -217,17 +215,37 @@ static int at91_rtc_setalarm(struct device *dev, struct rtc_wkalrm *alrm)
 	return 0;
 }
 
-static int at91_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
+/*
+ * Handle commands from user-space
+ */
+static int at91_rtc_ioctl(struct device *dev, unsigned int cmd,
+			unsigned long arg)
 {
 	struct sam9_rtc *rtc = dev_get_drvdata(dev);
+	int ret = 0;
 	u32 mr = rtt_readl(rtc, MR);
 
-	dev_dbg(dev, "alarm_irq_enable: enabled=%08x, mr %08x\n", enabled, mr);
-	if (enabled)
-		rtt_writel(rtc, MR, mr | AT91_RTT_ALMIEN);
-	else
+	dev_dbg(dev, "ioctl: cmd=%08x, arg=%08lx, mr %08x\n", cmd, arg, mr);
+
+	switch (cmd) {
+	case RTC_AIE_OFF:		/* alarm off */
 		rtt_writel(rtc, MR, mr & ~AT91_RTT_ALMIEN);
-	return 0;
+		break;
+	case RTC_AIE_ON:		/* alarm on */
+		rtt_writel(rtc, MR, mr | AT91_RTT_ALMIEN);
+		break;
+	case RTC_UIE_OFF:		/* update off */
+		rtt_writel(rtc, MR, mr & ~AT91_RTT_RTTINCIEN);
+		break;
+	case RTC_UIE_ON:		/* update on */
+		rtt_writel(rtc, MR, mr | AT91_RTT_RTTINCIEN);
+		break;
+	default:
+		ret = -ENOIOCTLCMD;
+		break;
+	}
+
+	return ret;
 }
 
 /*
@@ -277,30 +295,27 @@ static irqreturn_t at91_rtc_interrupt(int irq, void *_rtc)
 }
 
 static const struct rtc_class_ops at91_rtc_ops = {
+	.ioctl		= at91_rtc_ioctl,
 	.read_time	= at91_rtc_readtime,
 	.set_time	= at91_rtc_settime,
 	.read_alarm	= at91_rtc_readalarm,
 	.set_alarm	= at91_rtc_setalarm,
 	.proc		= at91_rtc_proc,
-	.alarm_irq_enable = at91_rtc_alarm_irq_enable,
 };
 
 /*
  * Initialize and install RTC driver
  */
-static int __devinit at91_rtc_probe(struct platform_device *pdev)
+static int __init at91_rtc_probe(struct platform_device *pdev)
 {
-	struct resource	*r, *r_gpbr;
+	struct resource	*r;
 	struct sam9_rtc	*rtc;
 	int		ret;
 	u32		mr;
 
 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	r_gpbr = platform_get_resource(pdev, IORESOURCE_MEM, 1);
-	if (!r || !r_gpbr) {
-		dev_err(&pdev->dev, "need 2 ressources\n");
+	if (!r)
 		return -ENODEV;
-	}
 
 	rtc = kzalloc(sizeof *rtc, GFP_KERNEL);
 	if (!rtc)
@@ -311,19 +326,8 @@ static int __devinit at91_rtc_probe(struct platform_device *pdev)
 		device_init_wakeup(&pdev->dev, 1);
 
 	platform_set_drvdata(pdev, rtc);
-	rtc->rtt = ioremap(r->start, resource_size(r));
-	if (!rtc->rtt) {
-		dev_err(&pdev->dev, "failed to map registers, aborting.\n");
-		ret = -ENOMEM;
-		goto fail;
-	}
-
-	rtc->gpbr = ioremap(r_gpbr->start, resource_size(r_gpbr));
-	if (!rtc->gpbr) {
-		dev_err(&pdev->dev, "failed to map gpbr registers, aborting.\n");
-		ret = -ENOMEM;
-		goto fail_gpbr;
-	}
+	rtc->rtt = (void __force __iomem *) (AT91_VA_BASE_SYS - AT91_BASE_SYS);
+	rtc->rtt += r->start;
 
 	mr = rtt_readl(rtc, MR);
 
@@ -341,17 +345,17 @@ static int __devinit at91_rtc_probe(struct platform_device *pdev)
 				&at91_rtc_ops, THIS_MODULE);
 	if (IS_ERR(rtc->rtcdev)) {
 		ret = PTR_ERR(rtc->rtcdev);
-		goto fail_register;
+		goto fail;
 	}
 
 	/* register irq handler after we know what name we'll use */
 	ret = request_irq(AT91_ID_SYS, at91_rtc_interrupt,
-				IRQF_SHARED,
+				IRQF_DISABLED | IRQF_SHARED,
 				dev_name(&rtc->rtcdev->dev), rtc);
 	if (ret) {
 		dev_dbg(&pdev->dev, "can't share IRQ %d?\n", AT91_ID_SYS);
 		rtc_device_unregister(rtc->rtcdev);
-		goto fail_register;
+		goto fail;
 	}
 
 	/* NOTE:  sam9260 rev A silicon has a ROM bug which resets the
@@ -366,10 +370,6 @@ static int __devinit at91_rtc_probe(struct platform_device *pdev)
 
 	return 0;
 
-fail_register:
-	iounmap(rtc->gpbr);
-fail_gpbr:
-	iounmap(rtc->rtt);
 fail:
 	platform_set_drvdata(pdev, NULL);
 	kfree(rtc);
@@ -379,7 +379,7 @@ fail:
 /*
  * Disable and remove the RTC driver
  */
-static int __devexit at91_rtc_remove(struct platform_device *pdev)
+static int __exit at91_rtc_remove(struct platform_device *pdev)
 {
 	struct sam9_rtc	*rtc = platform_get_drvdata(pdev);
 	u32		mr = rtt_readl(rtc, MR);
@@ -390,8 +390,6 @@ static int __devexit at91_rtc_remove(struct platform_device *pdev)
 
 	rtc_device_unregister(rtc->rtcdev);
 
-	iounmap(rtc->gpbr);
-	iounmap(rtc->rtt);
 	platform_set_drvdata(pdev, NULL);
 	kfree(rtc);
 	return 0;
@@ -454,20 +452,63 @@ static int at91_rtc_resume(struct platform_device *pdev)
 #endif
 
 static struct platform_driver at91_rtc_driver = {
-	.probe		= at91_rtc_probe,
-	.remove		= __devexit_p(at91_rtc_remove),
+	.driver.name	= "rtc-at91sam9",
+	.driver.owner	= THIS_MODULE,
+	.remove		= __exit_p(at91_rtc_remove),
 	.shutdown	= at91_rtc_shutdown,
 	.suspend	= at91_rtc_suspend,
 	.resume		= at91_rtc_resume,
-	.driver		= {
-		.name	= "rtc-at91sam9",
-		.owner	= THIS_MODULE,
-	},
 };
+
+/* Chips can have more than one RTT module, and they can be used for more
+ * than just RTCs.  So we can't just register as "the" RTT driver.
+ *
+ * A normal approach in such cases is to create a library to allocate and
+ * free the modules.  Here we just use bus_find_device() as like such a
+ * library, binding directly ... no runtime "library" footprint is needed.
+ */
+static int __init at91_rtc_match(struct device *dev, void *v)
+{
+	struct platform_device *pdev = to_platform_device(dev);
+	int ret;
+
+	/* continue searching if this isn't the RTT we need */
+	if (strcmp("at91_rtt", pdev->name) != 0
+			|| pdev->id != CONFIG_RTC_DRV_AT91SAM9_RTT)
+		goto fail;
+
+	/* else we found it ... but fail unless we can bind to the RTC driver */
+	if (dev->driver) {
+		dev_dbg(dev, "busy, can't use as RTC!\n");
+		goto fail;
+	}
+	dev->driver = &at91_rtc_driver.driver;
+	if (device_attach(dev) == 0) {
+		dev_dbg(dev, "can't attach RTC!\n");
+		goto fail;
+	}
+	ret = at91_rtc_probe(pdev);
+	if (ret == 0)
+		return true;
+
+	dev_dbg(dev, "RTC probe err %d!\n", ret);
+fail:
+	return false;
+}
 
 static int __init at91_rtc_init(void)
 {
-	return platform_driver_register(&at91_rtc_driver);
+	int status;
+	struct device *rtc;
+
+	status = platform_driver_register(&at91_rtc_driver);
+	if (status)
+		return status;
+	rtc = bus_find_device(&platform_bus_type, NULL,
+			NULL, at91_rtc_match);
+	if (!rtc)
+		platform_driver_unregister(&at91_rtc_driver);
+	return rtc ? 0 : -ENODEV;
 }
 module_init(at91_rtc_init);
 

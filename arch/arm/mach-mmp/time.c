@@ -9,7 +9,7 @@
  *   2008-04-11: Jason Chagas <Jason.chagas@marvell.com>
  *   2008-10-08: Bin Yang <bin.yang@marvell.com>
  *
- * The timers module actually includes three timers, each timer with up to
+ * The timers module actually includes three timers, each timer with upto
  * three match comparators. Timer #0 is used here in free-running mode as
  * the clock source, and match comparator #1 used as clock event device.
  *
@@ -25,14 +25,12 @@
 
 #include <linux/io.h>
 #include <linux/irq.h>
+#include <linux/sched.h>
+#include <linux/cnt32_to_63.h>
 
-#include <asm/sched_clock.h>
 #include <mach/addr-map.h>
 #include <mach/regs-timers.h>
-#include <mach/regs-apbc.h>
 #include <mach/irqs.h>
-#include <mach/cputype.h>
-#include <asm/mach/time.h>
 
 #include "clock.h"
 
@@ -41,6 +39,24 @@
 #define MAX_DELTA		(0xfffffffe)
 #define MIN_DELTA		(16)
 
+#define TCR2NS_SCALE_FACTOR	10
+
+static unsigned long tcr2ns_scale;
+
+static void __init set_tcr2ns_scale(unsigned long tcr_rate)
+{
+	unsigned long long v = 1000000000ULL << TCR2NS_SCALE_FACTOR;
+	do_div(v, tcr_rate);
+	tcr2ns_scale = v;
+	/*
+	 * We want an even value to automatically clear the top bit
+	 * returned by cnt32_to_63() without an additional run time
+	 * instruction. So if the LSB is 1 then round it up.
+	 */
+	if (tcr2ns_scale & 1)
+		tcr2ns_scale++;
+}
+
 /*
  * FIXME: the timer needs some delay to stablize the counter capture
  */
@@ -48,68 +64,46 @@ static inline uint32_t timer_read(void)
 {
 	int delay = 100;
 
-	__raw_writel(1, TIMERS_VIRT_BASE + TMR_CVWR(1));
+	__raw_writel(1, TIMERS_VIRT_BASE + TMR_CVWR(0));
 
 	while (delay--)
 		cpu_relax();
 
-	return __raw_readl(TIMERS_VIRT_BASE + TMR_CVWR(1));
+	return __raw_readl(TIMERS_VIRT_BASE + TMR_CVWR(0));
 }
 
-static u32 notrace mmp_read_sched_clock(void)
+unsigned long long sched_clock(void)
 {
-	return timer_read();
+	unsigned long long v = cnt32_to_63(timer_read());
+	return (v * tcr2ns_scale) >> TCR2NS_SCALE_FACTOR;
 }
 
 static irqreturn_t timer_interrupt(int irq, void *dev_id)
 {
 	struct clock_event_device *c = dev_id;
 
-	/*
-	 * Clear pending interrupt status.
-	 */
-	__raw_writel(0x01, TIMERS_VIRT_BASE + TMR_ICR(0));
-
-	/*
-	 * Disable timer 0.
-	 */
-	__raw_writel(0x02, TIMERS_VIRT_BASE + TMR_CER);
-
+	/* disable and clear pending interrupt status */
+	__raw_writel(0x0, TIMERS_VIRT_BASE + TMR_IER(0));
+	__raw_writel(0x1, TIMERS_VIRT_BASE + TMR_ICR(0));
 	c->event_handler(c);
-
 	return IRQ_HANDLED;
 }
 
 static int timer_set_next_event(unsigned long delta,
 				struct clock_event_device *dev)
 {
-	unsigned long flags;
+	unsigned long flags, next;
 
 	local_irq_save(flags);
 
-	/*
-	 * Disable timer 0.
-	 */
-	__raw_writel(0x02, TIMERS_VIRT_BASE + TMR_CER);
-
-	/*
-	 * Clear and enable timer match 0 interrupt.
-	 */
+	/* clear pending interrupt status and enable */
 	__raw_writel(0x01, TIMERS_VIRT_BASE + TMR_ICR(0));
 	__raw_writel(0x01, TIMERS_VIRT_BASE + TMR_IER(0));
 
-	/*
-	 * Setup new clockevent timer value.
-	 */
-	__raw_writel(delta - 1, TIMERS_VIRT_BASE + TMR_TN_MM(0, 0));
-
-	/*
-	 * Enable timer 0.
-	 */
-	__raw_writel(0x03, TIMERS_VIRT_BASE + TMR_CER);
+	next = timer_read() + delta;
+	__raw_writel(next, TIMERS_VIRT_BASE + TMR_TN_MM(0, 0));
 
 	local_irq_restore(flags);
-
 	return 0;
 }
 
@@ -149,6 +143,7 @@ static cycle_t clksrc_read(struct clocksource *cs)
 
 static struct clocksource cksrc = {
 	.name		= "clocksource",
+	.shift		= 20,
 	.rating		= 200,
 	.read		= clksrc_read,
 	.mask		= CLOCKSOURCE_MASK(32),
@@ -158,26 +153,23 @@ static struct clocksource cksrc = {
 static void __init timer_config(void)
 {
 	uint32_t ccr = __raw_readl(TIMERS_VIRT_BASE + TMR_CCR);
+	uint32_t cer = __raw_readl(TIMERS_VIRT_BASE + TMR_CER);
+	uint32_t cmr = __raw_readl(TIMERS_VIRT_BASE + TMR_CMR);
 
-	__raw_writel(0x0, TIMERS_VIRT_BASE + TMR_CER); /* disable */
+	__raw_writel(cer & ~0x1, TIMERS_VIRT_BASE + TMR_CER); /* disable */
 
-	ccr &= (cpu_is_mmp2()) ? (TMR_CCR_CS_0(0) | TMR_CCR_CS_1(0)) :
-		(TMR_CCR_CS_0(3) | TMR_CCR_CS_1(3));
+	ccr &= TMR_CCR_CS_0(0x3);
 	__raw_writel(ccr, TIMERS_VIRT_BASE + TMR_CCR);
 
-	/* set timer 0 to periodic mode, and timer 1 to free-running mode */
-	__raw_writel(0x2, TIMERS_VIRT_BASE + TMR_CMR);
+	/* free-running mode */
+	__raw_writel(cmr | 0x01, TIMERS_VIRT_BASE + TMR_CMR);
 
-	__raw_writel(0x1, TIMERS_VIRT_BASE + TMR_PLCR(0)); /* periodic */
+	__raw_writel(0x0, TIMERS_VIRT_BASE + TMR_PLCR(0)); /* free-running */
 	__raw_writel(0x7, TIMERS_VIRT_BASE + TMR_ICR(0));  /* clear status */
 	__raw_writel(0x0, TIMERS_VIRT_BASE + TMR_IER(0));
 
-	__raw_writel(0x0, TIMERS_VIRT_BASE + TMR_PLCR(1)); /* free-running */
-	__raw_writel(0x7, TIMERS_VIRT_BASE + TMR_ICR(1));  /* clear status */
-	__raw_writel(0x0, TIMERS_VIRT_BASE + TMR_IER(1));
-
-	/* enable timer 1 counter */
-	__raw_writel(0x2, TIMERS_VIRT_BASE + TMR_CER);
+	/* enable timer counter */
+	__raw_writel(cer | 0x01, TIMERS_VIRT_BASE + TMR_CER);
 }
 
 static struct irqaction timer_irq = {
@@ -191,15 +183,17 @@ void __init timer_init(int irq)
 {
 	timer_config();
 
-	setup_sched_clock(mmp_read_sched_clock, 32, CLOCK_TICK_RATE);
+	set_tcr2ns_scale(CLOCK_TICK_RATE);
 
 	ckevt.mult = div_sc(CLOCK_TICK_RATE, NSEC_PER_SEC, ckevt.shift);
 	ckevt.max_delta_ns = clockevent_delta2ns(MAX_DELTA, &ckevt);
 	ckevt.min_delta_ns = clockevent_delta2ns(MIN_DELTA, &ckevt);
 	ckevt.cpumask = cpumask_of(0);
 
+	cksrc.mult = clocksource_hz2mult(CLOCK_TICK_RATE, cksrc.shift);
+
 	setup_irq(irq, &timer_irq);
 
-	clocksource_register_hz(&cksrc, CLOCK_TICK_RATE);
+	clocksource_register(&cksrc);
 	clockevents_register_device(&ckevt);
 }

@@ -12,13 +12,11 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 #include <linux/leds.h>
 #include <linux/err.h>
 #include <linux/mfd/wm831x/core.h>
 #include <linux/mfd/wm831x/pdata.h>
 #include <linux/mfd/wm831x/status.h>
-#include <linux/module.h>
 
 
 struct wm831x_status {
@@ -237,8 +235,7 @@ static int wm831x_status_probe(struct platform_device *pdev)
 		goto err;
 	}
 
-	drvdata = devm_kzalloc(&pdev->dev, sizeof(struct wm831x_status),
-			       GFP_KERNEL);
+	drvdata = kzalloc(sizeof(struct wm831x_status), GFP_KERNEL);
 	if (!drvdata)
 		return -ENOMEM;
 	dev_set_drvdata(&pdev->dev, drvdata);
@@ -301,6 +298,7 @@ static int wm831x_status_probe(struct platform_device *pdev)
 
 err_led:
 	led_classdev_unregister(&drvdata->cdev);
+	kfree(drvdata);
 err:
 	return ret;
 }
@@ -311,6 +309,7 @@ static int wm831x_status_remove(struct platform_device *pdev)
 
 	device_remove_file(drvdata->cdev.dev, &dev_attr_src);
 	led_classdev_unregister(&drvdata->cdev);
+	kfree(drvdata);
 
 	return 0;
 }
@@ -324,7 +323,17 @@ static struct platform_driver wm831x_status_driver = {
 	.remove = wm831x_status_remove,
 };
 
-module_platform_driver(wm831x_status_driver);
+static int __devinit wm831x_status_init(void)
+{
+	return platform_driver_register(&wm831x_status_driver);
+}
+module_init(wm831x_status_init);
+
+static void wm831x_status_exit(void)
+{
+	platform_driver_unregister(&wm831x_status_driver);
+}
+module_exit(wm831x_status_exit);
 
 MODULE_AUTHOR("Mark Brown <broonie@opensource.wolfsonmicro.com>");
 MODULE_DESCRIPTION("WM831x status LED driver");

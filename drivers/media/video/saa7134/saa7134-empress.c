@@ -21,6 +21,8 @@
 #include <linux/list.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/delay.h>
 
 #include "saa7134-reg.h"
@@ -84,16 +86,24 @@ static int ts_init_encoder(struct saa7134_dev* dev)
 
 static int ts_open(struct file *file)
 {
-	struct video_device *vdev = video_devdata(file);
-	struct saa7134_dev *dev = video_drvdata(file);
+	int minor = video_devdata(file)->minor;
+	struct saa7134_dev *dev;
 	int err;
 
-	dprintk("open dev=%s\n", video_device_node_name(vdev));
+	lock_kernel();
+	list_for_each_entry(dev, &saa7134_devlist, devlist)
+		if (dev->empress_dev && dev->empress_dev->minor == minor)
+			goto found;
+	unlock_kernel();
+	return -ENODEV;
+ found:
+
+	dprintk("open minor=%d\n",minor);
 	err = -EBUSY;
 	if (!mutex_trylock(&dev->empress_tsq.vb_lock))
-		return err;
-	if (atomic_read(&dev->empress_users))
 		goto done;
+	if (atomic_read(&dev->empress_users))
+		goto done_up;
 
 	/* Unmute audio */
 	saa_writeb(SAA7134_AUDIO_MUTE_CTRL,
@@ -103,8 +113,10 @@ static int ts_open(struct file *file)
 	file->private_data = dev;
 	err = 0;
 
-done:
+done_up:
 	mutex_unlock(&dev->empress_tsq.vb_lock);
+done:
+	unlock_kernel();
 	return err;
 }
 
@@ -172,6 +184,7 @@ static int empress_querycap(struct file *file, void  *priv,
 	strlcpy(cap->card, saa7134_boards[dev->board].name,
 		sizeof(cap->card));
 	sprintf(cap->bus_info, "PCI:%s", pci_name(dev->pci));
+	cap->version = SAA7134_VERSION_CODE;
 	cap->capabilities =
 		V4L2_CAP_VIDEO_CAPTURE |
 		V4L2_CAP_READWRITE |
@@ -221,11 +234,9 @@ static int empress_g_fmt_vid_cap(struct file *file, void *priv,
 				struct v4l2_format *f)
 {
 	struct saa7134_dev *dev = file->private_data;
-	struct v4l2_mbus_framefmt mbus_fmt;
 
-	saa_call_all(dev, video, g_mbus_fmt, &mbus_fmt);
+	saa_call_all(dev, video, g_fmt, f);
 
-	v4l2_fill_pix_format(&f->fmt.pix, &mbus_fmt);
 	f->fmt.pix.pixelformat  = V4L2_PIX_FMT_MPEG;
 	f->fmt.pix.sizeimage    = TS_PACKET_SIZE * dev->ts.nr_packets;
 
@@ -236,11 +247,8 @@ static int empress_s_fmt_vid_cap(struct file *file, void *priv,
 				struct v4l2_format *f)
 {
 	struct saa7134_dev *dev = file->private_data;
-	struct v4l2_mbus_framefmt mbus_fmt;
 
-	v4l2_fill_mbus_format(&mbus_fmt, &f->fmt.pix, V4L2_MBUS_FMT_FIXED);
-	saa_call_all(dev, video, s_mbus_fmt, &mbus_fmt);
-	v4l2_fill_pix_format(&f->fmt.pix, &mbus_fmt);
+	saa_call_all(dev, video, s_fmt, f);
 
 	f->fmt.pix.pixelformat  = V4L2_PIX_FMT_MPEG;
 	f->fmt.pix.sizeimage    = TS_PACKET_SIZE * dev->ts.nr_packets;
@@ -372,10 +380,6 @@ static int empress_queryctrl(struct file *file, void *priv,
 	static const u32 mpeg_ctrls[] = {
 		V4L2_CID_MPEG_CLASS,
 		V4L2_CID_MPEG_STREAM_TYPE,
-		V4L2_CID_MPEG_STREAM_PID_PMT,
-		V4L2_CID_MPEG_STREAM_PID_AUDIO,
-		V4L2_CID_MPEG_STREAM_PID_VIDEO,
-		V4L2_CID_MPEG_STREAM_PID_PCR,
 		V4L2_CID_MPEG_AUDIO_SAMPLING_FREQ,
 		V4L2_CID_MPEG_AUDIO_ENCODING,
 		V4L2_CID_MPEG_AUDIO_L2_BITRATE,
@@ -485,6 +489,7 @@ static const struct v4l2_ioctl_ops ts_ioctl_ops = {
 static struct video_device saa7134_empress_template = {
 	.name          = "saa7134-empress",
 	.fops          = &ts_fops,
+	.minor	       = -1,
 	.ioctl_ops     = &ts_ioctl_ops,
 
 	.tvnorms			= SAA7134_NORMS,
@@ -526,7 +531,6 @@ static int empress_init(struct saa7134_dev *dev)
 
 	INIT_WORK(&dev->empress_workqueue, empress_signal_update);
 
-	video_set_drvdata(dev->empress_dev, dev);
 	err = video_register_device(dev->empress_dev,VFL_TYPE_GRABBER,
 				    empress_nr[dev->nr]);
 	if (err < 0) {
@@ -536,15 +540,15 @@ static int empress_init(struct saa7134_dev *dev)
 		dev->empress_dev = NULL;
 		return err;
 	}
-	printk(KERN_INFO "%s: registered device %s [mpeg]\n",
-	       dev->name, video_device_node_name(dev->empress_dev));
+	printk(KERN_INFO "%s: registered device video%d [mpeg]\n",
+	       dev->name, dev->empress_dev->num);
 
 	videobuf_queue_sg_init(&dev->empress_tsq, &saa7134_ts_qops,
 			    &dev->pci->dev, &dev->slock,
 			    V4L2_BUF_TYPE_VIDEO_CAPTURE,
 			    V4L2_FIELD_ALTERNATE,
 			    sizeof(struct saa7134_buf),
-			    dev, NULL);
+			    dev);
 
 	empress_signal_update(&dev->empress_workqueue);
 	return 0;
@@ -556,7 +560,7 @@ static int empress_fini(struct saa7134_dev *dev)
 
 	if (NULL == dev->empress_dev)
 		return 0;
-	flush_work_sync(&dev->empress_workqueue);
+	flush_scheduled_work();
 	video_unregister_device(dev->empress_dev);
 	dev->empress_dev = NULL;
 	return 0;

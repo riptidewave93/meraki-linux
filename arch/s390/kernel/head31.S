@@ -1,7 +1,7 @@
 /*
  * arch/s390/kernel/head31.S
  *
- * Copyright (C) IBM Corp. 2005,2010
+ * Copyright (C) IBM Corp. 2005,2006
  *
  *   Author(s):	Hartmut Penner <hp@de.ibm.com>
  *		Martin Schwidefsky <schwidefsky@de.ibm.com>
@@ -10,19 +10,13 @@
  *
  */
 
-#include <linux/init.h>
-#include <linux/linkage.h>
-#include <asm/asm-offsets.h>
-#include <asm/thread_info.h>
-#include <asm/page.h>
+	.org	0x11000
 
-__HEAD
-ENTRY(startup_continue)
+startup_continue:
 	basr	%r13,0			# get base
 .LPG1:
 
-	l	%r1,.Lbase_cc-.LPG1(%r13)
-	mvc	0(8,%r1),__LC_LAST_UPDATE_CLOCK
+	mvi	__LC_AR_MODE_ID,0	# set ESA flag (mode 0)
 	lctl	%c0,%c15,.Lctl-.LPG1(%r13) # load control registers
 	l	%r12,.Lparmaddr-.LPG1(%r13) # pointer to parameter area
 					# move IPL device to lowcore
@@ -45,7 +39,7 @@ ENTRY(startup_continue)
 					# virtual and never return ...
 	.align	8
 .Lentry:.long	0x00080000,0x80000000 + _stext
-.Lctl:	.long	0x04b50000		# cr0: various things
+.Lctl:	.long	0x04b50002		# cr0: various things
 	.long	0			# cr1: primary space segment table
 	.long	.Lduct			# cr2: dispatchable unit control table
 	.long	0			# cr3: instruction authorization
@@ -75,24 +69,23 @@ ENTRY(startup_continue)
 .Lduald:.rept	8
 	.long	0x80000000,0,0,0	# invalid access-list entries
 	.endr
-.Lbase_cc:
-	.long	sched_clock_base_cc
 
-ENTRY(_ehead)
-
+	.org	0x12000
+	.globl	_ehead
+_ehead:
 #ifdef CONFIG_SHARED_KERNEL
-	.org	0x100000 - 0x11000	# head.o ends at 0x11000
+	.org	0x100000
 #endif
 
 #
 # startup-code, running in absolute addressing mode
 #
-ENTRY(_stext)
-	basr	%r13,0			# get base
+	.globl	_stext
+_stext:	basr	%r13,0			# get base
 .LPG3:
 # check control registers
 	stctl	%c0,%c15,0(%r15)
-	oi	2(%r15),0x60		# enable sigp emergency & external call
+	oi	2(%r15),0x40		# enable sigp emergency signal
 	oi	0(%r15),0x10		# switch on low address protection
 	lctl	%c0,%c15,0(%r15)
 

@@ -22,7 +22,6 @@
  *
  ********************************************************************/
 
-#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/socket.h>
 #include <linux/module.h>

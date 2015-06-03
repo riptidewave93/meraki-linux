@@ -8,7 +8,6 @@
 
 #include <linux/types.h>
 #include <linux/init.h>
-#include <linux/export.h>
 #include <linux/ip.h>
 #include <linux/icmp.h>
 
@@ -28,9 +27,9 @@ icmp_in_range(const struct nf_conntrack_tuple *tuple,
 	       ntohs(tuple->src.u.icmp.id) <= ntohs(max->icmp.id);
 }
 
-static void
+static bool
 icmp_unique_tuple(struct nf_conntrack_tuple *tuple,
-		  const struct nf_nat_ipv4_range *range,
+		  const struct nf_nat_range *range,
 		  enum nf_nat_manip_type maniptype,
 		  const struct nf_conn *ct)
 {
@@ -40,16 +39,16 @@ icmp_unique_tuple(struct nf_conntrack_tuple *tuple,
 
 	range_size = ntohs(range->max.icmp.id) - ntohs(range->min.icmp.id) + 1;
 	/* If no range specified... */
-	if (!(range->flags & NF_NAT_RANGE_PROTO_SPECIFIED))
+	if (!(range->flags & IP_NAT_RANGE_PROTO_SPECIFIED))
 		range_size = 0xFFFF;
 
-	for (i = 0; ; ++id) {
+	for (i = 0; i < range_size; i++, id++) {
 		tuple->src.u.icmp.id = htons(ntohs(range->min.icmp.id) +
 					     (id % range_size));
-		if (++i == range_size || !nf_nat_used_tuple(tuple, ct))
-			return;
+		if (!nf_nat_used_tuple(tuple, ct))
+			return true;
 	}
-	return;
+	return false;
 }
 
 static bool
@@ -74,10 +73,12 @@ icmp_manip_pkt(struct sk_buff *skb,
 
 const struct nf_nat_protocol nf_nat_protocol_icmp = {
 	.protonum		= IPPROTO_ICMP,
+	.me			= THIS_MODULE,
 	.manip_pkt		= icmp_manip_pkt,
 	.in_range		= icmp_in_range,
 	.unique_tuple		= icmp_unique_tuple,
 #if defined(CONFIG_NF_CT_NETLINK) || defined(CONFIG_NF_CT_NETLINK_MODULE)
+	.range_to_nlattr	= nf_nat_proto_range_to_nlattr,
 	.nlattr_to_range	= nf_nat_proto_nlattr_to_range,
 #endif
 };

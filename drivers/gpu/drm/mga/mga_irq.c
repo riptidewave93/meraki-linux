@@ -76,8 +76,9 @@ irqreturn_t mga_driver_irq_handler(DRM_IRQ_ARGS)
 		/* In addition to clearing the interrupt-pending bit, we
 		 * have to write to MGA_PRIMEND to re-start the DMA operation.
 		 */
-		if ((prim_start & ~0x03) != (prim_end & ~0x03))
+		if ((prim_start & ~0x03) != (prim_end & ~0x03)) {
 			MGA_WRITE(MGA_PRIMEND, prim_end);
+		}
 
 		atomic_inc(&dev_priv->last_fence_retired);
 		DRM_WAKEUP(&dev_priv->fence_queue);
@@ -119,7 +120,7 @@ void mga_disable_vblank(struct drm_device *dev, int crtc)
 	/* MGA_WRITE(MGA_IEN, MGA_VLINEIEN | MGA_SOFTRAPEN); */
 }
 
-int mga_driver_fence_wait(struct drm_device *dev, unsigned int *sequence)
+int mga_driver_fence_wait(struct drm_device * dev, unsigned int *sequence)
 {
 	drm_mga_private_t *dev_priv = (drm_mga_private_t *) dev->dev_private;
 	unsigned int cur_fence;
@@ -138,7 +139,7 @@ int mga_driver_fence_wait(struct drm_device *dev, unsigned int *sequence)
 	return ret;
 }
 
-void mga_driver_irq_preinstall(struct drm_device *dev)
+void mga_driver_irq_preinstall(struct drm_device * dev)
 {
 	drm_mga_private_t *dev_priv = (drm_mga_private_t *) dev->dev_private;
 
@@ -161,7 +162,7 @@ int mga_driver_irq_postinstall(struct drm_device *dev)
 	return 0;
 }
 
-void mga_driver_irq_uninstall(struct drm_device *dev)
+void mga_driver_irq_uninstall(struct drm_device * dev)
 {
 	drm_mga_private_t *dev_priv = (drm_mga_private_t *) dev->dev_private;
 	if (!dev_priv)

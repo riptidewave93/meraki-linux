@@ -4,11 +4,10 @@
  * Copyright (c) 2007 The University of Aberdeen, Scotland, UK
  * Copyright (c) 2007 Arnaldo Carvalho de Melo <acme@redhat.com>
  */
-#include <linux/moduleparam.h>
 #include "tfrc.h"
 
 #ifdef CONFIG_IP_DCCP_TFRC_DEBUG
-bool tfrc_debug;
+int tfrc_debug;
 module_param(tfrc_debug, bool, 0644);
 MODULE_PARM_DESC(tfrc_debug, "Enable TFRC debug messages");
 #endif

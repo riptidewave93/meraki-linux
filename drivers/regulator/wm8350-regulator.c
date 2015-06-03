@@ -99,7 +99,7 @@ static int get_isink_val(int min_uA, int max_uA, u16 *setting)
 {
 	int i;
 
-	for (i = 0; i < ARRAY_SIZE(isink_cur); i++) {
+	for (i = ARRAY_SIZE(isink_cur) - 1; i >= 0; i--) {
 		if (min_uA <= isink_cur[i] && max_uA >= isink_cur[i]) {
 			*setting = i;
 			return 0;
@@ -186,7 +186,7 @@ static int wm8350_isink_get_current(struct regulator_dev *rdev)
 		return 0;
 	}
 
-	return isink_cur[val];
+	return (isink_cur[val] + 50) / 100;
 }
 
 /* turn on ISINK followed by DCDC */
@@ -290,51 +290,6 @@ static int wm8350_isink_is_enabled(struct regulator_dev *rdev)
 	return -EINVAL;
 }
 
-static int wm8350_isink_enable_time(struct regulator_dev *rdev)
-{
-	struct wm8350 *wm8350 = rdev_get_drvdata(rdev);
-	int isink = rdev_get_id(rdev);
-	int reg;
-
-	switch (isink) {
-	case WM8350_ISINK_A:
-		reg = wm8350_reg_read(wm8350, WM8350_CSA_FLASH_CONTROL);
-		break;
-	case WM8350_ISINK_B:
-		reg = wm8350_reg_read(wm8350, WM8350_CSB_FLASH_CONTROL);
-		break;
-	default:
-		return -EINVAL;
-	}
-
-	if (reg & WM8350_CS1_FLASH_MODE) {
-		switch (reg & WM8350_CS1_ON_RAMP_MASK) {
-		case 0:
-			return 0;
-		case 1:
-			return 1950;
-		case 2:
-			return 3910;
-		case 3:
-			return 7800;
-		}
-	} else {
-		switch (reg & WM8350_CS1_ON_RAMP_MASK) {
-		case 0:
-			return 0;
-		case 1:
-			return 250000;
-		case 2:
-			return 500000;
-		case 3:
-			return 1000000;
-		}
-	}
-
-	return -EINVAL;
-}
-
-
 int wm8350_isink_set_flash(struct wm8350 *wm8350, int isink, u16 mode,
 			   u16 trigger, u16 duration, u16 on_ramp, u16 off_ramp,
 			   u16 drive)
@@ -360,7 +315,7 @@ int wm8350_isink_set_flash(struct wm8350 *wm8350, int isink, u16 mode,
 EXPORT_SYMBOL_GPL(wm8350_isink_set_flash);
 
 static int wm8350_dcdc_set_voltage(struct regulator_dev *rdev, int min_uV,
-				   int max_uV, unsigned *selector)
+	int max_uV)
 {
 	struct wm8350 *wm8350 = rdev_get_drvdata(rdev);
 	int volt_reg, dcdc = rdev_get_id(rdev), mV,
@@ -397,18 +352,17 @@ static int wm8350_dcdc_set_voltage(struct regulator_dev *rdev, int min_uV,
 		return -EINVAL;
 	}
 
-	*selector = mV;
-
 	/* all DCDCs have same mV bits */
 	val = wm8350_reg_read(wm8350, volt_reg) & ~WM8350_DC1_VSEL_MASK;
 	wm8350_reg_write(wm8350, volt_reg, val | mV);
 	return 0;
 }
 
-static int wm8350_dcdc_get_voltage_sel(struct regulator_dev *rdev)
+static int wm8350_dcdc_get_voltage(struct regulator_dev *rdev)
 {
 	struct wm8350 *wm8350 = rdev_get_drvdata(rdev);
 	int volt_reg, dcdc = rdev_get_id(rdev);
+	u16 val;
 
 	switch (dcdc) {
 	case WM8350_DCDC_1:
@@ -430,7 +384,8 @@ static int wm8350_dcdc_get_voltage_sel(struct regulator_dev *rdev)
 	}
 
 	/* all DCDCs have same mV bits */
-	return wm8350_reg_read(wm8350, volt_reg) & WM8350_DC1_VSEL_MASK;
+	val = wm8350_reg_read(wm8350, volt_reg) & WM8350_DC1_VSEL_MASK;
+	return wm8350_dcdc_val_to_mvolts(val) * 1000;
 }
 
 static int wm8350_dcdc_list_voltage(struct regulator_dev *rdev,
@@ -495,25 +450,25 @@ static int wm8350_dcdc_set_suspend_enable(struct regulator_dev *rdev)
 		val = wm8350_reg_read(wm8350, WM8350_DCDC1_LOW_POWER)
 			& ~WM8350_DCDC_HIB_MODE_MASK;
 		wm8350_reg_write(wm8350, WM8350_DCDC1_LOW_POWER,
-			val | wm8350->pmic.dcdc1_hib_mode);
+			wm8350->pmic.dcdc1_hib_mode);
 		break;
 	case WM8350_DCDC_3:
 		val = wm8350_reg_read(wm8350, WM8350_DCDC3_LOW_POWER)
 			& ~WM8350_DCDC_HIB_MODE_MASK;
 		wm8350_reg_write(wm8350, WM8350_DCDC3_LOW_POWER,
-			val | wm8350->pmic.dcdc3_hib_mode);
+			wm8350->pmic.dcdc3_hib_mode);
 		break;
 	case WM8350_DCDC_4:
 		val = wm8350_reg_read(wm8350, WM8350_DCDC4_LOW_POWER)
 			& ~WM8350_DCDC_HIB_MODE_MASK;
 		wm8350_reg_write(wm8350, WM8350_DCDC4_LOW_POWER,
-			val | wm8350->pmic.dcdc4_hib_mode);
+			wm8350->pmic.dcdc4_hib_mode);
 		break;
 	case WM8350_DCDC_6:
 		val = wm8350_reg_read(wm8350, WM8350_DCDC6_LOW_POWER)
 			& ~WM8350_DCDC_HIB_MODE_MASK;
 		wm8350_reg_write(wm8350, WM8350_DCDC6_LOW_POWER,
-			val | wm8350->pmic.dcdc6_hib_mode);
+			wm8350->pmic.dcdc6_hib_mode);
 		break;
 	case WM8350_DCDC_2:
 	case WM8350_DCDC_5:
@@ -535,25 +490,25 @@ static int wm8350_dcdc_set_suspend_disable(struct regulator_dev *rdev)
 		val = wm8350_reg_read(wm8350, WM8350_DCDC1_LOW_POWER);
 		wm8350->pmic.dcdc1_hib_mode = val & WM8350_DCDC_HIB_MODE_MASK;
 		wm8350_reg_write(wm8350, WM8350_DCDC1_LOW_POWER,
-				 val | WM8350_DCDC_HIB_MODE_DIS);
+			WM8350_DCDC_HIB_MODE_DIS);
 		break;
 	case WM8350_DCDC_3:
 		val = wm8350_reg_read(wm8350, WM8350_DCDC3_LOW_POWER);
 		wm8350->pmic.dcdc3_hib_mode = val & WM8350_DCDC_HIB_MODE_MASK;
 		wm8350_reg_write(wm8350, WM8350_DCDC3_LOW_POWER,
-				 val | WM8350_DCDC_HIB_MODE_DIS);
+			WM8350_DCDC_HIB_MODE_DIS);
 		break;
 	case WM8350_DCDC_4:
 		val = wm8350_reg_read(wm8350, WM8350_DCDC4_LOW_POWER);
 		wm8350->pmic.dcdc4_hib_mode = val & WM8350_DCDC_HIB_MODE_MASK;
 		wm8350_reg_write(wm8350, WM8350_DCDC4_LOW_POWER,
-				 val | WM8350_DCDC_HIB_MODE_DIS);
+			WM8350_DCDC_HIB_MODE_DIS);
 		break;
 	case WM8350_DCDC_6:
 		val = wm8350_reg_read(wm8350, WM8350_DCDC6_LOW_POWER);
 		wm8350->pmic.dcdc6_hib_mode = val & WM8350_DCDC_HIB_MODE_MASK;
 		wm8350_reg_write(wm8350, WM8350_DCDC6_LOW_POWER,
-				 val | WM8350_DCDC_HIB_MODE_DIS);
+			WM8350_DCDC_HIB_MODE_DIS);
 		break;
 	case WM8350_DCDC_2:
 	case WM8350_DCDC_5:
@@ -575,13 +530,13 @@ static int wm8350_dcdc25_set_suspend_enable(struct regulator_dev *rdev)
 		val = wm8350_reg_read(wm8350, WM8350_DCDC2_CONTROL)
 		    & ~WM8350_DC2_HIB_MODE_MASK;
 		wm8350_reg_write(wm8350, WM8350_DCDC2_CONTROL, val |
-		    (WM8350_DC2_HIB_MODE_ACTIVE << WM8350_DC2_HIB_MODE_SHIFT));
+				 WM8350_DC2_HIB_MODE_ACTIVE);
 		break;
 	case WM8350_DCDC_5:
 		val = wm8350_reg_read(wm8350, WM8350_DCDC5_CONTROL)
-		    & ~WM8350_DC5_HIB_MODE_MASK;
+		    & ~WM8350_DC2_HIB_MODE_MASK;
 		wm8350_reg_write(wm8350, WM8350_DCDC5_CONTROL, val |
-		    (WM8350_DC5_HIB_MODE_ACTIVE << WM8350_DC5_HIB_MODE_SHIFT));
+				 WM8350_DC5_HIB_MODE_ACTIVE);
 		break;
 	default:
 		return -EINVAL;
@@ -600,13 +555,13 @@ static int wm8350_dcdc25_set_suspend_disable(struct regulator_dev *rdev)
 		val = wm8350_reg_read(wm8350, WM8350_DCDC2_CONTROL)
 		    & ~WM8350_DC2_HIB_MODE_MASK;
 		wm8350_reg_write(wm8350, WM8350_DCDC2_CONTROL, val |
-		    (WM8350_DC2_HIB_MODE_DISABLE << WM8350_DC2_HIB_MODE_SHIFT));
+				 WM8350_DC2_HIB_MODE_DISABLE);
 		break;
 	case WM8350_DCDC_5:
 		val = wm8350_reg_read(wm8350, WM8350_DCDC5_CONTROL)
-		    & ~WM8350_DC5_HIB_MODE_MASK;
+		    & ~WM8350_DC2_HIB_MODE_MASK;
 		wm8350_reg_write(wm8350, WM8350_DCDC5_CONTROL, val |
-		    (WM8350_DC5_HIB_MODE_DISABLE << WM8350_DC5_HIB_MODE_SHIFT));
+				 WM8350_DC2_HIB_MODE_DISABLE);
 		break;
 	default:
 		return -EINVAL;
@@ -749,12 +704,12 @@ static int wm8350_ldo_set_suspend_disable(struct regulator_dev *rdev)
 
 	/* all LDOs have same mV bits */
 	val = wm8350_reg_read(wm8350, volt_reg) & ~WM8350_LDO1_HIB_MODE_MASK;
-	wm8350_reg_write(wm8350, volt_reg, val | WM8350_LDO1_HIB_MODE_DIS);
+	wm8350_reg_write(wm8350, volt_reg, WM8350_LDO1_HIB_MODE_DIS);
 	return 0;
 }
 
 static int wm8350_ldo_set_voltage(struct regulator_dev *rdev, int min_uV,
-				  int max_uV, unsigned *selector)
+	int max_uV)
 {
 	struct wm8350 *wm8350 = rdev_get_drvdata(rdev);
 	int volt_reg, ldo = rdev_get_id(rdev), mV, min_mV = min_uV / 1000,
@@ -797,18 +752,17 @@ static int wm8350_ldo_set_voltage(struct regulator_dev *rdev, int min_uV,
 		return -EINVAL;
 	}
 
-	*selector = mV;
-
 	/* all LDOs have same mV bits */
 	val = wm8350_reg_read(wm8350, volt_reg) & ~WM8350_LDO1_VSEL_MASK;
 	wm8350_reg_write(wm8350, volt_reg, val | mV);
 	return 0;
 }
 
-static int wm8350_ldo_get_voltage_sel(struct regulator_dev *rdev)
+static int wm8350_ldo_get_voltage(struct regulator_dev *rdev)
 {
 	struct wm8350 *wm8350 = rdev_get_drvdata(rdev);
 	int volt_reg, ldo = rdev_get_id(rdev);
+	u16 val;
 
 	switch (ldo) {
 	case WM8350_LDO_1:
@@ -828,7 +782,8 @@ static int wm8350_ldo_get_voltage_sel(struct regulator_dev *rdev)
 	}
 
 	/* all LDOs have same mV bits */
-	return wm8350_reg_read(wm8350, volt_reg) & WM8350_LDO1_VSEL_MASK;
+	val = wm8350_reg_read(wm8350, volt_reg) & WM8350_LDO1_VSEL_MASK;
+	return wm8350_ldo_val_to_mvolts(val) * 1000;
 }
 
 static int wm8350_ldo_list_voltage(struct regulator_dev *rdev,
@@ -1129,7 +1084,7 @@ static unsigned int wm8350_dcdc_get_mode(struct regulator_dev *rdev)
 			mode = REGULATOR_MODE_NORMAL;
 	} else if (!active && !sleep)
 		mode = REGULATOR_MODE_IDLE;
-	else if (sleep)
+	else if (!sleep)
 		mode = REGULATOR_MODE_STANDBY;
 
 	return mode;
@@ -1225,7 +1180,7 @@ static int wm8350_ldo_is_enabled(struct regulator_dev *rdev)
 
 static struct regulator_ops wm8350_dcdc_ops = {
 	.set_voltage = wm8350_dcdc_set_voltage,
-	.get_voltage_sel = wm8350_dcdc_get_voltage_sel,
+	.get_voltage = wm8350_dcdc_get_voltage,
 	.list_voltage = wm8350_dcdc_list_voltage,
 	.enable = wm8350_dcdc_enable,
 	.disable = wm8350_dcdc_disable,
@@ -1249,7 +1204,7 @@ static struct regulator_ops wm8350_dcdc2_5_ops = {
 
 static struct regulator_ops wm8350_ldo_ops = {
 	.set_voltage = wm8350_ldo_set_voltage,
-	.get_voltage_sel = wm8350_ldo_get_voltage_sel,
+	.get_voltage = wm8350_ldo_get_voltage,
 	.list_voltage = wm8350_ldo_list_voltage,
 	.enable = wm8350_ldo_enable,
 	.disable = wm8350_ldo_disable,
@@ -1266,7 +1221,6 @@ static struct regulator_ops wm8350_isink_ops = {
 	.enable = wm8350_isink_enable,
 	.disable = wm8350_isink_disable,
 	.is_enabled = wm8350_isink_is_enabled,
-	.enable_time = wm8350_isink_enable_time,
 };
 
 static struct regulator_desc wm8350_reg[NUM_WM8350_REGULATORS] = {
@@ -1376,10 +1330,9 @@ static struct regulator_desc wm8350_reg[NUM_WM8350_REGULATORS] = {
 	 },
 };
 
-static irqreturn_t pmic_uv_handler(int irq, void *data)
+static void pmic_uv_handler(struct wm8350 *wm8350, int irq, void *data)
 {
 	struct regulator_dev *rdev = (struct regulator_dev *)data;
-	struct wm8350 *wm8350 = rdev_get_drvdata(rdev);
 
 	mutex_lock(&rdev->mutex);
 	if (irq == WM8350_IRQ_CS1 || irq == WM8350_IRQ_CS2)
@@ -1391,8 +1344,6 @@ static irqreturn_t pmic_uv_handler(int irq, void *data)
 					      REGULATOR_EVENT_UNDER_VOLTAGE,
 					      wm8350);
 	mutex_unlock(&rdev->mutex);
-
-	return IRQ_HANDLED;
 }
 
 static int wm8350_regulator_probe(struct platform_device *pdev)
@@ -1428,7 +1379,7 @@ static int wm8350_regulator_probe(struct platform_device *pdev)
 	/* register regulator */
 	rdev = regulator_register(&wm8350_reg[pdev->id], &pdev->dev,
 				  pdev->dev.platform_data,
-				  dev_get_drvdata(&pdev->dev), NULL);
+				  dev_get_drvdata(&pdev->dev));
 	if (IS_ERR(rdev)) {
 		dev_err(&pdev->dev, "failed to register %s\n",
 			wm8350_reg[pdev->id].name);
@@ -1437,13 +1388,15 @@ static int wm8350_regulator_probe(struct platform_device *pdev)
 
 	/* register regulator IRQ */
 	ret = wm8350_register_irq(wm8350, wm8350_reg[pdev->id].irq,
-				  pmic_uv_handler, 0, "UV", rdev);
+				  pmic_uv_handler, rdev);
 	if (ret < 0) {
 		regulator_unregister(rdev);
 		dev_err(&pdev->dev, "failed to register regulator %s IRQ\n",
 			wm8350_reg[pdev->id].name);
 		return ret;
 	}
+
+	wm8350_unmask_irq(wm8350, wm8350_reg[pdev->id].irq);
 
 	return 0;
 }
@@ -1453,7 +1406,8 @@ static int wm8350_regulator_remove(struct platform_device *pdev)
 	struct regulator_dev *rdev = platform_get_drvdata(pdev);
 	struct wm8350 *wm8350 = rdev_get_drvdata(rdev);
 
-	wm8350_free_irq(wm8350, wm8350_reg[pdev->id].irq, rdev);
+	wm8350_mask_irq(wm8350, wm8350_reg[pdev->id].irq);
+	wm8350_free_irq(wm8350, wm8350_reg[pdev->id].irq);
 
 	regulator_unregister(rdev);
 
@@ -1495,7 +1449,7 @@ int wm8350_register_regulator(struct wm8350 *wm8350, int reg,
 	if (ret != 0) {
 		dev_err(wm8350->dev, "Failed to register regulator %d: %d\n",
 			reg, ret);
-		platform_device_put(pdev);
+		platform_device_del(pdev);
 		wm8350->pmic.pdev[reg] = NULL;
 	}
 
@@ -1544,7 +1498,7 @@ int wm8350_register_led(struct wm8350 *wm8350, int lednum, int dcdc, int isink,
 		return -ENOMEM;
 	}
 
-	led->isink_consumer.dev_name = dev_name(&pdev->dev);
+	led->isink_consumer.dev = &pdev->dev;
 	led->isink_consumer.supply = "led_isink";
 	led->isink_init.num_consumer_supplies = 1;
 	led->isink_init.consumer_supplies = &led->isink_consumer;
@@ -1559,7 +1513,7 @@ int wm8350_register_led(struct wm8350 *wm8350, int lednum, int dcdc, int isink,
 		return ret;
 	}
 
-	led->dcdc_consumer.dev_name = dev_name(&pdev->dev);
+	led->dcdc_consumer.dev = &pdev->dev;
 	led->dcdc_consumer.supply = "led_vcc";
 	led->dcdc_init.num_consumer_supplies = 1;
 	led->dcdc_init.consumer_supplies = &led->dcdc_consumer;

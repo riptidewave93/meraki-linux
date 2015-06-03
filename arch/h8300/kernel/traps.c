@@ -22,6 +22,7 @@
 #include <linux/module.h>
 #include <linux/bug.h>
 
+#include <asm/system.h>
 #include <asm/irq.h>
 #include <asm/traps.h>
 #include <asm/page.h>
@@ -95,7 +96,7 @@ static void dump(struct pt_regs *fp)
 	printk("\n\n");
 }
 
-void die(const char *str, struct pt_regs *fp, unsigned long err)
+void die(char *str, struct pt_regs *fp, unsigned long err)
 {
 	static int diecount;
 

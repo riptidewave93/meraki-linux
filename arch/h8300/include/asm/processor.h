@@ -81,6 +81,7 @@ struct thread_struct {
 #if defined(__H8300H__)
 #define start_thread(_regs, _pc, _usp)			        \
 do {							        \
+	set_fs(USER_DS);           /* reads from user space */  \
   	(_regs)->pc = (_pc);				        \
 	(_regs)->ccr = 0x00;	   /* clear all flags */        \
 	(_regs)->er5 = current->mm->start_data;	/* GOT base */  \
@@ -90,6 +91,7 @@ do {							        \
 #if defined(__H8300S__)
 #define start_thread(_regs, _pc, _usp)			        \
 do {							        \
+	set_fs(USER_DS);           /* reads from user space */  \
 	(_regs)->pc = (_pc);				        \
 	(_regs)->ccr = 0x00;	   /* clear kernel flag */      \
 	(_regs)->exr = 0x78;       /* enable all interrupts */  \
@@ -134,10 +136,5 @@ unsigned long get_wchan(struct task_struct *p);
 #define	KSTK_ESP(tsk)	((tsk) == current ? rdusp() : (tsk)->thread.usp)
 
 #define cpu_relax()    barrier()
-
-#define HARD_RESET_NOW() ({		\
-        local_irq_disable();		\
-        asm("jmp @@0");			\
-})
 
 #endif

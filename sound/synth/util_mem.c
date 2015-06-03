@@ -21,7 +21,6 @@
 #include <linux/mutex.h>
 #include <linux/init.h>
 #include <linux/slab.h>
-#include <linux/module.h>
 #include <sound/core.h>
 #include <sound/util_mem.h>
 

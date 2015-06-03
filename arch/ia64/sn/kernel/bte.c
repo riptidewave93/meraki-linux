@@ -19,7 +19,6 @@
 #include <linux/bootmem.h>
 #include <linux/string.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 
 #include <asm/sn/bte.h>
 

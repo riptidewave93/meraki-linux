@@ -21,21 +21,22 @@
 #define CLCD_UBAS 		0x00000010
 #define CLCD_LBAS 		0x00000014
 
-#define CLCD_PL110_IENB		0x00000018
-#define CLCD_PL110_CNTL		0x0000001c
-#define CLCD_PL110_STAT		0x00000020
-#define CLCD_PL110_INTR 	0x00000024
-#define CLCD_PL110_UCUR		0x00000028
-#define CLCD_PL110_LCUR		0x0000002C
+#if !defined(CONFIG_ARCH_VERSATILE) && !defined(CONFIG_ARCH_REALVIEW)
+#define CLCD_IENB 		0x00000018
+#define CLCD_CNTL 		0x0000001c
+#else
+/*
+ * Someone rearranged these two registers on the Versatile
+ * platform...
+ */
+#define CLCD_IENB 		0x0000001c
+#define CLCD_CNTL 		0x00000018
+#endif
 
-#define CLCD_PL111_CNTL		0x00000018
-#define CLCD_PL111_IENB		0x0000001c
-#define CLCD_PL111_RIS		0x00000020
-#define CLCD_PL111_MIS		0x00000024
-#define CLCD_PL111_ICR		0x00000028
-#define CLCD_PL111_UCUR		0x0000002c
-#define CLCD_PL111_LCUR		0x00000030
-
+#define CLCD_STAT 		0x00000020
+#define CLCD_INTR 		0x00000024
+#define CLCD_UCUR 		0x00000028
+#define CLCD_LCUR 		0x0000002C
 #define CLCD_PALL 		0x00000200
 #define CLCD_PALETTE		0x00000200
 
@@ -53,7 +54,6 @@
 #define CNTL_LCDBPP8		(3 << 1)
 #define CNTL_LCDBPP16		(4 << 1)
 #define CNTL_LCDBPP16_565	(6 << 1)
-#define CNTL_LCDBPP16_444	(7 << 1)
 #define CNTL_LCDBPP24		(5 << 1)
 #define CNTL_LCDBW		(1 << 4)
 #define CNTL_LCDTFT		(1 << 5)
@@ -67,32 +67,6 @@
 #define CNTL_LDMAFIFOTIME	(1 << 15)
 #define CNTL_WATERMARK		(1 << 16)
 
-enum {
-	/* individual formats */
-	CLCD_CAP_RGB444		= (1 << 0),
-	CLCD_CAP_RGB5551	= (1 << 1),
-	CLCD_CAP_RGB565		= (1 << 2),
-	CLCD_CAP_RGB888		= (1 << 3),
-	CLCD_CAP_BGR444		= (1 << 4),
-	CLCD_CAP_BGR5551	= (1 << 5),
-	CLCD_CAP_BGR565		= (1 << 6),
-	CLCD_CAP_BGR888		= (1 << 7),
-
-	/* connection layouts */
-	CLCD_CAP_444		= CLCD_CAP_RGB444 | CLCD_CAP_BGR444,
-	CLCD_CAP_5551		= CLCD_CAP_RGB5551 | CLCD_CAP_BGR5551,
-	CLCD_CAP_565		= CLCD_CAP_RGB565 | CLCD_CAP_BGR565,
-	CLCD_CAP_888		= CLCD_CAP_RGB888 | CLCD_CAP_BGR888,
-
-	/* red/blue ordering */
-	CLCD_CAP_RGB		= CLCD_CAP_RGB444 | CLCD_CAP_RGB5551 |
-				  CLCD_CAP_RGB565 | CLCD_CAP_RGB888,
-	CLCD_CAP_BGR		= CLCD_CAP_BGR444 | CLCD_CAP_BGR5551 |
-				  CLCD_CAP_BGR565 | CLCD_CAP_BGR888,
-
-	CLCD_CAP_ALL		= CLCD_CAP_BGR | CLCD_CAP_RGB,
-};
-
 struct clcd_panel {
 	struct fb_videomode	mode;
 	signed short		width;	/* width in mm */
@@ -100,7 +74,6 @@ struct clcd_panel {
 	u32			tim2;
 	u32			tim3;
 	u32			cntl;
-	u32			caps;
 	unsigned int		bpp:8,
 				fixedtimings:1,
 				grayscale:1;
@@ -125,18 +98,13 @@ struct clcd_board {
 	const char *name;
 
 	/*
-	 * Optional.  Hardware capability flags.
-	 */
-	u32	caps;
-
-	/*
 	 * Optional.  Check whether the var structure is acceptable
 	 * for this display.
 	 */
 	int	(*check)(struct clcd_fb *fb, struct fb_var_screeninfo *var);
 
 	/*
-	 * Compulsory.  Decode fb->fb.var into regs->*.  In the case of
+	 * Compulsary.  Decode fb->fb.var into regs->*.  In the case of
 	 * fixed timing, set regs->* to the register values required.
 	 */
 	void	(*decode)(struct clcd_fb *fb, struct clcd_regs *regs);
@@ -179,44 +147,40 @@ struct clcd_fb {
 	struct clcd_board	*board;
 	void			*board_data;
 	void __iomem		*regs;
-	u16			off_ienb;
-	u16			off_cntl;
 	u32			clcd_cntl;
 	u32			cmap[16];
-	bool			clk_enabled;
 };
 
 static inline void clcdfb_decode(struct clcd_fb *fb, struct clcd_regs *regs)
 {
-	struct fb_var_screeninfo *var = &fb->fb.var;
 	u32 val, cpl;
 
 	/*
 	 * Program the CLCD controller registers and start the CLCD
 	 */
-	val = ((var->xres / 16) - 1) << 2;
-	val |= (var->hsync_len - 1) << 8;
-	val |= (var->right_margin - 1) << 16;
-	val |= (var->left_margin - 1) << 24;
+	val = ((fb->fb.var.xres / 16) - 1) << 2;
+	val |= (fb->fb.var.hsync_len - 1) << 8;
+	val |= (fb->fb.var.right_margin - 1) << 16;
+	val |= (fb->fb.var.left_margin - 1) << 24;
 	regs->tim0 = val;
 
-	val = var->yres;
+	val = fb->fb.var.yres;
 	if (fb->panel->cntl & CNTL_LCDDUAL)
 		val /= 2;
 	val -= 1;
-	val |= (var->vsync_len - 1) << 10;
-	val |= var->lower_margin << 16;
-	val |= var->upper_margin << 24;
+	val |= (fb->fb.var.vsync_len - 1) << 10;
+	val |= fb->fb.var.lower_margin << 16;
+	val |= fb->fb.var.upper_margin << 24;
 	regs->tim1 = val;
 
 	val = fb->panel->tim2;
-	val |= var->sync & FB_SYNC_HOR_HIGH_ACT  ? 0 : TIM2_IHS;
-	val |= var->sync & FB_SYNC_VERT_HIGH_ACT ? 0 : TIM2_IVS;
+	val |= fb->fb.var.sync & FB_SYNC_HOR_HIGH_ACT  ? 0 : TIM2_IHS;
+	val |= fb->fb.var.sync & FB_SYNC_VERT_HIGH_ACT ? 0 : TIM2_IVS;
 
-	cpl = var->xres_virtual;
+	cpl = fb->fb.var.xres_virtual;
 	if (fb->panel->cntl & CNTL_LCDTFT)	  /* TFT */
 		/* / 1 */;
-	else if (!var->grayscale)		  /* STN color */
+	else if (!fb->fb.var.grayscale)		  /* STN color */
 		cpl = cpl * 8 / 3;
 	else if (fb->panel->cntl & CNTL_LCDMONO8) /* STN monochrome, 8bit */
 		cpl /= 8;
@@ -228,22 +192,10 @@ static inline void clcdfb_decode(struct clcd_fb *fb, struct clcd_regs *regs)
 	regs->tim3 = fb->panel->tim3;
 
 	val = fb->panel->cntl;
-	if (var->grayscale)
+	if (fb->fb.var.grayscale)
 		val |= CNTL_LCDBW;
 
-	if (fb->panel->caps && fb->board->caps &&
-	    var->bits_per_pixel >= 16) {
-		/*
-		 * if board and panel supply capabilities, we can support
-		 * changing BGR/RGB depending on supplied parameters
-		 */
-		if (var->red.offset == 0)
-			val &= ~CNTL_BGR;
-		else
-			val |= CNTL_BGR;
-	}
-
-	switch (var->bits_per_pixel) {
+	switch (fb->fb.var.bits_per_pixel) {
 	case 1:
 		val |= CNTL_LCDBPP1;
 		break;
@@ -258,17 +210,15 @@ static inline void clcdfb_decode(struct clcd_fb *fb, struct clcd_regs *regs)
 		break;
 	case 16:
 		/*
-		 * PL110 cannot choose between 5551 and 565 modes in its
-		 * control register.  It is possible to use 565 with
-		 * custom external wiring.
+		 * PL110 cannot choose between 5551 and 565 modes in
+		 * its control register
 		 */
-		if (amba_part(fb->dev) == 0x110 ||
-		    var->green.length == 5)
+		if ((fb->dev->periphid & 0x000fffff) == 0x00041110)
 			val |= CNTL_LCDBPP16;
-		else if (var->green.length == 6)
-			val |= CNTL_LCDBPP16_565;
+		else if (fb->fb.var.green.length == 5)
+			val |= CNTL_LCDBPP16;
 		else
-			val |= CNTL_LCDBPP16_444;
+			val |= CNTL_LCDBPP16_565;
 		break;
 	case 32:
 		val |= CNTL_LCDBPP24;
@@ -276,7 +226,7 @@ static inline void clcdfb_decode(struct clcd_fb *fb, struct clcd_regs *regs)
 	}
 
 	regs->cntl = val;
-	regs->pixclock = var->pixclock;
+	regs->pixclock = fb->fb.var.pixclock;
 }
 
 static inline int clcdfb_check(struct clcd_fb *fb, struct fb_var_screeninfo *var)

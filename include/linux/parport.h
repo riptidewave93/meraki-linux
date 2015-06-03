@@ -100,6 +100,7 @@ typedef enum {
 #include <linux/wait.h>
 #include <linux/irqreturn.h>
 #include <linux/semaphore.h>
+#include <asm/system.h>
 #include <asm/ptrace.h>
 
 /* Define this later. */

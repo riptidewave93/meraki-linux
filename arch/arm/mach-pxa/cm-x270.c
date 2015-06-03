@@ -10,6 +10,7 @@
  */
 
 #include <linux/platform_device.h>
+#include <linux/sysdev.h>
 #include <linux/irq.h>
 #include <linux/gpio.h>
 #include <linux/delay.h>
@@ -18,12 +19,12 @@
 #include <video/mbxfb.h>
 
 #include <linux/spi/spi.h>
-#include <linux/spi/pxa2xx_spi.h>
 #include <linux/spi/libertas_spi.h>
 
 #include <mach/pxa27x.h>
 #include <mach/ohci.h>
 #include <mach/mmc.h>
+#include <mach/pxa2xx_spi.h>
 
 #include "generic.h"
 
@@ -33,7 +34,7 @@
 /* GPIO IRQ usage */
 #define GPIO83_MMC_IRQ		(83)
 
-#define CMX270_MMC_IRQ		PXA_GPIO_TO_IRQ(GPIO83_MMC_IRQ)
+#define CMX270_MMC_IRQ		IRQ_GPIO(GPIO83_MMC_IRQ)
 
 /* MMC power enable */
 #define GPIO105_MMC_POWER	(105)
@@ -70,7 +71,26 @@ static unsigned long cmx270_pin_config[] = {
 	GPIO111_MMC_DAT_3,
 
 	/* LCD */
-	GPIOxx_LCD_TFT_16BPP,
+	GPIO58_LCD_LDD_0,
+	GPIO59_LCD_LDD_1,
+	GPIO60_LCD_LDD_2,
+	GPIO61_LCD_LDD_3,
+	GPIO62_LCD_LDD_4,
+	GPIO63_LCD_LDD_5,
+	GPIO64_LCD_LDD_6,
+	GPIO65_LCD_LDD_7,
+	GPIO66_LCD_LDD_8,
+	GPIO67_LCD_LDD_9,
+	GPIO68_LCD_LDD_10,
+	GPIO69_LCD_LDD_11,
+	GPIO70_LCD_LDD_12,
+	GPIO71_LCD_LDD_13,
+	GPIO72_LCD_LDD_14,
+	GPIO73_LCD_LDD_15,
+	GPIO74_LCD_FCLK,
+	GPIO75_LCD_LCLK,
+	GPIO76_LCD_PCLK,
+	GPIO77_LCD_BIAS,
 
 	/* I2C */
 	GPIO117_I2C_SCL,
@@ -175,57 +195,33 @@ static struct resource cmx270_2700G_resource[] = {
 	},
 };
 
-static unsigned long cmx270_marathon_on[] = {
-	GPIO58_GPIO,
-	GPIO59_GPIO,
-	GPIO60_GPIO,
-	GPIO61_GPIO,
-	GPIO62_GPIO,
-	GPIO63_GPIO,
-	GPIO64_GPIO,
-	GPIO65_GPIO,
-	GPIO66_GPIO,
-	GPIO67_GPIO,
-	GPIO68_GPIO,
-	GPIO69_GPIO,
-	GPIO70_GPIO,
-	GPIO71_GPIO,
-	GPIO72_GPIO,
-	GPIO73_GPIO,
-	GPIO74_GPIO,
-	GPIO75_GPIO,
-	GPIO76_GPIO,
-	GPIO77_GPIO,
-};
-
-static unsigned long cmx270_marathon_off[] = {
-	GPIOxx_LCD_TFT_16BPP,
-};
+static unsigned long save_lcd_regs[10];
 
 static int cmx270_marathon_probe(struct fb_info *fb)
 {
-	int gpio, err;
+	/* save PXA-270 pin settings before enabling 2700G */
+	save_lcd_regs[0] = GPDR1;
+	save_lcd_regs[1] = GPDR2;
+	save_lcd_regs[2] = GAFR1_U;
+	save_lcd_regs[3] = GAFR2_L;
+	save_lcd_regs[4] = GAFR2_U;
 
-	for (gpio = 58; gpio <= 77; gpio++) {
-		err = gpio_request(gpio, "LCD");
-		if (err)
-			return err;
-		gpio_direction_input(gpio);
-	}
-
-	pxa2xx_mfp_config(ARRAY_AND_SIZE(cmx270_marathon_on));
+	/* Disable PXA-270 on-chip controller driving pins */
+	GPDR1 &= ~(0xfc000000);
+	GPDR2 &= ~(0x00c03fff);
+	GAFR1_U &= ~(0xfff00000);
+	GAFR2_L &= ~(0x0fffffff);
+	GAFR2_U &= ~(0x0000f000);
 	return 0;
 }
 
 static int cmx270_marathon_remove(struct fb_info *fb)
 {
-	int gpio;
-
-	pxa2xx_mfp_config(ARRAY_AND_SIZE(cmx270_marathon_off));
-
-	for (gpio = 58; gpio <= 77; gpio++)
-		gpio_free(gpio);
-
+	GPDR1 =   save_lcd_regs[0];
+	GPDR2 =   save_lcd_regs[1];
+	GAFR1_U = save_lcd_regs[2];
+	GAFR2_L = save_lcd_regs[3];
+	GAFR2_U = save_lcd_regs[4];
 	return 0;
 }
 
@@ -380,7 +376,7 @@ static struct spi_board_info cm_x270_spi_devices[] __initdata = {
 		.modalias		= "libertas_spi",
 		.max_speed_hz		= 13000000,
 		.bus_num		= 2,
-		.irq			= PXA_GPIO_TO_IRQ(95),
+		.irq			= gpio_to_irq(95),
 		.chip_select		= 0,
 		.controller_data	= &cm_x270_libertas_chip,
 		.platform_data		= &cm_x270_libertas_pdata,

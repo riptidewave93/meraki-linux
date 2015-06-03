@@ -33,8 +33,8 @@ ENTRY(__strnlen_user)
 	mov	pc, lr
 ENDPROC(__strnlen_user)
 
-	.pushsection .fixup,"ax"
+	.section .fixup,"ax"
 	.align	0
 9001:	mov	r0, #0
 	mov	pc, lr
-	.popsection
+	.previous

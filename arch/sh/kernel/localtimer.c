@@ -44,7 +44,7 @@ static void dummy_timer_set_mode(enum clock_event_mode mode,
 {
 }
 
-void local_timer_setup(unsigned int cpu)
+void __cpuinit local_timer_setup(unsigned int cpu)
 {
 	struct clock_event_device *clk = &per_cpu(local_clockevent, cpu);
 
@@ -59,8 +59,4 @@ void local_timer_setup(unsigned int cpu)
 	clk->cpumask		= cpumask_of(cpu);
 
 	clockevents_register_device(clk);
-}
-
-void local_timer_stop(unsigned int cpu)
-{
 }

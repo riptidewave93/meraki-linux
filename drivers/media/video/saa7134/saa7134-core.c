@@ -39,8 +39,6 @@
 MODULE_DESCRIPTION("v4l2 driver module for saa7130/34 based TV cards");
 MODULE_AUTHOR("Gerd Knorr <kraxel@bytesex.org> [SuSE Labs]");
 MODULE_LICENSE("GPL");
-MODULE_VERSION(SAA7134_VERSION);
-
 
 /* ------------------------------------------------------------------ */
 
@@ -168,14 +166,8 @@ static void request_submodules(struct saa7134_dev *dev)
 	schedule_work(&dev->request_module_wk);
 }
 
-static void flush_request_submodules(struct saa7134_dev *dev)
-{
-	flush_work_sync(&dev->request_module_wk);
-}
-
 #else
 #define request_submodules(dev)
-#define flush_request_submodules(dev)
 #endif /* CONFIG_MODULES */
 
 /* ------------------------------------------------------------------ */
@@ -263,8 +255,8 @@ void saa7134_dma_free(struct videobuf_queue *q,struct saa7134_buf *buf)
 	struct videobuf_dmabuf *dma=videobuf_to_dma(&buf->vb);
 	BUG_ON(in_interrupt());
 
-	videobuf_waiton(q, &buf->vb, 0, 0);
-	videobuf_dma_unmap(q->dev, dma);
+	videobuf_waiton(&buf->vb,0,0);
+	videobuf_dma_unmap(q, dma);
 	videobuf_dma_free(dma);
 	buf->vb.state = VIDEOBUF_NEEDS_INIT;
 }
@@ -479,7 +471,7 @@ static char *irqbits[] = {
 	"DONE_RA0", "DONE_RA1", "DONE_RA2", "DONE_RA3",
 	"AR", "PE", "PWR_ON", "RDCAP", "INTL", "FIDT", "MMC",
 	"TRIG_ERR", "CONF_ERR", "LOAD_ERR",
-	"GPIO16", "GPIO18", "GPIO22", "GPIO23"
+	"GPIO16?", "GPIO18", "GPIO22", "GPIO23"
 };
 #define IRQBITS ARRAY_SIZE(irqbits)
 
@@ -609,14 +601,12 @@ static irqreturn_t saa7134_irq(int irq, void *dev_id)
 			/* disable gpio16 IRQ */
 			printk(KERN_WARNING "%s/irq: looping -- "
 			       "clearing GPIO16 enable bit\n",dev->name);
-			saa_clearl(SAA7134_IRQ2, SAA7134_IRQ2_INTE_GPIO16_P);
-			saa_clearl(SAA7134_IRQ2, SAA7134_IRQ2_INTE_GPIO16_N);
+			saa_clearl(SAA7134_IRQ2, SAA7134_IRQ2_INTE_GPIO16);
 		} else if (report & SAA7134_IRQ_REPORT_GPIO18) {
 			/* disable gpio18 IRQs */
 			printk(KERN_WARNING "%s/irq: looping -- "
 			       "clearing GPIO18 enable bit\n",dev->name);
-			saa_clearl(SAA7134_IRQ2, SAA7134_IRQ2_INTE_GPIO18_P);
-			saa_clearl(SAA7134_IRQ2, SAA7134_IRQ2_INTE_GPIO18_N);
+			saa_clearl(SAA7134_IRQ2, SAA7134_IRQ2_INTE_GPIO18);
 		} else {
 			/* disable all irqs */
 			printk(KERN_WARNING "%s/irq: looping -- "
@@ -708,13 +698,11 @@ static int saa7134_hw_enable2(struct saa7134_dev *dev)
 
 	if (dev->has_remote == SAA7134_REMOTE_GPIO && dev->remote) {
 		if (dev->remote->mask_keydown & 0x10000)
-			irq2_mask |= SAA7134_IRQ2_INTE_GPIO16_N;
-		else {		/* Allow enabling both IRQ edge triggers */
-			if (dev->remote->mask_keydown & 0x40000)
-				irq2_mask |= SAA7134_IRQ2_INTE_GPIO18_P;
-			if (dev->remote->mask_keyup & 0x40000)
-				irq2_mask |= SAA7134_IRQ2_INTE_GPIO18_N;
-		}
+			irq2_mask |= SAA7134_IRQ2_INTE_GPIO16;
+		else if (dev->remote->mask_keydown & 0x40000)
+			irq2_mask |= SAA7134_IRQ2_INTE_GPIO18;
+		else if (dev->remote->mask_keyup & 0x40000)
+			irq2_mask |= SAA7134_IRQ2_INTE_GPIO18A;
 	}
 
 	if (dev->has_remote == SAA7134_REMOTE_I2C) {
@@ -754,28 +742,19 @@ static int saa7134_hwfini(struct saa7134_dev *dev)
 	return 0;
 }
 
-static void __devinit must_configure_manually(int has_eeprom)
+static void __devinit must_configure_manually(void)
 {
 	unsigned int i,p;
 
-	if (!has_eeprom)
-		printk(KERN_WARNING
-		       "saa7134: <rant>\n"
-		       "saa7134:  Congratulations!  Your TV card vendor saved a few\n"
-		       "saa7134:  cents for a eeprom, thus your pci board has no\n"
-		       "saa7134:  subsystem ID and I can't identify it automatically\n"
-		       "saa7134: </rant>\n"
-		       "saa7134: I feel better now.  Ok, here are the good news:\n"
-		       "saa7134: You can use the card=<nr> insmod option to specify\n"
-		       "saa7134: which board do you have.  The list:\n");
-	else
-		printk(KERN_WARNING
-		       "saa7134: Board is currently unknown. You might try to use the card=<nr>\n"
-		       "saa7134: insmod option to specify which board do you have, but this is\n"
-		       "saa7134: somewhat risky, as might damage your card. It is better to ask\n"
-		       "saa7134: for support at linux-media@vger.kernel.org.\n"
-		       "saa7134: The supported cards are:\n");
-
+	printk(KERN_WARNING
+	       "saa7134: <rant>\n"
+	       "saa7134:  Congratulations!  Your TV card vendor saved a few\n"
+	       "saa7134:  cents for a eeprom, thus your pci board has no\n"
+	       "saa7134:  subsystem ID and I can't identify it automatically\n"
+	       "saa7134: </rant>\n"
+	       "saa7134: I feel better now.  Ok, here are the good news:\n"
+	       "saa7134: You can use the card=<nr> insmod option to specify\n"
+	       "saa7134: which board do you have.  The list:\n");
 	for (i = 0; i < saa7134_bcount; i++) {
 		printk(KERN_WARNING "saa7134:   card=%d -> %-40.40s",
 		       i,saa7134_boards[i].name);
@@ -805,28 +784,27 @@ static struct video_device *vdev_init(struct saa7134_dev *dev,
 	vfd->debug   = video_debug;
 	snprintf(vfd->name, sizeof(vfd->name), "%s %s (%s)",
 		 dev->name, type, saa7134_boards[dev->board].name);
-	video_set_drvdata(vfd, dev);
 	return vfd;
 }
 
 static void saa7134_unregister_video(struct saa7134_dev *dev)
 {
 	if (dev->video_dev) {
-		if (video_is_registered(dev->video_dev))
+		if (-1 != dev->video_dev->minor)
 			video_unregister_device(dev->video_dev);
 		else
 			video_device_release(dev->video_dev);
 		dev->video_dev = NULL;
 	}
 	if (dev->vbi_dev) {
-		if (video_is_registered(dev->vbi_dev))
+		if (-1 != dev->vbi_dev->minor)
 			video_unregister_device(dev->vbi_dev);
 		else
 			video_device_release(dev->vbi_dev);
 		dev->vbi_dev = NULL;
 	}
 	if (dev->radio_dev) {
-		if (video_is_registered(dev->radio_dev))
+		if (-1 != dev->radio_dev->minor)
 			video_unregister_device(dev->radio_dev);
 		else
 			video_device_release(dev->radio_dev);
@@ -929,7 +907,7 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 	}
 
 	/* print pci info */
-	dev->pci_rev = pci_dev->revision;
+	pci_read_config_byte(pci_dev, PCI_CLASS_REVISION, &dev->pci_rev);
 	pci_read_config_byte(pci_dev, PCI_LATENCY_TIMER,  &dev->pci_lat);
 	printk(KERN_INFO "%s: found at %s, rev: %d, irq: %d, "
 	       "latency: %d, mmio: 0x%llx\n", dev->name,
@@ -947,10 +925,8 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 	if (card[dev->nr] >= 0 &&
 	    card[dev->nr] < saa7134_bcount)
 		dev->board = card[dev->nr];
-	if (SAA7134_BOARD_UNKNOWN == dev->board)
-		must_configure_manually(0);
-	else if (SAA7134_BOARD_NOAUTO == dev->board) {
-		must_configure_manually(1);
+	if (SAA7134_BOARD_NOAUTO == dev->board) {
+		must_configure_manually();
 		dev->board = SAA7134_BOARD_UNKNOWN;
 	}
 	dev->autodetected = card[dev->nr] != dev->board;
@@ -1010,7 +986,7 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 	if (card_is_empress(dev)) {
 		struct v4l2_subdev *sd =
 			v4l2_i2c_new_subdev(&dev->v4l2_dev, &dev->i2c_adap,
-				"saa6752hs",
+				"saa6752hs", "saa6752hs",
 				saa7134_boards[dev->board].empress_addr, NULL);
 
 		if (sd)
@@ -1021,13 +997,15 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 		struct v4l2_subdev *sd;
 
 		sd = v4l2_i2c_new_subdev(&dev->v4l2_dev,
-				&dev->i2c_adap, "saa6588",
+				&dev->i2c_adap,	"saa6588", "saa6588",
 				0, I2C_ADDRS(saa7134_boards[dev->board].rds_addr));
 		if (sd) {
 			printk(KERN_INFO "%s: found RDS decoder\n", dev->name);
 			dev->has_rds = 1;
 		}
 	}
+
+	request_submodules(dev);
 
 	v4l2_prio_init(&dev->prio);
 
@@ -1041,7 +1019,7 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 	saa7134_irq_video_signalchange(dev);
 
 	if (TUNER_ABSENT != dev->tuner_type)
-		saa_call_all(dev, core, s_power, 0);
+		saa_call_all(dev, tuner, s_standby);
 
 	/* register v4l devices */
 	if (saa7134_no_overlay > 0)
@@ -1055,8 +1033,8 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 		       dev->name);
 		goto fail4;
 	}
-	printk(KERN_INFO "%s: registered device %s [v4l2]\n",
-	       dev->name, video_device_node_name(dev->video_dev));
+	printk(KERN_INFO "%s: registered device video%d [v4l2]\n",
+	       dev->name, dev->video_dev->num);
 
 	dev->vbi_dev = vdev_init(dev, &saa7134_video_template, "vbi");
 
@@ -1064,8 +1042,8 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 				    vbi_nr[dev->nr]);
 	if (err < 0)
 		goto fail4;
-	printk(KERN_INFO "%s: registered device %s\n",
-	       dev->name, video_device_node_name(dev->vbi_dev));
+	printk(KERN_INFO "%s: registered device vbi%d\n",
+	       dev->name, dev->vbi_dev->num);
 
 	if (card_has_radio(dev)) {
 		dev->radio_dev = vdev_init(dev,&saa7134_radio_template,"radio");
@@ -1073,8 +1051,8 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 					    radio_nr[dev->nr]);
 		if (err < 0)
 			goto fail4;
-		printk(KERN_INFO "%s: registered device %s\n",
-		       dev->name, video_device_node_name(dev->radio_dev));
+		printk(KERN_INFO "%s: registered device radio%d\n",
+		       dev->name, dev->radio_dev->num);
 	}
 
 	/* everything worked */
@@ -1083,7 +1061,6 @@ static int __devinit saa7134_initdev(struct pci_dev *pci_dev,
 	if (saa7134_dmasound_init && !dev->dmasound.priv_data)
 		saa7134_dmasound_init(dev);
 
-	request_submodules(dev);
 	return 0;
 
  fail4:
@@ -1108,8 +1085,6 @@ static void __devexit saa7134_finidev(struct pci_dev *pci_dev)
 	struct v4l2_device *v4l2_dev = pci_get_drvdata(pci_dev);
 	struct saa7134_dev *dev = container_of(v4l2_dev, struct saa7134_dev, v4l2_dev);
 	struct saa7134_mpeg_ops *mops;
-
-	flush_request_submodules(dev);
 
 	/* Release DMA sound modules if present */
 	if (saa7134_dmasound_exit && dev->dmasound.priv_data) {
@@ -1251,7 +1226,7 @@ static int saa7134_resume(struct pci_dev *pci_dev)
 	if (card_has_mpeg(dev))
 		saa7134_ts_init_hw(dev);
 	if (dev->remote)
-		saa7134_ir_start(dev);
+		saa7134_ir_start(dev, dev->remote);
 	saa7134_hw_enable1(dev);
 
 	msleep(100);
@@ -1263,6 +1238,7 @@ static int saa7134_resume(struct pci_dev *pci_dev)
 	saa7134_tvaudio_setmute(dev);
 	saa7134_tvaudio_setvolume(dev, dev->ctl_volume);
 	saa7134_tvaudio_init(dev);
+	saa7134_tvaudio_do_scan(dev);
 	saa7134_enable_i2s(dev);
 	saa7134_hw_enable2(dev);
 
@@ -1330,15 +1306,21 @@ static struct pci_driver saa7134_pci_driver = {
 #endif
 };
 
-static int __init saa7134_init(void)
+static int saa7134_init(void)
 {
 	INIT_LIST_HEAD(&saa7134_devlist);
-	printk(KERN_INFO "saa7130/34: v4l2 driver version %s loaded\n",
-	       SAA7134_VERSION);
+	printk(KERN_INFO "saa7130/34: v4l2 driver version %d.%d.%d loaded\n",
+	       (SAA7134_VERSION_CODE >> 16) & 0xff,
+	       (SAA7134_VERSION_CODE >>  8) & 0xff,
+	       SAA7134_VERSION_CODE & 0xff);
+#ifdef SNAPSHOT
+	printk(KERN_INFO "saa7130/34: snapshot date %04d-%02d-%02d\n",
+	       SNAPSHOT/10000, (SNAPSHOT/100)%100, SNAPSHOT%100);
+#endif
 	return pci_register_driver(&saa7134_pci_driver);
 }
 
-static void __exit saa7134_fini(void)
+static void saa7134_fini(void)
 {
 	pci_unregister_driver(&saa7134_pci_driver);
 }

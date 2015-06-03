@@ -1,6 +1,6 @@
 /* Freescale Local Bus Controller
  *
- * Copyright © 2006-2007, 2010 Freescale Semiconductor
+ * Copyright (c) 2006-2007, 2010 Freescale Semiconductor
  *
  * Authors: Nick Spence <nick.spence@freescale.com>,
  *          Scott Wood <scottwood@freescale.com>
@@ -27,8 +27,9 @@
 #include <linux/compiler.h>
 #include <linux/types.h>
 #include <linux/io.h>
-#include <linux/device.h>
-#include <linux/spinlock.h>
+
+#include <linux/of_platform.h>
+#include <linux/interrupt.h>
 
 struct fsl_lbc_bank {
 	__be32 br;             /**< Base Register  */
@@ -157,8 +158,6 @@ struct fsl_lbc_regs {
 #define LBCR_EPAR_SHIFT    16
 #define LBCR_BMT   0x0000FF00
 #define LBCR_BMT_SHIFT      8
-#define LBCR_BMTPS 0x0000000F
-#define LBCR_BMTPS_SHIFT    0
 #define LBCR_INIT  0x00040000
 	__be32 lcrr;            /**< Clock Ratio Register */
 #define LCRR_DBYP    0x80000000
@@ -238,6 +237,8 @@ struct fsl_lbc_regs {
 #define FPAR_LP_CI_SHIFT      0
 	__be32 fbcr;            /**< Flash Byte Count Register */
 #define FBCR_BC      0x00000FFF
+	u8 res11[0x8];
+	u8 res8[0xF00];
 };
 
 /*
@@ -248,7 +249,7 @@ struct fsl_upm {
 	int width;
 };
 
-extern u32 fsl_lbc_addr(phys_addr_t addr_base);
+extern unsigned int convert_lbc_address(phys_addr_t addr_base);
 extern int fsl_lbc_find(phys_addr_t addr_base);
 extern int fsl_upm_find(phys_addr_t addr_base, struct fsl_upm *upm);
 
@@ -292,11 +293,6 @@ struct fsl_lbc_ctrl {
 
 	/* status read from LTESR by irq handler */
 	unsigned int			irq_status;
-
-#ifdef CONFIG_SUSPEND
-	/* save regs when system go to deep-sleep */
-	struct fsl_lbc_regs		*saved_regs;
-#endif
 };
 
 extern int fsl_upm_run_pattern(struct fsl_upm *upm, void __iomem *io_base,

@@ -17,8 +17,6 @@
  * based on softdog.c by Alan Cox <alan@redhat.com>
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/types.h>
@@ -32,10 +30,9 @@
 #include <linux/init.h>
 #include <asm/mach-pnx833x/pnx833x.h>
 
+#define PFX "pnx833x: "
 #define WATCHDOG_TIMEOUT 30		/* 30 sec Maximum timeout */
 #define WATCHDOG_COUNT_FREQUENCY 68000000U /* Watchdog counts at 68MHZ. */
-#define	PNX_WATCHDOG_TIMEOUT	(WATCHDOG_TIMEOUT * WATCHDOG_COUNT_FREQUENCY)
-#define PNX_TIMEOUT_VALUE	2040000000U
 
 /** CONFIG block */
 #define PNX833X_CONFIG                      (0x07000U)
@@ -50,21 +47,20 @@
 static int pnx833x_wdt_alive;
 
 /* Set default timeout in MHZ.*/
-static int pnx833x_wdt_timeout = PNX_WATCHDOG_TIMEOUT;
+static int pnx833x_wdt_timeout = (WATCHDOG_TIMEOUT * WATCHDOG_COUNT_FREQUENCY);
 module_param(pnx833x_wdt_timeout, int, 0);
 MODULE_PARM_DESC(timeout, "Watchdog timeout in Mhz. (68Mhz clock), default="
-			__MODULE_STRING(PNX_TIMEOUT_VALUE) "(30 seconds).");
+			__MODULE_STRING(pnx833x_wdt_timeout) "(30 seconds).");
 
-static bool nowayout = WATCHDOG_NOWAYOUT;
-module_param(nowayout, bool, 0);
+static int nowayout = WATCHDOG_NOWAYOUT;
+module_param(nowayout, int, 0);
 MODULE_PARM_DESC(nowayout, "Watchdog cannot be stopped once started (default="
 					__MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
 
-#define START_DEFAULT	1
-static int start_enabled = START_DEFAULT;
+static int start_enabled = 1;
 module_param(start_enabled, int, 0);
 MODULE_PARM_DESC(start_enabled, "Watchdog is started on module insertion "
-				"(default=" __MODULE_STRING(START_DEFAULT) ")");
+				"(default=" __MODULE_STRING(start_enabled) ")");
 
 static void pnx833x_wdt_start(void)
 {
@@ -77,7 +73,7 @@ static void pnx833x_wdt_start(void)
 	PNX833X_REG(PNX833X_CONFIG +
 				PNX833X_CONFIG_CPU_COUNTERS_CONTROL) |= 0x1;
 
-	pr_info("Started watchdog timer\n");
+	printk(KERN_INFO PFX "Started watchdog timer.\n");
 }
 
 static void pnx833x_wdt_stop(void)
@@ -88,7 +84,7 @@ static void pnx833x_wdt_stop(void)
 	PNX833X_REG(PNX833X_CONFIG +
 			PNX833X_CONFIG_CPU_COUNTERS_CONTROL) &= 0xFFFFFFFE;
 
-	pr_info("Stopped watchdog timer\n");
+	printk(KERN_INFO PFX "Stopped watchdog timer.\n");
 }
 
 static void pnx833x_wdt_ping(void)
@@ -114,7 +110,7 @@ static int pnx833x_wdt_open(struct inode *inode, struct file *file)
 
 	pnx833x_wdt_ping();
 
-	pr_info("Started watchdog timer\n");
+	printk(KERN_INFO "Started watchdog timer.\n");
 
 	return nonseekable_open(inode, file);
 }
@@ -145,7 +141,7 @@ static long pnx833x_wdt_ioctl(struct file *file, unsigned int cmd,
 	int options, new_timeout = 0;
 	uint32_t timeout, timeout_left = 0;
 
-	static const struct watchdog_info ident = {
+	static struct watchdog_info ident = {
 		.options = WDIOF_KEEPALIVEPING | WDIOF_SETTIMEOUT,
 		.firmware_version = 0,
 		.identity = "Hardware Watchdog for PNX833x",
@@ -233,6 +229,9 @@ static struct notifier_block pnx833x_wdt_notifier = {
 	.notifier_call = pnx833x_wdt_notify_sys,
 };
 
+static char banner[] __initdata =
+	KERN_INFO PFX "Hardware Watchdog Timer for PNX833x: Version 0.1\n";
+
 static int __init watchdog_init(void)
 {
 	int ret, cause;
@@ -241,25 +240,27 @@ static int __init watchdog_init(void)
 	cause = PNX833X_REG(PNX833X_RESET);
 	/*If bit 31 is set then watchdog was cause of reset.*/
 	if (cause & 0x80000000) {
-		pr_info("The system was previously reset due to the watchdog firing - please investigate...\n");
+		printk(KERN_INFO PFX "The system was previously reset due to "
+			"the watchdog firing - please investigate...\n");
 	}
 
 	ret = register_reboot_notifier(&pnx833x_wdt_notifier);
 	if (ret) {
-		pr_err("cannot register reboot notifier (err=%d)\n", ret);
+		printk(KERN_ERR PFX
+			"cannot register reboot notifier (err=%d)\n", ret);
 		return ret;
 	}
 
 	ret = misc_register(&pnx833x_wdt_miscdev);
 	if (ret) {
-		pr_err("cannot register miscdev on minor=%d (err=%d)\n",
-		       WATCHDOG_MINOR, ret);
+		printk(KERN_ERR PFX
+			"cannot register miscdev on minor=%d (err=%d)\n",
+			WATCHDOG_MINOR, ret);
 		unregister_reboot_notifier(&pnx833x_wdt_notifier);
 		return ret;
 	}
 
-	pr_info("Hardware Watchdog Timer for PNX833x: Version 0.1\n");
-
+	printk(banner);
 	if (start_enabled)
 		pnx833x_wdt_start();
 

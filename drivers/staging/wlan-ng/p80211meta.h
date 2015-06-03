@@ -62,7 +62,7 @@
 /* representation of category list metadata, group list metadata, */
 /* and data item metadata for both Mib and Messages. */
 
-struct p80211meta {
+typedef struct p80211meta {
 	char *name;		/* data item name */
 	u32 did;		/* partial did */
 	u32 flags;		/* set of various flag bits */
@@ -75,16 +75,16 @@ struct p80211meta {
 	p80211_totext_t totextptr;	/* ptr to totext conversion function */
 	p80211_fromtext_t fromtextptr;	/* ptr to totext conversion function */
 	p80211_valid_t validfunptr;	/* ptr to totext conversion function */
-};
+} p80211meta_t;
 
-struct grplistitem {
+typedef struct grplistitem {
 	char *name;
-	struct p80211meta *itemlist;
-};
+	p80211meta_t *itemlist;
+} grplistitem_t;
 
-struct catlistitem {
+typedef struct catlistitem {
 	char *name;
-	struct grplistitem *grplist;
-};
+	grplistitem_t *grplist;
+} catlistitem_t;
 
 #endif /* _P80211META_H */

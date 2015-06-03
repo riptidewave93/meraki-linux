@@ -21,7 +21,6 @@
 #include <linux/scatterlist.h>
 #include <linux/slab.h>
 
-#include <crypto/xts.h>
 #include <crypto/b128ops.h>
 #include <crypto/gf128mul.h>
 
@@ -46,7 +45,7 @@ static int setkey(struct crypto_tfm *parent, const u8 *key,
 		return -EINVAL;
 	}
 
-	/* we need two cipher instances: one to compute the initial 'tweak'
+	/* we need two cipher instances: one to compute the inital 'tweak'
 	 * by encrypting the IV (usually the 'plain' iv) and the other
 	 * one to encrypt and decrypt the data */
 
@@ -97,7 +96,7 @@ static int crypt(struct blkcipher_desc *d,
 {
 	int err;
 	unsigned int avail;
-	const int bs = XTS_BLOCK_SIZE;
+	const int bs = crypto_cipher_blocksize(ctx->child);
 	struct sinfo s = {
 		.tfm = crypto_cipher_tfm(ctx->child),
 		.fn = fn
@@ -166,78 +165,6 @@ static int decrypt(struct blkcipher_desc *desc, struct scatterlist *dst,
 		     crypto_cipher_alg(ctx->child)->cia_decrypt);
 }
 
-int xts_crypt(struct blkcipher_desc *desc, struct scatterlist *sdst,
-	      struct scatterlist *ssrc, unsigned int nbytes,
-	      struct xts_crypt_req *req)
-{
-	const unsigned int bsize = XTS_BLOCK_SIZE;
-	const unsigned int max_blks = req->tbuflen / bsize;
-	struct blkcipher_walk walk;
-	unsigned int nblocks;
-	be128 *src, *dst, *t;
-	be128 *t_buf = req->tbuf;
-	int err, i;
-
-	BUG_ON(max_blks < 1);
-
-	blkcipher_walk_init(&walk, sdst, ssrc, nbytes);
-
-	err = blkcipher_walk_virt(desc, &walk);
-	nbytes = walk.nbytes;
-	if (!nbytes)
-		return err;
-
-	nblocks = min(nbytes / bsize, max_blks);
-	src = (be128 *)walk.src.virt.addr;
-	dst = (be128 *)walk.dst.virt.addr;
-
-	/* calculate first value of T */
-	req->tweak_fn(req->tweak_ctx, (u8 *)&t_buf[0], walk.iv);
-
-	i = 0;
-	goto first;
-
-	for (;;) {
-		do {
-			for (i = 0; i < nblocks; i++) {
-				gf128mul_x_ble(&t_buf[i], t);
-first:
-				t = &t_buf[i];
-
-				/* PP <- T xor P */
-				be128_xor(dst + i, t, src + i);
-			}
-
-			/* CC <- E(Key2,PP) */
-			req->crypt_fn(req->crypt_ctx, (u8 *)dst,
-				      nblocks * bsize);
-
-			/* C <- T xor CC */
-			for (i = 0; i < nblocks; i++)
-				be128_xor(dst + i, dst + i, &t_buf[i]);
-
-			src += nblocks;
-			dst += nblocks;
-			nbytes -= nblocks * bsize;
-			nblocks = min(nbytes / bsize, max_blks);
-		} while (nblocks > 0);
-
-		*(be128 *)walk.iv = *t;
-
-		err = blkcipher_walk_done(desc, &walk, nbytes);
-		nbytes = walk.nbytes;
-		if (!nbytes)
-			break;
-
-		nblocks = min(nbytes / bsize, max_blks);
-		src = (be128 *)walk.src.virt.addr;
-		dst = (be128 *)walk.dst.virt.addr;
-	}
-
-	return err;
-}
-EXPORT_SYMBOL_GPL(xts_crypt);
-
 static int init_tfm(struct crypto_tfm *tfm)
 {
 	struct crypto_cipher *cipher;
@@ -250,7 +177,7 @@ static int init_tfm(struct crypto_tfm *tfm)
 	if (IS_ERR(cipher))
 		return PTR_ERR(cipher);
 
-	if (crypto_cipher_blocksize(cipher) != XTS_BLOCK_SIZE) {
+	if (crypto_cipher_blocksize(cipher) != 16) {
 		*flags |= CRYPTO_TFM_RES_BAD_BLOCK_LEN;
 		crypto_free_cipher(cipher);
 		return -EINVAL;
@@ -265,7 +192,7 @@ static int init_tfm(struct crypto_tfm *tfm)
 	}
 
 	/* this check isn't really needed, leave it here just in case */
-	if (crypto_cipher_blocksize(cipher) != XTS_BLOCK_SIZE) {
+	if (crypto_cipher_blocksize(cipher) != 16) {
 		crypto_free_cipher(cipher);
 		crypto_free_cipher(ctx->child);
 		*flags |= CRYPTO_TFM_RES_BAD_BLOCK_LEN;
@@ -297,7 +224,7 @@ static struct crypto_instance *alloc(struct rtattr **tb)
 	alg = crypto_get_attr_alg(tb, CRYPTO_ALG_TYPE_CIPHER,
 				  CRYPTO_ALG_TYPE_MASK);
 	if (IS_ERR(alg))
-		return ERR_CAST(alg);
+		return ERR_PTR(PTR_ERR(alg));
 
 	inst = crypto_alloc_instance("xts", alg);
 	if (IS_ERR(inst))

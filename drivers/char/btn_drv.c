@@ -106,7 +106,7 @@ int write_sb_gpio(unsigned int reg, unsigned int value)
 /* Platform specificed end */
 /*********************************************/
 
-static long btn_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static int btn_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
 {
     int value;
 
@@ -173,9 +173,7 @@ static int btn_release(struct inode * inode, struct file * file)
  * NULL is for unimplemented functions.
  */
 static const struct file_operations btn_fops = {
-	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= btn_ioctl,
-	.compat_ioctl	= btn_ioctl,
+	.ioctl		= btn_ioctl,
 	.open		= btn_open,
 	.release	= btn_release,
 };
@@ -183,8 +181,6 @@ static const struct file_operations btn_fops = {
 static struct miscdevice btn_miscdev = {
 	.fops		= &btn_fops,
 	.nodename	= "btn_drv",
-	.name		= "btn_drv",
-	.minor		= MISC_DYNAMIC_MINOR,
 };
 
 int btn_init(void)

@@ -16,11 +16,8 @@
 #include <linux/if_ether.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
-#include <linux/rculist_nulls.h>
-#include <linux/hash.h>
-#include <linux/jhash.h>
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 struct net_device;
 struct packet_type;
@@ -33,12 +30,6 @@ struct llc_addr {
 
 #define LLC_SAP_STATE_INACTIVE	1
 #define LLC_SAP_STATE_ACTIVE	2
-
-#define LLC_SK_DEV_HASH_BITS 6
-#define LLC_SK_DEV_HASH_ENTRIES (1<<LLC_SK_DEV_HASH_BITS)
-
-#define LLC_SK_LADDR_HASH_BITS 6
-#define LLC_SK_LADDR_HASH_ENTRIES (1<<LLC_SK_LADDR_HASH_BITS)
 
 /**
  * struct llc_sap - Defines the SAP component
@@ -62,38 +53,18 @@ struct llc_sap {
 				     struct net_device *orig_dev);
 	struct llc_addr	 laddr;
 	struct list_head node;
-	spinlock_t sk_lock;
-	int sk_count;
-	struct hlist_nulls_head sk_laddr_hash[LLC_SK_LADDR_HASH_ENTRIES];
-	struct hlist_head sk_dev_hash[LLC_SK_DEV_HASH_ENTRIES];
+	struct {
+		rwlock_t	  lock;
+		struct hlist_head list;
+	} sk_list;
 };
-
-static inline
-struct hlist_head *llc_sk_dev_hash(struct llc_sap *sap, int ifindex)
-{
-	return &sap->sk_dev_hash[ifindex % LLC_SK_DEV_HASH_ENTRIES];
-}
-
-static inline
-u32 llc_sk_laddr_hashfn(struct llc_sap *sap, const struct llc_addr *laddr)
-{
-	return hash_32(jhash(laddr->mac, sizeof(laddr->mac), 0),
-		       LLC_SK_LADDR_HASH_BITS);
-}
-
-static inline
-struct hlist_nulls_head *llc_sk_laddr_hash(struct llc_sap *sap,
-					   const struct llc_addr *laddr)
-{
-	return &sap->sk_laddr_hash[llc_sk_laddr_hashfn(sap, laddr)];
-}
 
 #define LLC_DEST_INVALID         0      /* Invalid LLC PDU type */
 #define LLC_DEST_SAP             1      /* Type 1 goes here */
 #define LLC_DEST_CONN            2      /* Type 2 goes here */
 
 extern struct list_head llc_sap_list;
-extern spinlock_t llc_sap_list_lock;
+extern rwlock_t llc_sap_list_lock;
 
 extern int llc_rcv(struct sk_buff *skb, struct net_device *dev,
 		   struct packet_type *pt, struct net_device *orig_dev);

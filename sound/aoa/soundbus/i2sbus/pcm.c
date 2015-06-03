@@ -8,11 +8,9 @@
 
 #include <asm/io.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
 #include <sound/core.h>
 #include <asm/macio.h>
 #include <linux/pci.h>
-#include <linux/module.h>
 #include "../soundbus.h"
 #include "i2sbus.h"
 

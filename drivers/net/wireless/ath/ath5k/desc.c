@@ -24,63 +24,21 @@
 #include "ath5k.h"
 #include "reg.h"
 #include "debug.h"
+#include "base.h"
 
-
-/**
- * DOC: Hardware descriptor functions
- *
- * Here we handle the processing of the low-level hw descriptors
- * that hw reads and writes via DMA for each TX and RX attempt (that means
- * we can also have descriptors for failed TX/RX tries). We have two kind of
- * descriptors for RX and TX, control descriptors tell the hw how to send or
- * receive a packet where to read/write it from/to etc and status descriptors
- * that contain information about how the packet was sent or received (errors
- * included).
- *
- * Descriptor format is not exactly the same for each MAC chip version so we
- * have function pointers on &struct ath5k_hw we initialize at runtime based on
- * the chip used.
+/*
+ * TX Descriptors
  */
 
-
-/************************\
-* TX Control descriptors *
-\************************/
-
-/**
- * ath5k_hw_setup_2word_tx_desc() - Initialize a 2-word tx control descriptor
- * @ah: The &struct ath5k_hw
- * @desc: The &struct ath5k_desc
- * @pkt_len: Frame length in bytes
- * @hdr_len: Header length in bytes (only used on AR5210)
- * @padsize: Any padding we've added to the frame length
- * @type: One of enum ath5k_pkt_type
- * @tx_power: Tx power in 0.5dB steps
- * @tx_rate0: HW idx for transmission rate
- * @tx_tries0: Max number of retransmissions
- * @key_index: Index on key table to use for encryption
- * @antenna_mode: Which antenna to use (0 for auto)
- * @flags: One of AR5K_TXDESC_* flags (desc.h)
- * @rtscts_rate: HW idx for RTS/CTS transmission rate
- * @rtscts_duration: What to put on duration field on the header of RTS/CTS
- *
- * Internal function to initialize a 2-Word TX control descriptor
- * found on AR5210 and AR5211 MACs chips.
- *
- * Returns 0 on success or -EINVAL on false input
+/*
+ * Initialize the 2-word tx control descriptor on 5210/5211
  */
 static int
-ath5k_hw_setup_2word_tx_desc(struct ath5k_hw *ah,
-			struct ath5k_desc *desc,
-			unsigned int pkt_len, unsigned int hdr_len,
-			int padsize,
-			enum ath5k_pkt_type type,
-			unsigned int tx_power,
-			unsigned int tx_rate0, unsigned int tx_tries0,
-			unsigned int key_index,
-			unsigned int antenna_mode,
-			unsigned int flags,
-			unsigned int rtscts_rate, unsigned int rtscts_duration)
+ath5k_hw_setup_2word_tx_desc(struct ath5k_hw *ah, struct ath5k_desc *desc,
+	unsigned int pkt_len, unsigned int hdr_len, enum ath5k_pkt_type type,
+	unsigned int tx_power, unsigned int tx_rate0, unsigned int tx_tries0,
+	unsigned int key_index, unsigned int antenna_mode, unsigned int flags,
+	unsigned int rtscts_rate, unsigned int rtscts_duration)
 {
 	u32 frame_type;
 	struct ath5k_hw_2w_tx_ctl *tx_ctl;
@@ -91,16 +49,16 @@ ath5k_hw_setup_2word_tx_desc(struct ath5k_hw *ah,
 	/*
 	 * Validate input
 	 * - Zero retries don't make sense.
-	 * - A zero rate will put the HW into a mode where it continuously sends
+	 * - A zero rate will put the HW into a mode where it continously sends
 	 *   noise on the channel, so it is important to avoid this.
 	 */
 	if (unlikely(tx_tries0 == 0)) {
-		ATH5K_ERR(ah, "zero retries\n");
+		ATH5K_ERR(ah->ah_sc, "zero retries\n");
 		WARN_ON(1);
 		return -EINVAL;
 	}
 	if (unlikely(tx_rate0 == 0)) {
-		ATH5K_ERR(ah, "zero rate\n");
+		ATH5K_ERR(ah->ah_sc, "zero rate\n");
 		WARN_ON(1);
 		return -EINVAL;
 	}
@@ -113,7 +71,7 @@ ath5k_hw_setup_2word_tx_desc(struct ath5k_hw *ah,
 	/* Verify and set frame length */
 
 	/* remove padding we might have added before */
-	frame_len = pkt_len - padsize + FCS_LEN;
+	frame_len = pkt_len - ath5k_pad_size(hdr_len) + FCS_LEN;
 
 	if (frame_len & ~AR5K_2W_TX_DESC_CTL0_FRAME_LEN)
 		return -EINVAL;
@@ -132,32 +90,30 @@ ath5k_hw_setup_2word_tx_desc(struct ath5k_hw *ah,
 	tx_ctl->tx_control_1 = pkt_len & AR5K_2W_TX_DESC_CTL1_BUF_LEN;
 
 	/*
-	 * Verify and set header length (only 5210)
+	 * Verify and set header length
+	 * XXX: I only found that on 5210 code, does it work on 5211 ?
 	 */
 	if (ah->ah_version == AR5K_AR5210) {
-		if (hdr_len & ~AR5K_2W_TX_DESC_CTL0_HEADER_LEN_5210)
+		if (hdr_len & ~AR5K_2W_TX_DESC_CTL0_HEADER_LEN)
 			return -EINVAL;
 		tx_ctl->tx_control_0 |=
-			AR5K_REG_SM(hdr_len, AR5K_2W_TX_DESC_CTL0_HEADER_LEN_5210);
+			AR5K_REG_SM(hdr_len, AR5K_2W_TX_DESC_CTL0_HEADER_LEN);
 	}
 
-	/*Differences between 5210-5211*/
+	/*Diferences between 5210-5211*/
 	if (ah->ah_version == AR5K_AR5210) {
 		switch (type) {
 		case AR5K_PKT_TYPE_BEACON:
 		case AR5K_PKT_TYPE_PROBE_RESP:
 			frame_type = AR5K_AR5210_TX_DESC_FRAME_TYPE_NO_DELAY;
-			break;
 		case AR5K_PKT_TYPE_PIFS:
 			frame_type = AR5K_AR5210_TX_DESC_FRAME_TYPE_PIFS;
-			break;
 		default:
-			frame_type = type;
-			break;
+			frame_type = type /*<< 2 ?*/;
 		}
 
 		tx_ctl->tx_control_0 |=
-		AR5K_REG_SM(frame_type, AR5K_2W_TX_DESC_CTL0_FRAME_TYPE_5210) |
+		AR5K_REG_SM(frame_type, AR5K_2W_TX_DESC_CTL0_FRAME_TYPE) |
 		AR5K_REG_SM(tx_rate0, AR5K_2W_TX_DESC_CTL0_XMIT_RATE);
 
 	} else {
@@ -166,30 +122,21 @@ ath5k_hw_setup_2word_tx_desc(struct ath5k_hw *ah,
 			AR5K_REG_SM(antenna_mode,
 				AR5K_2W_TX_DESC_CTL0_ANT_MODE_XMIT);
 		tx_ctl->tx_control_1 |=
-			AR5K_REG_SM(type, AR5K_2W_TX_DESC_CTL1_FRAME_TYPE_5211);
+			AR5K_REG_SM(type, AR5K_2W_TX_DESC_CTL1_FRAME_TYPE);
 	}
-
 #define _TX_FLAGS(_c, _flag)					\
 	if (flags & AR5K_TXDESC_##_flag) {			\
 		tx_ctl->tx_control_##_c |=			\
 			AR5K_2W_TX_DESC_CTL##_c##_##_flag;	\
 	}
-#define _TX_FLAGS_5211(_c, _flag)					\
-	if (flags & AR5K_TXDESC_##_flag) {				\
-		tx_ctl->tx_control_##_c |=				\
-			AR5K_2W_TX_DESC_CTL##_c##_##_flag##_5211;	\
-	}
+
 	_TX_FLAGS(0, CLRDMASK);
+	_TX_FLAGS(0, VEOL);
 	_TX_FLAGS(0, INTREQ);
 	_TX_FLAGS(0, RTSENA);
-
-	if (ah->ah_version == AR5K_AR5211) {
-		_TX_FLAGS_5211(0, VEOL);
-		_TX_FLAGS_5211(1, NOACK);
-	}
+	_TX_FLAGS(1, NOACK);
 
 #undef _TX_FLAGS
-#undef _TX_FLAGS_5211
 
 	/*
 	 * WEP crap
@@ -199,7 +146,7 @@ ath5k_hw_setup_2word_tx_desc(struct ath5k_hw *ah,
 			AR5K_2W_TX_DESC_CTL0_ENCRYPT_KEY_VALID;
 		tx_ctl->tx_control_1 |=
 			AR5K_REG_SM(key_index,
-			AR5K_2W_TX_DESC_CTL1_ENC_KEY_IDX);
+			AR5K_2W_TX_DESC_CTL1_ENCRYPT_KEY_INDEX);
 	}
 
 	/*
@@ -208,70 +155,41 @@ ath5k_hw_setup_2word_tx_desc(struct ath5k_hw *ah,
 	if ((ah->ah_version == AR5K_AR5210) &&
 			(flags & (AR5K_TXDESC_RTSENA | AR5K_TXDESC_CTSENA)))
 		tx_ctl->tx_control_1 |= rtscts_duration &
-				AR5K_2W_TX_DESC_CTL1_RTS_DURATION_5210;
+				AR5K_2W_TX_DESC_CTL1_RTS_DURATION;
 
 	return 0;
 }
 
-/**
- * ath5k_hw_setup_4word_tx_desc() - Initialize a 4-word tx control descriptor
- * @ah: The &struct ath5k_hw
- * @desc: The &struct ath5k_desc
- * @pkt_len: Frame length in bytes
- * @hdr_len: Header length in bytes (only used on AR5210)
- * @padsize: Any padding we've added to the frame length
- * @type: One of enum ath5k_pkt_type
- * @tx_power: Tx power in 0.5dB steps
- * @tx_rate0: HW idx for transmission rate
- * @tx_tries0: Max number of retransmissions
- * @key_index: Index on key table to use for encryption
- * @antenna_mode: Which antenna to use (0 for auto)
- * @flags: One of AR5K_TXDESC_* flags (desc.h)
- * @rtscts_rate: HW idx for RTS/CTS transmission rate
- * @rtscts_duration: What to put on duration field on the header of RTS/CTS
- *
- * Internal function to initialize a 4-Word TX control descriptor
- * found on AR5212 and later MACs chips.
- *
- * Returns 0 on success or -EINVAL on false input
+/*
+ * Initialize the 4-word tx control descriptor on 5212
  */
-static int
-ath5k_hw_setup_4word_tx_desc(struct ath5k_hw *ah,
-			struct ath5k_desc *desc,
-			unsigned int pkt_len, unsigned int hdr_len,
-			int padsize,
-			enum ath5k_pkt_type type,
-			unsigned int tx_power,
-			unsigned int tx_rate0, unsigned int tx_tries0,
-			unsigned int key_index,
-			unsigned int antenna_mode,
-			unsigned int flags,
-			unsigned int rtscts_rate, unsigned int rtscts_duration)
+static int ath5k_hw_setup_4word_tx_desc(struct ath5k_hw *ah,
+	struct ath5k_desc *desc, unsigned int pkt_len, unsigned int hdr_len,
+	enum ath5k_pkt_type type, unsigned int tx_power, unsigned int tx_rate0,
+	unsigned int tx_tries0, unsigned int key_index,
+	unsigned int antenna_mode, unsigned int flags,
+	unsigned int rtscts_rate,
+	unsigned int rtscts_duration)
 {
 	struct ath5k_hw_4w_tx_ctl *tx_ctl;
 	unsigned int frame_len;
 
-	/*
-	 * Use local variables for these to reduce load/store access on
-	 * uncached memory
-	 */
-	u32 txctl0 = 0, txctl1 = 0, txctl2 = 0, txctl3 = 0;
-
+	ATH5K_TRACE(ah->ah_sc);
 	tx_ctl = &desc->ud.ds_tx5212.tx_ctl;
 
 	/*
 	 * Validate input
 	 * - Zero retries don't make sense.
-	 * - A zero rate will put the HW into a mode where it continuously sends
+	 * - A zero rate will put the HW into a mode where it continously sends
 	 *   noise on the channel, so it is important to avoid this.
 	 */
 	if (unlikely(tx_tries0 == 0)) {
-		ATH5K_ERR(ah, "zero retries\n");
+		ATH5K_ERR(ah->ah_sc, "zero retries\n");
 		WARN_ON(1);
 		return -EINVAL;
 	}
 	if (unlikely(tx_rate0 == 0)) {
-		ATH5K_ERR(ah, "zero rate\n");
+		ATH5K_ERR(ah->ah_sc, "zero rate\n");
 		WARN_ON(1);
 		return -EINVAL;
 	}
@@ -280,21 +198,20 @@ ath5k_hw_setup_4word_tx_desc(struct ath5k_hw *ah,
 	if (tx_power > AR5K_TUNE_MAX_TXPOWER)
 		tx_power = AR5K_TUNE_MAX_TXPOWER;
 
-	/* Clear descriptor status area */
-	memset(&desc->ud.ds_tx5212.tx_stat, 0,
-	       sizeof(desc->ud.ds_tx5212.tx_stat));
+	/* Clear descriptor */
+	memset(&desc->ud.ds_tx5212, 0, sizeof(struct ath5k_hw_5212_tx_desc));
 
 	/* Setup control descriptor */
 
 	/* Verify and set frame length */
 
 	/* remove padding we might have added before */
-	frame_len = pkt_len - padsize + FCS_LEN;
+	frame_len = pkt_len - ath5k_pad_size(hdr_len) + FCS_LEN;
 
 	if (frame_len & ~AR5K_4W_TX_DESC_CTL0_FRAME_LEN)
 		return -EINVAL;
 
-	txctl0 = frame_len & AR5K_4W_TX_DESC_CTL0_FRAME_LEN;
+	tx_ctl->tx_control_0 = frame_len & AR5K_4W_TX_DESC_CTL0_FRAME_LEN;
 
 	/* Verify and set buffer length */
 
@@ -305,17 +222,21 @@ ath5k_hw_setup_4word_tx_desc(struct ath5k_hw *ah,
 	if (pkt_len & ~AR5K_4W_TX_DESC_CTL1_BUF_LEN)
 		return -EINVAL;
 
-	txctl1 = pkt_len & AR5K_4W_TX_DESC_CTL1_BUF_LEN;
+	tx_ctl->tx_control_1 = pkt_len & AR5K_4W_TX_DESC_CTL1_BUF_LEN;
 
-	txctl0 |= AR5K_REG_SM(tx_power, AR5K_4W_TX_DESC_CTL0_XMIT_POWER) |
-		  AR5K_REG_SM(antenna_mode, AR5K_4W_TX_DESC_CTL0_ANT_MODE_XMIT);
-	txctl1 |= AR5K_REG_SM(type, AR5K_4W_TX_DESC_CTL1_FRAME_TYPE);
-	txctl2 = AR5K_REG_SM(tx_tries0, AR5K_4W_TX_DESC_CTL2_XMIT_TRIES0);
-	txctl3 = tx_rate0 & AR5K_4W_TX_DESC_CTL3_XMIT_RATE0;
+	tx_ctl->tx_control_0 |=
+		AR5K_REG_SM(tx_power, AR5K_4W_TX_DESC_CTL0_XMIT_POWER) |
+		AR5K_REG_SM(antenna_mode, AR5K_4W_TX_DESC_CTL0_ANT_MODE_XMIT);
+	tx_ctl->tx_control_1 |= AR5K_REG_SM(type,
+					AR5K_4W_TX_DESC_CTL1_FRAME_TYPE);
+	tx_ctl->tx_control_2 = AR5K_REG_SM(tx_tries0 + AR5K_TUNE_HWTXTRIES,
+					AR5K_4W_TX_DESC_CTL2_XMIT_TRIES0);
+	tx_ctl->tx_control_3 = tx_rate0 & AR5K_4W_TX_DESC_CTL3_XMIT_RATE0;
 
 #define _TX_FLAGS(_c, _flag)					\
 	if (flags & AR5K_TXDESC_##_flag) {			\
-		txctl##_c |= AR5K_4W_TX_DESC_CTL##_c##_##_flag;	\
+		tx_ctl->tx_control_##_c |=			\
+			AR5K_4W_TX_DESC_CTL##_c##_##_flag;	\
 	}
 
 	_TX_FLAGS(0, CLRDMASK);
@@ -331,9 +252,9 @@ ath5k_hw_setup_4word_tx_desc(struct ath5k_hw *ah,
 	 * WEP crap
 	 */
 	if (key_index != AR5K_TXKEYIX_INVALID) {
-		txctl0 |= AR5K_4W_TX_DESC_CTL0_ENCRYPT_KEY_VALID;
-		txctl1 |= AR5K_REG_SM(key_index,
-				AR5K_4W_TX_DESC_CTL1_ENCRYPT_KEY_IDX);
+		tx_ctl->tx_control_0 |= AR5K_4W_TX_DESC_CTL0_ENCRYPT_KEY_VALID;
+		tx_ctl->tx_control_1 |= AR5K_REG_SM(key_index,
+				AR5K_4W_TX_DESC_CTL1_ENCRYPT_KEY_INDEX);
 	}
 
 	/*
@@ -343,59 +264,35 @@ ath5k_hw_setup_4word_tx_desc(struct ath5k_hw *ah,
 		if ((flags & AR5K_TXDESC_RTSENA) &&
 				(flags & AR5K_TXDESC_CTSENA))
 			return -EINVAL;
-		txctl2 |= rtscts_duration & AR5K_4W_TX_DESC_CTL2_RTS_DURATION;
-		txctl3 |= AR5K_REG_SM(rtscts_rate,
+		tx_ctl->tx_control_2 |= rtscts_duration &
+				AR5K_4W_TX_DESC_CTL2_RTS_DURATION;
+		tx_ctl->tx_control_3 |= AR5K_REG_SM(rtscts_rate,
 				AR5K_4W_TX_DESC_CTL3_RTS_CTS_RATE);
 	}
-
-	tx_ctl->tx_control_0 = txctl0;
-	tx_ctl->tx_control_1 = txctl1;
-	tx_ctl->tx_control_2 = txctl2;
-	tx_ctl->tx_control_3 = txctl3;
 
 	return 0;
 }
 
-/**
- * ath5k_hw_setup_mrr_tx_desc() - Initialize an MRR tx control descriptor
- * @ah: The &struct ath5k_hw
- * @desc: The &struct ath5k_desc
- * @tx_rate1: HW idx for rate used on transmission series 1
- * @tx_tries1: Max number of retransmissions for transmission series 1
- * @tx_rate2: HW idx for rate used on transmission series 2
- * @tx_tries2: Max number of retransmissions for transmission series 2
- * @tx_rate3: HW idx for rate used on transmission series 3
- * @tx_tries3: Max number of retransmissions for transmission series 3
- *
- * Multi rate retry (MRR) tx control descriptors are available only on AR5212
- * MACs, they are part of the normal 4-word tx control descriptor (see above)
- * but we handle them through a separate function for better abstraction.
- *
- * Returns 0 on success or -EINVAL on invalid input
+/*
+ * Initialize a 4-word multi rate retry tx control descriptor on 5212
  */
-int
-ath5k_hw_setup_mrr_tx_desc(struct ath5k_hw *ah,
-			struct ath5k_desc *desc,
-			u_int tx_rate1, u_int tx_tries1,
-			u_int tx_rate2, u_int tx_tries2,
-			u_int tx_rate3, u_int tx_tries3)
+static int
+ath5k_hw_setup_mrr_tx_desc(struct ath5k_hw *ah, struct ath5k_desc *desc,
+	unsigned int tx_rate1, u_int tx_tries1, u_int tx_rate2,
+	u_int tx_tries2, unsigned int tx_rate3, u_int tx_tries3)
 {
 	struct ath5k_hw_4w_tx_ctl *tx_ctl;
-
-	/* no mrr support for cards older than 5212 */
-	if (ah->ah_version < AR5K_AR5212)
-		return 0;
 
 	/*
 	 * Rates can be 0 as long as the retry count is 0 too.
 	 * A zero rate and nonzero retry count will put the HW into a mode where
-	 * it continuously sends noise on the channel, so it is important to
+	 * it continously sends noise on the channel, so it is important to
 	 * avoid this.
 	 */
 	if (unlikely((tx_rate1 == 0 && tx_tries1 != 0) ||
 		     (tx_rate2 == 0 && tx_tries2 != 0) ||
 		     (tx_rate3 == 0 && tx_tries3 != 0))) {
-		ATH5K_ERR(ah, "zero rate\n");
+		ATH5K_ERR(ah->ah_sc, "zero rate\n");
 		WARN_ON(1);
 		return -EINVAL;
 	}
@@ -425,24 +322,25 @@ ath5k_hw_setup_mrr_tx_desc(struct ath5k_hw *ah,
 	return 0;
 }
 
-
-/***********************\
-* TX Status descriptors *
-\***********************/
-
-/**
- * ath5k_hw_proc_2word_tx_status() - Process a tx status descriptor on 5210/1
- * @ah: The &struct ath5k_hw
- * @desc: The &struct ath5k_desc
- * @ts: The &struct ath5k_tx_status
- */
+/* no mrr support for cards older than 5212 */
 static int
-ath5k_hw_proc_2word_tx_status(struct ath5k_hw *ah,
-				struct ath5k_desc *desc,
-				struct ath5k_tx_status *ts)
+ath5k_hw_setup_no_mrr(struct ath5k_hw *ah, struct ath5k_desc *desc,
+	unsigned int tx_rate1, u_int tx_tries1, u_int tx_rate2,
+	u_int tx_tries2, unsigned int tx_rate3, u_int tx_tries3)
+{
+	return 0;
+}
+
+/*
+ * Proccess the tx status descriptor on 5210/5211
+ */
+static int ath5k_hw_proc_2word_tx_status(struct ath5k_hw *ah,
+		struct ath5k_desc *desc, struct ath5k_tx_status *ts)
 {
 	struct ath5k_hw_2w_tx_ctl *tx_ctl;
 	struct ath5k_hw_tx_status *tx_status;
+
+	ATH5K_TRACE(ah->ah_sc);
 
 	tx_ctl = &desc->ud.ds_tx5210.tx_ctl;
 	tx_status = &desc->ud.ds_tx5210.tx_stat;
@@ -458,7 +356,7 @@ ath5k_hw_proc_2word_tx_status(struct ath5k_hw *ah,
 		AR5K_DESC_TX_STATUS0_SEND_TIMESTAMP);
 	ts->ts_shortretry = AR5K_REG_MS(tx_status->tx_status_0,
 		AR5K_DESC_TX_STATUS0_SHORT_RETRY_COUNT);
-	ts->ts_final_retry = AR5K_REG_MS(tx_status->tx_status_0,
+	ts->ts_longretry = AR5K_REG_MS(tx_status->tx_status_0,
 		AR5K_DESC_TX_STATUS0_LONG_RETRY_COUNT);
 	/*TODO: ts->ts_virtcol + test*/
 	ts->ts_seqnum = AR5K_REG_MS(tx_status->tx_status_1,
@@ -467,6 +365,9 @@ ath5k_hw_proc_2word_tx_status(struct ath5k_hw *ah,
 		AR5K_DESC_TX_STATUS1_ACK_SIG_STRENGTH);
 	ts->ts_antenna = 1;
 	ts->ts_status = 0;
+	ts->ts_rate[0] = AR5K_REG_MS(tx_ctl->tx_control_0,
+		AR5K_2W_TX_DESC_CTL0_XMIT_RATE);
+	ts->ts_retry[0] = ts->ts_longretry;
 	ts->ts_final_idx = 0;
 
 	if (!(tx_status->tx_status_0 & AR5K_DESC_TX_STATUS0_FRAME_XMIT_OK)) {
@@ -484,86 +385,110 @@ ath5k_hw_proc_2word_tx_status(struct ath5k_hw *ah,
 	return 0;
 }
 
-/**
- * ath5k_hw_proc_4word_tx_status() - Process a tx status descriptor on 5212
- * @ah: The &struct ath5k_hw
- * @desc: The &struct ath5k_desc
- * @ts: The &struct ath5k_tx_status
+/*
+ * Proccess a tx status descriptor on 5212
  */
-static int
-ath5k_hw_proc_4word_tx_status(struct ath5k_hw *ah,
-				struct ath5k_desc *desc,
-				struct ath5k_tx_status *ts)
+static int ath5k_hw_proc_4word_tx_status(struct ath5k_hw *ah,
+		struct ath5k_desc *desc, struct ath5k_tx_status *ts)
 {
 	struct ath5k_hw_4w_tx_ctl *tx_ctl;
 	struct ath5k_hw_tx_status *tx_status;
-	u32 txstat0, txstat1;
+
+	ATH5K_TRACE(ah->ah_sc);
 
 	tx_ctl = &desc->ud.ds_tx5212.tx_ctl;
 	tx_status = &desc->ud.ds_tx5212.tx_stat;
 
-	txstat1 = ACCESS_ONCE(tx_status->tx_status_1);
-
 	/* No frame has been send or error */
-	if (unlikely(!(txstat1 & AR5K_DESC_TX_STATUS1_DONE)))
+	if (unlikely(!(tx_status->tx_status_1 & AR5K_DESC_TX_STATUS1_DONE)))
 		return -EINPROGRESS;
-
-	txstat0 = ACCESS_ONCE(tx_status->tx_status_0);
 
 	/*
 	 * Get descriptor status
 	 */
-	ts->ts_tstamp = AR5K_REG_MS(txstat0,
+	ts->ts_tstamp = AR5K_REG_MS(tx_status->tx_status_0,
 		AR5K_DESC_TX_STATUS0_SEND_TIMESTAMP);
-	ts->ts_shortretry = AR5K_REG_MS(txstat0,
+	ts->ts_shortretry = AR5K_REG_MS(tx_status->tx_status_0,
 		AR5K_DESC_TX_STATUS0_SHORT_RETRY_COUNT);
-	ts->ts_final_retry = AR5K_REG_MS(txstat0,
+	ts->ts_longretry = AR5K_REG_MS(tx_status->tx_status_0,
 		AR5K_DESC_TX_STATUS0_LONG_RETRY_COUNT);
-	ts->ts_seqnum = AR5K_REG_MS(txstat1,
+	ts->ts_seqnum = AR5K_REG_MS(tx_status->tx_status_1,
 		AR5K_DESC_TX_STATUS1_SEQ_NUM);
-	ts->ts_rssi = AR5K_REG_MS(txstat1,
+	ts->ts_rssi = AR5K_REG_MS(tx_status->tx_status_1,
 		AR5K_DESC_TX_STATUS1_ACK_SIG_STRENGTH);
-	ts->ts_antenna = (txstat1 &
-		AR5K_DESC_TX_STATUS1_XMIT_ANTENNA_5212) ? 2 : 1;
+	ts->ts_antenna = (tx_status->tx_status_1 &
+		AR5K_DESC_TX_STATUS1_XMIT_ANTENNA) ? 2 : 1;
 	ts->ts_status = 0;
 
-	ts->ts_final_idx = AR5K_REG_MS(txstat1,
-			AR5K_DESC_TX_STATUS1_FINAL_TS_IX_5212);
+	ts->ts_final_idx = AR5K_REG_MS(tx_status->tx_status_1,
+			AR5K_DESC_TX_STATUS1_FINAL_TS_INDEX);
+
+	/* The longretry counter has the number of un-acked retries
+	 * for the final rate. To get the total number of retries
+	 * we have to add the retry counters for the other rates
+	 * as well
+	 */
+	ts->ts_retry[ts->ts_final_idx] = ts->ts_longretry;
+	switch (ts->ts_final_idx) {
+	case 3:
+		ts->ts_rate[3] = AR5K_REG_MS(tx_ctl->tx_control_3,
+			AR5K_4W_TX_DESC_CTL3_XMIT_RATE3);
+
+		ts->ts_retry[2] = AR5K_REG_MS(tx_ctl->tx_control_2,
+			AR5K_4W_TX_DESC_CTL2_XMIT_TRIES2);
+		ts->ts_longretry += ts->ts_retry[2];
+		/* fall through */
+	case 2:
+		ts->ts_rate[2] = AR5K_REG_MS(tx_ctl->tx_control_3,
+			AR5K_4W_TX_DESC_CTL3_XMIT_RATE2);
+
+		ts->ts_retry[1] = AR5K_REG_MS(tx_ctl->tx_control_2,
+			AR5K_4W_TX_DESC_CTL2_XMIT_TRIES1);
+		ts->ts_longretry += ts->ts_retry[1];
+		/* fall through */
+	case 1:
+		ts->ts_rate[1] = AR5K_REG_MS(tx_ctl->tx_control_3,
+			AR5K_4W_TX_DESC_CTL3_XMIT_RATE1);
+
+		ts->ts_retry[0] = AR5K_REG_MS(tx_ctl->tx_control_2,
+			AR5K_4W_TX_DESC_CTL2_XMIT_TRIES1);
+		ts->ts_longretry += ts->ts_retry[0];
+		/* fall through */
+	case 0:
+		ts->ts_rate[0] = tx_ctl->tx_control_3 &
+			AR5K_4W_TX_DESC_CTL3_XMIT_RATE0;
+		break;
+	}
 
 	/* TX error */
-	if (!(txstat0 & AR5K_DESC_TX_STATUS0_FRAME_XMIT_OK)) {
-		if (txstat0 & AR5K_DESC_TX_STATUS0_EXCESSIVE_RETRIES)
+	if (!(tx_status->tx_status_0 & AR5K_DESC_TX_STATUS0_FRAME_XMIT_OK)) {
+		if (tx_status->tx_status_0 &
+				AR5K_DESC_TX_STATUS0_EXCESSIVE_RETRIES)
 			ts->ts_status |= AR5K_TXERR_XRETRY;
 
-		if (txstat0 & AR5K_DESC_TX_STATUS0_FIFO_UNDERRUN)
+		if (tx_status->tx_status_0 & AR5K_DESC_TX_STATUS0_FIFO_UNDERRUN)
 			ts->ts_status |= AR5K_TXERR_FIFO;
 
-		if (txstat0 & AR5K_DESC_TX_STATUS0_FILTERED)
+		if (tx_status->tx_status_0 & AR5K_DESC_TX_STATUS0_FILTERED)
 			ts->ts_status |= AR5K_TXERR_FILT;
 	}
 
 	return 0;
 }
 
-
-/****************\
-* RX Descriptors *
-\****************/
-
-/**
- * ath5k_hw_setup_rx_desc() - Initialize an rx control descriptor
- * @ah: The &struct ath5k_hw
- * @desc: The &struct ath5k_desc
- * @size: RX buffer length in bytes
- * @flags: One of AR5K_RXDESC_* flags
+/*
+ * RX Descriptors
  */
-int
-ath5k_hw_setup_rx_desc(struct ath5k_hw *ah,
-			struct ath5k_desc *desc,
+
+/*
+ * Initialize an rx control descriptor
+ */
+static int ath5k_hw_setup_rx_desc(struct ath5k_hw *ah, struct ath5k_desc *desc,
 			u32 size, unsigned int flags)
 {
 	struct ath5k_hw_rx_ctl *rx_ctl;
 
+	ATH5K_TRACE(ah->ah_sc);
 	rx_ctl = &desc->ud.ds_rx.rx_ctl;
 
 	/*
@@ -575,11 +500,10 @@ ath5k_hw_setup_rx_desc(struct ath5k_hw *ah,
 	*/
 	memset(&desc->ud.ds_rx, 0, sizeof(struct ath5k_hw_all_rx_desc));
 
-	if (unlikely(size & ~AR5K_DESC_RX_CTL1_BUF_LEN))
-		return -EINVAL;
-
 	/* Setup descriptor */
 	rx_ctl->rx_control_1 = size & AR5K_DESC_RX_CTL1_BUF_LEN;
+	if (unlikely(rx_ctl->rx_control_1 != size))
+		return -EINVAL;
 
 	if (flags & AR5K_RXDESC_INTREQ)
 		rx_ctl->rx_control_1 |= AR5K_DESC_RX_CTL1_INTREQ;
@@ -587,33 +511,20 @@ ath5k_hw_setup_rx_desc(struct ath5k_hw *ah,
 	return 0;
 }
 
-/**
- * ath5k_hw_proc_5210_rx_status() - Process the rx status descriptor on 5210/1
- * @ah: The &struct ath5k_hw
- * @desc: The &struct ath5k_desc
- * @rs: The &struct ath5k_rx_status
- *
- * Internal function used to process an RX status descriptor
- * on AR5210/5211 MAC.
- *
- * Returns 0 on success or -EINPROGRESS in case we haven't received the who;e
- * frame yet.
+/*
+ * Proccess the rx status descriptor on 5210/5211
  */
-static int
-ath5k_hw_proc_5210_rx_status(struct ath5k_hw *ah,
-				struct ath5k_desc *desc,
-				struct ath5k_rx_status *rs)
+static int ath5k_hw_proc_5210_rx_status(struct ath5k_hw *ah,
+		struct ath5k_desc *desc, struct ath5k_rx_status *rs)
 {
 	struct ath5k_hw_rx_status *rx_status;
 
-	rx_status = &desc->ud.ds_rx.rx_stat;
+	rx_status = &desc->ud.ds_rx.u.rx_stat;
 
 	/* No frame received / not ready */
 	if (unlikely(!(rx_status->rx_status_1 &
-			AR5K_5210_RX_DESC_STATUS1_DONE)))
+	AR5K_5210_RX_DESC_STATUS1_DONE)))
 		return -EINPROGRESS;
-
-	memset(rs, 0, sizeof(struct ath5k_rx_status));
 
 	/*
 	 * Frame receive status
@@ -624,23 +535,15 @@ ath5k_hw_proc_5210_rx_status(struct ath5k_hw *ah,
 		AR5K_5210_RX_DESC_STATUS0_RECEIVE_SIGNAL);
 	rs->rs_rate = AR5K_REG_MS(rx_status->rx_status_0,
 		AR5K_5210_RX_DESC_STATUS0_RECEIVE_RATE);
+	rs->rs_antenna = AR5K_REG_MS(rx_status->rx_status_0,
+		AR5K_5210_RX_DESC_STATUS0_RECEIVE_ANTENNA);
 	rs->rs_more = !!(rx_status->rx_status_0 &
 		AR5K_5210_RX_DESC_STATUS0_MORE);
-	/* TODO: this timestamp is 13 bit, later on we assume 15 bit!
-	 * also the HAL code for 5210 says the timestamp is bits [10..22] of the
-	 * TSF, and extends the timestamp here to 15 bit.
-	 * we need to check on 5210...
-	 */
+	/* TODO: this timestamp is 13 bit, later on we assume 15 bit */
 	rs->rs_tstamp = AR5K_REG_MS(rx_status->rx_status_1,
 		AR5K_5210_RX_DESC_STATUS1_RECEIVE_TIMESTAMP);
-
-	if (ah->ah_version == AR5K_AR5211)
-		rs->rs_antenna = AR5K_REG_MS(rx_status->rx_status_0,
-				AR5K_5210_RX_DESC_STATUS0_RECEIVE_ANT_5211);
-	else
-		rs->rs_antenna = (rx_status->rx_status_0 &
-				AR5K_5210_RX_DESC_STATUS0_RECEIVE_ANT_5210)
-				? 2 : 1;
+	rs->rs_status = 0;
+	rs->rs_phyerr = 0;
 
 	/*
 	 * Key table status
@@ -655,21 +558,19 @@ ath5k_hw_proc_5210_rx_status(struct ath5k_hw *ah,
 	 * Receive/descriptor errors
 	 */
 	if (!(rx_status->rx_status_1 &
-			AR5K_5210_RX_DESC_STATUS1_FRAME_RECEIVE_OK)) {
+	AR5K_5210_RX_DESC_STATUS1_FRAME_RECEIVE_OK)) {
 		if (rx_status->rx_status_1 &
 				AR5K_5210_RX_DESC_STATUS1_CRC_ERROR)
 			rs->rs_status |= AR5K_RXERR_CRC;
 
-		/* only on 5210 */
-		if ((ah->ah_version == AR5K_AR5210) &&
-		    (rx_status->rx_status_1 &
-				AR5K_5210_RX_DESC_STATUS1_FIFO_OVERRUN_5210))
+		if (rx_status->rx_status_1 &
+				AR5K_5210_RX_DESC_STATUS1_FIFO_OVERRUN)
 			rs->rs_status |= AR5K_RXERR_FIFO;
 
 		if (rx_status->rx_status_1 &
 				AR5K_5210_RX_DESC_STATUS1_PHY_ERROR) {
 			rs->rs_status |= AR5K_RXERR_PHY;
-			rs->rs_phyerr = AR5K_REG_MS(rx_status->rx_status_1,
+			rs->rs_phyerr |= AR5K_REG_MS(rx_status->rx_status_1,
 				AR5K_5210_RX_DESC_STATUS1_PHY_ERROR);
 		}
 
@@ -681,108 +582,115 @@ ath5k_hw_proc_5210_rx_status(struct ath5k_hw *ah,
 	return 0;
 }
 
-/**
- * ath5k_hw_proc_5212_rx_status() - Process the rx status descriptor on 5212
- * @ah: The &struct ath5k_hw
- * @desc: The &struct ath5k_desc
- * @rs: The &struct ath5k_rx_status
- *
- * Internal function used to process an RX status descriptor
- * on AR5212 and later MAC.
- *
- * Returns 0 on success or -EINPROGRESS in case we haven't received the who;e
- * frame yet.
+/*
+ * Proccess the rx status descriptor on 5212
  */
-static int
-ath5k_hw_proc_5212_rx_status(struct ath5k_hw *ah,
-				struct ath5k_desc *desc,
-				struct ath5k_rx_status *rs)
+static int ath5k_hw_proc_5212_rx_status(struct ath5k_hw *ah,
+		struct ath5k_desc *desc, struct ath5k_rx_status *rs)
 {
 	struct ath5k_hw_rx_status *rx_status;
-	u32 rxstat0, rxstat1;
+	struct ath5k_hw_rx_error *rx_err;
 
-	rx_status = &desc->ud.ds_rx.rx_stat;
-	rxstat1 = ACCESS_ONCE(rx_status->rx_status_1);
+	ATH5K_TRACE(ah->ah_sc);
+	rx_status = &desc->ud.ds_rx.u.rx_stat;
+
+	/* Overlay on error */
+	rx_err = &desc->ud.ds_rx.u.rx_err;
 
 	/* No frame received / not ready */
-	if (unlikely(!(rxstat1 & AR5K_5212_RX_DESC_STATUS1_DONE)))
+	if (unlikely(!(rx_status->rx_status_1 &
+	AR5K_5212_RX_DESC_STATUS1_DONE)))
 		return -EINPROGRESS;
-
-	memset(rs, 0, sizeof(struct ath5k_rx_status));
-	rxstat0 = ACCESS_ONCE(rx_status->rx_status_0);
 
 	/*
 	 * Frame receive status
 	 */
-	rs->rs_datalen = rxstat0 & AR5K_5212_RX_DESC_STATUS0_DATA_LEN;
-	rs->rs_rssi = AR5K_REG_MS(rxstat0,
+	rs->rs_datalen = rx_status->rx_status_0 &
+		AR5K_5212_RX_DESC_STATUS0_DATA_LEN;
+	rs->rs_rssi = AR5K_REG_MS(rx_status->rx_status_0,
 		AR5K_5212_RX_DESC_STATUS0_RECEIVE_SIGNAL);
-	rs->rs_rate = AR5K_REG_MS(rxstat0,
+	rs->rs_rate = AR5K_REG_MS(rx_status->rx_status_0,
 		AR5K_5212_RX_DESC_STATUS0_RECEIVE_RATE);
-	rs->rs_antenna = AR5K_REG_MS(rxstat0,
+	rs->rs_antenna = AR5K_REG_MS(rx_status->rx_status_0,
 		AR5K_5212_RX_DESC_STATUS0_RECEIVE_ANTENNA);
-	rs->rs_more = !!(rxstat0 & AR5K_5212_RX_DESC_STATUS0_MORE);
-	rs->rs_tstamp = AR5K_REG_MS(rxstat1,
+	rs->rs_more = !!(rx_status->rx_status_0 &
+		AR5K_5212_RX_DESC_STATUS0_MORE);
+	rs->rs_tstamp = AR5K_REG_MS(rx_status->rx_status_1,
 		AR5K_5212_RX_DESC_STATUS1_RECEIVE_TIMESTAMP);
+	rs->rs_status = 0;
+	rs->rs_phyerr = 0;
 
 	/*
 	 * Key table status
 	 */
-	if (rxstat1 & AR5K_5212_RX_DESC_STATUS1_KEY_INDEX_VALID)
-		rs->rs_keyix = AR5K_REG_MS(rxstat1,
-					   AR5K_5212_RX_DESC_STATUS1_KEY_INDEX);
+	if (rx_status->rx_status_1 & AR5K_5212_RX_DESC_STATUS1_KEY_INDEX_VALID)
+		rs->rs_keyix = AR5K_REG_MS(rx_status->rx_status_1,
+				AR5K_5212_RX_DESC_STATUS1_KEY_INDEX);
 	else
 		rs->rs_keyix = AR5K_RXKEYIX_INVALID;
 
 	/*
 	 * Receive/descriptor errors
 	 */
-	if (!(rxstat1 & AR5K_5212_RX_DESC_STATUS1_FRAME_RECEIVE_OK)) {
-		if (rxstat1 & AR5K_5212_RX_DESC_STATUS1_CRC_ERROR)
+	if (!(rx_status->rx_status_1 &
+	AR5K_5212_RX_DESC_STATUS1_FRAME_RECEIVE_OK)) {
+		if (rx_status->rx_status_1 &
+				AR5K_5212_RX_DESC_STATUS1_CRC_ERROR)
 			rs->rs_status |= AR5K_RXERR_CRC;
 
-		if (rxstat1 & AR5K_5212_RX_DESC_STATUS1_PHY_ERROR) {
+		if (rx_status->rx_status_1 &
+				AR5K_5212_RX_DESC_STATUS1_PHY_ERROR) {
 			rs->rs_status |= AR5K_RXERR_PHY;
-			rs->rs_phyerr = AR5K_REG_MS(rxstat1,
-				AR5K_5212_RX_DESC_STATUS1_PHY_ERROR_CODE);
-			if (!ah->ah_capabilities.cap_has_phyerr_counters)
-				ath5k_ani_phy_error_report(ah, rs->rs_phyerr);
+			rs->rs_phyerr |= AR5K_REG_MS(rx_err->rx_error_1,
+					   AR5K_RX_DESC_ERROR1_PHY_ERROR_CODE);
 		}
 
-		if (rxstat1 & AR5K_5212_RX_DESC_STATUS1_DECRYPT_CRC_ERROR)
+		if (rx_status->rx_status_1 &
+				AR5K_5212_RX_DESC_STATUS1_DECRYPT_CRC_ERROR)
 			rs->rs_status |= AR5K_RXERR_DECRYPT;
 
-		if (rxstat1 & AR5K_5212_RX_DESC_STATUS1_MIC_ERROR)
+		if (rx_status->rx_status_1 &
+				AR5K_5212_RX_DESC_STATUS1_MIC_ERROR)
 			rs->rs_status |= AR5K_RXERR_MIC;
 	}
+
 	return 0;
 }
 
-
-/********\
-* Attach *
-\********/
-
-/**
- * ath5k_hw_init_desc_functions() - Init function pointers inside ah
- * @ah: The &struct ath5k_hw
- *
- * Maps the internal descriptor functions to the function pointers on ah, used
- * from above. This is used as an abstraction layer to handle the various chips
- * the same way.
+/*
+ * Init function pointers inside ath5k_hw struct
  */
-int
-ath5k_hw_init_desc_functions(struct ath5k_hw *ah)
+int ath5k_hw_init_desc_functions(struct ath5k_hw *ah)
 {
+
+	if (ah->ah_version != AR5K_AR5210 &&
+		ah->ah_version != AR5K_AR5211 &&
+		ah->ah_version != AR5K_AR5212)
+			return -ENOTSUPP;
+
+	/* XXX: What is this magic value and where is it used ? */
+	if (ah->ah_version == AR5K_AR5212)
+		ah->ah_magic = AR5K_EEPROM_MAGIC_5212;
+	else if (ah->ah_version == AR5K_AR5211)
+		ah->ah_magic = AR5K_EEPROM_MAGIC_5211;
+
 	if (ah->ah_version == AR5K_AR5212) {
+		ah->ah_setup_rx_desc = ath5k_hw_setup_rx_desc;
 		ah->ah_setup_tx_desc = ath5k_hw_setup_4word_tx_desc;
+		ah->ah_setup_mrr_tx_desc = ath5k_hw_setup_mrr_tx_desc;
 		ah->ah_proc_tx_desc = ath5k_hw_proc_4word_tx_status;
-		ah->ah_proc_rx_desc = ath5k_hw_proc_5212_rx_status;
-	} else if (ah->ah_version <= AR5K_AR5211) {
+	} else {
+		ah->ah_setup_rx_desc = ath5k_hw_setup_rx_desc;
 		ah->ah_setup_tx_desc = ath5k_hw_setup_2word_tx_desc;
+		ah->ah_setup_mrr_tx_desc = ath5k_hw_setup_no_mrr;
 		ah->ah_proc_tx_desc = ath5k_hw_proc_2word_tx_status;
+	}
+
+	if (ah->ah_version == AR5K_AR5212)
+		ah->ah_proc_rx_desc = ath5k_hw_proc_5212_rx_status;
+	else if (ah->ah_version <= AR5K_AR5211)
 		ah->ah_proc_rx_desc = ath5k_hw_proc_5210_rx_status;
-	} else
-		return -ENOTSUPP;
+
 	return 0;
 }
+

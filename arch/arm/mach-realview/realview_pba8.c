@@ -21,19 +21,17 @@
 
 #include <linux/init.h>
 #include <linux/platform_device.h>
-#include <linux/device.h>
+#include <linux/sysdev.h>
 #include <linux/amba/bus.h>
 #include <linux/amba/pl061.h>
 #include <linux/amba/mmci.h>
-#include <linux/amba/pl022.h>
 #include <linux/io.h>
 
 #include <asm/irq.h>
 #include <asm/leds.h>
 #include <asm/mach-types.h>
-#include <asm/pmu.h>
-#include <asm/pgtable.h>
 #include <asm/hardware/gic.h>
+#include <asm/hardware/icst307.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
@@ -44,6 +42,7 @@
 #include <mach/irqs.h>
 
 #include "core.h"
+#include "clock.h"
 
 static struct map_desc realview_pba8_io_desc[] __initdata = {
 	{
@@ -102,72 +101,90 @@ static void __init realview_pba8_map_io(void)
 
 static struct pl061_platform_data gpio0_plat_data = {
 	.gpio_base	= 0,
+	.irq_base	= -1,
 };
 
 static struct pl061_platform_data gpio1_plat_data = {
 	.gpio_base	= 8,
+	.irq_base	= -1,
 };
 
 static struct pl061_platform_data gpio2_plat_data = {
 	.gpio_base	= 16,
-};
-
-static struct pl022_ssp_controller ssp0_plat_data = {
-	.bus_id = 0,
-	.enable_dma = 0,
-	.num_chipselect = 1,
+	.irq_base	= -1,
 };
 
 /*
  * RealView PBA8Core AMBA devices
  */
 
-#define GPIO2_IRQ		{ IRQ_PBA8_GPIO2 }
-#define GPIO3_IRQ		{ IRQ_PBA8_GPIO3 }
-#define AACI_IRQ		{ IRQ_PBA8_AACI }
+#define GPIO2_IRQ		{ IRQ_PBA8_GPIO2, NO_IRQ }
+#define GPIO2_DMA		{ 0, 0 }
+#define GPIO3_IRQ		{ IRQ_PBA8_GPIO3, NO_IRQ }
+#define GPIO3_DMA		{ 0, 0 }
+#define AACI_IRQ		{ IRQ_PBA8_AACI, NO_IRQ }
+#define AACI_DMA		{ 0x80, 0x81 }
 #define MMCI0_IRQ		{ IRQ_PBA8_MMCI0A, IRQ_PBA8_MMCI0B }
-#define KMI0_IRQ		{ IRQ_PBA8_KMI0 }
-#define KMI1_IRQ		{ IRQ_PBA8_KMI1 }
-#define PBA8_SMC_IRQ		{ }
-#define MPMC_IRQ		{ }
-#define PBA8_CLCD_IRQ		{ IRQ_PBA8_CLCD }
-#define DMAC_IRQ		{ IRQ_PBA8_DMAC }
-#define SCTL_IRQ		{ }
-#define PBA8_WATCHDOG_IRQ	{ IRQ_PBA8_WATCHDOG }
-#define PBA8_GPIO0_IRQ		{ IRQ_PBA8_GPIO0 }
-#define GPIO1_IRQ		{ IRQ_PBA8_GPIO1 }
-#define PBA8_RTC_IRQ		{ IRQ_PBA8_RTC }
-#define SCI_IRQ			{ IRQ_PBA8_SCI }
-#define PBA8_UART0_IRQ		{ IRQ_PBA8_UART0 }
-#define PBA8_UART1_IRQ		{ IRQ_PBA8_UART1 }
-#define PBA8_UART2_IRQ		{ IRQ_PBA8_UART2 }
-#define PBA8_UART3_IRQ		{ IRQ_PBA8_UART3 }
-#define PBA8_SSP_IRQ		{ IRQ_PBA8_SSP }
+#define MMCI0_DMA		{ 0x84, 0 }
+#define KMI0_IRQ		{ IRQ_PBA8_KMI0, NO_IRQ }
+#define KMI0_DMA		{ 0, 0 }
+#define KMI1_IRQ		{ IRQ_PBA8_KMI1, NO_IRQ }
+#define KMI1_DMA		{ 0, 0 }
+#define PBA8_SMC_IRQ		{ NO_IRQ, NO_IRQ }
+#define PBA8_SMC_DMA		{ 0, 0 }
+#define MPMC_IRQ		{ NO_IRQ, NO_IRQ }
+#define MPMC_DMA		{ 0, 0 }
+#define PBA8_CLCD_IRQ		{ IRQ_PBA8_CLCD, NO_IRQ }
+#define PBA8_CLCD_DMA		{ 0, 0 }
+#define DMAC_IRQ		{ IRQ_PBA8_DMAC, NO_IRQ }
+#define DMAC_DMA		{ 0, 0 }
+#define SCTL_IRQ		{ NO_IRQ, NO_IRQ }
+#define SCTL_DMA		{ 0, 0 }
+#define PBA8_WATCHDOG_IRQ	{ IRQ_PBA8_WATCHDOG, NO_IRQ }
+#define PBA8_WATCHDOG_DMA	{ 0, 0 }
+#define PBA8_GPIO0_IRQ		{ IRQ_PBA8_GPIO0, NO_IRQ }
+#define PBA8_GPIO0_DMA		{ 0, 0 }
+#define GPIO1_IRQ		{ IRQ_PBA8_GPIO1, NO_IRQ }
+#define GPIO1_DMA		{ 0, 0 }
+#define PBA8_RTC_IRQ		{ IRQ_PBA8_RTC, NO_IRQ }
+#define PBA8_RTC_DMA		{ 0, 0 }
+#define SCI_IRQ			{ IRQ_PBA8_SCI, NO_IRQ }
+#define SCI_DMA			{ 7, 6 }
+#define PBA8_UART0_IRQ		{ IRQ_PBA8_UART0, NO_IRQ }
+#define PBA8_UART0_DMA		{ 15, 14 }
+#define PBA8_UART1_IRQ		{ IRQ_PBA8_UART1, NO_IRQ }
+#define PBA8_UART1_DMA		{ 13, 12 }
+#define PBA8_UART2_IRQ		{ IRQ_PBA8_UART2, NO_IRQ }
+#define PBA8_UART2_DMA		{ 11, 10 }
+#define PBA8_UART3_IRQ		{ IRQ_PBA8_UART3, NO_IRQ }
+#define PBA8_UART3_DMA		{ 0x86, 0x87 }
+#define PBA8_SSP_IRQ		{ IRQ_PBA8_SSP, NO_IRQ }
+#define PBA8_SSP_DMA		{ 9, 8 }
 
 /* FPGA Primecells */
-APB_DEVICE(aaci,	"fpga:aaci",	AACI,		NULL);
-APB_DEVICE(mmc0,	"fpga:mmc0",	MMCI0,		&realview_mmc0_plat_data);
-APB_DEVICE(kmi0,	"fpga:kmi0",	KMI0,		NULL);
-APB_DEVICE(kmi1,	"fpga:kmi1",	KMI1,		NULL);
-APB_DEVICE(uart3,	"fpga:uart3",	PBA8_UART3,	NULL);
+AMBA_DEVICE(aaci,	"fpga:aaci",	AACI,		NULL);
+AMBA_DEVICE(mmc0,	"fpga:mmc0",	MMCI0,		&realview_mmc0_plat_data);
+AMBA_DEVICE(kmi0,	"fpga:kmi0",	KMI0,		NULL);
+AMBA_DEVICE(kmi1,	"fpga:kmi1",	KMI1,		NULL);
+AMBA_DEVICE(uart3,	"fpga:uart3",	PBA8_UART3,	NULL);
 
 /* DevChip Primecells */
-AHB_DEVICE(smc,		"dev:smc",	PBA8_SMC,	NULL);
-AHB_DEVICE(sctl,	"dev:sctl",	SCTL,		NULL);
-APB_DEVICE(wdog,	"dev:wdog",	PBA8_WATCHDOG, NULL);
-APB_DEVICE(gpio0,	"dev:gpio0",	PBA8_GPIO0,	&gpio0_plat_data);
-APB_DEVICE(gpio1,	"dev:gpio1",	GPIO1,		&gpio1_plat_data);
-APB_DEVICE(gpio2,	"dev:gpio2",	GPIO2,		&gpio2_plat_data);
-APB_DEVICE(rtc,		"dev:rtc",	PBA8_RTC,	NULL);
-APB_DEVICE(sci0,	"dev:sci0",	SCI,		NULL);
-APB_DEVICE(uart0,	"dev:uart0",	PBA8_UART0,	NULL);
-APB_DEVICE(uart1,	"dev:uart1",	PBA8_UART1,	NULL);
-APB_DEVICE(uart2,	"dev:uart2",	PBA8_UART2,	NULL);
-APB_DEVICE(ssp0,	"dev:ssp0",	PBA8_SSP,	&ssp0_plat_data);
+AMBA_DEVICE(smc,	"dev:smc",	PBA8_SMC,	NULL);
+AMBA_DEVICE(sctl,	"dev:sctl",	SCTL,		NULL);
+AMBA_DEVICE(wdog,	"dev:wdog",	PBA8_WATCHDOG, NULL);
+AMBA_DEVICE(gpio0,	"dev:gpio0",	PBA8_GPIO0,	&gpio0_plat_data);
+AMBA_DEVICE(gpio1,	"dev:gpio1",	GPIO1,		&gpio1_plat_data);
+AMBA_DEVICE(gpio2,	"dev:gpio2",	GPIO2,		&gpio2_plat_data);
+AMBA_DEVICE(rtc,	"dev:rtc",	PBA8_RTC,	NULL);
+AMBA_DEVICE(sci0,	"dev:sci0",	SCI,		NULL);
+AMBA_DEVICE(uart0,	"dev:uart0",	PBA8_UART0,	NULL);
+AMBA_DEVICE(uart1,	"dev:uart1",	PBA8_UART1,	NULL);
+AMBA_DEVICE(uart2,	"dev:uart2",	PBA8_UART2,	NULL);
+AMBA_DEVICE(ssp0,	"dev:ssp0",	PBA8_SSP,	NULL);
 
 /* Primecells on the NEC ISSP chip */
-AHB_DEVICE(clcd,	"issp:clcd",	PBA8_CLCD,	&clcd_plat_data);
-AHB_DEVICE(dmac,	"issp:dmac",	DMAC,		NULL);
+AMBA_DEVICE(clcd,	"issp:clcd",	PBA8_CLCD,	&clcd_plat_data);
+AMBA_DEVICE(dmac,	"issp:dmac",	DMAC,		NULL);
 
 static struct amba_device *amba_devs[] __initdata = {
 	&dmac_device,
@@ -233,25 +250,12 @@ static struct resource realview_pba8_isp1761_resources[] = {
 	},
 };
 
-static struct resource pmu_resource = {
-	.start		= IRQ_PBA8_PMU,
-	.end		= IRQ_PBA8_PMU,
-	.flags		= IORESOURCE_IRQ,
-};
-
-static struct platform_device pmu_device = {
-	.name			= "arm-pmu",
-	.id			= ARM_PMU_DEVICE_CPU,
-	.num_resources		= 1,
-	.resource		= &pmu_resource,
-};
-
 static void __init gic_init_irq(void)
 {
 	/* ARM PB-A8 on-board GIC */
-	gic_init(0, IRQ_PBA8_GIC_START,
-		 __io_address(REALVIEW_PBA8_GIC_DIST_BASE),
-		 __io_address(REALVIEW_PBA8_GIC_CPU_BASE));
+	gic_cpu_base_addr = __io_address(REALVIEW_PBA8_GIC_CPU_BASE);
+	gic_dist_init(0, __io_address(REALVIEW_PBA8_GIC_DIST_BASE), IRQ_PBA8_GIC_START);
+	gic_cpu_init(0, __io_address(REALVIEW_PBA8_GIC_CPU_BASE));
 }
 
 static void __init realview_pba8_timer_init(void)
@@ -268,21 +272,6 @@ static struct sys_timer realview_pba8_timer = {
 	.init		= realview_pba8_timer_init,
 };
 
-static void realview_pba8_restart(char mode, const char *cmd)
-{
-	void __iomem *reset_ctrl = __io_address(REALVIEW_SYS_RESETCTL);
-	void __iomem *lock_ctrl = __io_address(REALVIEW_SYS_LOCK);
-
-	/*
-	 * To reset, we hit the on-board reset register
-	 * in the system FPGA
-	 */
-	__raw_writel(REALVIEW_SYS_LOCK_VAL, lock_ctrl);
-	__raw_writel(0x0000, reset_ctrl);
-	__raw_writel(0x0004, reset_ctrl);
-	dsb();
-}
-
 static void __init realview_pba8_init(void)
 {
 	int i;
@@ -293,7 +282,6 @@ static void __init realview_pba8_init(void)
 	platform_device_register(&realview_i2c_device);
 	platform_device_register(&realview_cf_device);
 	realview_usb_register(realview_pba8_isp1761_resources);
-	platform_device_register(&pmu_device);
 
 	for (i = 0; i < ARRAY_SIZE(amba_devs); i++) {
 		struct amba_device *d = amba_devs[i];
@@ -307,16 +295,12 @@ static void __init realview_pba8_init(void)
 
 MACHINE_START(REALVIEW_PBA8, "ARM-RealView PB-A8")
 	/* Maintainer: ARM Ltd/Deep Blue Solutions Ltd */
-	.atag_offset	= 0x100,
+	.phys_io	= REALVIEW_PBA8_UART0_BASE,
+	.io_pg_offst	= (IO_ADDRESS(REALVIEW_PBA8_UART0_BASE) >> 18) & 0xfffc,
+	.boot_params	= PHYS_OFFSET + 0x00000100,
 	.fixup		= realview_fixup,
 	.map_io		= realview_pba8_map_io,
-	.init_early	= realview_init_early,
 	.init_irq	= gic_init_irq,
 	.timer		= &realview_pba8_timer,
-	.handle_irq	= gic_handle_irq,
 	.init_machine	= realview_pba8_init,
-#ifdef CONFIG_ZONE_DMA
-	.dma_zone_size	= SZ_256M,
-#endif
-	.restart	= realview_pba8_restart,
 MACHINE_END

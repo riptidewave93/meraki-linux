@@ -6,7 +6,7 @@
 #ifndef __START_H__
 #define __START_H__
 
-#include <generated/asm-offsets.h>
+#include "kern_constants.h"
 
 /*
  * Stolen from linux/const.h, which can't be directly included since

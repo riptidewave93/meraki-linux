@@ -14,8 +14,6 @@
  * 2 of the License, or (at your option) any later version.
  */
 
-#define pr_fmt(fmt) "IPv6-nf: " fmt
-
 #include <linux/errno.h>
 #include <linux/types.h>
 #include <linux/string.h>
@@ -29,7 +27,6 @@
 #include <linux/ipv6.h>
 #include <linux/icmpv6.h>
 #include <linux/random.h>
-#include <linux/slab.h>
 
 #include <net/sock.h>
 #include <net/snmp.h>
@@ -47,8 +44,10 @@
 #include <linux/netfilter_ipv6.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <net/netfilter/ipv6/nf_defrag_ipv6.h>
 
+#define NF_CT_FRAG6_HIGH_THRESH 262144 /* == 256*1024 */
+#define NF_CT_FRAG6_LOW_THRESH 196608  /* == 192*1024 */
+#define NF_CT_FRAG6_TIMEOUT IPV6_FRAG_TIMEOUT
 
 struct nf_ct_frag6_skb_cb
 {
@@ -76,7 +75,7 @@ static struct inet_frags nf_frags;
 static struct netns_frags nf_init_frags;
 
 #ifdef CONFIG_SYSCTL
-static struct ctl_table nf_ct_frag6_sysctl_table[] = {
+struct ctl_table nf_ct_ipv6_sysctl_table[] = {
 	{
 		.procname	= "nf_conntrack_frag6_timeout",
 		.data		= &nf_init_frags.timeout,
@@ -85,6 +84,7 @@ static struct ctl_table nf_ct_frag6_sysctl_table[] = {
 		.proc_handler	= proc_dointvec_jiffies,
 	},
 	{
+		.ctl_name	= NET_NF_CONNTRACK_FRAG6_LOW_THRESH,
 		.procname	= "nf_conntrack_frag6_low_thresh",
 		.data		= &nf_init_frags.low_thresh,
 		.maxlen		= sizeof(unsigned int),
@@ -92,16 +92,15 @@ static struct ctl_table nf_ct_frag6_sysctl_table[] = {
 		.proc_handler	= proc_dointvec,
 	},
 	{
+		.ctl_name	= NET_NF_CONNTRACK_FRAG6_HIGH_THRESH,
 		.procname	= "nf_conntrack_frag6_high_thresh",
 		.data		= &nf_init_frags.high_thresh,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec,
 	},
-	{ }
+	{ .ctl_name = 0 }
 };
-
-static struct ctl_table_header *nf_ct_frag6_sysctl_header;
 #endif
 
 static unsigned int nf_hashfn(struct inet_frag_queue *q)
@@ -116,6 +115,16 @@ static void nf_skb_free(struct sk_buff *skb)
 {
 	if (NFCT_FRAG6_CB(skb)->orig)
 		kfree_skb(NFCT_FRAG6_CB(skb)->orig);
+}
+
+/* Memory Tracking Functions. */
+static inline void frag_kfree_skb(struct sk_buff *skb, unsigned int *work)
+{
+	if (work)
+		*work -= skb->truesize;
+	atomic_sub(skb->truesize, &nf_init_frags.mem);
+	nf_skb_free(skb);
+	kfree_skb(skb);
 }
 
 /* Destruction primitives. */
@@ -178,12 +187,14 @@ fq_find(__be32 id, u32 user, struct in6_addr *src, struct in6_addr *dst)
 
 	q = inet_frag_find(&nf_init_frags, &nf_frags, &arg, hash);
 	local_bh_enable();
-	if (IS_ERR_OR_NULL(q)) {
-		inet_frag_maybe_warn_overflow(q, pr_fmt());
-		return NULL;
-	}
+	if (q == NULL)
+		goto oom;
 
 	return container_of(q, struct nf_ct_frag6_queue, q);
+
+oom:
+	pr_debug("Can't alloc new queue\n");
+	return NULL;
 }
 
 
@@ -194,7 +205,7 @@ static int nf_ct_frag6_queue(struct nf_ct_frag6_queue *fq, struct sk_buff *skb,
 	int offset, end;
 
 	if (fq->q.last_in & INET_FRAG_COMPLETE) {
-		pr_debug("Already completed\n");
+		pr_debug("Allready completed\n");
 		goto err;
 	}
 
@@ -264,11 +275,6 @@ static int nf_ct_frag6_queue(struct nf_ct_frag6_queue *fq, struct sk_buff *skb,
 	 * in the chain of fragments so far.  We must know where to put
 	 * this fragment, right?
 	 */
-	prev = fq->q.fragments_tail;
-	if (!prev || NFCT_FRAG6_CB(prev)->offset < offset) {
-		next = NULL;
-		goto found;
-	}
 	prev = NULL;
 	for (next = fq->q.fragments; next != NULL; next = next->next) {
 		if (NFCT_FRAG6_CB(next)->offset >= offset)
@@ -276,30 +282,71 @@ static int nf_ct_frag6_queue(struct nf_ct_frag6_queue *fq, struct sk_buff *skb,
 		prev = next;
 	}
 
-found:
-	/* RFC5722, Section 4:
-	 *                                  When reassembling an IPv6 datagram, if
-	 *   one or more its constituent fragments is determined to be an
-	 *   overlapping fragment, the entire datagram (and any constituent
-	 *   fragments, including those not yet received) MUST be silently
-	 *   discarded.
+	/* We found where to put this one.  Check for overlap with
+	 * preceding fragment, and, if needed, align things so that
+	 * any overlaps are eliminated.
 	 */
+	if (prev) {
+		int i = (NFCT_FRAG6_CB(prev)->offset + prev->len) - offset;
 
-	/* Check for overlap with preceding fragment. */
-	if (prev &&
-	    (NFCT_FRAG6_CB(prev)->offset + prev->len) > offset)
-		goto discard_fq;
+		if (i > 0) {
+			offset += i;
+			if (end <= offset) {
+				pr_debug("overlap\n");
+				goto err;
+			}
+			if (!pskb_pull(skb, i)) {
+				pr_debug("Can't pull\n");
+				goto err;
+			}
+			if (skb->ip_summed != CHECKSUM_UNNECESSARY)
+				skb->ip_summed = CHECKSUM_NONE;
+		}
+	}
 
-	/* Look for overlap with succeeding segment. */
-	if (next && NFCT_FRAG6_CB(next)->offset < end)
-		goto discard_fq;
+	/* Look for overlap with succeeding segments.
+	 * If we can merge fragments, do it.
+	 */
+	while (next && NFCT_FRAG6_CB(next)->offset < end) {
+		/* overlap is 'i' bytes */
+		int i = end - NFCT_FRAG6_CB(next)->offset;
+
+		if (i < next->len) {
+			/* Eat head of the next overlapped fragment
+			 * and leave the loop. The next ones cannot overlap.
+			 */
+			pr_debug("Eat head of the overlapped parts.: %d", i);
+			if (!pskb_pull(next, i))
+				goto err;
+
+			/* next fragment */
+			NFCT_FRAG6_CB(next)->offset += i;
+			fq->q.meat -= i;
+			if (next->ip_summed != CHECKSUM_UNNECESSARY)
+				next->ip_summed = CHECKSUM_NONE;
+			break;
+		} else {
+			struct sk_buff *free_it = next;
+
+			/* Old fragmnet is completely overridden with
+			 * new one drop it.
+			 */
+			next = next->next;
+
+			if (prev)
+				prev->next = next;
+			else
+				fq->q.fragments = next;
+
+			fq->q.meat -= free_it->len;
+			frag_kfree_skb(free_it, NULL);
+		}
+	}
 
 	NFCT_FRAG6_CB(skb)->offset = offset;
 
 	/* Insert this fragment in the chain of fragments. */
 	skb->next = next;
-	if (!next)
-		fq->q.fragments_tail = skb;
 	if (prev)
 		prev->next = skb;
 	else
@@ -322,8 +369,6 @@ found:
 	write_unlock(&nf_frags.lock);
 	return 0;
 
-discard_fq:
-	fq_kill(fq);
 err:
 	return -1;
 }
@@ -366,20 +411,20 @@ nf_ct_frag6_reasm(struct nf_ct_frag6_queue *fq, struct net_device *dev)
 	/* If the first fragment is fragmented itself, we split
 	 * it to two chunks: the first with data and paged part
 	 * and the second, holding only fragments. */
-	if (skb_has_frag_list(head)) {
+	if (skb_has_frags(head)) {
 		struct sk_buff *clone;
 		int i, plen = 0;
 
-		clone = alloc_skb(0, GFP_ATOMIC);
-		if (clone == NULL)
+		if ((clone = alloc_skb(0, GFP_ATOMIC)) == NULL) {
+			pr_debug("Can't alloc skb\n");
 			goto out_oom;
-
+		}
 		clone->next = head->next;
 		head->next = clone;
 		skb_shinfo(clone)->frag_list = skb_shinfo(head)->frag_list;
 		skb_frag_list_init(head);
-		for (i = 0; i < skb_shinfo(head)->nr_frags; i++)
-			plen += skb_frag_size(&skb_shinfo(head)->frags[i]);
+		for (i=0; i<skb_shinfo(head)->nr_frags; i++)
+			plen += skb_shinfo(head)->frags[i].size;
 		clone->len = clone->data_len = head->data_len - plen;
 		head->data_len -= clone->len;
 		head->len -= clone->len;
@@ -401,6 +446,7 @@ nf_ct_frag6_reasm(struct nf_ct_frag6_queue *fq, struct net_device *dev)
 	skb_shinfo(head)->frag_list = head->next;
 	skb_reset_transport_header(head);
 	skb_push(head, head->data - skb_network_header(head));
+	atomic_sub(head->truesize, &nf_init_frags.mem);
 
 	for (fp=head->next; fp; fp = fp->next) {
 		head->data_len += fp->len;
@@ -410,8 +456,8 @@ nf_ct_frag6_reasm(struct nf_ct_frag6_queue *fq, struct net_device *dev)
 		else if (head->ip_summed == CHECKSUM_COMPLETE)
 			head->csum = csum_add(head->csum, fp->csum);
 		head->truesize += fp->truesize;
+		atomic_sub(fp->truesize, &nf_init_frags.mem);
 	}
-	atomic_sub(head->truesize, &nf_init_frags.mem);
 
 	head->next = NULL;
 	head->dev = dev;
@@ -425,7 +471,6 @@ nf_ct_frag6_reasm(struct nf_ct_frag6_queue *fq, struct net_device *dev)
 					  head->csum);
 
 	fq->q.fragments = NULL;
-	fq->q.fragments_tail = NULL;
 
 	/* all original skbs are linked into the NFCT_FRAG6_CB(head).orig */
 	fp = skb_shinfo(head)->frag_list;
@@ -603,7 +648,7 @@ void nf_ct_frag6_output(unsigned int hooknum, struct sk_buff *skb,
 		s2 = s->next;
 		s->next = NULL;
 
-		NF_HOOK_THRESH(NFPROTO_IPV6, hooknum, s, in, out, okfn,
+		NF_HOOK_THRESH(PF_INET6, hooknum, s, in, out, okfn,
 			       NF_IP6_PRI_CONNTRACK_DEFRAG + 1);
 		s = s2;
 	}
@@ -621,29 +666,16 @@ int nf_ct_frag6_init(void)
 	nf_frags.frag_expire = nf_ct_frag6_expire;
 	nf_frags.secret_interval = 10 * 60 * HZ;
 	nf_init_frags.timeout = IPV6_FRAG_TIMEOUT;
-	nf_init_frags.high_thresh = IPV6_FRAG_HIGH_THRESH;
-	nf_init_frags.low_thresh = IPV6_FRAG_LOW_THRESH;
+	nf_init_frags.high_thresh = 256 * 1024;
+	nf_init_frags.low_thresh = 192 * 1024;
 	inet_frags_init_net(&nf_init_frags);
 	inet_frags_init(&nf_frags);
-
-#ifdef CONFIG_SYSCTL
-	nf_ct_frag6_sysctl_header = register_sysctl_paths(nf_net_netfilter_sysctl_path,
-							  nf_ct_frag6_sysctl_table);
-	if (!nf_ct_frag6_sysctl_header) {
-		inet_frags_fini(&nf_frags);
-		return -ENOMEM;
-	}
-#endif
 
 	return 0;
 }
 
 void nf_ct_frag6_cleanup(void)
 {
-#ifdef CONFIG_SYSCTL
-	unregister_sysctl_table(nf_ct_frag6_sysctl_header);
-	nf_ct_frag6_sysctl_header = NULL;
-#endif
 	inet_frags_fini(&nf_frags);
 
 	nf_init_frags.low_thresh = 0;

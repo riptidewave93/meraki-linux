@@ -221,9 +221,10 @@
 twofish_enc_blk:
 	pushq    R1
 
-	/* %rdi contains the ctx address */
+	/* %rdi contains the crypto tfm address */
 	/* %rsi contains the output address */
 	/* %rdx contains the input address */
+	add	$crypto_tfm_ctx_offset, %rdi	/* set ctx address */
 	/* ctx address is moved to free one non-rex register
 	as target for the 8bit high operations */
 	mov	%rdi,		%r11
@@ -273,9 +274,10 @@ twofish_enc_blk:
 twofish_dec_blk:
 	pushq    R1
 
-	/* %rdi contains the ctx address */
+	/* %rdi contains the crypto tfm address */
 	/* %rsi contains the output address */
 	/* %rdx contains the input address */
+	add	$crypto_tfm_ctx_offset, %rdi	/* set ctx address */
 	/* ctx address is moved to free one non-rex register
 	as target for the 8bit high operations */
 	mov	%rdi,		%r11

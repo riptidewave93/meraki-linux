@@ -77,8 +77,6 @@
 #include <linux/sysfs.h>
 #include <linux/kobject.h>
 #include <linux/device.h>
-#include <linux/slab.h>
-#include <linux/pstore.h>
 
 #include <asm/uaccess.h>
 
@@ -90,12 +88,16 @@ MODULE_DESCRIPTION("sysfs interface to EFI Variables");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(EFIVARS_VERSION);
 
-#define DUMP_NAME_LEN 52
-
-static bool efivars_pstore_disable =
-	IS_ENABLED(CONFIG_EFI_VARS_PSTORE_DEFAULT_DISABLE);
-
-module_param_named(pstore_disable, efivars_pstore_disable, bool, 0644);
+/*
+ * efivars_lock protects two things:
+ * 1) efivar_list - adds, removals, reads, writes
+ * 2) efi.[gs]et_variable() calls.
+ * It must not be held when creating sysfs entries or calling kmalloc.
+ * efi.get_next_variable() is only called from efivars_init(),
+ * which is protected by the BKL, so that path is safe.
+ */
+static DEFINE_SPINLOCK(efivars_lock);
+static LIST_HEAD(efivar_list);
 
 /*
  * The maximum size of VariableName + Data = 1024
@@ -115,7 +117,6 @@ struct efi_variable {
 
 
 struct efivar_entry {
-	struct efivars *efivars;
 	struct efi_variable var;
 	struct list_head list;
 	struct kobject kobj;
@@ -127,13 +128,6 @@ struct efivar_attribute {
 	ssize_t (*store)(struct efivar_entry *entry, const char *buf, size_t count);
 };
 
-static struct efivars __efivars;
-static struct efivar_operations ops;
-
-#define PSTORE_EFI_ATTRIBUTES \
-	(EFI_VARIABLE_NON_VOLATILE | \
-	 EFI_VARIABLE_BOOTSERVICE_ACCESS | \
-	 EFI_VARIABLE_RUNTIME_ACCESS)
 
 #define EFIVAR_ATTR(_name, _mode, _show, _store) \
 struct efivar_attribute efivar_attr_##_name = { \
@@ -149,33 +143,19 @@ struct efivar_attribute efivar_attr_##_name = { \
  * Prototype for sysfs creation function
  */
 static int
-efivar_create_sysfs_entry(struct efivars *efivars,
-			  unsigned long variable_name_size,
-			  efi_char16_t *variable_name,
-			  efi_guid_t *vendor_guid);
-
-/*
- * Prototype for workqueue functions updating sysfs entry
- */
-
-static void efivar_update_sysfs_entries(struct work_struct *);
-static DECLARE_WORK(efivar_work, efivar_update_sysfs_entries);
+efivar_create_sysfs_entry(unsigned long variable_name_size,
+				efi_char16_t *variable_name,
+				efi_guid_t *vendor_guid);
 
 /* Return the number of unicode characters in data */
 static unsigned long
-utf16_strnlen(efi_char16_t *s, size_t maxlength)
+utf8_strlen(efi_char16_t *data, unsigned long maxlength)
 {
 	unsigned long length = 0;
 
-	while (*s++ != 0 && length < maxlength)
+	while (*data++ != 0 && length < maxlength)
 		length++;
 	return length;
-}
-
-static inline unsigned long
-utf16_strlen(efi_char16_t *s)
-{
-	return utf16_strnlen(s, ~0UL);
 }
 
 /*
@@ -183,254 +163,29 @@ utf16_strlen(efi_char16_t *s)
  * Note: this is NOT the same as the number of unicode characters
  */
 static inline unsigned long
-utf16_strsize(efi_char16_t *data, unsigned long maxlength)
+utf8_strsize(efi_char16_t *data, unsigned long maxlength)
 {
-	return utf16_strnlen(data, maxlength/sizeof(efi_char16_t)) * sizeof(efi_char16_t);
-}
-
-static inline int
-utf16_strncmp(const efi_char16_t *a, const efi_char16_t *b, size_t len)
-{
-	while (1) {
-		if (len == 0)
-			return 0;
-		if (*a < *b)
-			return -1;
-		if (*a > *b)
-			return 1;
-		if (*a == 0) /* implies *b == 0 */
-			return 0;
-		a++;
-		b++;
-		len--;
-	}
-}
-
-static bool
-validate_device_path(struct efi_variable *var, int match, u8 *buffer,
-		     unsigned long len)
-{
-	struct efi_generic_dev_path *node;
-	int offset = 0;
-
-	node = (struct efi_generic_dev_path *)buffer;
-
-	if (len < sizeof(*node))
-		return false;
-
-	while (offset <= len - sizeof(*node) &&
-	       node->length >= sizeof(*node) &&
-		node->length <= len - offset) {
-		offset += node->length;
-
-		if ((node->type == EFI_DEV_END_PATH ||
-		     node->type == EFI_DEV_END_PATH2) &&
-		    node->sub_type == EFI_DEV_END_ENTIRE)
-			return true;
-
-		node = (struct efi_generic_dev_path *)(buffer + offset);
-	}
-
-	/*
-	 * If we're here then either node->length pointed past the end
-	 * of the buffer or we reached the end of the buffer without
-	 * finding a device path end node.
-	 */
-	return false;
-}
-
-static bool
-validate_boot_order(struct efi_variable *var, int match, u8 *buffer,
-		    unsigned long len)
-{
-	/* An array of 16-bit integers */
-	if ((len % 2) != 0)
-		return false;
-
-	return true;
-}
-
-static bool
-validate_load_option(struct efi_variable *var, int match, u8 *buffer,
-		     unsigned long len)
-{
-	u16 filepathlength;
-	int i, desclength = 0, namelen;
-
-	namelen = utf16_strnlen(var->VariableName, sizeof(var->VariableName));
-
-	/* Either "Boot" or "Driver" followed by four digits of hex */
-	for (i = match; i < match+4; i++) {
-		if (var->VariableName[i] > 127 ||
-		    hex_to_bin(var->VariableName[i] & 0xff) < 0)
-			return true;
-	}
-
-	/* Reject it if there's 4 digits of hex and then further content */
-	if (namelen > match + 4)
-		return false;
-
-	/* A valid entry must be at least 8 bytes */
-	if (len < 8)
-		return false;
-
-	filepathlength = buffer[4] | buffer[5] << 8;
-
-	/*
-	 * There's no stored length for the description, so it has to be
-	 * found by hand
-	 */
-	desclength = utf16_strsize((efi_char16_t *)(buffer + 6), len - 6) + 2;
-
-	/* Each boot entry must have a descriptor */
-	if (!desclength)
-		return false;
-
-	/*
-	 * If the sum of the length of the description, the claimed filepath
-	 * length and the original header are greater than the length of the
-	 * variable, it's malformed
-	 */
-	if ((desclength + filepathlength + 6) > len)
-		return false;
-
-	/*
-	 * And, finally, check the filepath
-	 */
-	return validate_device_path(var, match, buffer + desclength + 6,
-				    filepathlength);
-}
-
-static bool
-validate_uint16(struct efi_variable *var, int match, u8 *buffer,
-		unsigned long len)
-{
-	/* A single 16-bit integer */
-	if (len != 2)
-		return false;
-
-	return true;
-}
-
-static bool
-validate_ascii_string(struct efi_variable *var, int match, u8 *buffer,
-		      unsigned long len)
-{
-	int i;
-
-	for (i = 0; i < len; i++) {
-		if (buffer[i] > 127)
-			return false;
-
-		if (buffer[i] == 0)
-			return true;
-	}
-
-	return false;
-}
-
-struct variable_validate {
-	char *name;
-	bool (*validate)(struct efi_variable *var, int match, u8 *data,
-			 unsigned long len);
-};
-
-static const struct variable_validate variable_validate[] = {
-	{ "BootNext", validate_uint16 },
-	{ "BootOrder", validate_boot_order },
-	{ "DriverOrder", validate_boot_order },
-	{ "Boot*", validate_load_option },
-	{ "Driver*", validate_load_option },
-	{ "ConIn", validate_device_path },
-	{ "ConInDev", validate_device_path },
-	{ "ConOut", validate_device_path },
-	{ "ConOutDev", validate_device_path },
-	{ "ErrOut", validate_device_path },
-	{ "ErrOutDev", validate_device_path },
-	{ "Timeout", validate_uint16 },
-	{ "Lang", validate_ascii_string },
-	{ "PlatformLang", validate_ascii_string },
-	{ "", NULL },
-};
-
-static bool
-validate_var(struct efi_variable *var, u8 *data, unsigned long len)
-{
-	int i;
-	u16 *unicode_name = var->VariableName;
-
-	for (i = 0; variable_validate[i].validate != NULL; i++) {
-		const char *name = variable_validate[i].name;
-		int match;
-
-		for (match = 0; ; match++) {
-			char c = name[match];
-			u16 u = unicode_name[match];
-
-			/* All special variables are plain ascii */
-			if (u > 127)
-				return true;
-
-			/* Wildcard in the matching name means we've matched */
-			if (c == '*')
-				return variable_validate[i].validate(var,
-							     match, data, len);
-
-			/* Case sensitive match */
-			if (c != u)
-				break;
-
-			/* Reached the end of the string while matching */
-			if (!c)
-				return variable_validate[i].validate(var,
-							     match, data, len);
-		}
-	}
-
-	return true;
+	return utf8_strlen(data, maxlength/sizeof(efi_char16_t)) * sizeof(efi_char16_t);
 }
 
 static efi_status_t
-get_var_data_locked(struct efivars *efivars, struct efi_variable *var)
+get_var_data(struct efi_variable *var)
 {
 	efi_status_t status;
 
+	spin_lock(&efivars_lock);
 	var->DataSize = 1024;
-	status = efivars->ops->get_variable(var->VariableName,
-					    &var->VendorGuid,
-					    &var->Attributes,
-					    &var->DataSize,
-					    var->Data);
-	return status;
-}
-
-static efi_status_t
-get_var_data(struct efivars *efivars, struct efi_variable *var)
-{
-	efi_status_t status;
-	unsigned long flags;
-
-	spin_lock_irqsave(&efivars->lock, flags);
-	status = get_var_data_locked(efivars, var);
-	spin_unlock_irqrestore(&efivars->lock, flags);
-
+	status = efi.get_variable(var->VariableName,
+				&var->VendorGuid,
+				&var->Attributes,
+				&var->DataSize,
+				var->Data);
+	spin_unlock(&efivars_lock);
 	if (status != EFI_SUCCESS) {
 		printk(KERN_WARNING "efivars: get_variable() failed 0x%lx!\n",
 			status);
 	}
 	return status;
-}
-
-static efi_status_t
-check_var_size_locked(struct efivars *efivars, u32 attributes,
-			unsigned long size)
-{
-	const struct efivar_operations *fops = efivars->ops;
-
-	if (!efivars->ops->query_variable_store)
-		return EFI_UNSUPPORTED;
-
-	return fops->query_variable_store(attributes, size);
 }
 
 static ssize_t
@@ -459,27 +214,16 @@ efivar_attr_read(struct efivar_entry *entry, char *buf)
 	if (!entry || !buf)
 		return -EINVAL;
 
-	status = get_var_data(entry->efivars, var);
+	status = get_var_data(var);
 	if (status != EFI_SUCCESS)
 		return -EIO;
 
-	if (var->Attributes & EFI_VARIABLE_NON_VOLATILE)
+	if (var->Attributes & 0x1)
 		str += sprintf(str, "EFI_VARIABLE_NON_VOLATILE\n");
-	if (var->Attributes & EFI_VARIABLE_BOOTSERVICE_ACCESS)
+	if (var->Attributes & 0x2)
 		str += sprintf(str, "EFI_VARIABLE_BOOTSERVICE_ACCESS\n");
-	if (var->Attributes & EFI_VARIABLE_RUNTIME_ACCESS)
+	if (var->Attributes & 0x4)
 		str += sprintf(str, "EFI_VARIABLE_RUNTIME_ACCESS\n");
-	if (var->Attributes & EFI_VARIABLE_HARDWARE_ERROR_RECORD)
-		str += sprintf(str, "EFI_VARIABLE_HARDWARE_ERROR_RECORD\n");
-	if (var->Attributes & EFI_VARIABLE_AUTHENTICATED_WRITE_ACCESS)
-		str += sprintf(str,
-			"EFI_VARIABLE_AUTHENTICATED_WRITE_ACCESS\n");
-	if (var->Attributes &
-			EFI_VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS)
-		str += sprintf(str,
-			"EFI_VARIABLE_TIME_BASED_AUTHENTICATED_WRITE_ACCESS\n");
-	if (var->Attributes & EFI_VARIABLE_APPEND_WRITE)
-		str += sprintf(str, "EFI_VARIABLE_APPEND_WRITE\n");
 	return str - buf;
 }
 
@@ -493,7 +237,7 @@ efivar_size_read(struct efivar_entry *entry, char *buf)
 	if (!entry || !buf)
 		return -EINVAL;
 
-	status = get_var_data(entry->efivars, var);
+	status = get_var_data(var);
 	if (status != EFI_SUCCESS)
 		return -EIO;
 
@@ -510,7 +254,7 @@ efivar_data_read(struct efivar_entry *entry, char *buf)
 	if (!entry || !buf)
 		return -EINVAL;
 
-	status = get_var_data(entry->efivars, var);
+	status = get_var_data(var);
 	if (status != EFI_SUCCESS)
 		return -EIO;
 
@@ -525,7 +269,6 @@ static ssize_t
 efivar_store_raw(struct efivar_entry *entry, const char *buf, size_t count)
 {
 	struct efi_variable *new_var, *var = &entry->var;
-	struct efivars *efivars = entry->efivars;
 	efi_status_t status = EFI_NOT_FOUND;
 
 	if (count != sizeof(struct efi_variable))
@@ -547,25 +290,14 @@ efivar_store_raw(struct efivar_entry *entry, const char *buf, size_t count)
 		return -EINVAL;
 	}
 
-	if ((new_var->Attributes & ~EFI_VARIABLE_MASK) != 0 ||
-	    validate_var(new_var, new_var->Data, new_var->DataSize) == false) {
-		printk(KERN_ERR "efivars: Malformed variable content\n");
-		return -EINVAL;
-	}
+	spin_lock(&efivars_lock);
+	status = efi.set_variable(new_var->VariableName,
+					&new_var->VendorGuid,
+					new_var->Attributes,
+					new_var->DataSize,
+					new_var->Data);
 
-	spin_lock_irq(&efivars->lock);
-
-	status = check_var_size_locked(efivars, new_var->Attributes,
-	       new_var->DataSize + utf16_strsize(new_var->VariableName, 1024));
-
-	if (status == EFI_SUCCESS || status == EFI_UNSUPPORTED)
-		status = efivars->ops->set_variable(new_var->VariableName,
-						    &new_var->VendorGuid,
-						    new_var->Attributes,
-						    new_var->DataSize,
-						    new_var->Data);
-
-	spin_unlock_irq(&efivars->lock);
+	spin_unlock(&efivars_lock);
 
 	if (status != EFI_SUCCESS) {
 		printk(KERN_WARNING "efivars: set_variable() failed: status=%lx\n",
@@ -586,7 +318,7 @@ efivar_show_raw(struct efivar_entry *entry, char *buf)
 	if (!entry || !buf)
 		return 0;
 
-	status = get_var_data(entry->efivars, var);
+	status = get_var_data(var);
 	if (status != EFI_SUCCESS)
 		return -EIO;
 
@@ -596,7 +328,7 @@ efivar_show_raw(struct efivar_entry *entry, char *buf)
 
 /*
  * Generic read/write functions that call the specific functions of
- * the attributes...
+ * the atttributes...
  */
 static ssize_t efivar_attr_show(struct kobject *kobj, struct attribute *attr,
 				char *buf)
@@ -630,7 +362,7 @@ static ssize_t efivar_attr_store(struct kobject *kobj, struct attribute *attr,
 	return ret;
 }
 
-static const struct sysfs_ops efivar_attr_ops = {
+static struct sysfs_ops efivar_attr_ops = {
 	.show = efivar_attr_show,
 	.store = efivar_attr_store,
 };
@@ -668,221 +400,12 @@ efivar_unregister(struct efivar_entry *var)
 	kobject_put(&var->kobj);
 }
 
-static int efi_status_to_err(efi_status_t status)
-{
-	int err;
 
-	switch (status) {
-	case EFI_INVALID_PARAMETER:
-		err = -EINVAL;
-		break;
-	case EFI_OUT_OF_RESOURCES:
-		err = -ENOSPC;
-		break;
-	case EFI_DEVICE_ERROR:
-		err = -EIO;
-		break;
-	case EFI_WRITE_PROTECTED:
-		err = -EROFS;
-		break;
-	case EFI_SECURITY_VIOLATION:
-		err = -EACCES;
-		break;
-	case EFI_NOT_FOUND:
-		err = -ENOENT;
-		break;
-	default:
-		err = -EINVAL;
-	}
-
-	return err;
-}
-
-#ifdef CONFIG_EFI_VARS_PSTORE
-
-static int efi_pstore_open(struct pstore_info *psi)
-{
-	struct efivars *efivars = psi->data;
-
-	spin_lock_irq(&efivars->lock);
-	efivars->walk_entry = list_first_entry(&efivars->list,
-					       struct efivar_entry, list);
-	return 0;
-}
-
-static int efi_pstore_close(struct pstore_info *psi)
-{
-	struct efivars *efivars = psi->data;
-
-	spin_unlock_irq(&efivars->lock);
-	return 0;
-}
-
-static ssize_t efi_pstore_read(u64 *id, enum pstore_type_id *type,
-			       struct timespec *timespec,
-			       char **buf, struct pstore_info *psi)
-{
-	efi_guid_t vendor = LINUX_EFI_CRASH_GUID;
-	struct efivars *efivars = psi->data;
-	char name[DUMP_NAME_LEN];
-	int i;
-	unsigned int part, size;
-	unsigned long time;
-
-	while (&efivars->walk_entry->list != &efivars->list) {
-		if (!efi_guidcmp(efivars->walk_entry->var.VendorGuid,
-				 vendor)) {
-			for (i = 0; i < DUMP_NAME_LEN; i++) {
-				name[i] = efivars->walk_entry->var.VariableName[i];
-			}
-			if (sscanf(name, "dump-type%u-%u-%lu", type, &part, &time) == 3) {
-				*id = part;
-				timespec->tv_sec = time;
-				timespec->tv_nsec = 0;
-				get_var_data_locked(efivars, &efivars->walk_entry->var);
-				size = efivars->walk_entry->var.DataSize;
-				*buf = kmalloc(size, GFP_KERNEL);
-				if (*buf == NULL)
-					return -ENOMEM;
-				memcpy(*buf, efivars->walk_entry->var.Data,
-				       size);
-				efivars->walk_entry = list_entry(efivars->walk_entry->list.next,
-					           struct efivar_entry, list);
-				return size;
-			}
-		}
-		efivars->walk_entry = list_entry(efivars->walk_entry->list.next,
-						 struct efivar_entry, list);
-	}
-	return 0;
-}
-
-static int efi_pstore_write(enum pstore_type_id type,
-		enum kmsg_dump_reason reason, u64 *id,
-		unsigned int part, size_t size, struct pstore_info *psi)
-{
-	char name[DUMP_NAME_LEN];
-	char stub_name[DUMP_NAME_LEN];
-	efi_char16_t efi_name[DUMP_NAME_LEN];
-	efi_guid_t vendor = LINUX_EFI_CRASH_GUID;
-	struct efivars *efivars = psi->data;
-	struct efivar_entry *entry, *found = NULL;
-	int i, ret = 0;
-	efi_status_t status = EFI_NOT_FOUND;
-	unsigned long flags;
-
-	sprintf(stub_name, "dump-type%u-%u-", type, part);
-	sprintf(name, "%s%lu", stub_name, get_seconds());
-
-	spin_lock_irqsave(&efivars->lock, flags);
-
-	if (size) {
-		/*
-		 * Check if there is a space enough to log.
-		 * size: a size of logging data
-		 * DUMP_NAME_LEN * 2: a maximum size of variable name
-		 */
-
-		status = check_var_size_locked(efivars, PSTORE_EFI_ATTRIBUTES,
-					       size + DUMP_NAME_LEN * 2);
-
-		if (status) {
-			spin_unlock_irqrestore(&efivars->lock, flags);
-			*id = part;
-			return -ENOSPC;
-		}
-	}
-
-	for (i = 0; i < DUMP_NAME_LEN; i++)
-		efi_name[i] = stub_name[i];
-
-	/*
-	 * Clean up any entries with the same name
-	 */
-
-	list_for_each_entry(entry, &efivars->list, list) {
-		get_var_data_locked(efivars, &entry->var);
-
-		if (efi_guidcmp(entry->var.VendorGuid, vendor))
-			continue;
-		if (utf16_strncmp(entry->var.VariableName, efi_name,
-				  utf16_strlen(efi_name)))
-			continue;
-		/* Needs to be a prefix */
-		if (entry->var.VariableName[utf16_strlen(efi_name)] == 0)
-			continue;
-
-		/* found */
-		found = entry;
-		efivars->ops->set_variable(entry->var.VariableName,
-					   &entry->var.VendorGuid,
-					   PSTORE_EFI_ATTRIBUTES,
-					   0, NULL);
-	}
-
-	if (found)
-		list_del(&found->list);
-
-	for (i = 0; i < DUMP_NAME_LEN; i++)
-		efi_name[i] = name[i];
-
-	efivars->ops->set_variable(efi_name, &vendor, PSTORE_EFI_ATTRIBUTES,
-				   size, psi->buf);
-
-	spin_unlock_irqrestore(&efivars->lock, flags);
-
-	if (found)
-		efivar_unregister(found);
-
-	if (reason == KMSG_DUMP_OOPS)
-		schedule_work(&efivar_work);
-
-	*id = part;
-	return ret;
-};
-
-static int efi_pstore_erase(enum pstore_type_id type, u64 id,
-			    struct pstore_info *psi)
-{
-	efi_pstore_write(type, 0, &id, (unsigned int)id, 0, psi);
-
-	return 0;
-}
-
-static struct pstore_info efi_pstore_info = {
-	.owner		= THIS_MODULE,
-	.name		= "efi",
-	.open		= efi_pstore_open,
-	.close		= efi_pstore_close,
-	.read		= efi_pstore_read,
-	.write		= efi_pstore_write,
-	.erase		= efi_pstore_erase,
-};
-
-static void efivar_pstore_register(struct efivars *efivars)
-{
-	efivars->efi_pstore_info = efi_pstore_info;
-	efivars->efi_pstore_info.buf = kmalloc(4096, GFP_KERNEL);
-	if (efivars->efi_pstore_info.buf) {
-		efivars->efi_pstore_info.bufsize = 1024;
-		efivars->efi_pstore_info.data = efivars;
-		spin_lock_init(&efivars->efi_pstore_info.buf_lock);
-		pstore_register(&efivars->efi_pstore_info);
-	}
-}
-#else
-static void efivar_pstore_register(struct efivars *efivars)
-{
-	return;
-}
-#endif
-
-static ssize_t efivar_create(struct file *filp, struct kobject *kobj,
+static ssize_t efivar_create(struct kobject *kobj,
 			     struct bin_attribute *bin_attr,
 			     char *buf, loff_t pos, size_t count)
 {
 	struct efi_variable *new_var = (struct efi_variable *)buf;
-	struct efivars *efivars = bin_attr->private;
 	struct efivar_entry *search_efivar, *n;
 	unsigned long strsize1, strsize2;
 	efi_status_t status = EFI_NOT_FOUND;
@@ -891,20 +414,14 @@ static ssize_t efivar_create(struct file *filp, struct kobject *kobj,
 	if (!capable(CAP_SYS_ADMIN))
 		return -EACCES;
 
-	if ((new_var->Attributes & ~EFI_VARIABLE_MASK) != 0 ||
-	    validate_var(new_var, new_var->Data, new_var->DataSize) == false) {
-		printk(KERN_ERR "efivars: Malformed variable content\n");
-		return -EINVAL;
-	}
-
-	spin_lock_irq(&efivars->lock);
+	spin_lock(&efivars_lock);
 
 	/*
 	 * Does this variable already exist?
 	 */
-	list_for_each_entry_safe(search_efivar, n, &efivars->list, list) {
-		strsize1 = utf16_strsize(search_efivar->var.VariableName, 1024);
-		strsize2 = utf16_strsize(new_var->VariableName, 1024);
+	list_for_each_entry_safe(search_efivar, n, &efivar_list, list) {
+		strsize1 = utf8_strsize(search_efivar->var.VariableName, 1024);
+		strsize2 = utf8_strsize(new_var->VariableName, 1024);
 		if (strsize1 == strsize2 &&
 			!memcmp(&(search_efivar->var.VariableName),
 				new_var->VariableName, strsize1) &&
@@ -915,51 +432,39 @@ static ssize_t efivar_create(struct file *filp, struct kobject *kobj,
 		}
 	}
 	if (found) {
-		spin_unlock_irq(&efivars->lock);
+		spin_unlock(&efivars_lock);
 		return -EINVAL;
 	}
 
-	status = check_var_size_locked(efivars, new_var->Attributes,
-	       new_var->DataSize + utf16_strsize(new_var->VariableName, 1024));
-
-	if (status && status != EFI_UNSUPPORTED) {
-		spin_unlock_irq(&efivars->lock);
-		return efi_status_to_err(status);
-	}
-
 	/* now *really* create the variable via EFI */
-	status = efivars->ops->set_variable(new_var->VariableName,
-					    &new_var->VendorGuid,
-					    new_var->Attributes,
-					    new_var->DataSize,
-					    new_var->Data);
+	status = efi.set_variable(new_var->VariableName,
+			&new_var->VendorGuid,
+			new_var->Attributes,
+			new_var->DataSize,
+			new_var->Data);
 
 	if (status != EFI_SUCCESS) {
 		printk(KERN_WARNING "efivars: set_variable() failed: status=%lx\n",
 			status);
-		spin_unlock_irq(&efivars->lock);
+		spin_unlock(&efivars_lock);
 		return -EIO;
 	}
-	spin_unlock_irq(&efivars->lock);
+	spin_unlock(&efivars_lock);
 
 	/* Create the entry in sysfs.  Locking is not required here */
-	status = efivar_create_sysfs_entry(efivars,
-					   utf16_strsize(new_var->VariableName,
-							 1024),
-					   new_var->VariableName,
-					   &new_var->VendorGuid);
+	status = efivar_create_sysfs_entry(utf8_strsize(new_var->VariableName,
+			1024), new_var->VariableName, &new_var->VendorGuid);
 	if (status) {
 		printk(KERN_WARNING "efivars: variable created, but sysfs entry wasn't.\n");
 	}
 	return count;
 }
 
-static ssize_t efivar_delete(struct file *filp, struct kobject *kobj,
+static ssize_t efivar_delete(struct kobject *kobj,
 			     struct bin_attribute *bin_attr,
 			     char *buf, loff_t pos, size_t count)
 {
 	struct efi_variable *del_var = (struct efi_variable *)buf;
-	struct efivars *efivars = bin_attr->private;
 	struct efivar_entry *search_efivar, *n;
 	unsigned long strsize1, strsize2;
 	efi_status_t status = EFI_NOT_FOUND;
@@ -968,14 +473,14 @@ static ssize_t efivar_delete(struct file *filp, struct kobject *kobj,
 	if (!capable(CAP_SYS_ADMIN))
 		return -EACCES;
 
-	spin_lock_irq(&efivars->lock);
+	spin_lock(&efivars_lock);
 
 	/*
 	 * Does this variable already exist?
 	 */
-	list_for_each_entry_safe(search_efivar, n, &efivars->list, list) {
-		strsize1 = utf16_strsize(search_efivar->var.VariableName, 1024);
-		strsize2 = utf16_strsize(del_var->VariableName, 1024);
+	list_for_each_entry_safe(search_efivar, n, &efivar_list, list) {
+		strsize1 = utf8_strsize(search_efivar->var.VariableName, 1024);
+		strsize2 = utf8_strsize(del_var->VariableName, 1024);
 		if (strsize1 == strsize2 &&
 			!memcmp(&(search_efivar->var.VariableName),
 				del_var->VariableName, strsize1) &&
@@ -986,127 +491,43 @@ static ssize_t efivar_delete(struct file *filp, struct kobject *kobj,
 		}
 	}
 	if (!found) {
-		spin_unlock_irq(&efivars->lock);
+		spin_unlock(&efivars_lock);
 		return -EINVAL;
 	}
 	/* force the Attributes/DataSize to 0 to ensure deletion */
 	del_var->Attributes = 0;
 	del_var->DataSize = 0;
 
-	status = efivars->ops->set_variable(del_var->VariableName,
-					    &del_var->VendorGuid,
-					    del_var->Attributes,
-					    del_var->DataSize,
-					    del_var->Data);
+	status = efi.set_variable(del_var->VariableName,
+			&del_var->VendorGuid,
+			del_var->Attributes,
+			del_var->DataSize,
+			del_var->Data);
 
 	if (status != EFI_SUCCESS) {
 		printk(KERN_WARNING "efivars: set_variable() failed: status=%lx\n",
 			status);
-		spin_unlock_irq(&efivars->lock);
+		spin_unlock(&efivars_lock);
 		return -EIO;
 	}
 	list_del(&search_efivar->list);
 	/* We need to release this lock before unregistering. */
-	spin_unlock_irq(&efivars->lock);
+	spin_unlock(&efivars_lock);
 	efivar_unregister(search_efivar);
 
 	/* It's dead Jim.... */
 	return count;
 }
 
-static bool variable_is_present(efi_char16_t *variable_name, efi_guid_t *vendor)
-{
-	struct efivar_entry *entry, *n;
-	struct efivars *efivars = &__efivars;
-	unsigned long strsize1, strsize2;
-	bool found = false;
+static struct bin_attribute var_subsys_attr_new_var = {
+	.attr = {.name = "new_var", .mode = 0200},
+	.write = efivar_create,
+};
 
-	strsize1 = utf16_strsize(variable_name, 1024);
-	list_for_each_entry_safe(entry, n, &efivars->list, list) {
-		strsize2 = utf16_strsize(entry->var.VariableName, 1024);
-		if (strsize1 == strsize2 &&
-			!memcmp(variable_name, &(entry->var.VariableName),
-				strsize2) &&
-			!efi_guidcmp(entry->var.VendorGuid,
-				*vendor)) {
-			found = true;
-			break;
-		}
-	}
-	return found;
-}
-
-static void efivar_update_sysfs_entries(struct work_struct *work)
-{
-	struct efivars *efivars = &__efivars;
-	efi_guid_t vendor;
-	efi_char16_t *variable_name;
-	unsigned long variable_name_size = 1024;
-	efi_status_t status = EFI_NOT_FOUND;
-	bool found;
-
-	/* Add new sysfs entries */
-	while (1) {
-		variable_name = kzalloc(variable_name_size, GFP_KERNEL);
-		if (!variable_name) {
-			pr_err("efivars: Memory allocation failed.\n");
-			return;
-		}
-
-		spin_lock_irq(&efivars->lock);
-		found = false;
-		while (1) {
-			variable_name_size = 1024;
-			status = efivars->ops->get_next_variable(
-							&variable_name_size,
-							variable_name,
-							&vendor);
-			if (status != EFI_SUCCESS) {
-				break;
-			} else {
-				if (!variable_is_present(variable_name,
-				    &vendor)) {
-					found = true;
-					break;
-				}
-			}
-		}
-		spin_unlock_irq(&efivars->lock);
-
-		if (!found) {
-			kfree(variable_name);
-			break;
-		} else
-			efivar_create_sysfs_entry(efivars,
-						  variable_name_size,
-						  variable_name, &vendor);
-	}
-}
-
-/*
- * Returns the size of variable_name, in bytes, including the
- * terminating NULL character, or variable_name_size if no NULL
- * character is found among the first variable_name_size bytes.
- */
-static unsigned long var_name_strnsize(efi_char16_t *variable_name,
-				       unsigned long variable_name_size)
-{
-	unsigned long len;
-	efi_char16_t c;
-
-	/*
-	 * The variable name is, by definition, a NULL-terminated
-	 * string, so make absolutely sure that variable_name_size is
-	 * the value we expect it to be. If not, return the real size.
-	 */
-	for (len = 2; len <= variable_name_size; len += sizeof(c)) {
-		c = variable_name[(len / sizeof(c)) - 1];
-		if (!c)
-			break;
-	}
-
-	return min(len, variable_name_size);
-}
+static struct bin_attribute var_subsys_attr_del_var = {
+	.attr = {.name = "del_var", .mode = 0200},
+	.write = efivar_delete,
+};
 
 /*
  * Let's not leave out systab information that snuck into
@@ -1150,6 +571,8 @@ static struct attribute_group efi_subsys_attr_group = {
 	.attrs = efi_subsys_attrs,
 };
 
+
+static struct kset *vars_kset;
 static struct kobject *efi_kobj;
 
 /*
@@ -1158,14 +581,13 @@ static struct kobject *efi_kobj;
  *    variable_name_size = number of bytes required to hold
  *                         variable_name (not counting the NULL
  *                         character at the end.
- *    efivars->lock is not held on entry or exit.
+ *    efivars_lock is not held on entry or exit.
  * Returns 1 on failure, 0 on success
  */
 static int
-efivar_create_sysfs_entry(struct efivars *efivars,
-			  unsigned long variable_name_size,
-			  efi_char16_t *variable_name,
-			  efi_guid_t *vendor_guid)
+efivar_create_sysfs_entry(unsigned long variable_name_size,
+			efi_char16_t *variable_name,
+			efi_guid_t *vendor_guid)
 {
 	int i, short_name_size = variable_name_size / sizeof(efi_char16_t) + 38;
 	char *short_name;
@@ -1180,7 +602,6 @@ efivar_create_sysfs_entry(struct efivars *efivars,
 		return 1;
 	}
 
-	new_efivar->efivars = efivars;
 	memcpy(new_efivar->var.VariableName, variable_name,
 		variable_name_size);
 	memcpy(&(new_efivar->var.VendorGuid), vendor_guid, sizeof(efi_guid_t));
@@ -1196,7 +617,7 @@ efivar_create_sysfs_entry(struct efivars *efivars,
 	*(short_name + strlen(short_name)) = '-';
 	efi_guid_unparse(vendor_guid, short_name + strlen(short_name));
 
-	new_efivar->kobj.kset = efivars->kset;
+	new_efivar->kobj.kset = vars_kset;
 	i = kobject_init_and_add(&new_efivar->kobj, &efivar_ktype, NULL,
 				 "%s", short_name);
 	if (i) {
@@ -1209,201 +630,12 @@ efivar_create_sysfs_entry(struct efivars *efivars,
 	kfree(short_name);
 	short_name = NULL;
 
-	spin_lock_irq(&efivars->lock);
-	list_add(&new_efivar->list, &efivars->list);
-	spin_unlock_irq(&efivars->lock);
+	spin_lock(&efivars_lock);
+	list_add(&new_efivar->list, &efivar_list);
+	spin_unlock(&efivars_lock);
 
 	return 0;
 }
-
-static int
-create_efivars_bin_attributes(struct efivars *efivars)
-{
-	struct bin_attribute *attr;
-	int error;
-
-	/* new_var */
-	attr = kzalloc(sizeof(*attr), GFP_KERNEL);
-	if (!attr)
-		return -ENOMEM;
-
-	attr->attr.name = "new_var";
-	attr->attr.mode = 0200;
-	attr->write = efivar_create;
-	attr->private = efivars;
-	efivars->new_var = attr;
-
-	/* del_var */
-	attr = kzalloc(sizeof(*attr), GFP_KERNEL);
-	if (!attr) {
-		error = -ENOMEM;
-		goto out_free;
-	}
-	attr->attr.name = "del_var";
-	attr->attr.mode = 0200;
-	attr->write = efivar_delete;
-	attr->private = efivars;
-	efivars->del_var = attr;
-
-	sysfs_bin_attr_init(efivars->new_var);
-	sysfs_bin_attr_init(efivars->del_var);
-
-	/* Register */
-	error = sysfs_create_bin_file(&efivars->kset->kobj,
-				      efivars->new_var);
-	if (error) {
-		printk(KERN_ERR "efivars: unable to create new_var sysfs file"
-			" due to error %d\n", error);
-		goto out_free;
-	}
-	error = sysfs_create_bin_file(&efivars->kset->kobj,
-				      efivars->del_var);
-	if (error) {
-		printk(KERN_ERR "efivars: unable to create del_var sysfs file"
-			" due to error %d\n", error);
-		sysfs_remove_bin_file(&efivars->kset->kobj,
-				      efivars->new_var);
-		goto out_free;
-	}
-
-	return 0;
-out_free:
-	kfree(efivars->del_var);
-	efivars->del_var = NULL;
-	kfree(efivars->new_var);
-	efivars->new_var = NULL;
-	return error;
-}
-
-void unregister_efivars(struct efivars *efivars)
-{
-	struct efivar_entry *entry, *n;
-
-	list_for_each_entry_safe(entry, n, &efivars->list, list) {
-		spin_lock_irq(&efivars->lock);
-		list_del(&entry->list);
-		spin_unlock_irq(&efivars->lock);
-		efivar_unregister(entry);
-	}
-	if (efivars->new_var)
-		sysfs_remove_bin_file(&efivars->kset->kobj, efivars->new_var);
-	if (efivars->del_var)
-		sysfs_remove_bin_file(&efivars->kset->kobj, efivars->del_var);
-	kfree(efivars->new_var);
-	kfree(efivars->del_var);
-	kset_unregister(efivars->kset);
-}
-EXPORT_SYMBOL_GPL(unregister_efivars);
-
-/*
- * Print a warning when duplicate EFI variables are encountered and
- * disable the sysfs workqueue since the firmware is buggy.
- */
-static void dup_variable_bug(efi_char16_t *s16, efi_guid_t *vendor_guid,
-			     unsigned long len16)
-{
-	size_t i, len8 = len16 / sizeof(efi_char16_t);
-	char *s8;
-
-	s8 = kzalloc(len8, GFP_KERNEL);
-	if (!s8)
-		return;
-
-	for (i = 0; i < len8; i++)
-		s8[i] = s16[i];
-
-	printk(KERN_WARNING "efivars: duplicate variable: %s-%pUl\n",
-	       s8, vendor_guid);
-	kfree(s8);
-}
-
-int register_efivars(struct efivars *efivars,
-		     const struct efivar_operations *ops,
-		     struct kobject *parent_kobj)
-{
-	efi_status_t status = EFI_NOT_FOUND;
-	efi_guid_t vendor_guid;
-	efi_char16_t *variable_name;
-	unsigned long variable_name_size = 1024;
-	int error = 0;
-
-	variable_name = kzalloc(variable_name_size, GFP_KERNEL);
-	if (!variable_name) {
-		printk(KERN_ERR "efivars: Memory allocation failed.\n");
-		return -ENOMEM;
-	}
-
-	spin_lock_init(&efivars->lock);
-	INIT_LIST_HEAD(&efivars->list);
-	efivars->ops = ops;
-
-	efivars->kset = kset_create_and_add("vars", NULL, parent_kobj);
-	if (!efivars->kset) {
-		printk(KERN_ERR "efivars: Subsystem registration failed.\n");
-		error = -ENOMEM;
-		goto out;
-	}
-
-	/*
-	 * Per EFI spec, the maximum storage allocated for both
-	 * the variable name and variable data is 1024 bytes.
-	 */
-
-	do {
-		variable_name_size = 1024;
-
-		status = ops->get_next_variable(&variable_name_size,
-						variable_name,
-						&vendor_guid);
-		switch (status) {
-		case EFI_SUCCESS:
-			variable_name_size = var_name_strnsize(variable_name,
-							       variable_name_size);
-
-			/*
-			 * Some firmware implementations return the
-			 * same variable name on multiple calls to
-			 * get_next_variable(). Terminate the loop
-			 * immediately as there is no guarantee that
-			 * we'll ever see a different variable name,
-			 * and may end up looping here forever.
-			 */
-			if (variable_is_present(variable_name, &vendor_guid)) {
-				dup_variable_bug(variable_name, &vendor_guid,
-						 variable_name_size);
-				status = EFI_NOT_FOUND;
-				break;
-			}
-
-			efivar_create_sysfs_entry(efivars,
-						  variable_name_size,
-						  variable_name,
-						  &vendor_guid);
-			break;
-		case EFI_NOT_FOUND:
-			break;
-		default:
-			printk(KERN_WARNING "efivars: get_next_variable: status=%lx\n",
-				status);
-			status = EFI_NOT_FOUND;
-			break;
-		}
-	} while (status != EFI_NOT_FOUND);
-
-	error = create_efivars_bin_attributes(efivars);
-	if (error)
-		unregister_efivars(efivars);
-
-	if (!efivars_pstore_disable)
-		efivar_pstore_register(efivars);
-
-out:
-	kfree(variable_name);
-
-	return error;
-}
-EXPORT_SYMBOL_GPL(register_efivars);
-
 /*
  * For now we register the efi subsystem with the firmware subsystem
  * and the vars subsystem with the efi subsystem.  In the future, it
@@ -1415,54 +647,113 @@ EXPORT_SYMBOL_GPL(register_efivars);
 static int __init
 efivars_init(void)
 {
+	efi_status_t status = EFI_NOT_FOUND;
+	efi_guid_t vendor_guid;
+	efi_char16_t *variable_name;
+	unsigned long variable_name_size = 1024;
 	int error = 0;
+
+	if (!efi_enabled)
+		return -ENODEV;
+
+	variable_name = kzalloc(variable_name_size, GFP_KERNEL);
+	if (!variable_name) {
+		printk(KERN_ERR "efivars: Memory allocation failed.\n");
+		return -ENOMEM;
+	}
 
 	printk(KERN_INFO "EFI Variables Facility v%s %s\n", EFIVARS_VERSION,
 	       EFIVARS_DATE);
-
-	if (!efi_enabled(EFI_RUNTIME_SERVICES))
-		return 0;
 
 	/* For now we'll register the efi directory at /sys/firmware/efi */
 	efi_kobj = kobject_create_and_add("efi", firmware_kobj);
 	if (!efi_kobj) {
 		printk(KERN_ERR "efivars: Firmware registration failed.\n");
-		return -ENOMEM;
+		error = -ENOMEM;
+		goto out_free;
 	}
 
-	ops.get_variable = efi.get_variable;
-	ops.set_variable = efi.set_variable;
-	ops.get_next_variable = efi.get_next_variable;
-	ops.query_variable_store = efi_query_variable_store;
-	error = register_efivars(&__efivars, &ops, efi_kobj);
+	vars_kset = kset_create_and_add("vars", NULL, efi_kobj);
+	if (!vars_kset) {
+		printk(KERN_ERR "efivars: Subsystem registration failed.\n");
+		error = -ENOMEM;
+		goto out_firmware_unregister;
+	}
+
+	/*
+	 * Per EFI spec, the maximum storage allocated for both
+	 * the variable name and variable data is 1024 bytes.
+	 */
+
+	do {
+		variable_name_size = 1024;
+
+		status = efi.get_next_variable(&variable_name_size,
+						variable_name,
+						&vendor_guid);
+		switch (status) {
+		case EFI_SUCCESS:
+			efivar_create_sysfs_entry(variable_name_size,
+							variable_name,
+							&vendor_guid);
+			break;
+		case EFI_NOT_FOUND:
+			break;
+		default:
+			printk(KERN_WARNING "efivars: get_next_variable: status=%lx\n",
+				status);
+			status = EFI_NOT_FOUND;
+			break;
+		}
+	} while (status != EFI_NOT_FOUND);
+
+	/*
+	 * Now add attributes to allow creation of new vars
+	 * and deletion of existing ones...
+	 */
+	error = sysfs_create_bin_file(&vars_kset->kobj,
+				      &var_subsys_attr_new_var);
 	if (error)
-		goto err_put;
+		printk(KERN_ERR "efivars: unable to create new_var sysfs file"
+			" due to error %d\n", error);
+	error = sysfs_create_bin_file(&vars_kset->kobj,
+				      &var_subsys_attr_del_var);
+	if (error)
+		printk(KERN_ERR "efivars: unable to create del_var sysfs file"
+			" due to error %d\n", error);
 
 	/* Don't forget the systab entry */
 	error = sysfs_create_group(efi_kobj, &efi_subsys_attr_group);
-	if (error) {
-		printk(KERN_ERR
-		       "efivars: Sysfs attribute export failed with error %d.\n",
-		       error);
-		goto err_unregister;
-	}
+	if (error)
+		printk(KERN_ERR "efivars: Sysfs attribute export failed with error %d.\n", error);
+	else
+		goto out_free;
 
-	return 0;
+	kset_unregister(vars_kset);
 
-err_unregister:
-	unregister_efivars(&__efivars);
-err_put:
+out_firmware_unregister:
 	kobject_put(efi_kobj);
+
+out_free:
+	kfree(variable_name);
+
 	return error;
 }
 
 static void __exit
 efivars_exit(void)
 {
-	if (efi_enabled(EFI_RUNTIME_SERVICES)) {
-		unregister_efivars(&__efivars);
-		kobject_put(efi_kobj);
+	struct efivar_entry *entry, *n;
+
+	list_for_each_entry_safe(entry, n, &efivar_list, list) {
+		spin_lock(&efivars_lock);
+		list_del(&entry->list);
+		spin_unlock(&efivars_lock);
+		efivar_unregister(entry);
 	}
+
+	kset_unregister(vars_kset);
+	kobject_put(efi_kobj);
 }
 
 module_init(efivars_init);

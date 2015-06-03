@@ -21,10 +21,6 @@ struct in6_pktinfo {
 	int		ipi6_ifindex;
 };
 
-struct ip6_mtuinfo {
-	struct sockaddr_in6	ip6m_addr;
-	__u32			ip6m_mtu;
-};
 
 struct in6_ifreq {
 	struct in6_addr	ifr6_addr;
@@ -58,7 +54,7 @@ struct ipv6_opt_hdr {
 	/* 
 	 * TLV encoded option data follows.
 	 */
-} __attribute__((packed));	/* required for some archs */
+} __attribute__ ((packed));	/* required for some archs */
 
 #define ipv6_destopt_hdr ipv6_opt_hdr
 #define ipv6_hopopt_hdr  ipv6_opt_hdr
@@ -99,7 +95,7 @@ struct ipv6_destopt_hao {
 	__u8			type;
 	__u8			length;
 	struct in6_addr		addr;
-} __attribute__((packed));
+} __attribute__ ((__packed__));
 
 /*
  *	IPv6 fixed header
@@ -171,7 +167,6 @@ struct ipv6_devconf {
 #endif
 	__s32		disable_ipv6;
 	__s32		accept_dad;
-	__s32		force_tllao;
 	void		*sysctl;
 };
 
@@ -212,7 +207,6 @@ enum {
 	DEVCONF_MC_FORWARDING,
 	DEVCONF_DISABLE_IPV6,
 	DEVCONF_ACCEPT_DAD,
-	DEVCONF_FORCE_TLLAO,
 	DEVCONF_MAX
 };
 
@@ -233,11 +227,6 @@ static inline struct ipv6hdr *ipipv6_hdr(const struct sk_buff *skb)
 	return (struct ipv6hdr *)skb_transport_header(skb);
 }
 
-static inline __u8 ipv6_tclass(const struct ipv6hdr *iph)
-{
-	return (ntohl(*(__be32 *)iph) >> 20) & 0xff;
-}
-
 /* 
    This structure contains results of exthdrs parsing
    as offsets from skb->nh.
@@ -251,7 +240,7 @@ struct inet6_skb_parm {
 	__u16			srcrt;
 	__u16			dst1;
 	__u16			lastopt;
-	__u16			nhoff;
+	__u32			nhoff;
 	__u16			flags;
 #if defined(CONFIG_IPV6_MIP6) || defined(CONFIG_IPV6_MIP6_MODULE)
 	__u16			dsthao;
@@ -259,12 +248,10 @@ struct inet6_skb_parm {
 
 #define IP6SKB_XFRM_TRANSFORMED	1
 #define IP6SKB_FORWARDED	2
-#define IP6SKB_REROUTED		4
 #define IP6SKB_FRAGMENTED      16
 };
 
 #define IP6CB(skb)	((struct inet6_skb_parm*)((skb)->cb))
-#define IP6CBMTU(skb)	((struct ip6_mtuinfo *)((skb)->cb))
 
 static inline int inet6_iif(const struct sk_buff *skb)
 {
@@ -330,7 +317,6 @@ struct ipv6_pinfo {
 				__unused_2:6;
 	__s16			mcast_hops:9;
 #endif
-	int			ucast_oif;
 	int			mcast_oif;
 
 	/* pktoption flags */
@@ -347,37 +333,30 @@ struct ipv6_pinfo {
 				dstopts:1,
 				odstopts:1,
                                 rxflow:1,
-				rxtclass:1,
-				rxpmtu:1,
-				rxorigdstaddr:1;
-				/* 2 bits hole */
+				rxtclass:1;
 		} bits;
 		__u16		all;
 	} rxopt;
 
 	/* sockopt flags */
-	__u16			recverr:1,
+	__u8			recverr:1,
 	                        sndflow:1,
 				pmtudisc:2,
 				ipv6only:1,
-				srcprefs:3,	/* 001: prefer temporary address
+				srcprefs:3;	/* 001: prefer temporary address
 						 * 010: prefer public address
 						 * 100: prefer care-of address
 						 */
-				dontfrag:1;
-	__u8			min_hopcount;
 	__u8			tclass;
-	__u8			rcv_tclass;
 
 	__u32			dst_cookie;
 
-	struct ipv6_mc_socklist	__rcu *ipv6_mc_list;
+	struct ipv6_mc_socklist	*ipv6_mc_list;
 	struct ipv6_ac_socklist	*ipv6_ac_list;
 	struct ipv6_fl_socklist *ipv6_fl_list;
 
 	struct ipv6_txoptions	*opt;
 	struct sk_buff		*pktoptions;
-	struct sk_buff		*rxpmtu;
 	struct {
 		struct ipv6_txoptions *opt;
 		u8 hop_limit;
@@ -392,7 +371,6 @@ struct raw6_sock {
 	__u32			checksum;	/* perform checksum */
 	__u32			offset;		/* checksum offset  */
 	struct icmp6_filter	filter;
-	__u32			ip6mr_table;
 	/* ipv6_pinfo has to be the last member of raw6_sock, see inet6_sk_generic */
 	struct ipv6_pinfo	inet6;
 };
@@ -411,7 +389,7 @@ struct tcp6_sock {
 
 extern int inet6_sk_rebuild_header(struct sock *sk);
 
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 static inline struct ipv6_pinfo * inet6_sk(const struct sock *__sk)
 {
 	return inet_sk(__sk)->pinet6;
@@ -522,11 +500,11 @@ static inline struct raw6_sock *raw6_sk(const struct sock *sk)
 #define inet6_rcv_saddr(__sk)	NULL
 #define tcp_twsk_ipv6only(__sk)		0
 #define inet_v6_ipv6only(__sk)		0
-#endif /* IS_ENABLED(CONFIG_IPV6) */
+#endif /* defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE) */
 
 #define INET6_MATCH(__sk, __net, __hash, __saddr, __daddr, __ports, __dif)\
 	(((__sk)->sk_hash == (__hash)) && sock_net((__sk)) == (__net)	&& \
-	 ((*((__portpair *)&(inet_sk(__sk)->inet_dport))) == (__ports)) && \
+	 ((*((__portpair *)&(inet_sk(__sk)->dport))) == (__ports))  	&& \
 	 ((__sk)->sk_family		== AF_INET6)		&& \
 	 ipv6_addr_equal(&inet6_sk(__sk)->daddr, (__saddr))	&& \
 	 ipv6_addr_equal(&inet6_sk(__sk)->rcv_saddr, (__daddr))	&& \

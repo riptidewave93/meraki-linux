@@ -41,7 +41,6 @@
 #include <linux/rcupdate.h>
 #include <linux/completion.h>
 #include <linux/tracehook.h>
-#include <linux/slab.h>
 
 #include <asm/errno.h>
 #include <asm/intrinsics.h>
@@ -49,6 +48,7 @@
 #include <asm/perfmon.h>
 #include <asm/processor.h>
 #include <asm/signal.h>
+#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/delay.h>
 
@@ -522,37 +522,42 @@ EXPORT_SYMBOL(pfm_sysctl);
 
 static ctl_table pfm_ctl_table[]={
 	{
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "debug",
 		.data		= &pfm_sysctl.debug,
 		.maxlen		= sizeof(int),
 		.mode		= 0666,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= &proc_dointvec,
 	},
 	{
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "debug_ovfl",
 		.data		= &pfm_sysctl.debug_ovfl,
 		.maxlen		= sizeof(int),
 		.mode		= 0666,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= &proc_dointvec,
 	},
 	{
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "fastctxsw",
 		.data		= &pfm_sysctl.fastctxsw,
 		.maxlen		= sizeof(int),
 		.mode		= 0600,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	=  &proc_dointvec,
 	},
 	{
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "expert_mode",
 		.data		= &pfm_sysctl.expert_mode,
 		.maxlen		= sizeof(int),
 		.mode		= 0600,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= &proc_dointvec,
 	},
 	{}
 };
 static ctl_table pfm_sysctl_dir[] = {
 	{
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "perfmon",
 		.mode		= 0555,
 		.child		= pfm_ctl_table,
@@ -561,6 +566,7 @@ static ctl_table pfm_sysctl_dir[] = {
 };
 static ctl_table pfm_sysctl_root[] = {
 	{
+		.ctl_name	= CTL_KERN,
 		.procname	= "kernel",
 		.mode		= 0555,
 		.child		= pfm_sysctl_dir,
@@ -604,25 +610,29 @@ pfm_unprotect_ctx_ctxsw(pfm_context_t *x, unsigned long f)
 	spin_unlock(&(x)->ctx_lock);
 }
 
+static inline unsigned int
+pfm_do_munmap(struct mm_struct *mm, unsigned long addr, size_t len, int acct)
+{
+	return do_munmap(mm, addr, len);
+}
+
 static inline unsigned long 
 pfm_get_unmapped_area(struct file *file, unsigned long addr, unsigned long len, unsigned long pgoff, unsigned long flags, unsigned long exec)
 {
 	return get_unmapped_area(file, addr, len, pgoff, flags);
 }
 
-/* forward declaration */
-static const struct dentry_operations pfmfs_dentry_operations;
 
-static struct dentry *
-pfmfs_mount(struct file_system_type *fs_type, int flags, const char *dev_name, void *data)
+static int
+pfmfs_get_sb(struct file_system_type *fs_type, int flags, const char *dev_name, void *data,
+	     struct vfsmount *mnt)
 {
-	return mount_pseudo(fs_type, "pfm:", NULL, &pfmfs_dentry_operations,
-			PFMFS_MAGIC);
+	return get_sb_pseudo(fs_type, "pfm:", NULL, PFMFS_MAGIC, mnt);
 }
 
 static struct file_system_type pfm_fs_type = {
 	.name     = "pfmfs",
-	.mount    = pfmfs_mount,
+	.get_sb   = pfmfs_get_sb,
 	.kill_sb  = kill_anon_super,
 };
 
@@ -825,9 +835,10 @@ pfm_rvmalloc(unsigned long size)
 	unsigned long addr;
 
 	size = PAGE_ALIGN(size);
-	mem  = vzalloc(size);
+	mem  = vmalloc(size);
 	if (mem) {
 		//printk("perfmon: CPU%d pfm_rvmalloc(%ld)=%p\n", smp_processor_id(), size, mem);
+		memset(mem, 0, size);
 		addr = (unsigned long)mem;
 		while (size > 0) {
 			pfm_reserve_page(addr);
@@ -1452,9 +1463,8 @@ pfm_unreserve_session(pfm_context_t *ctx, int is_syswide, unsigned int cpu)
  * a PROTECT_CTX() section.
  */
 static int
-pfm_remove_smpl_mapping(void *vaddr, unsigned long size)
+pfm_remove_smpl_mapping(struct task_struct *task, void *vaddr, unsigned long size)
 {
-	struct task_struct *task = current;
 	int r;
 
 	/* sanity checks */
@@ -1468,8 +1478,13 @@ pfm_remove_smpl_mapping(void *vaddr, unsigned long size)
 	/*
 	 * does the actual unmapping
 	 */
-	r = vm_munmap((unsigned long)vaddr, size);
+	down_write(&task->mm->mmap_sem);
 
+	DPRINT(("down_write done smpl_vaddr=%p size=%lu\n", vaddr, size));
+
+	r = pfm_do_munmap(task->mm, (unsigned long)vaddr, size, 0);
+
+	up_write(&task->mm->mmap_sem);
 	if (r !=0) {
 		printk(KERN_ERR "perfmon: [%d] unable to unmap sampling buffer @%p size=%lu\n", task_pid_nr(task), vaddr, size);
 	}
@@ -1533,7 +1548,7 @@ pfm_exit_smpl_buffer(pfm_buffer_fmt_t *fmt)
  * any operations on the root directory. However, we need a non-trivial
  * d_name - pfm: will go nicely and kill the special-casing in procfs.
  */
-static struct vfsmount *pfmfs_mnt __read_mostly;
+static struct vfsmount *pfmfs_mnt;
 
 static int __init
 init_pfm_fs(void)
@@ -1563,7 +1578,7 @@ pfm_read(struct file *filp, char __user *buf, size_t size, loff_t *ppos)
 		return -EINVAL;
 	}
 
-	ctx = filp->private_data;
+	ctx = (pfm_context_t *)filp->private_data;
 	if (ctx == NULL) {
 		printk(KERN_ERR "perfmon: pfm_read: NULL ctx [%d]\n", task_pid_nr(current));
 		return -EINVAL;
@@ -1663,7 +1678,7 @@ pfm_poll(struct file *filp, poll_table * wait)
 		return 0;
 	}
 
-	ctx = filp->private_data;
+	ctx = (pfm_context_t *)filp->private_data;
 	if (ctx == NULL) {
 		printk(KERN_ERR "perfmon: pfm_poll: NULL ctx [%d]\n", task_pid_nr(current));
 		return 0;
@@ -1686,8 +1701,8 @@ pfm_poll(struct file *filp, poll_table * wait)
 	return mask;
 }
 
-static long
-pfm_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static int
+pfm_ioctl(struct inode *inode, struct file *file, unsigned int cmd, unsigned long arg)
 {
 	DPRINT(("pfm_ioctl called\n"));
 	return -EINVAL;
@@ -1723,7 +1738,7 @@ pfm_fasync(int fd, struct file *filp, int on)
 		return -EBADF;
 	}
 
-	ctx = filp->private_data;
+	ctx = (pfm_context_t *)filp->private_data;
 	if (ctx == NULL) {
 		printk(KERN_ERR "perfmon: pfm_fasync NULL ctx [%d]\n", task_pid_nr(current));
 		return -EBADF;
@@ -1831,7 +1846,7 @@ pfm_flush(struct file *filp, fl_owner_t id)
 		return -EBADF;
 	}
 
-	ctx = filp->private_data;
+	ctx = (pfm_context_t *)filp->private_data;
 	if (ctx == NULL) {
 		printk(KERN_ERR "perfmon: pfm_flush: NULL ctx [%d]\n", task_pid_nr(current));
 		return -EBADF;
@@ -1935,7 +1950,7 @@ pfm_flush(struct file *filp, fl_owner_t id)
 	 * because some VM function reenables interrupts.
 	 *
 	 */
-	if (smpl_buf_vaddr) pfm_remove_smpl_mapping(smpl_buf_vaddr, smpl_buf_size);
+	if (smpl_buf_vaddr) pfm_remove_smpl_mapping(current, smpl_buf_vaddr, smpl_buf_size);
 
 	return 0;
 }
@@ -1974,7 +1989,7 @@ pfm_close(struct inode *inode, struct file *filp)
 		return -EBADF;
 	}
 	
-	ctx = filp->private_data;
+	ctx = (pfm_context_t *)filp->private_data;
 	if (ctx == NULL) {
 		printk(KERN_ERR "perfmon: pfm_close: NULL ctx [%d]\n", task_pid_nr(current));
 		return -EBADF;
@@ -2164,32 +2179,25 @@ pfm_no_open(struct inode *irrelevant, struct file *dontcare)
 
 
 static const struct file_operations pfm_file_ops = {
-	.llseek		= no_llseek,
-	.read		= pfm_read,
-	.write		= pfm_write,
-	.poll		= pfm_poll,
-	.unlocked_ioctl = pfm_ioctl,
-	.open		= pfm_no_open,	/* special open code to disallow open via /proc */
-	.fasync		= pfm_fasync,
-	.release	= pfm_close,
-	.flush		= pfm_flush
+	.llseek   = no_llseek,
+	.read     = pfm_read,
+	.write    = pfm_write,
+	.poll     = pfm_poll,
+	.ioctl    = pfm_ioctl,
+	.open     = pfm_no_open,	/* special open code to disallow open via /proc */
+	.fasync   = pfm_fasync,
+	.release  = pfm_close,
+	.flush	  = pfm_flush
 };
 
 static int
-pfmfs_delete_dentry(const struct dentry *dentry)
+pfmfs_delete_dentry(struct dentry *dentry)
 {
 	return 1;
 }
 
-static char *pfmfs_dname(struct dentry *dentry, char *buffer, int buflen)
-{
-	return dynamic_dname(dentry, buffer, buflen, "pfm:[%lu]",
-			     dentry->d_inode->i_ino);
-}
-
 static const struct dentry_operations pfmfs_dentry_operations = {
 	.d_delete = pfmfs_delete_dentry,
-	.d_dname = pfmfs_dname,
 };
 
 
@@ -2198,8 +2206,9 @@ pfm_alloc_file(pfm_context_t *ctx)
 {
 	struct file *file;
 	struct inode *inode;
-	struct path path;
-	struct qstr this = { .name = "" };
+	struct dentry *dentry;
+	char name[32];
+	struct qstr this;
 
 	/*
 	 * allocate a new inode
@@ -2214,21 +2223,26 @@ pfm_alloc_file(pfm_context_t *ctx)
 	inode->i_uid  = current_fsuid();
 	inode->i_gid  = current_fsgid();
 
+	sprintf(name, "[%lu]", inode->i_ino);
+	this.name = name;
+	this.len  = strlen(name);
+	this.hash = inode->i_ino;
+
 	/*
 	 * allocate a new dcache entry
 	 */
-	path.dentry = d_alloc(pfmfs_mnt->mnt_root, &this);
-	if (!path.dentry) {
+	dentry = d_alloc(pfmfs_mnt->mnt_sb->s_root, &this);
+	if (!dentry) {
 		iput(inode);
 		return ERR_PTR(-ENOMEM);
 	}
-	path.mnt = mntget(pfmfs_mnt);
 
-	d_add(path.dentry, inode);
+	dentry->d_op = &pfmfs_dentry_operations;
+	d_add(dentry, inode);
 
-	file = alloc_file(&path, FMODE_READ, &pfm_file_ops);
+	file = alloc_file(pfmfs_mnt, dentry, FMODE_READ, &pfm_file_ops);
 	if (!file) {
-		path_put(&path);
+		dput(dentry);
 		return ERR_PTR(-ENFILE);
 	}
 
@@ -2284,7 +2298,7 @@ pfm_smpl_buffer_alloc(struct task_struct *task, struct file *filp, pfm_context_t
 	 * if ((mm->total_vm << PAGE_SHIFT) + len> task->rlim[RLIMIT_AS].rlim_cur)
 	 * 	return -ENOMEM;
 	 */
-	if (size > task_rlimit(task, RLIMIT_MEMLOCK))
+	if (size > task->signal->rlim[RLIMIT_MEMLOCK].rlim_cur)
 		return -ENOMEM;
 
 	/*
@@ -2306,7 +2320,6 @@ pfm_smpl_buffer_alloc(struct task_struct *task, struct file *filp, pfm_context_t
 		DPRINT(("Cannot allocate vma\n"));
 		goto error_kmem;
 	}
-	INIT_LIST_HEAD(&vma->anon_vma_chain);
 
 	/*
 	 * partially initialize the vma for the sampling buffer
@@ -2705,7 +2718,7 @@ pfm_context_create(pfm_context_t *ctx, void *arg, int count, struct pt_regs *reg
 			goto buffer_error;
 	}
 
-	DPRINT(("ctx=%p flags=0x%x system=%d notify_block=%d excl_idle=%d no_msg=%d ctx_fd=%d\n",
+	DPRINT(("ctx=%p flags=0x%x system=%d notify_block=%d excl_idle=%d no_msg=%d ctx_fd=%d \n",
 		ctx,
 		ctx_flags,
 		ctx->ctx_fl_system,
@@ -3510,7 +3523,7 @@ pfm_use_debug_registers(struct task_struct *task)
  * IA64_THREAD_DBG_VALID set. This indicates a task which was
  * able to use the debug registers for debugging purposes via
  * ptrace(). Therefore we know it was not using them for
- * performance monitoring, so we only decrement the number
+ * perfmormance monitoring, so we only decrement the number
  * of "ptraced" debug register users to keep the count up to date
  */
 int
@@ -3669,7 +3682,7 @@ pfm_restart(pfm_context_t *ctx, void *arg, int count, struct pt_regs *regs)
 	 * "self-monitoring".
 	 */
 	if (CTX_OVFL_NOBLOCK(ctx) == 0 && state == PFM_CTX_MASKED) {
-		DPRINT(("unblocking [%d]\n", task_pid_nr(task)));
+		DPRINT(("unblocking [%d] \n", task_pid_nr(task)));
 		complete(&ctx->ctx_restart_done);
 	} else {
 		DPRINT(("[%d] armed exit trap\n", task_pid_nr(task)));
@@ -4896,7 +4909,7 @@ restart_args:
 		goto error_args;
 	}
 
-	ctx = file->private_data;
+	ctx = (pfm_context_t *)file->private_data;
 	if (unlikely(ctx == NULL)) {
 		DPRINT(("no context for fd %d\n", fd));
 		goto error_args;

@@ -13,6 +13,7 @@
  */
 
 #include <linux/module.h>
+#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <linux/bitops.h>
 #include <linux/string.h>
@@ -23,7 +24,6 @@
 #include <linux/errno.h>
 #include <linux/netdevice.h>
 #include <linux/timer.h>
-#include <linux/slab.h>
 #include <net/ax25.h>
 #include <linux/etherdevice.h>
 #include <linux/skbuff.h>
@@ -34,8 +34,7 @@
 #include <linux/ip.h>
 #include <linux/tcp.h>
 #include <linux/semaphore.h>
-#include <linux/compat.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #define SIXPACK_VERSION    "Revision: 0.3.0"
 
@@ -607,7 +606,7 @@ static int sixpack_open(struct tty_struct *tty)
 
 	spin_lock_init(&sp->lock);
 	atomic_set(&sp->refcnt, 1);
-	sema_init(&sp->dead_sem, 0);
+	init_MUTEX_LOCKED(&sp->dead_sem);
 
 	/* !!! length of the buffers. MTU is IP MTU, not PACLEN!  */
 
@@ -778,23 +777,6 @@ static int sixpack_ioctl(struct tty_struct *tty, struct file *file,
 	return err;
 }
 
-#ifdef CONFIG_COMPAT
-static long sixpack_compat_ioctl(struct tty_struct * tty, struct file * file,
-				unsigned int cmd, unsigned long arg)
-{
-	switch (cmd) {
-	case SIOCGIFNAME:
-	case SIOCGIFENCAP:
-	case SIOCSIFENCAP:
-	case SIOCSIFHWADDR:
-		return sixpack_ioctl(tty, file, cmd,
-				(unsigned long)compat_ptr(arg));
-	}
-
-	return -ENOIOCTLCMD;
-}
-#endif
-
 static struct tty_ldisc_ops sp_ldisc = {
 	.owner		= THIS_MODULE,
 	.magic		= TTY_LDISC_MAGIC,
@@ -802,9 +784,6 @@ static struct tty_ldisc_ops sp_ldisc = {
 	.open		= sixpack_open,
 	.close		= sixpack_close,
 	.ioctl		= sixpack_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= sixpack_compat_ioctl,
-#endif
 	.receive_buf	= sixpack_receive_buf,
 	.write_wakeup	= sixpack_write_wakeup,
 };

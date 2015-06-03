@@ -17,7 +17,6 @@
 #include <linux/platform_device.h>
 #include <linux/input.h>
 #include <linux/mfd/ezx-pcap.h>
-#include <linux/slab.h>
 
 struct pcap_keys {
 	struct pcap_chip *pcap;
@@ -125,7 +124,19 @@ static struct platform_driver pcap_keys_device_driver = {
 		.owner	= THIS_MODULE,
 	}
 };
-module_platform_driver(pcap_keys_device_driver);
+
+static int __init pcap_keys_init(void)
+{
+	return platform_driver_register(&pcap_keys_device_driver);
+};
+
+static void __exit pcap_keys_exit(void)
+{
+	platform_driver_unregister(&pcap_keys_device_driver);
+};
+
+module_init(pcap_keys_init);
+module_exit(pcap_keys_exit);
 
 MODULE_DESCRIPTION("Motorola PCAP2 input events driver");
 MODULE_AUTHOR("Ilya Petrov <ilya.muromec@gmail.com>");

@@ -21,7 +21,6 @@
 #include <linux/fs.h>
 #include <linux/xattr.h>
 #include <linux/posix_acl_xattr.h>
-#include <linux/slab.h>
 #include <linux/quotaops.h>
 #include <linux/security.h>
 #include "jfs_incore.h"
@@ -240,14 +239,14 @@ static int ea_write(struct inode *ip, struct jfs_ea_list *ealist, int size,
 	nblocks = (size + (sb->s_blocksize - 1)) >> sb->s_blocksize_bits;
 
 	/* Allocate new blocks to quota. */
-	rc = dquot_alloc_block(ip, nblocks);
-	if (rc)
-		return rc;
+	if (vfs_dq_alloc_block(ip, nblocks)) {
+		return -EDQUOT;
+	}
 
 	rc = dbAlloc(ip, INOHINT(ip), nblocks, &blkno);
 	if (rc) {
 		/*Rollback quota allocation. */
-		dquot_free_block(ip, nblocks);
+		vfs_dq_free_block(ip, nblocks);
 		return rc;
 	}
 
@@ -312,7 +311,7 @@ static int ea_write(struct inode *ip, struct jfs_ea_list *ealist, int size,
 
       failed:
 	/* Rollback quota allocation. */
-	dquot_free_block(ip, nblocks);
+	vfs_dq_free_block(ip, nblocks);
 
 	dbFree(ip, blkno, nblocks);
 	return rc;
@@ -518,8 +517,7 @@ static int ea_get(struct inode *inode, struct ea_buffer *ea_buf, int min_size)
 
 	if (blocks_needed > current_blocks) {
 		/* Allocate new blocks to quota. */
-		rc = dquot_alloc_block(inode, blocks_needed);
-		if (rc)
+		if (vfs_dq_alloc_block(inode, blocks_needed))
 			return -EDQUOT;
 
 		quota_allocation = blocks_needed;
@@ -583,7 +581,7 @@ static int ea_get(struct inode *inode, struct ea_buffer *ea_buf, int min_size)
       clean_up:
 	/* Rollback quota allocation */
 	if (quota_allocation)
-		dquot_free_block(inode, quota_allocation);
+		vfs_dq_free_block(inode, quota_allocation);
 
 	return (rc);
 }
@@ -658,7 +656,7 @@ static int ea_put(tid_t tid, struct inode *inode, struct ea_buffer *ea_buf,
 
 	/* If old blocks exist, they must be removed from quota allocation. */
 	if (old_blocks)
-		dquot_free_block(inode, old_blocks);
+		vfs_dq_free_block(inode, old_blocks);
 
 	inode->i_ctime = CURRENT_TIME;
 
@@ -678,7 +676,7 @@ static int can_set_system_xattr(struct inode *inode, const char *name,
 	struct posix_acl *acl;
 	int rc;
 
-	if (!inode_owner_or_capable(inode))
+	if (!is_owner_or_cap(inode))
 		return -EPERM;
 
 	/*
@@ -693,7 +691,8 @@ static int can_set_system_xattr(struct inode *inode, const char *name,
 			return rc;
 		}
 		if (acl) {
-			rc = posix_acl_equiv_mode(acl, &inode->i_mode);
+			mode_t mode = inode->i_mode;
+			rc = posix_acl_equiv_mode(acl, &mode);
 			posix_acl_release(acl);
 			if (rc < 0) {
 				printk(KERN_ERR
@@ -701,6 +700,7 @@ static int can_set_system_xattr(struct inode *inode, const char *name,
 				       rc);
 				return rc;
 			}
+			inode->i_mode = mode;
 			mark_inode_dirty(inode);
 		}
 		/*
@@ -1089,37 +1089,36 @@ int jfs_removexattr(struct dentry *dentry, const char *name)
 }
 
 #ifdef CONFIG_JFS_SECURITY
-int jfs_initxattrs(struct inode *inode, const struct xattr *xattr_array,
-		   void *fs_info)
+int jfs_init_security(tid_t tid, struct inode *inode, struct inode *dir)
 {
-	const struct xattr *xattr;
-	tid_t *tid = fs_info;
+	int rc;
+	size_t len;
+	void *value;
+	char *suffix;
 	char *name;
-	int err = 0;
 
-	for (xattr = xattr_array; xattr->name != NULL; xattr++) {
-		name = kmalloc(XATTR_SECURITY_PREFIX_LEN +
-			       strlen(xattr->name) + 1, GFP_NOFS);
-		if (!name) {
-			err = -ENOMEM;
-			break;
-		}
-		strcpy(name, XATTR_SECURITY_PREFIX);
-		strcpy(name + XATTR_SECURITY_PREFIX_LEN, xattr->name);
-
-		err = __jfs_setxattr(*tid, inode, name,
-				     xattr->value, xattr->value_len, 0);
-		kfree(name);
-		if (err < 0)
-			break;
+	rc = security_inode_init_security(inode, dir, &suffix, &value, &len);
+	if (rc) {
+		if (rc == -EOPNOTSUPP)
+			return 0;
+		return rc;
 	}
-	return err;
-}
+	name = kmalloc(XATTR_SECURITY_PREFIX_LEN + 1 + strlen(suffix),
+		       GFP_NOFS);
+	if (!name) {
+		rc = -ENOMEM;
+		goto kmalloc_failed;
+	}
+	strcpy(name, XATTR_SECURITY_PREFIX);
+	strcpy(name + XATTR_SECURITY_PREFIX_LEN, suffix);
 
-int jfs_init_security(tid_t tid, struct inode *inode, struct inode *dir,
-		      const struct qstr *qstr)
-{
-	return security_inode_init_security(inode, dir, qstr,
-					    &jfs_initxattrs, &tid);
+	rc = __jfs_setxattr(tid, inode, name, value, len, 0);
+
+	kfree(name);
+kmalloc_failed:
+	kfree(suffix);
+	kfree(value);
+
+	return rc;
 }
 #endif

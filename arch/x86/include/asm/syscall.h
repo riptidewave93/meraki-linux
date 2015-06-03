@@ -15,10 +15,6 @@
 
 #include <linux/sched.h>
 #include <linux/err.h>
-#include <asm/asm-offsets.h>	/* For NR_syscalls */
-#include <asm/unistd.h>
-
-extern const unsigned long sys_call_table[];
 
 /*
  * Only the low 32 bits of orig_ax are meaningful, so we return int.

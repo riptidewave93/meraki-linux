@@ -8,6 +8,7 @@
  * published by the Free Software Foundation.
  */
 
+#include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/signal.h>
@@ -69,7 +70,7 @@ static int iwmmxt_do(struct notifier_block *self, unsigned long cmd, void *t)
 		 * initialised state information on the first fault.
 		 */
 
-	case THREAD_NOTIFY_EXIT:
+	case THREAD_NOTIFY_RELEASE:
 		iwmmxt_task_release(thread);
 		break;
 

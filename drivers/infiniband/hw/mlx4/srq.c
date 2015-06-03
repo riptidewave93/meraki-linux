@@ -33,7 +33,6 @@
 
 #include <linux/mlx4/qp.h>
 #include <linux/mlx4/srq.h>
-#include <linux/slab.h>
 
 #include "mlx4_ib.h"
 #include "user.h"
@@ -75,9 +74,6 @@ struct ib_srq *mlx4_ib_create_srq(struct ib_pd *pd,
 	struct mlx4_ib_dev *dev = to_mdev(pd->device);
 	struct mlx4_ib_srq *srq;
 	struct mlx4_wqe_srq_next_seg *next;
-	struct mlx4_wqe_data_seg *scatter;
-	u32 cqn;
-	u16 xrcdn;
 	int desc_size;
 	int buf_size;
 	int err;
@@ -153,11 +149,6 @@ struct ib_srq *mlx4_ib_create_srq(struct ib_pd *pd,
 			next = get_wqe(srq, i);
 			next->next_wqe_index =
 				cpu_to_be16((i + 1) & (srq->msrq.max - 1));
-
-			for (scatter = (void *) (next + 1);
-			     (void *) scatter < (void *) next + desc_size;
-			     ++scatter)
-				scatter->lkey = cpu_to_be32(MLX4_INVALID_LKEY);
 		}
 
 		err = mlx4_mtt_init(dev->dev, srq->buf.npages, srq->buf.page_shift,
@@ -176,18 +167,12 @@ struct ib_srq *mlx4_ib_create_srq(struct ib_pd *pd,
 		}
 	}
 
-	cqn = (init_attr->srq_type == IB_SRQT_XRC) ?
-		to_mcq(init_attr->ext.xrc.cq)->mcq.cqn : 0;
-	xrcdn = (init_attr->srq_type == IB_SRQT_XRC) ?
-		to_mxrcd(init_attr->ext.xrc.xrcd)->xrcdn :
-		(u16) dev->dev->caps.reserved_xrcds;
-	err = mlx4_srq_alloc(dev->dev, to_mpd(pd)->pdn, cqn, xrcdn, &srq->mtt,
+	err = mlx4_srq_alloc(dev->dev, to_mpd(pd)->pdn, &srq->mtt,
 			     srq->db.dma, &srq->msrq);
 	if (err)
 		goto err_wrid;
 
 	srq->msrq.event = mlx4_ib_srq_event;
-	srq->ibsrq.ext.xrc.srq_num = srq->msrq.srqn;
 
 	if (pd->uobject)
 		if (ib_copy_to_udata(udata, &srq->msrq.srqn, sizeof (__u32))) {

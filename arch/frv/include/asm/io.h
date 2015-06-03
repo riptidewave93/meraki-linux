@@ -21,7 +21,6 @@
 #include <asm/virtconvert.h>
 #include <asm/string.h>
 #include <asm/mb-regs.h>
-#include <asm-generic/pci_iomap.h>
 #include <linux/delay.h>
 
 /*
@@ -371,6 +370,7 @@ static inline void iowrite32_rep(void __iomem *p, const void *src, unsigned long
 
 /* Create a virtual mapping cookie for a PCI BAR (memory or IO) */
 struct pci_dev;
+extern void __iomem *pci_iomap(struct pci_dev *dev, int bar, unsigned long max);
 static inline void pci_iounmap(struct pci_dev *dev, void __iomem *p)
 {
 }

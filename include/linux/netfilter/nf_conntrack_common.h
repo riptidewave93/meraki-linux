@@ -3,7 +3,8 @@
 /* Connection state tracking for netfilter.  This is separated from,
    but required by, the NAT layer; it can also be used by an iptables
    extension. */
-enum ip_conntrack_info {
+enum ip_conntrack_info
+{
 	/* Part of an established connection (either direction). */
 	IP_CT_ESTABLISHED,
 
@@ -18,9 +19,6 @@ enum ip_conntrack_info {
 	/* >= this indicates reply direction */
 	IP_CT_IS_REPLY,
 
-	IP_CT_ESTABLISHED_REPLY = IP_CT_ESTABLISHED + IP_CT_IS_REPLY,
-	IP_CT_RELATED_REPLY = IP_CT_RELATED + IP_CT_IS_REPLY,
-	IP_CT_NEW_REPLY = IP_CT_NEW + IP_CT_IS_REPLY,	
 	/* Number of distinct IP_CT types (no NEW in reply dirn). */
 	IP_CT_NUMBER = IP_CT_IS_REPLY * 2 - 1
 };
@@ -75,42 +73,11 @@ enum ip_conntrack_status {
 	/* Connection has fixed timeout. */
 	IPS_FIXED_TIMEOUT_BIT = 10,
 	IPS_FIXED_TIMEOUT = (1 << IPS_FIXED_TIMEOUT_BIT),
-
-	/* Conntrack is a template */
-	IPS_TEMPLATE_BIT = 11,
-	IPS_TEMPLATE = (1 << IPS_TEMPLATE_BIT),
-
-	/* Conntrack is a fake untracked entry */
-	IPS_UNTRACKED_BIT = 12,
-	IPS_UNTRACKED = (1 << IPS_UNTRACKED_BIT),
 };
-
-/* Connection tracking event types */
-enum ip_conntrack_events {
-	IPCT_NEW,		/* new conntrack */
-	IPCT_RELATED,		/* related conntrack */
-	IPCT_DESTROY,		/* destroyed conntrack */
-	IPCT_REPLY,		/* connection has seen two-way traffic */
-	IPCT_ASSURED,		/* connection status has changed to assured */
-	IPCT_PROTOINFO,		/* protocol information has changed */
-	IPCT_HELPER,		/* new helper has been set */
-	IPCT_MARK,		/* new mark has been set */
-	IPCT_NATSEQADJ,		/* NAT is doing sequence adjustment */
-	IPCT_SECMARK,		/* new security mark has been set */
-};
-
-enum ip_conntrack_expect_events {
-	IPEXP_NEW,		/* new expectation */
-	IPEXP_DESTROY,		/* destroyed expectation */
-};
-
-/* expectation flags */
-#define NF_CT_EXPECT_PERMANENT		0x1
-#define NF_CT_EXPECT_INACTIVE		0x2
-#define NF_CT_EXPECT_USERSPACE		0x4
 
 #ifdef __KERNEL__
-struct ip_conntrack_stat {
+struct ip_conntrack_stat
+{
 	unsigned int searched;
 	unsigned int found;
 	unsigned int new;
@@ -126,7 +93,6 @@ struct ip_conntrack_stat {
 	unsigned int expect_new;
 	unsigned int expect_create;
 	unsigned int expect_delete;
-	unsigned int search_restart;
 };
 
 /* call to create an explicit dependency on nf_conntrack. */

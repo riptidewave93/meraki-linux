@@ -11,7 +11,7 @@
 #define EVENT_BUFFER_H
 
 #include <linux/types.h>
-#include <linux/mutex.h>
+#include <asm/mutex.h>
 
 int alloc_event_buffer(void);
 

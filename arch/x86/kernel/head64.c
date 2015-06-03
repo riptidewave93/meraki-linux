@@ -12,7 +12,6 @@
 #include <linux/percpu.h>
 #include <linux/start_kernel.h>
 #include <linux/io.h>
-#include <linux/memblock.h>
 
 #include <asm/processor.h>
 #include <asm/proto.h>
@@ -77,7 +76,8 @@ void __init x86_64_start_kernel(char * real_mode_data)
 	/* Make NULL pointers segfault */
 	zap_identity_mappings();
 
-	max_pfn_mapped = KERNEL_IMAGE_SIZE >> PAGE_SHIFT;
+	/* Cleanup the over mapped high alias */
+	cleanup_highmap();
 
 	for (i = 0; i < NUM_EXCEPTION_VECTORS; i++) {
 #ifdef CONFIG_EARLY_PRINTK
@@ -98,17 +98,17 @@ void __init x86_64_start_reservations(char *real_mode_data)
 {
 	copy_bootdata(__va(real_mode_data));
 
-	memblock_reserve(__pa_symbol(&_text),
-			 __pa_symbol(&__bss_stop) - __pa_symbol(&_text));
+	reserve_trampoline_memory();
+
+	reserve_early(__pa_symbol(&_text), __pa_symbol(&__bss_stop), "TEXT DATA BSS");
 
 #ifdef CONFIG_BLK_DEV_INITRD
 	/* Reserve INITRD */
 	if (boot_params.hdr.type_of_loader && boot_params.hdr.ramdisk_image) {
-		/* Assume only end is not page aligned */
 		unsigned long ramdisk_image = boot_params.hdr.ramdisk_image;
 		unsigned long ramdisk_size  = boot_params.hdr.ramdisk_size;
-		unsigned long ramdisk_end   = PAGE_ALIGN(ramdisk_image + ramdisk_size);
-		memblock_reserve(ramdisk_image, ramdisk_end - ramdisk_image);
+		unsigned long ramdisk_end   = ramdisk_image + ramdisk_size;
+		reserve_early(ramdisk_image, ramdisk_end, "RAMDISK");
 	}
 #endif
 

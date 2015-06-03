@@ -3,7 +3,6 @@
 #include <asm/io.h>
 #include <asm/time.h>
 #include <asm/mpc52xx.h>
-#include <asm/switch_to.h>
 
 /* defined in lite5200_sleep.S and only used here */
 extern void lite5200_low_power(void __iomem *sram, void __iomem *mbar);
@@ -217,6 +216,9 @@ static int lite5200_pm_enter(suspend_state_t state)
 
 	lite5200_restore_regs();
 
+	/* restart jiffies */
+	wakeup_decrementer();
+
 	iounmap(mbar);
 	return 0;
 }
@@ -233,7 +235,7 @@ static void lite5200_pm_end(void)
 	lite5200_pm_target_state = PM_SUSPEND_ON;
 }
 
-static const struct platform_suspend_ops lite5200_pm_ops = {
+static struct platform_suspend_ops lite5200_pm_ops = {
 	.valid		= lite5200_pm_valid,
 	.begin		= lite5200_pm_begin,
 	.prepare	= lite5200_pm_prepare,

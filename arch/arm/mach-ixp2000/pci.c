@@ -22,10 +22,12 @@
 #include <linux/mm.h>
 #include <linux/init.h>
 #include <linux/ioport.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/io.h>
 
 #include <asm/irq.h>
+#include <asm/system.h>
 #include <mach/hardware.h>
 
 #include <asm/mach/pci.h>
@@ -131,8 +133,7 @@ static struct pci_ops ixp2000_pci_ops = {
 
 struct pci_bus *ixp2000_pci_scan_bus(int nr, struct pci_sys_data *sysdata)
 {
-	return pci_scan_root_bus(NULL, sysdata->busnr, &ixp2000_pci_ops,
-				 sysdata, &sysdata->resources);
+	return pci_scan_bus(sysdata->busnr, &ixp2000_pci_ops, sysdata);
 }
 
 
@@ -196,11 +197,6 @@ clear_master_aborts(void)
 void __init
 ixp2000_pci_preinit(void)
 {
-	pci_set_flags(0);
-
-	pcibios_min_io = 0;
-	pcibios_min_mem = 0;
-
 #ifndef CONFIG_IXP2000_SUPPORT_BROKEN_PCI_IO
 	/*
 	 * Configure the PCI unit to properly byteswap I/O transactions,
@@ -214,7 +210,7 @@ ixp2000_pci_preinit(void)
 			"the needed workaround has not been configured in");
 #endif
 
-	hook_fault_code(16+6, ixp2000_pci_abort_handler, SIGBUS, 0,
+	hook_fault_code(16+6, ixp2000_pci_abort_handler, SIGBUS,
 				"PCI config cycle to non-existent device");
 }
 
@@ -242,10 +238,9 @@ int ixp2000_pci_setup(int nr, struct pci_sys_data *sys)
 	if (nr >= 1)
 		return 0;
 
-	pci_add_resource_offset(&sys->resources,
-				&ixp2000_pci_io_space, sys->io_offset);
-	pci_add_resource_offset(&sys->resources,
-				&ixp2000_pci_mem_space, sys->mem_offset);
+	sys->resource[0] = &ixp2000_pci_io_space;
+	sys->resource[1] = &ixp2000_pci_mem_space;
+	sys->resource[2] = NULL;
 
 	return 1;
 }

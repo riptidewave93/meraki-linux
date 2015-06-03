@@ -39,7 +39,7 @@
 })
 
 #define __page_to_pfn(pg)						\
-({	const struct page *__pg = (pg);					\
+({	struct page *__pg = (pg);					\
 	struct pglist_data *__pgdat = NODE_DATA(page_to_nid(__pg));	\
 	(unsigned long)(__pg - __pgdat->node_mem_map) +			\
 	 __pgdat->node_start_pfn;					\
@@ -47,7 +47,7 @@
 
 #elif defined(CONFIG_SPARSEMEM_VMEMMAP)
 
-/* memmap is virtually contiguous.  */
+/* memmap is virtually contigious.  */
 #define __pfn_to_page(pfn)	(vmemmap + (pfn))
 #define __page_to_pfn(page)	(unsigned long)((page) - vmemmap)
 
@@ -57,7 +57,7 @@
  * section[i].section_mem_map == mem_map's address - start_pfn;
  */
 #define __page_to_pfn(pg)					\
-({	const struct page *__pg = (pg);				\
+({	struct page *__pg = (pg);				\
 	int __sec = page_to_section(__pg);			\
 	(unsigned long)(__pg - __section_mem_map_addr(__nr_to_section(__sec)));	\
 })

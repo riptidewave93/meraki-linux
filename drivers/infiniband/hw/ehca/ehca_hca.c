@@ -39,8 +39,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <linux/gfp.h>
-
 #include "ehca_tools.h"
 #include "ehca_iverbs.h"
 #include "hcp_if.h"
@@ -233,7 +231,7 @@ int ehca_query_port(struct ib_device *ibdev,
 		props->phys_state      = 5;
 		props->state           = rblock->state;
 		props->active_width    = IB_WIDTH_12X;
-		props->active_speed    = IB_SPEED_SDR;
+		props->active_speed    = 0x1;
 	}
 
 query_port1:

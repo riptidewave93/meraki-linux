@@ -19,7 +19,7 @@
 #include <linux/miscdevice.h>
 #include <linux/fcntl.h>
 #include <linux/init.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <asm/uaccess.h>
 #include <asm/nvram.h>
 #ifdef CONFIG_PPC_PMAC
@@ -28,28 +28,25 @@
 
 #define NVRAM_SIZE	8192
 
-static DEFINE_MUTEX(nvram_mutex);
 static ssize_t nvram_len;
 
 static loff_t nvram_llseek(struct file *file, loff_t offset, int origin)
 {
+	lock_kernel();
 	switch (origin) {
-	case 0:
-		break;
 	case 1:
 		offset += file->f_pos;
 		break;
 	case 2:
 		offset += nvram_len;
 		break;
-	default:
-		offset = -1;
 	}
-	if (offset < 0)
+	if (offset < 0) {
+		unlock_kernel();
 		return -EINVAL;
-
+	}
 	file->f_pos = offset;
-
+	unlock_kernel();
 	return file->f_pos;
 }
 
@@ -90,7 +87,8 @@ static ssize_t write_nvram(struct file *file, const char __user *buf,
 	return p - buf;
 }
 
-static int nvram_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static int nvram_ioctl(struct inode *inode, struct file *file,
+	unsigned int cmd, unsigned long arg)
 {
 	switch(cmd) {
 #ifdef CONFIG_PPC_PMAC
@@ -121,23 +119,12 @@ static int nvram_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	return 0;
 }
 
-static long nvram_unlocked_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
-{
-	int ret;
-
-	mutex_lock(&nvram_mutex);
-	ret = nvram_ioctl(file, cmd, arg);
-	mutex_unlock(&nvram_mutex);
-
-	return ret;
-}
-
 const struct file_operations nvram_fops = {
 	.owner		= THIS_MODULE,
 	.llseek		= nvram_llseek,
 	.read		= read_nvram,
 	.write		= write_nvram,
-	.unlocked_ioctl	= nvram_unlocked_ioctl,
+	.ioctl		= nvram_ioctl,
 };
 
 static struct miscdevice nvram_dev = {

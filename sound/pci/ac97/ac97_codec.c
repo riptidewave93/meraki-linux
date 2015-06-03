@@ -26,7 +26,7 @@
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/pci.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/mutex.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -42,7 +42,7 @@ MODULE_AUTHOR("Jaroslav Kysela <perex@perex.cz>");
 MODULE_DESCRIPTION("Universal interface for Audio Codec '97");
 MODULE_LICENSE("GPL");
 
-static bool enable_loopback;
+static int enable_loopback;
 
 module_param(enable_loopback, bool, 0444);
 MODULE_PARM_DESC(enable_loopback, "Enable AC97 ADC/DAC Loopback Control");
@@ -71,12 +71,6 @@ static const struct ac97_codec_id snd_ac97_codec_id_vendors[] = {
 { 0x414b4d00, 0xffffff00, "Asahi Kasei",	NULL,	NULL },
 { 0x414c4300, 0xffffff00, "Realtek",		NULL,	NULL },
 { 0x414c4700, 0xffffff00, "Realtek",		NULL,	NULL },
-/*
- * This is an _inofficial_ Aztech Labs entry
- * (value might differ from unknown official Aztech ID),
- * currently used by the AC97 emulation of the almost-AC97 PCI168 card.
- */
-{ 0x415a5400, 0xffffff00, "Aztech Labs (emulated)",	NULL,	NULL },
 { 0x434d4900, 0xffffff00, "C-Media Electronics", NULL,	NULL },
 { 0x43525900, 0xffffff00, "Cirrus Logic",	NULL,	NULL },
 { 0x43585400, 0xffffff00, "Conexant",           NULL,	NULL },
@@ -89,7 +83,6 @@ static const struct ac97_codec_id snd_ac97_codec_id_vendors[] = {
 { 0x4e534300, 0xffffff00, "National Semiconductor", NULL, NULL },
 { 0x50534300, 0xffffff00, "Philips",		NULL,	NULL },
 { 0x53494c00, 0xffffff00, "Silicon Laboratory",	NULL,	NULL },
-{ 0x53544d00, 0xffffff00, "STMicroelectronics",	NULL,	NULL },
 { 0x54524100, 0xffffff00, "TriTech",		NULL,	NULL },
 { 0x54584e00, 0xffffff00, "Texas Instruments",	NULL,	NULL },
 { 0x56494100, 0xffffff00, "VIA Technologies",   NULL,	NULL },
@@ -133,7 +126,6 @@ static const struct ac97_codec_id snd_ac97_codec_ids[] = {
 { 0x414c4781, 0xffffffff, "ALC658D",		NULL,	NULL }, /* already patched */
 { 0x414c4780, 0xfffffff0, "ALC658",		patch_alc655,	NULL },
 { 0x414c4790, 0xfffffff0, "ALC850",		patch_alc850,	NULL },
-{ 0x415a5401, 0xffffffff, "AZF3328",		patch_aztech_azf3328,	NULL },
 { 0x434d4941, 0xffffffff, "CMI9738",		patch_cm9738,	NULL },
 { 0x434d4961, 0xffffffff, "CMI9739",		patch_cm9739,	NULL },
 { 0x434d4969, 0xffffffff, "CMI9780",		patch_cm9780,	NULL },
@@ -169,7 +161,6 @@ static const struct ac97_codec_id snd_ac97_codec_ids[] = {
 { 0x4e534350, 0xffffffff, "LM4550",		patch_lm4550,  	NULL }, // volume wrap fix 
 { 0x50534304, 0xffffffff, "UCB1400",		patch_ucb1400,	NULL },
 { 0x53494c20, 0xffffffe0, "Si3036,8",		mpatch_si3036,	mpatch_si3036, AC97_MODEM_PATCH },
-{ 0x53544d02, 0xffffffff, "ST7597",		NULL,		NULL },
 { 0x54524102, 0xffffffff, "TR28022",		NULL,		NULL },
 { 0x54524103, 0xffffffff, "TR28023",		NULL,		NULL },
 { 0x54524106, 0xffffffff, "TR28026",		NULL,		NULL },
@@ -222,14 +213,6 @@ static int snd_ac97_valid_reg(struct snd_ac97 *ac97, unsigned short reg)
 {
 	/* filter some registers for buggy codecs */
 	switch (ac97->id) {
-	case AC97_ID_ST_AC97_ID4:
-		if (reg == 0x08)
-			return 0;
-		/* fall through */
-	case AC97_ID_ST7597:
-		if (reg == 0x22 || reg == 0x7a)
-			return 1;
-		/* fall through */
 	case AC97_ID_AK4540:
 	case AC97_ID_AK4542:
 		if (reg <= 0x1c || reg == 0x20 || reg == 0x26 || reg >= 0x7c)
@@ -597,9 +580,9 @@ static int snd_ac97_put_volsw(struct snd_kcontrol *kcontrol,
 	snd_ac97_page_restore(ac97, page_save);
 #ifdef CONFIG_SND_AC97_POWER_SAVE
 	/* check analog mixer power-down */
-	if ((val_mask & AC97_PD_EAPD) &&
+	if ((val_mask & 0x8000) &&
 	    (kcontrol->private_value & (1<<30))) {
-		if (val & AC97_PD_EAPD)
+		if (val & 0x8000)
 			ac97->power_up &= ~(1 << (reg>>1));
 		else
 			ac97->power_up |= 1 << (reg>>1);
@@ -620,8 +603,8 @@ AC97_SINGLE("Tone Control - Treble", AC97_MASTER_TONE, 0, 15, 1)
 };
 
 static const struct snd_kcontrol_new snd_ac97_controls_pc_beep[2] = {
-AC97_SINGLE("Beep Playback Switch", AC97_PC_BEEP, 15, 1, 1),
-AC97_SINGLE("Beep Playback Volume", AC97_PC_BEEP, 1, 15, 1)
+AC97_SINGLE("PC Speaker Playback Switch", AC97_PC_BEEP, 15, 1, 1),
+AC97_SINGLE("PC Speaker Playback Volume", AC97_PC_BEEP, 1, 15, 1)
 };
 
 static const struct snd_kcontrol_new snd_ac97_controls_mic_boost =
@@ -1021,7 +1004,8 @@ static int snd_ac97_free(struct snd_ac97 *ac97)
 {
 	if (ac97) {
 #ifdef CONFIG_SND_AC97_POWER_SAVE
-		cancel_delayed_work_sync(&ac97->power_work);
+		cancel_delayed_work(&ac97->power_work);
+		flush_scheduled_work();
 #endif
 		snd_ac97_proc_done(ac97);
 		if (ac97->bus)
@@ -1042,20 +1026,20 @@ static int snd_ac97_dev_free(struct snd_device *device)
 
 static int snd_ac97_try_volume_mix(struct snd_ac97 * ac97, int reg)
 {
-	unsigned short val, mask = AC97_MUTE_MASK_MONO;
+	unsigned short val, mask = 0x8000;
 
 	if (! snd_ac97_valid_reg(ac97, reg))
 		return 0;
 
 	switch (reg) {
 	case AC97_MASTER_TONE:
-		return ac97->caps & AC97_BC_BASS_TREBLE ? 1 : 0;
+		return ac97->caps & 0x04 ? 1 : 0;
 	case AC97_HEADPHONE:
-		return ac97->caps & AC97_BC_HEADPHONE ? 1 : 0;
+		return ac97->caps & 0x10 ? 1 : 0;
 	case AC97_REC_GAIN_MIC:
-		return ac97->caps & AC97_BC_DEDICATED_MIC ? 1 : 0;
+		return ac97->caps & 0x01 ? 1 : 0;
 	case AC97_3D_CONTROL:
-		if (ac97->caps & AC97_BC_3D_TECH_ID_MASK) {
+		if (ac97->caps & 0x7c00) {
 			val = snd_ac97_read(ac97, reg);
 			/* if nonzero - fixed and we can't set it */
 			return val == 0;
@@ -1111,10 +1095,7 @@ static void check_volume_resolution(struct snd_ac97 *ac97, int reg, unsigned cha
 	*lo_max = *hi_max = 0;
 	for (i = 0 ; i < ARRAY_SIZE(cbit); i++) {
 		unsigned short val;
-		snd_ac97_write(
-			ac97, reg,
-			AC97_MUTE_MASK_STEREO | cbit[i] | (cbit[i] << 8)
-		);
+		snd_ac97_write(ac97, reg, 0x8080 | cbit[i] | (cbit[i] << 8));
 		/* Do the read twice due to buffers on some ac97 codecs.
 		 * e.g. The STAC9704 returns exactly what you wrote to the register
 		 * if you read it immediately. This causes the detect routine to fail.
@@ -1149,14 +1130,14 @@ static void snd_ac97_change_volume_params2(struct snd_ac97 * ac97, int reg, int 
 	unsigned short val, val1;
 
 	*max = 63;
-	val = AC97_MUTE_MASK_STEREO | (0x20 << shift);
+	val = 0x8080 | (0x20 << shift);
 	snd_ac97_write(ac97, reg, val);
 	val1 = snd_ac97_read(ac97, reg);
 	if (val != val1) {
 		*max = 31;
 	}
 	/* reset volume to zero */
-	snd_ac97_write_cache(ac97, reg, AC97_MUTE_MASK_STEREO);
+	snd_ac97_write_cache(ac97, reg, 0x8080);
 }
 
 static inline int printable(unsigned int x)
@@ -1193,16 +1174,16 @@ static int snd_ac97_cmute_new_stereo(struct snd_card *card, char *name, int reg,
 	if (! snd_ac97_valid_reg(ac97, reg))
 		return 0;
 
-	mute_mask = AC97_MUTE_MASK_MONO;
+	mute_mask = 0x8000;
 	val = snd_ac97_read(ac97, reg);
 	if (check_stereo || (ac97->flags & AC97_STEREO_MUTES)) {
 		/* check whether both mute bits work */
-		val1 = val | AC97_MUTE_MASK_STEREO;
+		val1 = val | 0x8080;
 		snd_ac97_write(ac97, reg, val1);
 		if (val1 == snd_ac97_read(ac97, reg))
-			mute_mask = AC97_MUTE_MASK_STEREO;
+			mute_mask = 0x8080;
 	}
-	if (mute_mask == AC97_MUTE_MASK_STEREO) {
+	if (mute_mask == 0x8080) {
 		struct snd_kcontrol_new tmp = AC97_DOUBLE(name, reg, 15, 7, 1, 1);
 		if (check_amix)
 			tmp.private_value |= (1 << 30);
@@ -1280,11 +1261,9 @@ static int snd_ac97_cvol_new(struct snd_card *card, char *name, int reg, unsigne
 	err = snd_ctl_add(card, kctl);
 	if (err < 0)
 		return err;
-	snd_ac97_write_cache(
-		ac97, reg,
-		(snd_ac97_read(ac97, reg) & AC97_MUTE_MASK_STEREO)
-		| lo_max | (hi_max << 8)
-	);
+	snd_ac97_write_cache(ac97, reg,
+			     (snd_ac97_read(ac97, reg) & 0x8080) |
+			     lo_max | (hi_max << 8));
 	return 0;
 }
 
@@ -1346,7 +1325,7 @@ static int snd_ac97_mixer_build(struct snd_ac97 * ac97)
 			return err;
 	}
 
-	ac97->regs[AC97_CENTER_LFE_MASTER] = AC97_MUTE_MASK_STEREO;
+	ac97->regs[AC97_CENTER_LFE_MASTER] = 0x8080;
 
 	/* build center controls */
 	if ((snd_ac97_try_volume_mix(ac97, AC97_CENTER_LFE_MASTER)) 
@@ -1416,7 +1395,7 @@ static int snd_ac97_mixer_build(struct snd_ac97 * ac97)
 		}
 	}
 	
-	/* build Beep controls */
+	/* build PC Speaker controls */
 	if (!(ac97->flags & AC97_HAS_NO_PC_BEEP) && 
 		((ac97->flags & AC97_HAS_PC_BEEP) ||
 	    snd_ac97_try_volume_mix(ac97, AC97_PC_BEEP))) {
@@ -1424,12 +1403,8 @@ static int snd_ac97_mixer_build(struct snd_ac97 * ac97)
 			if ((err = snd_ctl_add(card, kctl = snd_ac97_cnew(&snd_ac97_controls_pc_beep[idx], ac97))) < 0)
 				return err;
 		set_tlv_db_scale(kctl, db_scale_4bit);
-		snd_ac97_write_cache(
-			ac97,
-			AC97_PC_BEEP,
-			(snd_ac97_read(ac97, AC97_PC_BEEP)
-				| AC97_MUTE_MASK_MONO | 0x001e)
-		);
+		snd_ac97_write_cache(ac97, AC97_PC_BEEP,
+				     snd_ac97_read(ac97, AC97_PC_BEEP) | 0x801e);
 	}
 	
 	/* build Phone controls */
@@ -1563,7 +1538,7 @@ static int snd_ac97_mixer_build(struct snd_ac97 * ac97)
 	}
 
 	/* build Simulated Stereo Enhancement control */
-	if (ac97->caps & AC97_BC_SIM_STEREO) {
+	if (ac97->caps & 0x0008) {
 		if ((err = snd_ctl_add(card, snd_ac97_cnew(&snd_ac97_controls_general[AC97_GENERAL_STEREO_ENHANCEMENT], ac97))) < 0)
 			return err;
 	}
@@ -1575,7 +1550,7 @@ static int snd_ac97_mixer_build(struct snd_ac97 * ac97)
 	}
 
 	/* build Loudness control */
-	if (ac97->caps & AC97_BC_LOUDNESS) {
+	if (ac97->caps & 0x0020) {
 		if ((err = snd_ctl_add(card, snd_ac97_cnew(&snd_ac97_controls_general[AC97_GENERAL_LOUDNESS], ac97))) < 0)
 			return err;
 	}
@@ -1979,7 +1954,7 @@ static int snd_ac97_dev_disconnect(struct snd_device *device)
 }
 
 /* build_ops to do nothing */
-static const struct snd_ac97_build_ops null_build_ops;
+static struct snd_ac97_build_ops null_build_ops;
 
 #ifdef CONFIG_SND_AC97_POWER_SAVE
 static void do_update_power(struct work_struct *work)
@@ -2149,7 +2124,7 @@ int snd_ac97_mixer(struct snd_ac97_bus *bus, struct snd_ac97_template *template,
 		}
 		/* nothing should be in powerdown mode */
 		snd_ac97_write_cache(ac97, AC97_GENERAL_PURPOSE, 0);
-		end_time = jiffies + msecs_to_jiffies(5000);
+		end_time = jiffies + msecs_to_jiffies(120);
 		do {
 			if ((snd_ac97_read(ac97, AC97_POWERDOWN) & 0x0f) == 0x0f)
 				goto __ready_ok;
@@ -2473,7 +2448,8 @@ void snd_ac97_suspend(struct snd_ac97 *ac97)
 	if (ac97->build_ops->suspend)
 		ac97->build_ops->suspend(ac97);
 #ifdef CONFIG_SND_AC97_POWER_SAVE
-	cancel_delayed_work_sync(&ac97->power_work);
+	cancel_delayed_work(&ac97->power_work);
+	flush_scheduled_work();
 #endif
 	snd_ac97_powerdown(ac97);
 }
@@ -2560,8 +2536,8 @@ void snd_ac97_resume(struct snd_ac97 *ac97)
 			schedule_timeout_uninterruptible(1);
 		} while (time_after_eq(end_time, jiffies));
 		/* FIXME: extra delay */
-		ac97->bus->ops->write(ac97, AC97_MASTER, AC97_MUTE_MASK_MONO);
-		if (snd_ac97_read(ac97, AC97_MASTER) != AC97_MUTE_MASK_MONO)
+		ac97->bus->ops->write(ac97, AC97_MASTER, 0x8000);
+		if (snd_ac97_read(ac97, AC97_MASTER) != 0x8000)
 			msleep(250);
 	} else {
 		end_time = jiffies + msecs_to_jiffies(100);
@@ -2765,12 +2741,12 @@ static int master_mute_sw_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem
 		int rshift = (kcontrol->private_value >> 12) & 0x0f;
 		unsigned short mask;
 		if (shift != rshift)
-			mask = AC97_MUTE_MASK_STEREO;
+			mask = 0x8080;
 		else
-			mask = AC97_MUTE_MASK_MONO;
-		snd_ac97_update_bits(ac97, AC97_POWERDOWN, AC97_PD_EAPD,
+			mask = 0x8000;
+		snd_ac97_update_bits(ac97, AC97_POWERDOWN, 0x8000,
 				     (ac97->regs[AC97_MASTER] & mask) == mask ?
-				     AC97_PD_EAPD : 0);
+				     0x8000 : 0);
 	}
 	return err;
 }
@@ -2783,10 +2759,7 @@ static int tune_mute_led(struct snd_ac97 *ac97)
 		return -ENOENT;
 	msw->put = master_mute_sw_put;
 	snd_ac97_remove_ctl(ac97, "External Amplifier", NULL);
-	snd_ac97_update_bits(
-		ac97, AC97_POWERDOWN,
-		AC97_PD_EAPD, AC97_PD_EAPD /* mute LED on */
-	);
+	snd_ac97_update_bits(ac97, AC97_POWERDOWN, 0x8000, 0x8000); /* mute LED on */
 	ac97->scaps |= AC97_SCAP_EAPD_LED;
 	return 0;
 }
@@ -2801,12 +2774,12 @@ static int hp_master_mute_sw_put(struct snd_kcontrol *kcontrol,
 		int rshift = (kcontrol->private_value >> 12) & 0x0f;
 		unsigned short mask;
 		if (shift != rshift)
-			mask = AC97_MUTE_MASK_STEREO;
+			mask = 0x8080;
 		else
-			mask = AC97_MUTE_MASK_MONO;
-		snd_ac97_update_bits(ac97, AC97_POWERDOWN, AC97_PD_EAPD,
+			mask = 0x8000;
+		snd_ac97_update_bits(ac97, AC97_POWERDOWN, 0x8000,
 				     (ac97->regs[AC97_MASTER] & mask) == mask ?
-				     AC97_PD_EAPD : 0);
+				     0x8000 : 0);
 	}
 	return err;
 }
@@ -2822,10 +2795,7 @@ static int tune_hp_mute_led(struct snd_ac97 *ac97)
 	snd_ac97_remove_ctl(ac97, "External Amplifier", NULL);
 	snd_ac97_remove_ctl(ac97, "Headphone Playback", "Switch");
 	snd_ac97_remove_ctl(ac97, "Headphone Playback", "Volume");
-	snd_ac97_update_bits(
-		ac97, AC97_POWERDOWN,
-		AC97_PD_EAPD, AC97_PD_EAPD /* mute LED on */
-	);
+	snd_ac97_update_bits(ac97, AC97_POWERDOWN, 0x8000, 0x8000); /* mute LED on */
 	return 0;
 }
 

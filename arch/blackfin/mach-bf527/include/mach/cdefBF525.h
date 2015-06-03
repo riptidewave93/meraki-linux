@@ -1,14 +1,24 @@
 /*
- * Copyright 2007-2010 Analog Devices Inc.
+ * Copyright 2007-2008 Analog Devices Inc.
  *
- * Licensed under the GPL-2 or later.
+ * Licensed under the GPL-2 or later
  */
 
 #ifndef _CDEF_BF525_H
 #define _CDEF_BF525_H
 
-/* BF525 is BF522 + USB */
-#include "cdefBF522.h"
+/* include all Core registers and bit definitions */
+#include "defBF525.h"
+
+/* include core specific register pointer definitions */
+#include <asm/cdef_LPBlackfin.h>
+
+/* SYSTEM & MMR ADDRESS DEFINITIONS FOR ADSP-BF525 */
+
+/* include cdefBF52x_base.h for the set of #defines that are common to all ADSP-BF52x processors */
+#include "cdefBF52x_base.h"
+
+/* The following are the #defines needed by ADSP-BF525 that are not in the common header */
 
 /* USB Control Registers */
 

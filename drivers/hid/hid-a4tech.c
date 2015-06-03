@@ -20,7 +20,6 @@
 #include <linux/input.h>
 #include <linux/hid.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 
 #include "hid-ids.h"
 
@@ -93,7 +92,7 @@ static int a4_probe(struct hid_device *hdev, const struct hid_device_id *id)
 
 	a4 = kzalloc(sizeof(*a4), GFP_KERNEL);
 	if (a4 == NULL) {
-		hid_err(hdev, "can't alloc device descriptor\n");
+		dev_err(&hdev->dev, "can't alloc device descriptor\n");
 		ret = -ENOMEM;
 		goto err_free;
 	}
@@ -104,13 +103,13 @@ static int a4_probe(struct hid_device *hdev, const struct hid_device_id *id)
 
 	ret = hid_parse(hdev);
 	if (ret) {
-		hid_err(hdev, "parse failed\n");
+		dev_err(&hdev->dev, "parse failed\n");
 		goto err_free;
 	}
 
 	ret = hid_hw_start(hdev, HID_CONNECT_DEFAULT);
 	if (ret) {
-		hid_err(hdev, "hw start failed\n");
+		dev_err(&hdev->dev, "hw start failed\n");
 		goto err_free;
 	}
 
@@ -132,8 +131,6 @@ static const struct hid_device_id a4_devices[] = {
 	{ HID_USB_DEVICE(USB_VENDOR_ID_A4TECH, USB_DEVICE_ID_A4TECH_WCP32PU),
 		.driver_data = A4_2WHEEL_MOUSE_HACK_7 },
 	{ HID_USB_DEVICE(USB_VENDOR_ID_A4TECH, USB_DEVICE_ID_A4TECH_X5_005D),
-		.driver_data = A4_2WHEEL_MOUSE_HACK_B8 },
-	{ HID_USB_DEVICE(USB_VENDOR_ID_A4TECH, USB_DEVICE_ID_A4TECH_RP_649),
 		.driver_data = A4_2WHEEL_MOUSE_HACK_B8 },
 	{ }
 };

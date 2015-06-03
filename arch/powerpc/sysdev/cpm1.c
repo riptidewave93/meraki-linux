@@ -31,7 +31,6 @@
 #include <linux/irq.h>
 #include <linux/module.h>
 #include <linux/spinlock.h>
-#include <linux/slab.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/8xx_immap.h>
@@ -54,34 +53,34 @@ cpm8xx_t __iomem *cpmp;  /* Pointer to comm processor space */
 immap_t __iomem *mpc8xx_immr;
 static cpic8xx_t __iomem *cpic_reg;
 
-static struct irq_domain *cpm_pic_host;
+static struct irq_host *cpm_pic_host;
 
-static void cpm_mask_irq(struct irq_data *d)
+static void cpm_mask_irq(unsigned int irq)
 {
-	unsigned int cpm_vec = (unsigned int)irqd_to_hwirq(d);
+	unsigned int cpm_vec = (unsigned int)irq_map[irq].hwirq;
 
 	clrbits32(&cpic_reg->cpic_cimr, (1 << cpm_vec));
 }
 
-static void cpm_unmask_irq(struct irq_data *d)
+static void cpm_unmask_irq(unsigned int irq)
 {
-	unsigned int cpm_vec = (unsigned int)irqd_to_hwirq(d);
+	unsigned int cpm_vec = (unsigned int)irq_map[irq].hwirq;
 
 	setbits32(&cpic_reg->cpic_cimr, (1 << cpm_vec));
 }
 
-static void cpm_end_irq(struct irq_data *d)
+static void cpm_end_irq(unsigned int irq)
 {
-	unsigned int cpm_vec = (unsigned int)irqd_to_hwirq(d);
+	unsigned int cpm_vec = (unsigned int)irq_map[irq].hwirq;
 
 	out_be32(&cpic_reg->cpic_cisr, (1 << cpm_vec));
 }
 
 static struct irq_chip cpm_pic = {
-	.name = "CPM PIC",
-	.irq_mask = cpm_mask_irq,
-	.irq_unmask = cpm_unmask_irq,
-	.irq_eoi = cpm_end_irq,
+	.typename = " CPM PIC ",
+	.mask = cpm_mask_irq,
+	.unmask = cpm_unmask_irq,
+	.eoi = cpm_end_irq,
 };
 
 int cpm_get_irq(void)
@@ -98,13 +97,13 @@ int cpm_get_irq(void)
 	return irq_linear_revmap(cpm_pic_host, cpm_vec);
 }
 
-static int cpm_pic_host_map(struct irq_domain *h, unsigned int virq,
+static int cpm_pic_host_map(struct irq_host *h, unsigned int virq,
 			  irq_hw_number_t hw)
 {
 	pr_debug("cpm_pic_host_map(%d, 0x%lx)\n", virq, hw);
 
-	irq_set_status_flags(virq, IRQ_LEVEL);
-	irq_set_chip_and_handler(virq, &cpm_pic, handle_fasteoi_irq);
+	get_irq_desc(virq)->status |= IRQ_LEVEL;
+	set_irq_chip_and_handler(virq, &cpm_pic, handle_fasteoi_irq);
 	return 0;
 }
 
@@ -123,7 +122,7 @@ static struct irqaction cpm_error_irqaction = {
 	.name = "error",
 };
 
-static const struct irq_domain_ops cpm_pic_host_ops = {
+static struct irq_host_ops cpm_pic_host_ops = {
 	.map = cpm_pic_host_map,
 };
 
@@ -148,7 +147,7 @@ unsigned int cpm_pic_init(void)
 	if (ret)
 		goto end;
 
-	cpic_reg = ioremap(res.start, resource_size(&res));
+	cpic_reg = ioremap(res.start, res.end - res.start + 1);
 	if (cpic_reg == NULL)
 		goto end;
 
@@ -157,14 +156,15 @@ unsigned int cpm_pic_init(void)
 		goto end;
 
 	/* Initialize the CPM interrupt controller. */
-	hwirq = (unsigned int)virq_to_hw(sirq);
+	hwirq = (unsigned int)irq_map[sirq].hwirq;
 	out_be32(&cpic_reg->cpic_cicr,
 	    (CICR_SCD_SCC4 | CICR_SCC_SCC3 | CICR_SCB_SCC2 | CICR_SCA_SCC1) |
 		((hwirq/2) << 13) | CICR_HP_MASK);
 
 	out_be32(&cpic_reg->cpic_cimr, 0);
 
-	cpm_pic_host = irq_domain_add_linear(np, 64, &cpm_pic_host_ops, NULL);
+	cpm_pic_host = irq_alloc_host(np, IRQ_HOST_MAP_LINEAR,
+				      64, &cpm_pic_host_ops, 64);
 	if (cpm_pic_host == NULL) {
 		printk(KERN_ERR "CPM2 PIC: failed to allocate irq host!\n");
 		sirq = NO_IRQ;
@@ -222,7 +222,7 @@ void __init cpm_reset(void)
 
 	/* Set SDMA Bus Request priority 5.
 	 * On 860T, this also enables FEC priority 6.  I am not sure
-	 * this is what we really want for some applications, but the
+	 * this is what we realy want for some applications, but the
 	 * manual recommends it.
 	 * Bit 25, FAM can also be set to use FEC aggressive mode (860T).
 	 */
@@ -485,6 +485,9 @@ int cpm1_clk_setup(enum cpm_clk_target target, int clock, int mode)
 		return -EINVAL;
 	}
 
+	if (reg == &mpc8xx_immr->im_cpm.cp_sicr && mode == CPM_CLK_RX)
+		shift += 3;
+
 	for (i = 0; i < ARRAY_SIZE(clk_map); i++) {
 		if (clk_map[i][0] == target && clk_map[i][1] == clock) {
 			bits = clk_map[i][2];
@@ -499,17 +502,6 @@ int cpm1_clk_setup(enum cpm_clk_target target, int clock, int mode)
 
 	bits <<= shift;
 	mask <<= shift;
-
-	if (reg == &mpc8xx_immr->im_cpm.cp_sicr) {
-		if (mode == CPM_CLK_RTX) {
-			bits |= bits << 3;
-			mask |= mask << 3;
-		} else if (mode == CPM_CLK_RX) {
-			bits <<= 3;
-			mask <<= 3;
-		}
-	}
-
 	out_be32(reg, (in_be32(reg) & ~mask) | bits);
 
 	return 0;
@@ -620,6 +612,7 @@ int cpm1_gpiochip_add16(struct device_node *np)
 {
 	struct cpm1_gpio16_chip *cpm1_gc;
 	struct of_mm_gpio_chip *mm_gc;
+	struct of_gpio_chip *of_gc;
 	struct gpio_chip *gc;
 
 	cpm1_gc = kzalloc(sizeof(*cpm1_gc), GFP_KERNEL);
@@ -629,9 +622,11 @@ int cpm1_gpiochip_add16(struct device_node *np)
 	spin_lock_init(&cpm1_gc->lock);
 
 	mm_gc = &cpm1_gc->mm_gc;
-	gc = &mm_gc->gc;
+	of_gc = &mm_gc->of_gc;
+	gc = &of_gc->gc;
 
 	mm_gc->save_regs = cpm1_gpio16_save_regs;
+	of_gc->gpio_cells = 2;
 	gc->ngpio = 16;
 	gc->direction_input = cpm1_gpio16_dir_in;
 	gc->direction_output = cpm1_gpio16_dir_out;
@@ -741,6 +736,7 @@ int cpm1_gpiochip_add32(struct device_node *np)
 {
 	struct cpm1_gpio32_chip *cpm1_gc;
 	struct of_mm_gpio_chip *mm_gc;
+	struct of_gpio_chip *of_gc;
 	struct gpio_chip *gc;
 
 	cpm1_gc = kzalloc(sizeof(*cpm1_gc), GFP_KERNEL);
@@ -750,9 +746,11 @@ int cpm1_gpiochip_add32(struct device_node *np)
 	spin_lock_init(&cpm1_gc->lock);
 
 	mm_gc = &cpm1_gc->mm_gc;
-	gc = &mm_gc->gc;
+	of_gc = &mm_gc->of_gc;
+	gc = &of_gc->gc;
 
 	mm_gc->save_regs = cpm1_gpio32_save_regs;
+	of_gc->gpio_cells = 2;
 	gc->ngpio = 32;
 	gc->direction_input = cpm1_gpio32_dir_in;
 	gc->direction_output = cpm1_gpio32_dir_out;

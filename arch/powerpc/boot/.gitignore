@@ -1,4 +1,5 @@
 addnote
+dtc
 empty.c
 hack-coff
 infblock.c
@@ -27,6 +28,7 @@ zImage.bin.*
 zImage.chrp
 zImage.coff
 zImage.holly
+zImage.iseries
 zImage.*lds
 zImage.miboot
 zImage.pmac

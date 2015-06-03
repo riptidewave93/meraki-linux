@@ -18,8 +18,7 @@
 #ifndef _ASM_POWERPC_EMULATED_OPS_H
 #define _ASM_POWERPC_EMULATED_OPS_H
 
-#include <linux/atomic.h>
-#include <linux/perf_event.h>
+#include <asm/atomic.h>
 
 
 #ifdef CONFIG_PPC_EMULATED_STATS
@@ -52,17 +51,13 @@ extern struct ppc_emulated {
 #ifdef CONFIG_VSX
 	struct ppc_emulated_entry vsx;
 #endif
-#ifdef CONFIG_PPC64
-	struct ppc_emulated_entry mfdscr;
-	struct ppc_emulated_entry mtdscr;
-#endif
 } ppc_emulated;
 
 extern u32 ppc_warn_emulated;
 
 extern void ppc_warn_emulated_print(const char *type);
 
-#define __PPC_WARN_EMULATED(type)					 \
+#define PPC_WARN_EMULATED(type)						 \
 	do {								 \
 		atomic_inc(&ppc_emulated.type.val);			 \
 		if (ppc_warn_emulated)					 \
@@ -71,22 +66,8 @@ extern void ppc_warn_emulated_print(const char *type);
 
 #else /* !CONFIG_PPC_EMULATED_STATS */
 
-#define __PPC_WARN_EMULATED(type)	do { } while (0)
+#define PPC_WARN_EMULATED(type)	do { } while (0)
 
 #endif /* !CONFIG_PPC_EMULATED_STATS */
-
-#define PPC_WARN_EMULATED(type, regs)					\
-	do {								\
-		perf_sw_event(PERF_COUNT_SW_EMULATION_FAULTS,		\
-			1, regs, 0);					\
-		__PPC_WARN_EMULATED(type);				\
-	} while (0)
-
-#define PPC_WARN_ALIGNMENT(type, regs)					\
-	do {								\
-		perf_sw_event(PERF_COUNT_SW_ALIGNMENT_FAULTS,		\
-			1, regs, regs->dar);				\
-		__PPC_WARN_EMULATED(type);				\
-	} while (0)
 
 #endif /* _ASM_POWERPC_EMULATED_OPS_H */

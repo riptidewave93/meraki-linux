@@ -24,6 +24,7 @@
 #include <linux/list.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 
 #include "saa7134-reg.h"
@@ -254,9 +255,7 @@ static int saa7134_i2c_xfer(struct i2c_adapter *i2c_adap,
 			addr  = msgs[i].addr << 1;
 			if (msgs[i].flags & I2C_M_RD)
 				addr |= 1;
-			if (i > 0 && msgs[i].flags &
-			    I2C_M_RD && msgs[i].addr != 0x40 &&
-			    msgs[i].addr != 0x19) {
+			if (i > 0 && msgs[i].flags & I2C_M_RD && msgs[i].addr != 0x40) {
 				/* workaround for a saa7134 i2c bug
 				 * needed to talk to the mt352 demux
 				 * thanks to pinnacle for the hint */
@@ -280,16 +279,6 @@ static int saa7134_i2c_xfer(struct i2c_adapter *i2c_adap,
 					goto err;
 				d1printk("%02x", rc);
 				msgs[i].buf[byte] = rc;
-			}
-			/* discard mysterious extra byte when reading
-			   from Samsung S5H1411.  i2c bus gets error
-			   if we do not. */
-			if (0x19 == msgs[i].addr) {
-				d1printk(" ?");
-				rc = i2c_recv_byte(dev);
-				if (rc < 0)
-					goto err;
-				d1printk("%02x", rc);
 			}
 		} else {
 			/* write bytes */
@@ -340,6 +329,7 @@ static struct i2c_algorithm saa7134_algo = {
 static struct i2c_adapter saa7134_adap_template = {
 	.owner         = THIS_MODULE,
 	.name          = "saa7134",
+	.id            = I2C_HW_SAA7134,
 	.algo          = &saa7134_algo,
 };
 

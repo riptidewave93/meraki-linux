@@ -19,7 +19,7 @@
  * along with this program; if not, write to the Free Software
  * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  *
- * see Documentation/dvb/README.dvb-usb for more information
+ * see Documentation/dvb/REDME.dvb-usb for more information
  */
 #include "af9005.h"
 
@@ -30,7 +30,7 @@ MODULE_PARM_DESC(debug,
 		 "set debugging level (1=info,xfer=2,rc=4,reg=8,i2c=16,fw=32 (or-able))."
 		 DVB_USB_DEBUG_STATUS);
 /* enable obnoxious led */
-bool dvb_usb_af9005_led = 1;
+int dvb_usb_af9005_led = 1;
 module_param_named(led, dvb_usb_af9005_led, bool, 0644);
 MODULE_PARM_DESC(led, "enable led (default: 1).");
 
@@ -53,6 +53,50 @@ struct af9005_device_state {
 	u8 sequence;
 	int led_state;
 };
+
+static int af9005_usb_generic_rw(struct dvb_usb_device *d, u8 *wbuf, u16 wlen,
+			  u8 *rbuf, u16 rlen, int delay_ms)
+{
+	int actlen, ret = -ENOMEM;
+
+	if (wbuf == NULL || wlen == 0)
+		return -EINVAL;
+
+	if ((ret = mutex_lock_interruptible(&d->usb_mutex)))
+		return ret;
+
+	deb_xfer(">>> ");
+	debug_dump(wbuf, wlen, deb_xfer);
+
+	ret = usb_bulk_msg(d->udev, usb_sndbulkpipe(d->udev,
+						    2), wbuf, wlen,
+			   &actlen, 2000);
+
+	if (ret)
+		err("bulk message failed: %d (%d/%d)", ret, wlen, actlen);
+	else
+		ret = actlen != wlen ? -1 : 0;
+
+	/* an answer is expected, and no error before */
+	if (!ret && rbuf && rlen) {
+		if (delay_ms)
+			msleep(delay_ms);
+
+		ret = usb_bulk_msg(d->udev, usb_rcvbulkpipe(d->udev,
+							    0x01), rbuf,
+				   rlen, &actlen, 2000);
+
+		if (ret)
+			err("recv bulk message failed: %d", ret);
+		else {
+			deb_xfer("<<< ");
+			debug_dump(rbuf, actlen, deb_xfer);
+		}
+	}
+
+	mutex_unlock(&d->usb_mutex);
+	return ret;
+}
 
 static int af9005_generic_read_write(struct dvb_usb_device *d, u16 reg,
 			      int readwrite, int type, u8 * values, int len)
@@ -102,7 +146,7 @@ static int af9005_generic_read_write(struct dvb_usb_device *d, u16 reg,
 		obuf[8] = values[0];
 	obuf[7] = command;
 
-	ret = dvb_usb_generic_rw(d, obuf, 16, ibuf, 17, 0);
+	ret = af9005_usb_generic_rw(d, obuf, 16, ibuf, 17, 0);
 	if (ret)
 		return ret;
 
@@ -490,7 +534,7 @@ int af9005_send_command(struct dvb_usb_device *d, u8 command, u8 * wbuf,
 	buf[6] = wlen;
 	for (i = 0; i < wlen; i++)
 		buf[7 + i] = wbuf[i];
-	ret = dvb_usb_generic_rw(d, buf, wlen + 7, ibuf, rlen + 7, 0);
+	ret = af9005_usb_generic_rw(d, buf, wlen + 7, ibuf, rlen + 7, 0);
 	if (ret)
 		return ret;
 	if (ibuf[2] != 0x27) {
@@ -537,7 +581,7 @@ int af9005_read_eeprom(struct dvb_usb_device *d, u8 address, u8 * values,
 
 	obuf[6] = len;
 	obuf[7] = address;
-	ret = dvb_usb_generic_rw(d, obuf, 16, ibuf, 14, 0);
+	ret = af9005_usb_generic_rw(d, obuf, 16, ibuf, 14, 0);
 	if (ret)
 		return ret;
 	if (ibuf[2] != 0x2b) {
@@ -815,7 +859,7 @@ static int af9005_frontend_attach(struct dvb_usb_adapter *adap)
 			debug_dump(buf, 8, printk);
 		}
 	}
-	adap->fe_adap[0].fe = af9005_fe_attach(adap->dev);
+	adap->fe = af9005_fe_attach(adap->dev);
 	return 0;
 }
 
@@ -838,7 +882,7 @@ static int af9005_rc_query(struct dvb_usb_device *d, u32 * event, int *state)
 	obuf[2] = 0x40;		/* read remote */
 	obuf[3] = 1;		/* rest of packet length */
 	obuf[4] = st->sequence++;	/* sequence number */
-	ret = dvb_usb_generic_rw(d, obuf, 5, ibuf, 256, 0);
+	ret = af9005_usb_generic_rw(d, obuf, 5, ibuf, 256, 0);
 	if (ret) {
 		err("rc query failed");
 		return ret;
@@ -977,20 +1021,11 @@ static int af9005_usb_probe(struct usb_interface *intf,
 				   THIS_MODULE, NULL, adapter_nr);
 }
 
-enum af9005_usb_table_entry {
-	AFATECH_AF9005,
-	TERRATEC_AF9005,
-	ANSONIC_AF9005,
-};
-
 static struct usb_device_id af9005_usb_table[] = {
-	[AFATECH_AF9005] = {USB_DEVICE(USB_VID_AFATECH,
-				USB_PID_AFATECH_AF9005)},
-	[TERRATEC_AF9005] = {USB_DEVICE(USB_VID_TERRATEC,
-				USB_PID_TERRATEC_CINERGY_T_USB_XE)},
-	[ANSONIC_AF9005] = {USB_DEVICE(USB_VID_ANSONIC,
-				USB_PID_ANSONIC_DVBT_USB)},
-	{ }
+	{USB_DEVICE(USB_VID_AFATECH, USB_PID_AFATECH_AF9005)},
+	{USB_DEVICE(USB_VID_TERRATEC, USB_PID_TERRATEC_CINERGY_T_USB_XE)},
+	{USB_DEVICE(USB_VID_ANSONIC, USB_PID_ANSONIC_DVBT_USB)},
+	{0},
 };
 
 MODULE_DEVICE_TABLE(usb, af9005_usb_table);
@@ -1008,8 +1043,6 @@ static struct dvb_usb_device_properties af9005_properties = {
 	.num_adapters = 1,
 	.adapter = {
 		    {
-		    .num_frontends = 1,
-		    .fe = {{
 		     .caps =
 		     DVB_USB_ADAP_HAS_PID_FILTER |
 		     DVB_USB_ADAP_PID_FILTER_CAN_BE_TURNED_OFF,
@@ -1029,7 +1062,6 @@ static struct dvb_usb_device_properties af9005_properties = {
 					       }
 				      }
 				},
-		     }},
 		     }
 		    },
 	.power_ctrl = af9005_power_ctrl,
@@ -1037,28 +1069,23 @@ static struct dvb_usb_device_properties af9005_properties = {
 
 	.i2c_algo = &af9005_i2c_algo,
 
-	.rc.legacy = {
-		.rc_interval = 200,
-		.rc_map_table = NULL,
-		.rc_map_size = 0,
-		.rc_query = af9005_rc_query,
-	},
-
-	.generic_bulk_ctrl_endpoint          = 2,
-	.generic_bulk_ctrl_endpoint_response = 1,
+	.rc_interval = 200,
+	.rc_key_map = NULL,
+	.rc_key_map_size = 0,
+	.rc_query = af9005_rc_query,
 
 	.num_device_descs = 3,
 	.devices = {
 		    {.name = "Afatech DVB-T USB1.1 stick",
-		     .cold_ids = {&af9005_usb_table[AFATECH_AF9005], NULL},
+		     .cold_ids = {&af9005_usb_table[0], NULL},
 		     .warm_ids = {NULL},
 		     },
 		    {.name = "TerraTec Cinergy T USB XE",
-		     .cold_ids = {&af9005_usb_table[TERRATEC_AF9005], NULL},
+		     .cold_ids = {&af9005_usb_table[1], NULL},
 		     .warm_ids = {NULL},
 		     },
 		    {.name = "Ansonic DVB-T USB1.1 stick",
-		     .cold_ids = {&af9005_usb_table[ANSONIC_AF9005], NULL},
+		     .cold_ids = {&af9005_usb_table[2], NULL},
 		     .warm_ids = {NULL},
 		     },
 		    {NULL},
@@ -1082,14 +1109,14 @@ static int __init af9005_usb_module_init(void)
 		return result;
 	}
 	rc_decode = symbol_request(af9005_rc_decode);
-	rc_keys = symbol_request(rc_map_af9005_table);
-	rc_keys_size = symbol_request(rc_map_af9005_table_size);
+	rc_keys = symbol_request(af9005_rc_keys);
+	rc_keys_size = symbol_request(af9005_rc_keys_size);
 	if (rc_decode == NULL || rc_keys == NULL || rc_keys_size == NULL) {
 		err("af9005_rc_decode function not found, disabling remote");
-		af9005_properties.rc.legacy.rc_query = NULL;
+		af9005_properties.rc_query = NULL;
 	} else {
-		af9005_properties.rc.legacy.rc_map_table = rc_keys;
-		af9005_properties.rc.legacy.rc_map_size = *rc_keys_size;
+		af9005_properties.rc_key_map = rc_keys;
+		af9005_properties.rc_key_map_size = *rc_keys_size;
 	}
 
 	return 0;
@@ -1101,9 +1128,9 @@ static void __exit af9005_usb_module_exit(void)
 	if (rc_decode != NULL)
 		symbol_put(af9005_rc_decode);
 	if (rc_keys != NULL)
-		symbol_put(rc_map_af9005_table);
+		symbol_put(af9005_rc_keys);
 	if (rc_keys_size != NULL)
-		symbol_put(rc_map_af9005_table_size);
+		symbol_put(af9005_rc_keys_size);
 	/* deregister this driver from the USB subsystem */
 	usb_deregister(&af9005_usb_driver);
 }

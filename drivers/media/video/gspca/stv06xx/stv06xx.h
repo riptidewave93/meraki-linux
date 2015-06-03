@@ -30,16 +30,13 @@
 #ifndef STV06XX_H_
 #define STV06XX_H_
 
-#include <linux/slab.h>
 #include "gspca.h"
 
 #define MODULE_NAME "STV06xx"
 
 #define STV_ISOC_ENDPOINT_ADDR		0x81
 
-#define STV_R                           0x0509
-
-#define STV_REG23			0x0423
+#define STV_REG23 			0x0423
 
 /* Control registers of the STV0600 ASIC */
 #define STV_I2C_PARTNER			0x1420
@@ -63,9 +60,7 @@
 
 /* Refers to the CIF 352x288 and QCIF 176x144 */
 /* 1: 288 lines, 2: 144 lines */
-#define STV_Y_CTRL		        0x15c3
-
-#define STV_RESET                       0x1620
+#define STV_Y_CTRL			0x15c3
 
 /* 0xa: 352 columns, 0x6: 176 columns */
 #define STV_X_CTRL			0x1680

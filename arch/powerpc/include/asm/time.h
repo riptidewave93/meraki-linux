@@ -18,22 +18,33 @@
 #include <linux/percpu.h>
 
 #include <asm/processor.h>
+#ifdef CONFIG_PPC_ISERIES
+#include <asm/paca.h>
+#include <asm/firmware.h>
+#include <asm/iseries/hv_call.h>
+#endif
 
 /* time.c */
 extern unsigned long tb_ticks_per_jiffy;
 extern unsigned long tb_ticks_per_usec;
 extern unsigned long tb_ticks_per_sec;
+extern u64 tb_to_xs;
+extern unsigned      tb_to_us;
 
 struct rtc_time;
 extern void to_tm(int tim, struct rtc_time * tm);
 extern void GregorianDay(struct rtc_time *tm);
+extern time_t last_rtc_update;
 
 extern void generic_calibrate_decr(void);
+extern void wakeup_decrementer(void);
+extern void snapshot_timebase(void);
 
 extern void set_dec_cpu6(unsigned int val);
 
 /* Some sane defaults: 125 MHz timebase, 1GHz processor */
 extern unsigned long ppc_proc_freq;
+extern unsigned long ppc_proc_plbfreq;
 #define DEFAULT_PROC_FREQ	(DEFAULT_TB_FREQ * 8)
 extern unsigned long ppc_tb_freq;
 #define DEFAULT_TB_FREQ		125000000UL
@@ -162,6 +173,15 @@ static inline void set_dec(int val)
 #ifndef CONFIG_BOOKE
 	--val;
 #endif
+#ifdef CONFIG_PPC_ISERIES
+	if (firmware_has_feature(FW_FEATURE_ISERIES) &&
+			get_lppaca()->shared_proc) {
+		get_lppaca()->virtual_decr = val;
+		if (get_dec() > val)
+			HvCall_setVirtualDecr();
+		return;
+	}
+#endif
 	mtspr(SPRN_DEC, val);
 #endif /* not 40x or 8xx_CPU6 */
 }
@@ -185,6 +205,9 @@ static inline unsigned long tb_ticks_since(unsigned long tstamp)
 extern u64 mulhdu(u64, u64);
 #endif
 
+extern void smp_space_timers(unsigned int);
+
+extern unsigned mulhwu_scale_factor(unsigned, unsigned);
 extern void div128_by_32(u64 dividend_high, u64 dividend_low,
 			 unsigned divisor, struct div_result *dr);
 
@@ -197,14 +220,17 @@ struct cpu_usage {
 DECLARE_PER_CPU(struct cpu_usage, cpu_usage_array);
 
 #if defined(CONFIG_VIRT_CPU_ACCOUNTING)
+extern void calculate_steal_time(void);
+extern void snapshot_timebases(void);
 #define account_process_vtime(tsk)		account_process_tick(tsk, 0)
 #else
+#define calculate_steal_time()			do { } while (0)
+#define snapshot_timebases()			do { } while (0)
 #define account_process_vtime(tsk)		do { } while (0)
 #endif
 
 extern void secondary_cpu_time_init(void);
-
-DECLARE_PER_CPU(u64, decrementers_next_tb);
+extern void iSeries_time_init_early(void);
 
 #endif /* __KERNEL__ */
 #endif /* __POWERPC_TIME_H */

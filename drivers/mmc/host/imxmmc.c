@@ -148,12 +148,11 @@ static int imxmci_start_clock(struct imxmci_host *host)
 
 		while (delay--) {
 			reg = readw(host->base + MMC_REG_STATUS);
-			if (reg & STATUS_CARD_BUS_CLK_RUN) {
+			if (reg & STATUS_CARD_BUS_CLK_RUN)
 				/* Check twice before cut */
 				reg = readw(host->base + MMC_REG_STATUS);
 				if (reg & STATUS_CARD_BUS_CLK_RUN)
 					return 0;
-			}
 
 			if (test_bit(IMXMCI_PEND_STARTED_b, &host->pending_events))
 				return 0;
@@ -942,7 +941,7 @@ static int __init imxmci_probe(struct platform_device *pdev)
 	int ret = 0, irq;
 	u16 rev_no;
 
-	pr_info("i.MX mmc driver\n");
+	printk(KERN_INFO "i.MX mmc driver\n");
 
 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	irq = platform_get_irq(pdev, 0);
@@ -966,7 +965,8 @@ static int __init imxmci_probe(struct platform_device *pdev)
 	mmc->caps = MMC_CAP_4_BIT_DATA;
 
 	/* MMC core transfer sizes tunable parameters */
-	mmc->max_segs = 64;
+	mmc->max_hw_segs = 64;
+	mmc->max_phys_segs = 64;
 	mmc->max_seg_size = 64*512;	/* default PAGE_CACHE_SIZE */
 	mmc->max_req_size = 64*512;	/* default PAGE_CACHE_SIZE */
 	mmc->max_blk_size = 2048;
@@ -1115,7 +1115,7 @@ static int imxmci_suspend(struct platform_device *dev, pm_message_t state)
 	int ret = 0;
 
 	if (mmc)
-		ret = mmc_suspend_host(mmc);
+		ret = mmc_suspend_host(mmc, state);
 
 	return ret;
 }

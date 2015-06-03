@@ -11,7 +11,6 @@
 #include <linux/module.h>
 #include <linux/list.h>
 #include <linux/hugetlb.h>
-#include <linux/slab.h>
 #include <asm/pgalloc.h>
 #include <asm/pgtable.h>
 #include <asm/setup.h>
@@ -61,12 +60,12 @@ static inline pmd_t *vmem_pmd_alloc(void)
 	return pmd;
 }
 
-static pte_t __ref *vmem_pte_alloc(unsigned long address)
+static pte_t __ref *vmem_pte_alloc(void)
 {
 	pte_t *pte;
 
 	if (slab_is_available())
-		pte = (pte_t *) page_table_alloc(&init_mm, address);
+		pte = (pte_t *) page_table_alloc(&init_mm);
 	else
 		pte = alloc_bootmem(PTRS_PER_PTE * sizeof(pte_t));
 	if (!pte)
@@ -95,7 +94,7 @@ static int vmem_add_mem(unsigned long start, unsigned long size, int ro)
 			pu_dir = vmem_pud_alloc();
 			if (!pu_dir)
 				goto out;
-			pgd_populate(&init_mm, pg_dir, pu_dir);
+			pgd_populate_kernel(&init_mm, pg_dir, pu_dir);
 		}
 
 		pu_dir = pud_offset(pg_dir, address);
@@ -103,7 +102,7 @@ static int vmem_add_mem(unsigned long start, unsigned long size, int ro)
 			pm_dir = vmem_pmd_alloc();
 			if (!pm_dir)
 				goto out;
-			pud_populate(&init_mm, pu_dir, pm_dir);
+			pud_populate_kernel(&init_mm, pu_dir, pm_dir);
 		}
 
 		pte = mk_pte_phys(address, __pgprot(ro ? _PAGE_RO : 0));
@@ -120,10 +119,10 @@ static int vmem_add_mem(unsigned long start, unsigned long size, int ro)
 		}
 #endif
 		if (pmd_none(*pm_dir)) {
-			pt_dir = vmem_pte_alloc(address);
+			pt_dir = vmem_pte_alloc();
 			if (!pt_dir)
 				goto out;
-			pmd_populate(&init_mm, pm_dir, pt_dir);
+			pmd_populate_kernel(&init_mm, pm_dir, pt_dir);
 		}
 
 		pt_dir = pte_offset_kernel(pm_dir, address);
@@ -159,7 +158,7 @@ static void vmem_remove_range(unsigned long start, unsigned long size)
 			continue;
 
 		if (pmd_huge(*pm_dir)) {
-			pmd_clear(pm_dir);
+			pmd_clear_kernel(pm_dir);
 			address += HPAGE_SIZE - PAGE_SIZE;
 			continue;
 		}
@@ -192,7 +191,7 @@ int __meminit vmemmap_populate(struct page *start, unsigned long nr, int node)
 			pu_dir = vmem_pud_alloc();
 			if (!pu_dir)
 				goto out;
-			pgd_populate(&init_mm, pg_dir, pu_dir);
+			pgd_populate_kernel(&init_mm, pg_dir, pu_dir);
 		}
 
 		pu_dir = pud_offset(pg_dir, address);
@@ -200,15 +199,15 @@ int __meminit vmemmap_populate(struct page *start, unsigned long nr, int node)
 			pm_dir = vmem_pmd_alloc();
 			if (!pm_dir)
 				goto out;
-			pud_populate(&init_mm, pu_dir, pm_dir);
+			pud_populate_kernel(&init_mm, pu_dir, pm_dir);
 		}
 
 		pm_dir = pmd_offset(pu_dir, address);
 		if (pmd_none(*pm_dir)) {
-			pt_dir = vmem_pte_alloc(address);
+			pt_dir = vmem_pte_alloc();
 			if (!pt_dir)
 				goto out;
-			pmd_populate(&init_mm, pm_dir, pt_dir);
+			pmd_populate_kernel(&init_mm, pm_dir, pt_dir);
 		}
 
 		pt_dir = pte_offset_kernel(pm_dir, address);
@@ -332,12 +331,13 @@ void __init vmem_map_init(void)
 	unsigned long start, end;
 	int i;
 
+	spin_lock_init(&init_mm.context.list_lock);
+	INIT_LIST_HEAD(&init_mm.context.crst_list);
+	INIT_LIST_HEAD(&init_mm.context.pgtable_list);
+	init_mm.context.noexec = 0;
 	ro_start = ((unsigned long)&_stext) & PAGE_MASK;
 	ro_end = PFN_ALIGN((unsigned long)&_eshared);
 	for (i = 0; i < MEMORY_CHUNKS && memory_chunk[i].size > 0; i++) {
-		if (memory_chunk[i].type == CHUNK_CRASHK ||
-		    memory_chunk[i].type == CHUNK_OLDMEM)
-			continue;
 		start = memory_chunk[i].addr;
 		end = memory_chunk[i].addr + memory_chunk[i].size;
 		if (start >= ro_end || end <= ro_start)
@@ -370,9 +370,6 @@ static int __init vmem_convert_memory_chunk(void)
 	mutex_lock(&vmem_mutex);
 	for (i = 0; i < MEMORY_CHUNKS; i++) {
 		if (!memory_chunk[i].size)
-			continue;
-		if (memory_chunk[i].type == CHUNK_CRASHK ||
-		    memory_chunk[i].type == CHUNK_OLDMEM)
 			continue;
 		seg = kzalloc(sizeof(*seg), GFP_KERNEL);
 		if (!seg)

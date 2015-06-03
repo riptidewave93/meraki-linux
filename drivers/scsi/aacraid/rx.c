@@ -5,8 +5,7 @@
  * based on the old aacraid driver that is..
  * Adaptec aacraid device driver for Linux.
  *
- * Copyright (c) 2000-2010 Adaptec, Inc.
- *               2010 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ * Copyright (c) 2000-2007 Adaptec, Inc. (aacraid@adaptec.com)
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,6 +33,7 @@
 #include <linux/types.h>
 #include <linux/pci.h>
 #include <linux/spinlock.h>
+#include <linux/slab.h>
 #include <linux/blkdev.h>
 #include <linux/delay.h>
 #include <linux/completion.h>
@@ -85,35 +85,15 @@ static irqreturn_t aac_rx_intr_producer(int irq, void *dev_id)
 
 static irqreturn_t aac_rx_intr_message(int irq, void *dev_id)
 {
-	int isAif, isFastResponse, isSpecial;
 	struct aac_dev *dev = dev_id;
 	u32 Index = rx_readl(dev, MUnit.OutboundQueue);
 	if (unlikely(Index == 0xFFFFFFFFL))
 		Index = rx_readl(dev, MUnit.OutboundQueue);
 	if (likely(Index != 0xFFFFFFFFL)) {
 		do {
-			isAif = isFastResponse = isSpecial = 0;
-			if (Index & 0x00000002L) {
-				isAif = 1;
-				if (Index == 0xFFFFFFFEL)
-					isSpecial = 1;
-				Index &= ~0x00000002L;
-			} else {
-				if (Index & 0x00000001L)
-					isFastResponse = 1;
-				Index >>= 2;
-			}
-			if (!isSpecial) {
-				if (unlikely(aac_intr_normal(dev,
-						Index, isAif,
-						isFastResponse, NULL))) {
-					rx_writel(dev,
-						MUnit.OutboundQueue,
-						Index);
-					rx_writel(dev,
-						MUnit.ODR,
-						DoorBellAdapterNormRespReady);
-				}
+			if (unlikely(aac_intr_normal(dev, Index))) {
+				rx_writel(dev, MUnit.OutboundQueue, Index);
+				rx_writel(dev, MUnit.ODR, DoorBellAdapterNormRespReady);
 			}
 			Index = rx_readl(dev, MUnit.OutboundQueue);
 		} while (Index != 0xFFFFFFFFL);
@@ -373,8 +353,9 @@ static int aac_rx_check_health(struct aac_dev *dev)
 		pci_free_consistent(dev->pdev, sizeof(struct POSTSTATUS),
 		  post, paddr);
 		if (likely((buffer[0] == '0') && ((buffer[1] == 'x') || (buffer[1] == 'X')))) {
-			ret = (hex_to_bin(buffer[2]) << 4) +
-				hex_to_bin(buffer[3]);
+			ret = (buffer[2] <= '9') ? (buffer[2] - '0') : (buffer[2] - 'A' + 10);
+			ret <<= 4;
+			ret += (buffer[3] <= '9') ? (buffer[3] - '0') : (buffer[3] - 'A' + 10);
 		}
 		pci_free_consistent(dev->pdev, 512, buffer, baddr);
 		return ret;
@@ -643,7 +624,6 @@ int _aac_rx_init(struct aac_dev *dev)
 	if (aac_init_adapter(dev) == NULL)
 		goto error_iounmap;
 	aac_adapter_comm(dev, dev->comm_interface);
-	dev->sync_mode = 0;	/* sync. mode not supported */
 	dev->msi = aac_msi && !pci_enable_msi(dev->pdev);
 	if (request_irq(dev->pdev->irq, dev->a_ops.adapter_intr,
 			IRQF_SHARED|IRQF_DISABLED, "aacraid", dev) < 0) {
@@ -653,10 +633,6 @@ int _aac_rx_init(struct aac_dev *dev)
 			name, instance);
 		goto error_iounmap;
 	}
-	dev->dbg_base = dev->scsi_host_ptr->base;
-	dev->dbg_base_mapped = dev->base;
-	dev->dbg_size = dev->base_size;
-
 	aac_adapter_enable_int(dev);
 	/*
 	 *	Tell the adapter that all is configured, and it can

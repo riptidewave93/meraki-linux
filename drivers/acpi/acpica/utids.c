@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2009, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -48,6 +48,42 @@
 #define _COMPONENT          ACPI_UTILITIES
 ACPI_MODULE_NAME("utids")
 
+/* Local prototypes */
+static void acpi_ut_copy_id_string(char *destination, char *source);
+
+/*******************************************************************************
+ *
+ * FUNCTION:    acpi_ut_copy_id_string
+ *
+ * PARAMETERS:  Destination         - Where to copy the string
+ *              Source              - Source string
+ *
+ * RETURN:      None
+ *
+ * DESCRIPTION: Copies an ID string for the _HID, _CID, and _UID methods.
+ *              Performs removal of a leading asterisk if present -- workaround
+ *              for a known issue on a bunch of machines.
+ *
+ ******************************************************************************/
+
+static void acpi_ut_copy_id_string(char *destination, char *source)
+{
+
+	/*
+	 * Workaround for ID strings that have a leading asterisk. This construct
+	 * is not allowed by the ACPI specification  (ID strings must be
+	 * alphanumeric), but enough existing machines have this embedded in their
+	 * ID strings that the following code is useful.
+	 */
+	if (*source == '*') {
+		source++;
+	}
+
+	/* Do the actual copy */
+
+	ACPI_STRCPY(destination, source);
+}
+
 /*******************************************************************************
  *
  * FUNCTION:    acpi_ut_execute_HID
@@ -65,6 +101,7 @@ ACPI_MODULE_NAME("utids")
  *              NOTE: Internal function, no parameter validation
  *
  ******************************************************************************/
+
 acpi_status
 acpi_ut_execute_HID(struct acpi_namespace_node *device_node,
 		    struct acpica_device_id **return_id)
@@ -110,7 +147,7 @@ acpi_ut_execute_HID(struct acpi_namespace_node *device_node,
 	if (obj_desc->common.type == ACPI_TYPE_INTEGER) {
 		acpi_ex_eisa_id_to_string(hid->string, obj_desc->integer.value);
 	} else {
-		ACPI_STRCPY(hid->string, obj_desc->string.pointer);
+		acpi_ut_copy_id_string(hid->string, obj_desc->string.pointer);
 	}
 
 	hid->length = length;
@@ -187,7 +224,7 @@ acpi_ut_execute_UID(struct acpi_namespace_node *device_node,
 	if (obj_desc->common.type == ACPI_TYPE_INTEGER) {
 		acpi_ex_integer_to_string(uid->string, obj_desc->integer.value);
 	} else {
-		ACPI_STRCPY(uid->string, obj_desc->string.pointer);
+		acpi_ut_copy_id_string(uid->string, obj_desc->string.pointer);
 	}
 
 	uid->length = length;
@@ -320,8 +357,8 @@ acpi_ut_execute_CID(struct acpi_namespace_node *device_node,
 
 			/* Copy the String CID from the returned object */
 
-			ACPI_STRCPY(next_id_string,
-				    cid_objects[i]->string.pointer);
+			acpi_ut_copy_id_string(next_id_string,
+					       cid_objects[i]->string.pointer);
 			length = cid_objects[i]->string.length + 1;
 		}
 

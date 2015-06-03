@@ -42,7 +42,6 @@ struct nlmclnt_initdata {
 	unsigned short		protocol;
 	u32			nfs_version;
 	int			noresvport;
-	struct net		*net;
 };
 
 /*
@@ -54,7 +53,7 @@ extern void	nlmclnt_done(struct nlm_host *host);
 
 extern int	nlmclnt_proc(struct nlm_host *host, int cmd,
 					struct file_lock *fl);
-extern int	lockd_up(struct net *net);
-extern void	lockd_down(struct net *net);
+extern int	lockd_up(void);
+extern void	lockd_down(void);
 
 #endif /* LINUX_LOCKD_BIND_H */

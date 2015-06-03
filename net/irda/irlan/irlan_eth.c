@@ -45,12 +45,14 @@ static int  irlan_eth_close(struct net_device *dev);
 static netdev_tx_t  irlan_eth_xmit(struct sk_buff *skb,
 					 struct net_device *dev);
 static void irlan_eth_set_multicast_list( struct net_device *dev);
+static struct net_device_stats *irlan_eth_get_stats(struct net_device *dev);
 
 static const struct net_device_ops irlan_eth_netdev_ops = {
 	.ndo_open               = irlan_eth_open,
 	.ndo_stop               = irlan_eth_close,
 	.ndo_start_xmit    	= irlan_eth_xmit,
-	.ndo_set_rx_mode	= irlan_eth_set_multicast_list,
+	.ndo_get_stats	        = irlan_eth_get_stats,
+	.ndo_set_multicast_list = irlan_eth_set_multicast_list,
 	.ndo_change_mtu		= eth_change_mtu,
 	.ndo_validate_addr	= eth_validate_addr,
 };
@@ -167,7 +169,6 @@ static netdev_tx_t irlan_eth_xmit(struct sk_buff *skb,
 {
 	struct irlan_cb *self = netdev_priv(dev);
 	int ret;
-	unsigned int len;
 
 	/* skb headroom large enough to contain all IrDA-headers? */
 	if ((skb_headroom(skb) < self->max_header_size) || (skb_shared(skb))) {
@@ -187,7 +188,6 @@ static netdev_tx_t irlan_eth_xmit(struct sk_buff *skb,
 
 	dev->trans_start = jiffies;
 
-	len = skb->len;
 	/* Now queue the packet in the transport layer */
 	if (self->use_udata)
 		ret = irttp_udata_request(self->tsap_data, skb);
@@ -206,10 +206,10 @@ static netdev_tx_t irlan_eth_xmit(struct sk_buff *skb,
 		 * tried :-) DB
 		 */
 		/* irttp_data_request already free the packet */
-		dev->stats.tx_dropped++;
+		self->stats.tx_dropped++;
 	} else {
-		dev->stats.tx_packets++;
-		dev->stats.tx_bytes += len;
+		self->stats.tx_packets++;
+		self->stats.tx_bytes += skb->len;
 	}
 
 	return NETDEV_TX_OK;
@@ -224,16 +224,15 @@ static netdev_tx_t irlan_eth_xmit(struct sk_buff *skb,
 int irlan_eth_receive(void *instance, void *sap, struct sk_buff *skb)
 {
 	struct irlan_cb *self = instance;
-	struct net_device *dev = self->dev;
 
 	if (skb == NULL) {
-		dev->stats.rx_dropped++;
+		++self->stats.rx_dropped;
 		return 0;
 	}
 	if (skb->len < ETH_HLEN) {
 		IRDA_DEBUG(0, "%s() : IrLAN frame too short (%d)\n",
 			   __func__, skb->len);
-		dev->stats.rx_dropped++;
+		++self->stats.rx_dropped;
 		dev_kfree_skb(skb);
 		return 0;
 	}
@@ -243,10 +242,10 @@ int irlan_eth_receive(void *instance, void *sap, struct sk_buff *skb)
 	 * might have been previously set by the low level IrDA network
 	 * device driver
 	 */
-	skb->protocol = eth_type_trans(skb, dev); /* Remove eth header */
+	skb->protocol = eth_type_trans(skb, self->dev); /* Remove eth header */
 
-	dev->stats.rx_packets++;
-	dev->stats.rx_bytes += skb->len;
+	self->stats.rx_packets++;
+	self->stats.rx_bytes += skb->len;
 
 	netif_rx(skb);   /* Eat it! */
 
@@ -272,7 +271,7 @@ void irlan_eth_flow_indication(void *instance, void *sap, LOCAL_FLOW flow)
 	struct irlan_cb *self;
 	struct net_device *dev;
 
-	self = instance;
+	self = (struct irlan_cb *) instance;
 
 	IRDA_ASSERT(self != NULL, return;);
 	IRDA_ASSERT(self->magic == IRLAN_MAGIC, return;);
@@ -322,15 +321,14 @@ static void irlan_eth_set_multicast_list(struct net_device *dev)
 		/* Enable promiscuous mode */
 		IRDA_WARNING("Promiscuous mode not implemented by IrLAN!\n");
 	}
-	else if ((dev->flags & IFF_ALLMULTI) ||
-		 netdev_mc_count(dev) > HW_MAX_ADDRS) {
+	else if ((dev->flags & IFF_ALLMULTI) || dev->mc_count > HW_MAX_ADDRS) {
 		/* Disable promiscuous mode, use normal mode. */
 		IRDA_DEBUG(4, "%s(), Setting multicast filter\n", __func__ );
 		/* hardware_set_filter(NULL); */
 
 		irlan_set_multicast_filter(self, TRUE);
 	}
-	else if (!netdev_mc_empty(dev)) {
+	else if (dev->mc_count) {
 		IRDA_DEBUG(4, "%s(), Setting multicast filter\n", __func__ );
 		/* Walk the address list, and load the filter */
 		/* hardware_set_filter(dev->mc_list); */
@@ -346,4 +344,17 @@ static void irlan_eth_set_multicast_list(struct net_device *dev)
 		irlan_set_broadcast_filter(self, TRUE);
 	else
 		irlan_set_broadcast_filter(self, FALSE);
+}
+
+/*
+ * Function irlan_get_stats (dev)
+ *
+ *    Get the current statistics for this device
+ *
+ */
+static struct net_device_stats *irlan_eth_get_stats(struct net_device *dev)
+{
+	struct irlan_cb *self = netdev_priv(dev);
+
+	return &self->stats;
 }

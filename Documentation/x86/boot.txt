@@ -600,7 +600,6 @@ Protocol:	2.07+
   0x00000001	lguest
   0x00000002	Xen
   0x00000003	Moorestown MID
-  0x00000004	CE4100 TV Platform
 
 Field name:	hardware_subarch_data
 Type:		write (subarch-dependent)
@@ -674,7 +673,7 @@ Protocol:	2.10+
 
 Field name:	init_size
 Type:		read
-Offset/size:	0x260/4
+Offset/size:	0x25c/4
 
   This field indicates the amount of linear contiguous memory starting
   at the kernel runtime start address that the kernel needs before it

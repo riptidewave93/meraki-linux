@@ -26,7 +26,7 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <asm/io.h>
 #include <sound/core.h>
 #include <sound/control.h>
@@ -57,7 +57,7 @@ static struct ac97_quirk ac97_quirks[] __devinitdata = {
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
 
 module_param_array(index, int, NULL, 0444);
 MODULE_PARM_DESC(index, "Index value for " DRIVER_NAME);
@@ -66,7 +66,7 @@ MODULE_PARM_DESC(id, "ID string for " DRIVER_NAME);
 module_param_array(enable, bool, NULL, 0444);
 MODULE_PARM_DESC(enable, "Enable " DRIVER_NAME);
 
-static DEFINE_PCI_DEVICE_TABLE(snd_cs5535audio_ids) = {
+static struct pci_device_id snd_cs5535audio_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_NS, PCI_DEVICE_ID_NS_CS5535_AUDIO) },
 	{ PCI_DEVICE(PCI_VENDOR_ID_AMD, PCI_DEVICE_ID_AMD_CS5536_AUDIO) },
 	{}
@@ -311,7 +311,7 @@ static int __devinit snd_cs5535audio_create(struct snd_card *card,
 	cs5535au->port = pci_resource_start(pci, 0);
 
 	if (request_irq(pci->irq, snd_cs5535audio_interrupt,
-			IRQF_SHARED, KBUILD_MODNAME, cs5535au)) {
+			IRQF_SHARED, "CS5535 Audio", cs5535au)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		err = -EBUSY;
 		goto sndfail;
@@ -389,13 +389,12 @@ probefail_out:
 
 static void __devexit snd_cs5535audio_remove(struct pci_dev *pci)
 {
-	olpc_quirks_cleanup();
 	snd_card_free(pci_get_drvdata(pci));
 	pci_set_drvdata(pci, NULL);
 }
 
 static struct pci_driver driver = {
-	.name = KBUILD_MODNAME,
+	.name = DRIVER_NAME,
 	.id_table = snd_cs5535audio_ids,
 	.probe = snd_cs5535audio_probe,
 	.remove = __devexit_p(snd_cs5535audio_remove),

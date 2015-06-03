@@ -39,7 +39,7 @@ struct ip6_mh {
 	__u16	ip6mh_cksum;
 	/* Followed by type specific messages */
 	__u8	data[0];
-} __packed;
+} __attribute__ ((__packed__));
 
 #define IP6_MH_TYPE_BRR		0   /* Binding Refresh Request */
 #define IP6_MH_TYPE_HOTI	1   /* HOTI Message   */

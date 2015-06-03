@@ -17,7 +17,6 @@
 #include <linux/spi/tdo24m.h>
 #include <linux/fb.h>
 #include <linux/lcd.h>
-#include <linux/slab.h>
 
 #define POWER_IS_ON(pwr)	((pwr) <= FB_BLANK_NORMAL)
 
@@ -368,7 +367,6 @@ static int __devinit tdo24m_probe(struct spi_device *spi)
 
 	spi_message_init(m);
 
-	x->cs_change = 1;
 	x->tx_buf = &lcd->buf[0];
 	spi_message_add_tail(x, m);
 
@@ -459,7 +457,17 @@ static struct spi_driver tdo24m_driver = {
 	.resume		= tdo24m_resume,
 };
 
-module_spi_driver(tdo24m_driver);
+static int __init tdo24m_init(void)
+{
+	return spi_register_driver(&tdo24m_driver);
+}
+module_init(tdo24m_init);
+
+static void __exit tdo24m_exit(void)
+{
+	spi_unregister_driver(&tdo24m_driver);
+}
+module_exit(tdo24m_exit);
 
 MODULE_AUTHOR("Eric Miao <eric.miao@marvell.com>");
 MODULE_DESCRIPTION("Driver for Toppoly TDO24M LCD Panel");

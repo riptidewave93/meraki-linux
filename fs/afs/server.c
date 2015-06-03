@@ -91,10 +91,9 @@ static struct afs_server *afs_alloc_server(struct afs_cell *cell,
 
 		memcpy(&server->addr, addr, sizeof(struct in_addr));
 		server->addr.s_addr = addr->s_addr;
-		_leave(" = %p{%d}", server, atomic_read(&server->usage));
-	} else {
-		_leave(" = NULL [nomem]");
 	}
+
+	_leave(" = %p{%d}", server, atomic_read(&server->usage));
 	return server;
 }
 
@@ -238,8 +237,8 @@ void afs_put_server(struct afs_server *server)
 	if (atomic_read(&server->usage) == 0) {
 		list_move_tail(&server->grave, &afs_server_graveyard);
 		server->time_of_death = get_seconds();
-		queue_delayed_work(afs_wq, &afs_server_reaper,
-				   afs_server_timeout * HZ);
+		schedule_delayed_work(&afs_server_reaper,
+				      afs_server_timeout * HZ);
 	}
 	spin_unlock(&afs_server_graveyard_lock);
 	_leave(" [dead]");
@@ -285,11 +284,10 @@ static void afs_reap_server(struct work_struct *work)
 		expiry = server->time_of_death + afs_server_timeout;
 		if (expiry > now) {
 			delay = (expiry - now) * HZ;
-			if (!queue_delayed_work(afs_wq, &afs_server_reaper,
-						delay)) {
+			if (!schedule_delayed_work(&afs_server_reaper, delay)) {
 				cancel_delayed_work(&afs_server_reaper);
-				queue_delayed_work(afs_wq, &afs_server_reaper,
-						   delay);
+				schedule_delayed_work(&afs_server_reaper,
+						      delay);
 			}
 			break;
 		}
@@ -324,5 +322,5 @@ void __exit afs_purge_servers(void)
 {
 	afs_server_timeout = 0;
 	cancel_delayed_work(&afs_server_reaper);
-	queue_delayed_work(afs_wq, &afs_server_reaper, 0);
+	schedule_delayed_work(&afs_server_reaper, 0);
 }

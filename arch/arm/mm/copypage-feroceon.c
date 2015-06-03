@@ -68,21 +68,20 @@ feroceon_copy_user_page(void *kto, const void *kfrom)
 }
 
 void feroceon_copy_user_highpage(struct page *to, struct page *from,
-	unsigned long vaddr, struct vm_area_struct *vma)
+	unsigned long vaddr)
 {
 	void *kto, *kfrom;
 
-	kto = kmap_atomic(to);
-	kfrom = kmap_atomic(from);
-	flush_cache_page(vma, vaddr, page_to_pfn(from));
+	kto = kmap_atomic(to, KM_USER0);
+	kfrom = kmap_atomic(from, KM_USER1);
 	feroceon_copy_user_page(kto, kfrom);
-	kunmap_atomic(kfrom);
-	kunmap_atomic(kto);
+	kunmap_atomic(kfrom, KM_USER1);
+	kunmap_atomic(kto, KM_USER0);
 }
 
 void feroceon_clear_user_highpage(struct page *page, unsigned long vaddr)
 {
-	void *ptr, *kaddr = kmap_atomic(page);
+	void *ptr, *kaddr = kmap_atomic(page, KM_USER0);
 	asm volatile ("\
 	mov	r1, %2				\n\
 	mov	r2, #0				\n\
@@ -102,7 +101,7 @@ void feroceon_clear_user_highpage(struct page *page, unsigned long vaddr)
 	: "=r" (ptr)
 	: "0" (kaddr), "I" (PAGE_SIZE / 32)
 	: "r1", "r2", "r3", "r4", "r5", "r6", "r7", "ip", "lr");
-	kunmap_atomic(kaddr);
+	kunmap_atomic(kaddr, KM_USER0);
 }
 
 struct cpu_user_fns feroceon_user_fns __initdata = {

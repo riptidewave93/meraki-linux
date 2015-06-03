@@ -56,15 +56,16 @@ static void tx4938ide_tune_ebusc(unsigned int ebus_ch,
 		     &tx4938_ebuscptr->cr[ebus_ch]);
 }
 
-static void tx4938ide_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void tx4938ide_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
+	ide_hwif_t *hwif = drive->hwif;
 	struct tx4938ide_platform_info *pdata = hwif->dev->platform_data;
-	u8 safe = drive->pio_mode - XFER_PIO_0;
+	u8 safe = pio;
 	ide_drive_t *pair;
 
 	pair = ide_get_pair_dev(drive);
 	if (pair)
-		safe = min_t(u8, safe, pair->pio_mode - XFER_PIO_0);
+		safe = min(safe, ide_get_best_pio_mode(pair, 255, 5));
 	tx4938ide_tune_ebusc(pdata->ebus_ch, pdata->gbus_clock, safe);
 }
 
@@ -145,7 +146,7 @@ static int __init tx4938ide_probe(struct platform_device *pdev)
 		return -ENODEV;
 
 	if (!devm_request_mem_region(&pdev->dev, res->start,
-				     resource_size(res), "tx4938ide"))
+				     res->end - res->start + 1, "tx4938ide"))
 		return -EBUSY;
 	mapbase = (unsigned long)devm_ioremap(&pdev->dev, res->start,
 					      8 << pdata->ioport_shift);

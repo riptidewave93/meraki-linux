@@ -11,10 +11,12 @@
 #include <string.h>
 #include <sys/termios.h>
 #include <sys/wait.h>
+#include "kern_constants.h"
 #include "net_user.h"
 #include "os.h"
 #include "slip.h"
 #include "um_malloc.h"
+#include "user.h"
 
 static int slip_user_init(void *data, void *dev)
 {
@@ -100,7 +102,7 @@ static int slip_tramp(char **argv, int fd)
 		       "buffer\n");
 		os_kill_process(pid, 1);
 		err = -ENOMEM;
-		goto out_close;
+		goto out_free;
 	}
 
 	close(fds[1]);
@@ -110,6 +112,7 @@ static int slip_tramp(char **argv, int fd)
 	err = helper_wait(pid);
 	close(fds[0]);
 
+out_free:
 	kfree(output);
 	return err;
 

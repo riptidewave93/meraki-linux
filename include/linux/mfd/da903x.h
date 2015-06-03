@@ -96,10 +96,6 @@ struct da9034_touch_pdata {
 	int	y_inverted;
 };
 
-struct da9034_backlight_pdata {
-	int	output_current;	/* output current of WLED, from 0-31 (in mA) */
-};
-
 /* DA9030 battery charger data */
 struct power_supply_info;
 

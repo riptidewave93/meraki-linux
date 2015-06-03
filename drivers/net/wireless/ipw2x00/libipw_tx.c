@@ -260,7 +260,7 @@ netdev_tx_t libipw_xmit(struct sk_buff *skb, struct net_device *dev)
 	int i, bytes_per_frag, nr_frags, bytes_last_frag, frag_size,
 	    rts_required;
 	unsigned long flags;
-	int encrypt, host_encrypt, host_encrypt_msdu;
+	int encrypt, host_encrypt, host_encrypt_msdu, host_build_iv;
 	__be16 ether_type;
 	int bytes, fc, hdr_len;
 	struct sk_buff *skb_frag;
@@ -301,6 +301,7 @@ netdev_tx_t libipw_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	host_encrypt = ieee->host_encrypt && encrypt && crypt;
 	host_encrypt_msdu = ieee->host_encrypt_msdu && encrypt && crypt;
+	host_build_iv = ieee->host_build_iv && encrypt && crypt;
 
 	if (!encrypt && ieee->ieee802_1x &&
 	    ieee->drop_unencrypted && ether_type != htons(ETH_P_PAE)) {
@@ -312,7 +313,7 @@ netdev_tx_t libipw_xmit(struct sk_buff *skb, struct net_device *dev)
 	skb_copy_from_linear_data(skb, dest, ETH_ALEN);
 	skb_copy_from_linear_data_offset(skb, ETH_ALEN, src, ETH_ALEN);
 
-	if (host_encrypt)
+	if (host_encrypt || host_build_iv)
 		fc = IEEE80211_FTYPE_DATA | IEEE80211_STYPE_DATA |
 		    IEEE80211_FCTL_PROTECTED;
 	else
@@ -395,7 +396,7 @@ netdev_tx_t libipw_xmit(struct sk_buff *skb, struct net_device *dev)
 		    (CFG_LIBIPW_COMPUTE_FCS | CFG_LIBIPW_RESERVE_FCS))
 			bytes_per_frag -= LIBIPW_FCS_LEN;
 
-		/* Each fragment may need to have room for encryption
+		/* Each fragment may need to have room for encryptiong
 		 * pre/postfix */
 		if (host_encrypt)
 			bytes_per_frag -= crypt->ops->extra_mpdu_prefix_len +
@@ -466,7 +467,7 @@ netdev_tx_t libipw_xmit(struct sk_buff *skb, struct net_device *dev)
 	for (; i < nr_frags; i++) {
 		skb_frag = txb->fragments[i];
 
-		if (host_encrypt)
+		if (host_encrypt || host_build_iv)
 			skb_reserve(skb_frag,
 				    crypt->ops->extra_mpdu_prefix_len);
 
@@ -501,6 +502,15 @@ netdev_tx_t libipw_xmit(struct sk_buff *skb, struct net_device *dev)
 		 * to insert the IV between the header and the payload */
 		if (host_encrypt)
 			libipw_encrypt_fragment(ieee, skb_frag, hdr_len);
+		else if (host_build_iv) {
+			atomic_inc(&crypt->refcnt);
+			if (crypt->ops->build_iv)
+				crypt->ops->build_iv(skb_frag, hdr_len,
+				      ieee->sec.keys[ieee->sec.active_key],
+				      ieee->sec.key_sizes[ieee->sec.active_key],
+				      crypt->priv);
+			atomic_dec(&crypt->refcnt);
+		}
 
 		if (ieee->config &
 		    (CFG_LIBIPW_COMPUTE_FCS | CFG_LIBIPW_RESERVE_FCS))

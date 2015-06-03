@@ -142,7 +142,7 @@ static int usb_mouse_probe(struct usb_interface *intf, const struct usb_device_i
 	if (!mouse || !input_dev)
 		goto fail1;
 
-	mouse->data = usb_alloc_coherent(dev, 8, GFP_ATOMIC, &mouse->data_dma);
+	mouse->data = usb_buffer_alloc(dev, 8, GFP_ATOMIC, &mouse->data_dma);
 	if (!mouse->data)
 		goto fail1;
 
@@ -205,7 +205,7 @@ static int usb_mouse_probe(struct usb_interface *intf, const struct usb_device_i
 fail3:	
 	usb_free_urb(mouse->irq);
 fail2:	
-	usb_free_coherent(dev, 8, mouse->data, mouse->data_dma);
+	usb_buffer_free(dev, 8, mouse->data, mouse->data_dma);
 fail1:	
 	input_free_device(input_dev);
 	kfree(mouse);
@@ -221,7 +221,7 @@ static void usb_mouse_disconnect(struct usb_interface *intf)
 		usb_kill_urb(mouse->irq);
 		input_unregister_device(mouse->dev);
 		usb_free_urb(mouse->irq);
-		usb_free_coherent(interface_to_usbdev(intf), 8, mouse->data, mouse->data_dma);
+		usb_buffer_free(interface_to_usbdev(intf), 8, mouse->data, mouse->data_dma);
 		kfree(mouse);
 	}
 }
@@ -241,4 +241,19 @@ static struct usb_driver usb_mouse_driver = {
 	.id_table	= usb_mouse_id_table,
 };
 
-module_usb_driver(usb_mouse_driver);
+static int __init usb_mouse_init(void)
+{
+	int retval = usb_register(&usb_mouse_driver);
+	if (retval == 0)
+		printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_VERSION ":"
+				DRIVER_DESC "\n");
+	return retval;
+}
+
+static void __exit usb_mouse_exit(void)
+{
+	usb_deregister(&usb_mouse_driver);
+}
+
+module_init(usb_mouse_init);
+module_exit(usb_mouse_exit);

@@ -24,7 +24,6 @@
 #include <linux/jiffies.h>
 #include <linux/workqueue.h>
 #include <linux/pm.h>
-#include <linux/slab.h>
 #include <linux/platform_device.h>
 #include <linux/power_supply.h>
 
@@ -64,7 +63,7 @@ static unsigned int cache_time = 1000;
 module_param(cache_time, uint, 0644);
 MODULE_PARM_DESC(cache_time, "cache time in milliseconds");
 
-static bool pmod_enabled;
+static unsigned int pmod_enabled;
 module_param(pmod_enabled, bool, 0644);
 MODULE_PARM_DESC(pmod_enabled, "PMOD enable bit");
 
@@ -86,20 +85,12 @@ static int rated_capacities[] = {
 	920,	/* NEC */
 	1440,	/* Samsung */
 	1440,	/* BYD */
-#ifdef CONFIG_MACH_H4700
-	1800,	/* HP iPAQ hx4700 3.7V 1800mAh (359113-001) */
-#else
 	1440,	/* Lishen */
-#endif
 	1440,	/* NEC */
 	2880,	/* Samsung */
 	2880,	/* BYD */
 	2880,	/* Lishen */
-	2880,	/* NEC */
-#ifdef CONFIG_MACH_H4700
-	0,
-	3600,	/* HP iPAQ hx4700 3.7V 3600mAh (359114-001) */
-#endif
+	2880	/* NEC */
 };
 
 /* array is level at temps 0°C, 10°C, 20°C, 30°C, 40°C
@@ -194,7 +185,7 @@ static int ds2760_battery_read_status(struct ds2760_device_info *di)
 
 	scale[0] = di->full_active_uAh;
 	for (i = 1; i < 5; i++)
-		scale[i] = scale[i - 1] + di->raw[DS2760_ACTIVE_FULL + 1 + i];
+		scale[i] = scale[i - 1] + di->raw[DS2760_ACTIVE_FULL + 2 + i];
 
 	di->full_active_uAh = battery_interpolate(scale, di->temp_C / 10);
 	di->full_active_uAh *= 1000; /* convert to µAh */
@@ -310,28 +301,6 @@ static void ds2760_battery_write_rated_capacity(struct ds2760_device_info *di,
 	w1_ds2760_write(di->w1_dev, &rated_capacity, DS2760_RATED_CAPACITY, 1);
 	w1_ds2760_store_eeprom(di->w1_dev, DS2760_EEPROM_BLOCK1);
 	w1_ds2760_recall_eeprom(di->w1_dev, DS2760_EEPROM_BLOCK1);
-}
-
-static void ds2760_battery_write_active_full(struct ds2760_device_info *di,
-					     int active_full)
-{
-	unsigned char tmp[2] = {
-		active_full >> 8,
-		active_full & 0xff
-	};
-
-	if (tmp[0] == di->raw[DS2760_ACTIVE_FULL] &&
-	    tmp[1] == di->raw[DS2760_ACTIVE_FULL + 1])
-		return;
-
-	w1_ds2760_write(di->w1_dev, tmp, DS2760_ACTIVE_FULL, sizeof(tmp));
-	w1_ds2760_store_eeprom(di->w1_dev, DS2760_EEPROM_BLOCK0);
-	w1_ds2760_recall_eeprom(di->w1_dev, DS2760_EEPROM_BLOCK0);
-
-	/* Write to the di->raw[] buffer directly - the DS2760_ACTIVE_FULL
-	 * values won't be read back by ds2760_battery_read_status() */
-	di->raw[DS2760_ACTIVE_FULL] = tmp[0];
-	di->raw[DS2760_ACTIVE_FULL + 1] = tmp[1];
 }
 
 static void ds2760_battery_work(struct work_struct *work)
@@ -456,45 +425,6 @@ static int ds2760_battery_get_property(struct power_supply *psy,
 	return 0;
 }
 
-static int ds2760_battery_set_property(struct power_supply *psy,
-				       enum power_supply_property psp,
-				       const union power_supply_propval *val)
-{
-	struct ds2760_device_info *di = to_ds2760_device_info(psy);
-
-	switch (psp) {
-	case POWER_SUPPLY_PROP_CHARGE_FULL:
-		/* the interface counts in uAh, convert the value */
-		ds2760_battery_write_active_full(di, val->intval / 1000L);
-		break;
-
-	case POWER_SUPPLY_PROP_CHARGE_NOW:
-		/* ds2760_battery_set_current_accum() does the conversion */
-		ds2760_battery_set_current_accum(di, val->intval);
-		break;
-
-	default:
-		return -EPERM;
-	}
-
-	return 0;
-}
-
-static int ds2760_battery_property_is_writeable(struct power_supply *psy,
-						enum power_supply_property psp)
-{
-	switch (psp) {
-	case POWER_SUPPLY_PROP_CHARGE_FULL:
-	case POWER_SUPPLY_PROP_CHARGE_NOW:
-		return 1;
-
-	default:
-		break;
-	}
-
-	return 0;
-}
-
 static enum power_supply_property ds2760_battery_props[] = {
 	POWER_SUPPLY_PROP_STATUS,
 	POWER_SUPPLY_PROP_VOLTAGE_NOW,
@@ -529,9 +459,6 @@ static int ds2760_battery_probe(struct platform_device *pdev)
 	di->bat.properties	= ds2760_battery_props;
 	di->bat.num_properties	= ARRAY_SIZE(ds2760_battery_props);
 	di->bat.get_property	= ds2760_battery_get_property;
-	di->bat.set_property	= ds2760_battery_set_property;
-	di->bat.property_is_writeable =
-				  ds2760_battery_property_is_writeable;
 	di->bat.set_charged	= ds2760_battery_set_charged;
 	di->bat.external_power_changed =
 				  ds2760_battery_external_power_changed;
@@ -588,11 +515,12 @@ static int ds2760_battery_remove(struct platform_device *pdev)
 {
 	struct ds2760_device_info *di = platform_get_drvdata(pdev);
 
-	cancel_delayed_work_sync(&di->monitor_work);
-	cancel_delayed_work_sync(&di->set_charged_work);
+	cancel_rearming_delayed_workqueue(di->monitor_wqueue,
+					  &di->monitor_work);
+	cancel_rearming_delayed_workqueue(di->monitor_wqueue,
+					  &di->set_charged_work);
 	destroy_workqueue(di->monitor_wqueue);
 	power_supply_unregister(&di->bat);
-	kfree(di);
 
 	return 0;
 }
@@ -641,7 +569,18 @@ static struct platform_driver ds2760_battery_driver = {
 	.resume	  = ds2760_battery_resume,
 };
 
-module_platform_driver(ds2760_battery_driver);
+static int __init ds2760_battery_init(void)
+{
+	return platform_driver_register(&ds2760_battery_driver);
+}
+
+static void __exit ds2760_battery_exit(void)
+{
+	platform_driver_unregister(&ds2760_battery_driver);
+}
+
+module_init(ds2760_battery_init);
+module_exit(ds2760_battery_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Szabolcs Gyurko <szabolcs.gyurko@tlt.hu>, "

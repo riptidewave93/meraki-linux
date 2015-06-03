@@ -30,17 +30,6 @@ extern void flush_dcache_page(struct page *page);
 #define flush_dcache_mmap_lock(mapping)		do { } while (0)
 #define flush_dcache_mmap_unlock(mapping)	do { } while (0)
 
-extern void __flush_disable_L1(void);
-#ifdef CONFIG_FSL_SOC_BOOKE
-extern void flush_dcache_L1(void);
-void flush_backside_L2_cache(void);
-void disable_backside_L2_cache(void);
-void flush_disable_L2(void);
-void invalidate_enable_L2(void);
-#else
-#define flush_dcache_L1()			do { } while (0)
-#endif
-
 extern void __flush_icache_range(unsigned long, unsigned long);
 static inline void flush_icache_range(unsigned long start, unsigned long stop)
 {

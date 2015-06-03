@@ -15,13 +15,14 @@
 #include <linux/types.h>
 
 #include <asm/intrinsics.h>
+#include <asm/system.h>
 
 
-#define ATOMIC_INIT(i)		{ (i) }
-#define ATOMIC64_INIT(i)	{ (i) }
+#define ATOMIC_INIT(i)		((atomic_t) { (i) })
+#define ATOMIC64_INIT(i)	((atomic64_t) { (i) })
 
-#define atomic_read(v)		(*(volatile int *)&(v)->counter)
-#define atomic64_read(v)	(*(volatile long *)&(v)->counter)
+#define atomic_read(v)		((v)->counter)
+#define atomic64_read(v)	((v)->counter)
 
 #define atomic_set(v,i)		(((v)->counter) = (i))
 #define atomic64_set(v,i)	(((v)->counter) = (i))
@@ -40,7 +41,7 @@ ia64_atomic_add (int i, atomic_t *v)
 	return new;
 }
 
-static __inline__ long
+static __inline__ int
 ia64_atomic64_add (__s64 i, atomic64_t *v)
 {
 	__s64 old, new;
@@ -68,7 +69,7 @@ ia64_atomic_sub (int i, atomic_t *v)
 	return new;
 }
 
-static __inline__ long
+static __inline__ int
 ia64_atomic64_sub (__s64 i, atomic64_t *v)
 {
 	__s64 old, new;
@@ -89,7 +90,7 @@ ia64_atomic64_sub (__s64 i, atomic64_t *v)
 	(cmpxchg(&((v)->counter), old, new))
 #define atomic64_xchg(v, new) (xchg(&((v)->counter), new))
 
-static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
+static __inline__ int atomic_add_unless(atomic_t *v, int a, int u)
 {
 	int c, old;
 	c = atomic_read(v);
@@ -101,11 +102,12 @@ static __inline__ int __atomic_add_unless(atomic_t *v, int a, int u)
 			break;
 		c = old;
 	}
-	return c;
+	return c != (u);
 }
 
+#define atomic_inc_not_zero(v) atomic_add_unless((v), 1, 0)
 
-static __inline__ long atomic64_add_unless(atomic64_t *v, long a, long u)
+static __inline__ int atomic64_add_unless(atomic64_t *v, long a, long u)
 {
 	long c, old;
 	c = atomic64_read(v);
@@ -156,7 +158,7 @@ atomic_add_negative (int i, atomic_t *v)
 	return atomic_add_return(i, v) < 0;
 }
 
-static __inline__ long
+static __inline__ int
 atomic64_add_negative (__s64 i, atomic64_t *v)
 {
 	return atomic64_add_return(i, v) < 0;
@@ -214,4 +216,5 @@ atomic64_add_negative (__s64 i, atomic64_t *v)
 #define smp_mb__before_atomic_inc()	barrier()
 #define smp_mb__after_atomic_inc()	barrier()
 
+#include <asm-generic/atomic-long.h>
 #endif /* _ASM_IA64_ATOMIC_H */

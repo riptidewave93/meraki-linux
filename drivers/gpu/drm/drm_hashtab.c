@@ -35,22 +35,29 @@
 #include "drmP.h"
 #include "drm_hashtab.h"
 #include <linux/hash.h>
-#include <linux/slab.h>
-#include <linux/export.h>
 
 int drm_ht_create(struct drm_open_hash *ht, unsigned int order)
 {
-	unsigned int size = 1 << order;
+	unsigned int i;
 
+	ht->size = 1 << order;
 	ht->order = order;
+	ht->fill = 0;
 	ht->table = NULL;
-	if (size <= PAGE_SIZE / sizeof(*ht->table))
-		ht->table = kcalloc(size, sizeof(*ht->table), GFP_KERNEL);
-	else
-		ht->table = vzalloc(size*sizeof(*ht->table));
+	ht->use_vmalloc = ((ht->size * sizeof(*ht->table)) > PAGE_SIZE);
+	if (!ht->use_vmalloc) {
+		ht->table = kcalloc(ht->size, sizeof(*ht->table), GFP_KERNEL);
+	}
+	if (!ht->table) {
+		ht->use_vmalloc = 1;
+		ht->table = vmalloc(ht->size*sizeof(*ht->table));
+	}
 	if (!ht->table) {
 		DRM_ERROR("Out of memory for hash table\n");
 		return -ENOMEM;
+	}
+	for (i=0; i< ht->size; ++i) {
+		INIT_HLIST_HEAD(&ht->table[i]);
 	}
 	return 0;
 }
@@ -172,6 +179,7 @@ int drm_ht_remove_key(struct drm_open_hash *ht, unsigned long key)
 	list = drm_ht_find_key(ht, key);
 	if (list) {
 		hlist_del_init(list);
+		ht->fill--;
 		return 0;
 	}
 	return -EINVAL;
@@ -180,6 +188,7 @@ int drm_ht_remove_key(struct drm_open_hash *ht, unsigned long key)
 int drm_ht_remove_item(struct drm_open_hash *ht, struct drm_hash_item *item)
 {
 	hlist_del_init(&item->head);
+	ht->fill--;
 	return 0;
 }
 EXPORT_SYMBOL(drm_ht_remove_item);
@@ -187,10 +196,10 @@ EXPORT_SYMBOL(drm_ht_remove_item);
 void drm_ht_remove(struct drm_open_hash *ht)
 {
 	if (ht->table) {
-		if ((PAGE_SIZE / sizeof(*ht->table)) >> ht->order)
-			kfree(ht->table);
-		else
+		if (ht->use_vmalloc)
 			vfree(ht->table);
+		else
+			kfree(ht->table);
 		ht->table = NULL;
 	}
 }

@@ -9,7 +9,6 @@
  * your option) any later version.
  */
 
-#include <linux/export.h>
 #include <linux/mmc/host.h>
 #include <linux/mmc/card.h>
 #include <linux/mmc/sdio.h>
@@ -190,15 +189,7 @@ static inline unsigned int sdio_max_byte_size(struct sdio_func *func)
 {
 	unsigned mval =	min(func->card->host->max_seg_size,
 			    func->card->host->max_blk_size);
-
-	if (mmc_blksz_for_byte_mode(func->card))
-		mval = min(mval, func->cur_blksize);
-	else
-		mval = min(mval, func->max_blksize);
-
-	if (mmc_card_broken_byte_mode_512(func->card))
-		return min(mval, 511u);
-
+	mval = min(mval, func->max_blksize);
 	return min(mval, 512u); /* maximum size for byte mode */
 }
 
@@ -317,7 +308,7 @@ static int sdio_io_rw_ext_helper(struct sdio_func *func, int write,
 			func->card->host->max_seg_size / func->cur_blksize);
 		max_blocks = min(max_blocks, 511u);
 
-		while (remainder >= func->cur_blksize) {
+		while (remainder > func->cur_blksize) {
 			unsigned blocks;
 
 			blocks = remainder / func->cur_blksize;
@@ -342,9 +333,8 @@ static int sdio_io_rw_ext_helper(struct sdio_func *func, int write,
 	while (remainder > 0) {
 		size = min(remainder, sdio_max_byte_size(func));
 
-		/* Indicate byte mode by setting "blocks" = 0 */
 		ret = mmc_io_rw_extended(func->card, write, func->num, addr,
-			 incr_addr, buf, 0, size);
+			 incr_addr, buf, 1, size);
 		if (ret)
 			return ret;
 
@@ -409,36 +399,6 @@ void sdio_writeb(struct sdio_func *func, u8 b, unsigned int addr, int *err_ret)
 		*err_ret = ret;
 }
 EXPORT_SYMBOL_GPL(sdio_writeb);
-
-/**
- *	sdio_writeb_readb - write and read a byte from SDIO function
- *	@func: SDIO function to access
- *	@write_byte: byte to write
- *	@addr: address to write to
- *	@err_ret: optional status value from transfer
- *
- *	Performs a RAW (Read after Write) operation as defined by SDIO spec -
- *	single byte is written to address space of a given SDIO function and
- *	response is read back from the same address, both using single request.
- *	If there is a problem with the operation, 0xff is returned and
- *	@err_ret will contain the error code.
- */
-u8 sdio_writeb_readb(struct sdio_func *func, u8 write_byte,
-	unsigned int addr, int *err_ret)
-{
-	int ret;
-	u8 val;
-
-	ret = mmc_io_rw_direct(func->card, 1, func->num, addr,
-			write_byte, &val);
-	if (err_ret)
-		*err_ret = ret;
-	if (ret)
-		val = 0xff;
-
-	return val;
-}
-EXPORT_SYMBOL_GPL(sdio_writeb_readb);
 
 /**
  *	sdio_memcpy_fromio - read a chunk of memory from a SDIO function
@@ -675,52 +635,3 @@ void sdio_f0_writeb(struct sdio_func *func, unsigned char b, unsigned int addr,
 		*err_ret = ret;
 }
 EXPORT_SYMBOL_GPL(sdio_f0_writeb);
-
-/**
- *	sdio_get_host_pm_caps - get host power management capabilities
- *	@func: SDIO function attached to host
- *
- *	Returns a capability bitmask corresponding to power management
- *	features supported by the host controller that the card function
- *	might rely upon during a system suspend.  The host doesn't need
- *	to be claimed, nor the function active, for this information to be
- *	obtained.
- */
-mmc_pm_flag_t sdio_get_host_pm_caps(struct sdio_func *func)
-{
-	BUG_ON(!func);
-	BUG_ON(!func->card);
-
-	return func->card->host->pm_caps;
-}
-EXPORT_SYMBOL_GPL(sdio_get_host_pm_caps);
-
-/**
- *	sdio_set_host_pm_flags - set wanted host power management capabilities
- *	@func: SDIO function attached to host
- *
- *	Set a capability bitmask corresponding to wanted host controller
- *	power management features for the upcoming suspend state.
- *	This must be called, if needed, each time the suspend method of
- *	the function driver is called, and must contain only bits that
- *	were returned by sdio_get_host_pm_caps().
- *	The host doesn't need to be claimed, nor the function active,
- *	for this information to be set.
- */
-int sdio_set_host_pm_flags(struct sdio_func *func, mmc_pm_flag_t flags)
-{
-	struct mmc_host *host;
-
-	BUG_ON(!func);
-	BUG_ON(!func->card);
-
-	host = func->card->host;
-
-	if (flags & ~host->pm_caps)
-		return -EINVAL;
-
-	/* function suspend methods are serialized, hence no lock needed */
-	host->pm_flags |= flags;
-	return 0;
-}
-EXPORT_SYMBOL_GPL(sdio_set_host_pm_flags);

@@ -42,8 +42,6 @@
 #include <linux/parport.h>
 #include <linux/spinlock.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
-#include <linux/module.h>
 #include <sound/core.h>
 #include <sound/initval.h>
 #include <sound/rawmidi.h>
@@ -55,7 +53,7 @@
 
 static int index[SNDRV_CARDS]  = SNDRV_DEFAULT_IDX;
 static char *id[SNDRV_CARDS]   = SNDRV_DEFAULT_STR;
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
 
 static struct platform_device *platform_devices[SNDRV_CARDS]; 
 static int device_count;

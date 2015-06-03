@@ -1,6 +1,5 @@
 menu "Self-contained MTD device drivers"
 	depends on MTD!=n
-	depends on HAS_IOMEM
 
 config MTD_PMC551
 	tristate "Ramix PMC551 PCI Mezzanine RAM card support"
@@ -103,12 +102,12 @@ config M25PXX_USE_FAST_READ
 	help
 	  This option enables FAST_READ access supported by ST M25Pxx.
 
-config MTD_SPEAR_SMI
-	tristate "SPEAR MTD NOR Support through SMI controller"
-	depends on PLAT_SPEAR
-	default y
+config MTD_MT29F
+	tristate "Supports Micron MT29F series Nand flash"
+	depends on SPI_MASTER && EXPERIMENTAL
 	help
-	  This enable SNOR support on SPEAR platforms using SMI controller
+	  This enables support for Micron MT29F series NAND flash chips
+	  used for program and data storage.
 
 config MTD_SST25L
 	tristate "Support SST25L (non JEDEC) SPI Flash chips"
@@ -199,7 +198,6 @@ comment "Disk-On-Chip Device Drivers"
 
 config MTD_DOC2000
 	tristate "M-Systems Disk-On-Chip 2000 and Millennium (DEPRECATED)"
-	depends on MTD_NAND
 	select MTD_DOCPROBE
 	select MTD_NAND_IDS
 	---help---
@@ -222,7 +220,6 @@ config MTD_DOC2000
 
 config MTD_DOC2001
 	tristate "M-Systems Disk-On-Chip Millennium-only alternative driver (DEPRECATED)"
-	depends on MTD_NAND
 	select MTD_DOCPROBE
 	select MTD_NAND_IDS
 	---help---
@@ -244,7 +241,6 @@ config MTD_DOC2001
 
 config MTD_DOC2001PLUS
 	tristate "M-Systems Disk-On-Chip Millennium Plus"
-	depends on MTD_NAND
 	select MTD_DOCPROBE
 	select MTD_NAND_IDS
 	---help---
@@ -259,25 +255,6 @@ config MTD_DOC2001PLUS
 	  NOTE: This driver will soon be replaced by the new DiskOnChip driver
 	  under "NAND Flash Device Drivers" (currently that driver does not
 	  support all Millennium Plus devices).
-
-config MTD_DOCG3
-	tristate "M-Systems Disk-On-Chip G3"
-	select BCH
-	select BCH_CONST_PARAMS
-	---help---
-	  This provides an MTD device driver for the M-Systems DiskOnChip
-	  G3 devices.
-
-	  The driver provides access to G3 DiskOnChip, distributed by
-	  M-Systems and now Sandisk. The support is very experimental,
-	  and doesn't give access to any write operations.
-
-if MTD_DOCG3
-config BCH_CONST_M
-	default 14
-config BCH_CONST_T
-	default 4
-endif
 
 config MTD_DOCPROBE
 	tristate
@@ -298,7 +275,8 @@ config MTD_DOCPROBE_ADVANCED
 config MTD_DOCPROBE_ADDRESS
 	hex "Physical address of DiskOnChip" if MTD_DOCPROBE_ADVANCED
 	depends on MTD_DOCPROBE
-	default "0x0"
+	default "0x0000" if MTD_DOCPROBE_ADVANCED
+	default "0" if !MTD_DOCPROBE_ADVANCED
 	---help---
 	  By default, the probe for DiskOnChip devices will look for a
 	  DiskOnChip at every multiple of 0x2000 between 0xC8000 and 0xEE000.
@@ -333,5 +311,22 @@ config MTD_DOCPROBE_55AA
 	  Millennium will it be absent.  Enable this option if you are using
 	  LinuxBIOS or if you need to recover a DiskOnChip Millennium on which
 	  you have managed to wipe the first block.
+
+config MTD_AR7240_SPI_FLASH
+	bool "Support for ar7240 spi flash"
+	depends on MTD
+
+config MTD_ATH_FLASH
+	bool "Support for Atheros spi flash"
+	depends on MTD
+
+config MTD_AR7100_SPI_FLASH
+    bool "Support for ar7100 spi flash"
+    depends on MTD
+
+config MTD_AR9100_PARALLEL_FLASH
+    bool "Support for ar9100 parallel flash"
+    depends on MTD
+
 
 endmenu

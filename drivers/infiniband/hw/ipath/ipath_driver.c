@@ -39,9 +39,6 @@
 #include <linux/delay.h>
 #include <linux/netdevice.h>
 #include <linux/vmalloc.h>
-#include <linux/bitmap.h>
-#include <linux/slab.h>
-#include <linux/module.h>
 
 #include "ipath_kernel.h"
 #include "ipath_verbs.h"
@@ -133,13 +130,18 @@ static int __devinit ipath_init_one(struct pci_dev *,
 
 /* Only needed for registration, nothing else needs this info */
 #define PCI_VENDOR_ID_PATHSCALE 0x1fc1
+#define PCI_VENDOR_ID_QLOGIC 0x1077
 #define PCI_DEVICE_ID_INFINIPATH_HT 0xd
+#define PCI_DEVICE_ID_INFINIPATH_PE800 0x10
+#define PCI_DEVICE_ID_INFINIPATH_7220 0x7220
 
 /* Number of seconds before our card status check...  */
 #define STATUS_TIMEOUT 60
 
 static const struct pci_device_id ipath_pci_tbl[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_PATHSCALE, PCI_DEVICE_ID_INFINIPATH_HT) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_PATHSCALE, PCI_DEVICE_ID_INFINIPATH_PE800) },
+	{ PCI_DEVICE(PCI_VENDOR_ID_QLOGIC, PCI_DEVICE_ID_INFINIPATH_7220) },
 	{ 0, }
 };
 
@@ -200,11 +202,12 @@ static struct ipath_devdata *ipath_alloc_devdata(struct pci_dev *pdev)
 		goto bail;
 	}
 
-	dd = vzalloc(sizeof(*dd));
+	dd = vmalloc(sizeof(*dd));
 	if (!dd) {
 		dd = ERR_PTR(-ENOMEM);
 		goto bail;
 	}
+	memset(dd, 0, sizeof(*dd));
 	dd->ipath_unit = -1;
 
 	spin_lock_irqsave(&ipath_devs_lock, flags);
@@ -390,8 +393,6 @@ done:
 	ipath_enable_armlaunch(dd);
 }
 
-static void cleanup_device(struct ipath_devdata *dd);
-
 static int __devinit ipath_init_one(struct pci_dev *pdev,
 				    const struct pci_device_id *ent)
 {
@@ -399,6 +400,7 @@ static int __devinit ipath_init_one(struct pci_dev *pdev,
 	struct ipath_devdata *dd;
 	unsigned long long addr;
 	u32 bar0 = 0, bar1 = 0;
+	u8 rev;
 
 	dd = ipath_alloc_devdata(pdev);
 	if (IS_ERR(dd)) {
@@ -517,9 +519,30 @@ static int __devinit ipath_init_one(struct pci_dev *pdev,
 	/* setup the chip-specific functions, as early as possible. */
 	switch (ent->device) {
 	case PCI_DEVICE_ID_INFINIPATH_HT:
+#ifdef CONFIG_HT_IRQ
 		ipath_init_iba6110_funcs(dd);
 		break;
-
+#else
+		ipath_dev_err(dd, "QLogic HT device 0x%x cannot work if "
+			      "CONFIG_HT_IRQ is not enabled\n", ent->device);
+		return -ENODEV;
+#endif
+	case PCI_DEVICE_ID_INFINIPATH_PE800:
+#ifdef CONFIG_PCI_MSI
+		ipath_init_iba6120_funcs(dd);
+		break;
+#else
+		ipath_dev_err(dd, "QLogic PCIE device 0x%x cannot work if "
+			      "CONFIG_PCI_MSI is not enabled\n", ent->device);
+		return -ENODEV;
+#endif
+	case PCI_DEVICE_ID_INFINIPATH_7220:
+#ifndef CONFIG_PCI_MSI
+		ipath_dbg("CONFIG_PCI_MSI is not enabled, "
+			  "using INTx for unit %u\n", dd->ipath_unit);
+#endif
+		ipath_init_iba7220_funcs(dd);
+		break;
 	default:
 		ipath_dev_err(dd, "Found unknown QLogic deviceid 0x%x, "
 			      "failing\n", ent->device);
@@ -529,8 +552,9 @@ static int __devinit ipath_init_one(struct pci_dev *pdev,
 	for (j = 0; j < 6; j++) {
 		if (!pdev->resource[j].start)
 			continue;
-		ipath_cdbg(VERBOSE, "BAR %d %pR, len %llx\n",
-			   j, &pdev->resource[j],
+		ipath_cdbg(VERBOSE, "BAR %d start %llx, end %llx, len %llx\n",
+			   j, (unsigned long long)pdev->resource[j].start,
+			   (unsigned long long)pdev->resource[j].end,
 			   (unsigned long long)pci_resource_len(pdev, j));
 	}
 
@@ -540,7 +564,13 @@ static int __devinit ipath_init_one(struct pci_dev *pdev,
 		goto bail_regions;
 	}
 
-	dd->ipath_pcirev = pdev->revision;
+	ret = pci_read_config_byte(pdev, PCI_REVISION_ID, &rev);
+	if (ret) {
+		ipath_dev_err(dd, "Failed to read PCI revision ID unit "
+			      "%u: err %d\n", dd->ipath_unit, -ret);
+		goto bail_regions;	/* shouldn't ever happen */
+	}
+	dd->ipath_pcirev = rev;
 
 #if defined(__powerpc__)
 	/* There isn't a generic way to specify writethrough mappings */
@@ -610,13 +640,8 @@ static int __devinit ipath_init_one(struct pci_dev *pdev,
 	goto bail;
 
 bail_irqsetup:
-	cleanup_device(dd);
-
-	if (dd->ipath_irq)
-		dd->ipath_f_free_irq(dd);
-
-	if (dd->ipath_f_cleanup)
-		dd->ipath_f_cleanup(dd);
+	if (pdev->irq)
+		free_irq(pdev->irq, dd);
 
 bail_iounmap:
 	iounmap((volatile void __iomem *) dd->ipath_kregbase);
@@ -634,7 +659,7 @@ bail:
 	return ret;
 }
 
-static void cleanup_device(struct ipath_devdata *dd)
+static void __devexit cleanup_device(struct ipath_devdata *dd)
 {
 	int port;
 	struct ipath_portdata **tmp;
@@ -749,7 +774,7 @@ static void __devexit ipath_remove_one(struct pci_dev *pdev)
 	 */
 	ipath_shutdown_device(dd);
 
-	flush_workqueue(ib_wq);
+	flush_scheduled_work();
 
 	if (dd->verbs_dev)
 		ipath_unregister_ib_device(dd->verbs_dev);
@@ -1672,7 +1697,7 @@ void ipath_chg_pioavailkernel(struct ipath_devdata *dd, unsigned start,
 			      unsigned len, int avail)
 {
 	unsigned long flags;
-	unsigned end, cnt = 0;
+	unsigned end, cnt = 0, next;
 
 	/* There are two bits per send buffer (busy and generation) */
 	start *= 2;
@@ -1723,7 +1748,12 @@ void ipath_chg_pioavailkernel(struct ipath_devdata *dd, unsigned start,
 
 	if (dd->ipath_pioupd_thresh) {
 		end = 2 * (dd->ipath_piobcnt2k + dd->ipath_piobcnt4k);
-		cnt = bitmap_weight(dd->ipath_pioavailkernel, end);
+		next = find_first_bit(dd->ipath_pioavailkernel, end);
+		while (next < end) {
+			cnt++;
+			next = find_next_bit(dd->ipath_pioavailkernel, end,
+					next + 1);
+		}
 	}
 	spin_unlock_irqrestore(&ipath_pioavail_lock, flags);
 
@@ -2386,7 +2416,7 @@ void ipath_shutdown_device(struct ipath_devdata *dd)
 	/*
 	 * clear SerdesEnable and turn the leds off; do this here because
 	 * we are unloading, so don't count on interrupts to move along
-	 * Turn the LEDs off explicitly for the same reason.
+	 * Turn the LEDs off explictly for the same reason.
 	 */
 	dd->ipath_f_quiet_serdes(dd);
 

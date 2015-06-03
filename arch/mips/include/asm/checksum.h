@@ -91,6 +91,14 @@ static inline __sum16 csum_fold(__wsum sum)
 	return (__force __sum16)sum;
 }
 
+#ifdef CONFIG_ATHRS_HW_CSUM
+typedef struct
+{
+    __sum16 (*compute_csum_hw)(const void *buff, int len);
+} csum_hw_ops;
+extern csum_hw_ops *csum_hw;
+#endif
+
 /*
  *	This is a version of ip_compute_csum() optimized for IP headers,
  *	which always checksum on 4 octet boundaries.
@@ -104,6 +112,19 @@ static inline __sum16 ip_fast_csum(const void *iph, unsigned int ihl)
 	const unsigned int *stop = word + ihl;
 	unsigned int csum;
 	int carry;
+#if 0
+#ifdef CONFIG_ATHRS_HW_CSUM
+        __sum16 (*compute_csum)(const void *buff, int len);
+        __sum16 csum;
+        if (csum_hw) {
+                compute_csum = rcu_dereference(csum_hw->compute_csum_hw);
+                if (compute_csum) {
+                        csum = compute_csum(iph, ihl); 
+                        printk("hw checksum = 0x%x\n", csum);
+                }
+        }
+#endif
+#endif
 
 	csum = word[0];
 	csum += word[1];

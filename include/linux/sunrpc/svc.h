@@ -29,6 +29,7 @@ struct svc_pool_stats {
 	unsigned long	packets;
 	unsigned long	sockets_queued;
 	unsigned long	threads_woken;
+	unsigned long	overloads_avoided;
 	unsigned long	threads_timedout;
 };
 
@@ -49,6 +50,7 @@ struct svc_pool {
 	struct list_head	sp_sockets;	/* pending sockets */
 	unsigned int		sp_nrthreads;	/* # of threads in pool */
 	struct list_head	sp_all_threads;	/* all server threads */
+	int			sp_nwaking;	/* number of threads woken but not yet active */
 	struct svc_pool_stats	sp_stats;	/* statistics on pool operation */
 } ____cacheline_aligned_in_smp;
 
@@ -84,8 +86,7 @@ struct svc_serv {
 	unsigned int		sv_nrpools;	/* number of thread pools */
 	struct svc_pool *	sv_pools;	/* array of thread pools */
 
-	void			(*sv_shutdown)(struct svc_serv *serv,
-					       struct net *net);
+	void			(*sv_shutdown)(struct svc_serv *serv);
 						/* Callback to use when last thread
 						 * exits.
 						 */
@@ -93,15 +94,15 @@ struct svc_serv {
 	struct module *		sv_module;	/* optional module to count when
 						 * adding threads */
 	svc_thread_fn		sv_function;	/* main function for threads */
-#if defined(CONFIG_SUNRPC_BACKCHANNEL)
+#if defined(CONFIG_NFS_V4_1)
 	struct list_head	sv_cb_list;	/* queue for callback requests
 						 * that arrive over the same
 						 * connection */
 	spinlock_t		sv_cb_lock;	/* protects the svc_cb_list */
 	wait_queue_head_t	sv_cb_waitq;	/* sleep here if there are no
 						 * entries in the svc_cb_list */
-	struct svc_xprt		*sv_bc_xprt;	/* callback on fore channel */
-#endif /* CONFIG_SUNRPC_BACKCHANNEL */
+	struct svc_xprt		*bc_xprt;
+#endif /* CONFIG_NFS_V4_1 */
 };
 
 /*
@@ -213,6 +214,11 @@ static inline void svc_putu32(struct kvec *iov, __be32 val)
 	iov->iov_len += sizeof(__be32);
 }
 
+union svc_addr_u {
+    struct in_addr	addr;
+    struct in6_addr	addr6;
+};
+
 /*
  * The context of a single thread, including the request currently being
  * processed.
@@ -221,12 +227,8 @@ struct svc_rqst {
 	struct list_head	rq_list;	/* idle list */
 	struct list_head	rq_all;		/* all threads list */
 	struct svc_xprt *	rq_xprt;	/* transport ptr */
-
 	struct sockaddr_storage	rq_addr;	/* peer address */
 	size_t			rq_addrlen;
-	struct sockaddr_storage	rq_daddr;	/* dest addr of request
-						 *  - reply from here */
-	size_t			rq_daddrlen;
 
 	struct svc_serv *	rq_server;	/* RPC service definition */
 	struct svc_pool *	rq_pool;	/* thread pool */
@@ -255,6 +257,9 @@ struct svc_rqst {
 	unsigned short
 				rq_secure  : 1;	/* secure port */
 
+	union svc_addr_u	rq_daddr;	/* dest addr of request
+						 *  - reply from here */
+
 	void *			rq_argp;	/* decoded arguments */
 	void *			rq_resp;	/* xdr'd results */
 	void *			rq_auth_data;	/* flavor-specific data */
@@ -266,17 +271,20 @@ struct svc_rqst {
 	struct cache_req	rq_chandle;	/* handle passed to caches for 
 						 * request delaying 
 						 */
-	bool			rq_dropme;
 	/* Catering to nfsd */
 	struct auth_domain *	rq_client;	/* RPC peer info */
 	struct auth_domain *	rq_gssclient;	/* "gss/"-style peer info */
-	int			rq_cachetype;
 	struct svc_cacherep *	rq_cacherep;	/* cache info */
+	struct knfsd_fh *	rq_reffh;	/* Referrence filehandle, used to
+						 * determine what device number
+						 * to report (real or virtual)
+						 */
 	int			rq_splice_ok;   /* turned off in gss privacy
 						 * to prevent encrypting page
 						 * cache pages */
 	wait_queue_head_t	rq_wait;	/* synchronization */
 	struct task_struct	*rq_task;	/* service thread */
+	int			rq_waking;	/* 1 if thread is being woken */
 };
 
 /*
@@ -295,21 +303,6 @@ static inline struct sockaddr_in6 *svc_addr_in6(const struct svc_rqst *rqst)
 static inline struct sockaddr *svc_addr(const struct svc_rqst *rqst)
 {
 	return (struct sockaddr *) &rqst->rq_addr;
-}
-
-static inline struct sockaddr_in *svc_daddr_in(const struct svc_rqst *rqst)
-{
-	return (struct sockaddr_in *) &rqst->rq_daddr;
-}
-
-static inline struct sockaddr_in6 *svc_daddr_in6(const struct svc_rqst *rqst)
-{
-	return (struct sockaddr_in6 *) &rqst->rq_daddr;
-}
-
-static inline struct sockaddr *svc_daddr(const struct svc_rqst *rqst)
-{
-	return (struct sockaddr *) &rqst->rq_daddr;
 }
 
 /*
@@ -352,8 +345,7 @@ struct svc_deferred_req {
 	struct svc_xprt		*xprt;
 	struct sockaddr_storage	addr;	/* where reply must go */
 	size_t			addrlen;
-	struct sockaddr_storage	daddr;	/* where reply must come from */
-	size_t			daddrlen;
+	union svc_addr_u	daddr;	/* where reply must come from */
 	struct cache_deferred_req handle;
 	size_t			xprt_hlen;
 	int			argslen;
@@ -414,25 +406,21 @@ struct svc_procedure {
 /*
  * Function prototypes.
  */
-int svc_rpcb_setup(struct svc_serv *serv, struct net *net);
-void svc_rpcb_cleanup(struct svc_serv *serv, struct net *net);
-int svc_bind(struct svc_serv *serv, struct net *net);
 struct svc_serv *svc_create(struct svc_program *, unsigned int,
-			    void (*shutdown)(struct svc_serv *, struct net *net));
+			    void (*shutdown)(struct svc_serv *));
 struct svc_rqst *svc_prepare_thread(struct svc_serv *serv,
-					struct svc_pool *pool, int node);
+					struct svc_pool *pool);
 void		   svc_exit_thread(struct svc_rqst *);
 struct svc_serv *  svc_create_pooled(struct svc_program *, unsigned int,
-			void (*shutdown)(struct svc_serv *, struct net *net),
+			void (*shutdown)(struct svc_serv *),
 			svc_thread_fn, struct module *);
 int		   svc_set_num_threads(struct svc_serv *, struct svc_pool *, int);
 int		   svc_pool_stats_open(struct svc_serv *serv, struct file *file);
 void		   svc_destroy(struct svc_serv *);
-void		   svc_shutdown_net(struct svc_serv *, struct net *);
 int		   svc_process(struct svc_rqst *);
 int		   bc_svc_process(struct svc_serv *, struct rpc_rqst *,
 			struct svc_rqst *);
-int		   svc_register(const struct svc_serv *, struct net *, const int,
+int		   svc_register(const struct svc_serv *, const int,
 				const unsigned short, const unsigned short);
 
 void		   svc_wake_up(struct svc_serv *);

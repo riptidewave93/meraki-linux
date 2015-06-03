@@ -159,7 +159,7 @@ static int max6900_i2c_read_time(struct i2c_client *client, struct rtc_time *tm)
 		      bcd2bin(regs[MAX6900_REG_CENTURY]) * 100 - 1900;
 	tm->tm_wday = bcd2bin(regs[MAX6900_REG_DW]);
 
-	return rtc_valid_tm(tm);
+	return 0;
 }
 
 static int max6900_i2c_clear_write_protect(struct i2c_client *client)
@@ -261,9 +261,20 @@ static struct i2c_driver max6900_driver = {
 	.id_table = max6900_id,
 };
 
-module_i2c_driver(max6900_driver);
+static int __init max6900_init(void)
+{
+	return i2c_add_driver(&max6900_driver);
+}
+
+static void __exit max6900_exit(void)
+{
+	i2c_del_driver(&max6900_driver);
+}
 
 MODULE_DESCRIPTION("Maxim MAX6900 RTC driver");
 MODULE_AUTHOR("Dale Farnsworth <dale@farnsworth.org>");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(DRV_VERSION);
+
+module_init(max6900_init);
+module_exit(max6900_exit);

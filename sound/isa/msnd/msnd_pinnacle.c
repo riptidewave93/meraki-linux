@@ -73,11 +73,9 @@
 #ifdef MSND_CLASSIC
 #  include "msnd_classic.h"
 #  define LOGNAME			"msnd_classic"
-#  define DEV_NAME			"msnd-classic"
 #else
 #  include "msnd_pinnacle.h"
 #  define LOGNAME			"snd_msnd_pinnacle"
-#  define DEV_NAME			"msnd-pinnacle"
 #endif
 
 static void __devinit set_default_audio_parameters(struct snd_msnd *chip)
@@ -551,10 +549,7 @@ static int __devinit snd_msnd_attach(struct snd_card *card)
 		printk(KERN_ERR LOGNAME ": Couldn't grab IRQ %d\n", chip->irq);
 		return err;
 	}
-	if (request_region(chip->io, DSP_NUMIO, card->shortname) == NULL) {
-		free_irq(chip->irq, chip);
-		return -EBUSY;
-	}
+	request_region(chip->io, DSP_NUMIO, card->shortname);
 
 	if (!request_mem_region(chip->base, BUFFSIZE, card->shortname)) {
 		printk(KERN_ERR LOGNAME
@@ -602,7 +597,7 @@ static int __devinit snd_msnd_attach(struct snd_card *card)
 					  mpu_io[0],
 					  MPU401_MODE_INPUT |
 					  MPU401_MODE_OUTPUT,
-					  mpu_irq[0],
+					  mpu_irq[0], IRQF_DISABLED,
 					  &chip->rmidi);
 		if (err < 0) {
 			printk(KERN_ERR LOGNAME
@@ -766,9 +761,9 @@ static long io[SNDRV_CARDS] = SNDRV_DEFAULT_PORT;
 static int irq[SNDRV_CARDS] = SNDRV_DEFAULT_IRQ;
 static long mem[SNDRV_CARDS] = SNDRV_DEFAULT_PORT;
 
-#ifndef MSND_CLASSIC
 static long cfg[SNDRV_CARDS] = SNDRV_DEFAULT_PORT;
 
+#ifndef MSND_CLASSIC
 /* Extra Peripheral Configuration (Default: Disable) */
 static long ide_io0[SNDRV_CARDS] = SNDRV_DEFAULT_PORT;
 static long ide_io1[SNDRV_CARDS] = SNDRV_DEFAULT_PORT;
@@ -787,7 +782,7 @@ static int write_ndelay[SNDRV_CARDS] = { [0 ... (SNDRV_CARDS-1)] = 1 };
 static int calibrate_signal;
 
 #ifdef CONFIG_PNP
-static bool isapnp[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
+static int isapnp[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
 module_param_array(isapnp, bool, NULL, 0444);
 MODULE_PARM_DESC(isapnp, "ISA PnP detection for specified soundcard.");
 #define has_isapnp(x) isapnp[x]
@@ -896,11 +891,7 @@ static int __devinit snd_msnd_isa_probe(struct device *pdev, unsigned int idx)
 	struct snd_card *card;
 	struct snd_msnd *chip;
 
-	if (has_isapnp(idx)
-#ifndef MSND_CLASSIC
-	    || cfg[idx] == SNDRV_AUTO_PORT
-#endif
-	    ) {
+	if (has_isapnp(idx) || cfg[idx] == SNDRV_AUTO_PORT) {
 		printk(KERN_INFO LOGNAME ": Assuming PnP mode\n");
 		return -ENODEV;
 	}
@@ -1069,6 +1060,8 @@ static int __devexit snd_msnd_isa_remove(struct device *pdev, unsigned int dev)
 	dev_set_drvdata(pdev, NULL);
 	return 0;
 }
+
+#define DEV_NAME "msnd-pinnacle"
 
 static struct isa_driver snd_msnd_driver = {
 	.match		= snd_msnd_isa_match,

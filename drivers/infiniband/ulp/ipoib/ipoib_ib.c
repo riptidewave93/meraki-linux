@@ -34,9 +34,7 @@
  */
 
 #include <linux/delay.h>
-#include <linux/moduleparam.h>
 #include <linux/dma-mapping.h>
-#include <linux/slab.h>
 
 #include <linux/ip.h>
 #include <linux/tcp.h>
@@ -57,24 +55,21 @@ struct ipoib_ah *ipoib_create_ah(struct net_device *dev,
 				 struct ib_pd *pd, struct ib_ah_attr *attr)
 {
 	struct ipoib_ah *ah;
-	struct ib_ah *vah;
 
 	ah = kmalloc(sizeof *ah, GFP_KERNEL);
 	if (!ah)
-		return ERR_PTR(-ENOMEM);
+		return NULL;
 
 	ah->dev       = dev;
 	ah->last_send = 0;
 	kref_init(&ah->ref);
 
-	vah = ib_create_ah(pd, attr);
-	if (IS_ERR(vah)) {
+	ah->ah = ib_create_ah(pd, attr);
+	if (IS_ERR(ah->ah)) {
 		kfree(ah);
-		ah = (struct ipoib_ah *)vah;
-	} else {
-		ah->ah = vah;
+		ah = NULL;
+	} else
 		ipoib_dbg(netdev_priv(dev), "Created ah %p\n", ah->ah);
-	}
 
 	return ah;
 }
@@ -121,7 +116,7 @@ static void ipoib_ud_skb_put_frags(struct ipoib_dev_priv *priv,
 
 		size = length - IPOIB_UD_HEAD_SIZE;
 
-		skb_frag_size_set(frag, size);
+		frag->size     = size;
 		skb->data_len += size;
 		skb->truesize += size;
 	} else
@@ -186,7 +181,7 @@ static struct sk_buff *ipoib_alloc_rx_skb(struct net_device *dev, int id)
 			goto partial_error;
 		skb_fill_page_desc(skb, 0, page, 0, PAGE_SIZE);
 		mapping[1] =
-			ib_dma_map_page(priv->ca, page,
+			ib_dma_map_page(priv->ca, skb_shinfo(skb)->frags[0].page,
 					0, PAGE_SIZE, DMA_FROM_DEVICE);
 		if (unlikely(ib_dma_mapping_error(priv->ca, mapping[1])))
 			goto partial_error;
@@ -227,7 +222,6 @@ static void ipoib_ib_handle_rx_wc(struct net_device *dev, struct ib_wc *wc)
 	unsigned int wr_id = wc->wr_id & ~IPOIB_OP_RECV;
 	struct sk_buff *skb;
 	u64 mapping[IPOIB_UD_RX_SG];
-	union ib_gid *dgid;
 
 	ipoib_dbg_data(priv, "recv completion: id %d, status: %d\n",
 		       wr_id, wc->status);
@@ -276,16 +270,6 @@ static void ipoib_ib_handle_rx_wc(struct net_device *dev, struct ib_wc *wc)
 	ipoib_ud_dma_unmap_rx(priv, mapping);
 	ipoib_ud_skb_put_frags(priv, skb, wc->byte_len);
 
-	/* First byte of dgid signals multicast when 0xff */
-	dgid = &((struct ib_grh *)skb->data)->dgid;
-
-	if (!(wc->wc_flags & IB_WC_GRH) || dgid->raw[0] != 0xff)
-		skb->pkt_type = PACKET_HOST;
-	else if (memcmp(dgid, dev->broadcast + 4, sizeof(union ib_gid)) == 0)
-		skb->pkt_type = PACKET_BROADCAST;
-	else
-		skb->pkt_type = PACKET_MULTICAST;
-
 	skb_pull(skb, IB_GRH_BYTES);
 
 	skb->protocol = ((struct ipoib_header *) skb->data)->proto;
@@ -296,11 +280,16 @@ static void ipoib_ib_handle_rx_wc(struct net_device *dev, struct ib_wc *wc)
 	dev->stats.rx_bytes += skb->len;
 
 	skb->dev = dev;
-	if ((dev->features & NETIF_F_RXCSUM) &&
-			likely(wc->wc_flags & IB_WC_IP_CSUM_OK))
+	/* XXX get correct PACKET_ type here */
+	skb->pkt_type = PACKET_HOST;
+
+	if (test_bit(IPOIB_FLAG_CSUM, &priv->flags) && likely(wc->csum_ok))
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 
-	napi_gro_receive(&priv->napi, skb);
+	if (dev->features & NETIF_F_LRO)
+		lro_receive_skb(&priv->lro.lro_mgr, skb, NULL);
+	else
+		netif_receive_skb(skb);
 
 repost:
 	if (unlikely(ipoib_ib_post_receive(dev, wr_id)))
@@ -327,10 +316,9 @@ static int ipoib_dma_map_tx(struct ib_device *ca,
 		off = 0;
 
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; ++i) {
-		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
-		mapping[i + off] = ib_dma_map_page(ca,
-						 skb_frag_page(frag),
-						 frag->page_offset, skb_frag_size(frag),
+		skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+		mapping[i + off] = ib_dma_map_page(ca, frag->page,
+						 frag->page_offset, frag->size,
 						 DMA_TO_DEVICE);
 		if (unlikely(ib_dma_mapping_error(ca, mapping[i + off])))
 			goto partial_error;
@@ -339,9 +327,8 @@ static int ipoib_dma_map_tx(struct ib_device *ca,
 
 partial_error:
 	for (; i > 0; --i) {
-		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i - 1];
-
-		ib_dma_unmap_page(ca, mapping[i - !off], skb_frag_size(frag), DMA_TO_DEVICE);
+		skb_frag_t *frag = &skb_shinfo(skb)->frags[i - 1];
+		ib_dma_unmap_page(ca, mapping[i - !off], frag->size, DMA_TO_DEVICE);
 	}
 
 	if (off)
@@ -365,9 +352,8 @@ static void ipoib_dma_unmap_tx(struct ib_device *ca,
 		off = 0;
 
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; ++i) {
-		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
-
-		ib_dma_unmap_page(ca, mapping[i + off], skb_frag_size(frag),
+		skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+		ib_dma_unmap_page(ca, mapping[i + off], frag->size,
 				  DMA_TO_DEVICE);
 	}
 }
@@ -455,6 +441,9 @@ poll_more:
 	}
 
 	if (done < budget) {
+		if (dev->features & NETIF_F_LRO)
+			lro_flush_all(&priv->lro.lro_mgr);
+
 		napi_complete(napi);
 		if (unlikely(ib_req_notify_cq(priv->recv_cq,
 					      IB_CQ_NEXT_COMP |
@@ -517,7 +506,7 @@ static inline int post_send(struct ipoib_dev_priv *priv,
 
 	for (i = 0; i < nr_frags; ++i) {
 		priv->tx_sge[i + off].addr = mapping[i + off];
-		priv->tx_sge[i + off].length = skb_frag_size(&frags[i]);
+		priv->tx_sge[i + off].length = frags[i].size;
 	}
 	priv->tx_wr.num_sge	     = nr_frags + off;
 	priv->tx_wr.wr_id 	     = wr_id;
@@ -540,7 +529,7 @@ void ipoib_send(struct net_device *dev, struct sk_buff *skb,
 {
 	struct ipoib_dev_priv *priv = netdev_priv(dev);
 	struct ipoib_tx_buf *tx_req;
-	int hlen, rc;
+	int hlen;
 	void *phead;
 
 	if (skb_is_gso(skb)) {
@@ -596,10 +585,9 @@ void ipoib_send(struct net_device *dev, struct sk_buff *skb,
 		netif_stop_queue(dev);
 	}
 
-	rc = post_send(priv, priv->tx_head & (ipoib_sendq_size - 1),
-		       address->ah, qpn, tx_req, phead, hlen);
-	if (unlikely(rc)) {
-		ipoib_warn(priv, "post_send failed, error %d\n", rc);
+	if (unlikely(post_send(priv, priv->tx_head & (ipoib_sendq_size - 1),
+			       address->ah, qpn, tx_req, phead, hlen))) {
+		ipoib_warn(priv, "post_send failed\n");
 		++dev->stats.tx_errors;
 		--priv->tx_outstanding;
 		ipoib_dma_unmap_tx(priv->ca, tx_req);

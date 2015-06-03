@@ -11,8 +11,6 @@
 #ifndef __ASM_SMP_OPS_H
 #define __ASM_SMP_OPS_H
 
-#include <linux/errno.h>
-
 #ifdef CONFIG_SMP
 
 #include <linux/cpumask.h>
@@ -58,43 +56,8 @@ static inline void register_smp_ops(struct plat_smp_ops *ops)
 
 #endif /* !CONFIG_SMP */
 
-static inline int register_up_smp_ops(void)
-{
-#ifdef CONFIG_SMP_UP
-	extern struct plat_smp_ops up_smp_ops;
-
-	register_smp_ops(&up_smp_ops);
-
-	return 0;
-#else
-	return -ENODEV;
-#endif
-}
-
-static inline int register_cmp_smp_ops(void)
-{
-#ifdef CONFIG_MIPS_CMP
-	extern struct plat_smp_ops cmp_smp_ops;
-
-	register_smp_ops(&cmp_smp_ops);
-
-	return 0;
-#else
-	return -ENODEV;
-#endif
-}
-
-static inline int register_vsmp_smp_ops(void)
-{
-#ifdef CONFIG_MIPS_MT_SMP
-	extern struct plat_smp_ops vsmp_smp_ops;
-
-	register_smp_ops(&vsmp_smp_ops);
-
-	return 0;
-#else
-	return -ENODEV;
-#endif
-}
+extern struct plat_smp_ops up_smp_ops;
+extern struct plat_smp_ops cmp_smp_ops;
+extern struct plat_smp_ops vsmp_smp_ops;
 
 #endif /* __ASM_SMP_OPS_H */

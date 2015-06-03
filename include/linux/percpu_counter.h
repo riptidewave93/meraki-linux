@@ -16,12 +16,12 @@
 #ifdef CONFIG_SMP
 
 struct percpu_counter {
-	raw_spinlock_t lock;
+	spinlock_t lock;
 	s64 count;
 #ifdef CONFIG_HOTPLUG_CPU
 	struct list_head list;	/* All percpu_counters are on a list */
 #endif
-	s32 __percpu *counters;
+	s32 *counters;
 };
 
 extern int percpu_counter_batch;
@@ -40,7 +40,6 @@ void percpu_counter_destroy(struct percpu_counter *fbc);
 void percpu_counter_set(struct percpu_counter *fbc, s64 amount);
 void __percpu_counter_add(struct percpu_counter *fbc, s64 amount, s32 batch);
 s64 __percpu_counter_sum(struct percpu_counter *fbc);
-int percpu_counter_compare(struct percpu_counter *fbc, s64 rhs);
 
 static inline void percpu_counter_add(struct percpu_counter *fbc, s64 amount)
 {
@@ -75,12 +74,7 @@ static inline s64 percpu_counter_read_positive(struct percpu_counter *fbc)
 	barrier();		/* Prevent reloads of fbc->count */
 	if (ret >= 0)
 		return ret;
-	return 0;
-}
-
-static inline int percpu_counter_initialized(struct percpu_counter *fbc)
-{
-	return (fbc->counters != NULL);
+	return 1;
 }
 
 #else
@@ -104,15 +98,8 @@ static inline void percpu_counter_set(struct percpu_counter *fbc, s64 amount)
 	fbc->count = amount;
 }
 
-static inline int percpu_counter_compare(struct percpu_counter *fbc, s64 rhs)
-{
-	if (fbc->count > rhs)
-		return 1;
-	else if (fbc->count < rhs)
-		return -1;
-	else
-		return 0;
-}
+#define __percpu_counter_add(fbc, amount, batch) \
+	percpu_counter_add(fbc, amount)
 
 static inline void
 percpu_counter_add(struct percpu_counter *fbc, s64 amount)
@@ -122,21 +109,11 @@ percpu_counter_add(struct percpu_counter *fbc, s64 amount)
 	preempt_enable();
 }
 
-static inline void
-__percpu_counter_add(struct percpu_counter *fbc, s64 amount, s32 batch)
-{
-	percpu_counter_add(fbc, amount);
-}
-
 static inline s64 percpu_counter_read(struct percpu_counter *fbc)
 {
 	return fbc->count;
 }
 
-/*
- * percpu_counter is intended to track positive numbers. In the UP case the
- * number should never be negative.
- */
 static inline s64 percpu_counter_read_positive(struct percpu_counter *fbc)
 {
 	return fbc->count;
@@ -150,11 +127,6 @@ static inline s64 percpu_counter_sum_positive(struct percpu_counter *fbc)
 static inline s64 percpu_counter_sum(struct percpu_counter *fbc)
 {
 	return percpu_counter_read(fbc);
-}
-
-static inline int percpu_counter_initialized(struct percpu_counter *fbc)
-{
-	return 1;
 }
 
 #endif	/* CONFIG_SMP */

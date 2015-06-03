@@ -22,10 +22,8 @@
  */
 
 #include <linux/pci.h>
-#include <linux/gfp.h>
 #include <linux/time.h>
 #include <linux/mutex.h>
-#include <linux/export.h>
 
 #include <sound/core.h>
 #include <sound/emu10k1.h>
@@ -249,7 +247,7 @@ static int is_valid_page(struct snd_emu10k1 *emu, dma_addr_t addr)
 /*
  * map the given memory block on PTB.
  * if the block is already mapped, update the link order.
- * if no empty pages are found, tries to release unused memory blocks
+ * if no empty pages are found, tries to release unsed memory blocks
  * and retry the mapping.
  */
 int snd_emu10k1_memblk_map(struct snd_emu10k1 *emu, struct snd_emu10k1_memblk *blk)

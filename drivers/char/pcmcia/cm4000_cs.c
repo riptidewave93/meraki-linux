@@ -23,6 +23,8 @@
   * All rights reserved. Licensed under dual BSD/GPL license.
   */
 
+/* #define PCMCIA_DEBUG 6 */
+
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/slab.h>
@@ -30,10 +32,12 @@
 #include <linux/fs.h>
 #include <linux/delay.h>
 #include <linux/bitrev.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/uaccess.h>
 #include <linux/io.h>
 
+#include <pcmcia/cs_types.h>
+#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/cisreg.h>
 #include <pcmcia/ciscode.h>
@@ -43,18 +47,19 @@
 
 /* #define ATR_CSUM */
 
-#define reader_to_dev(x)	(&x->p_dev->dev)
-
-/* n (debug level) is ignored */
-/* additional debug output may be enabled by re-compiling with
- * CM4000_DEBUG set */
-/* #define CM4000_DEBUG */
-#define DEBUGP(n, rdr, x, args...) do { 		\
-		dev_dbg(reader_to_dev(rdr), "%s:" x, 	\
-			   __func__ , ## args);		\
+#ifdef PCMCIA_DEBUG
+#define reader_to_dev(x)	(&handle_to_dev(x->p_dev))
+static int pc_debug = PCMCIA_DEBUG;
+module_param(pc_debug, int, 0600);
+#define DEBUGP(n, rdr, x, args...) do { 				\
+	if (pc_debug >= (n))						\
+		dev_printk(KERN_DEBUG, reader_to_dev(rdr), "%s:" x, 	\
+			   __func__ , ## args);			\
 	} while (0)
-
-static DEFINE_MUTEX(cmm_mutex);
+#else
+#define DEBUGP(n, rdr, x, args...)
+#endif
+static char *version = "cm4000_cs.c v2.4.0gm6 - All bugs added by Harald Welte";
 
 #define	T_1SEC		(HZ)
 #define	T_10MSEC	msecs_to_jiffies(10)
@@ -104,6 +109,7 @@ static int major;		/* major number we get from the kernel */
 
 struct cm4000_dev {
 	struct pcmcia_device *p_dev;
+	dev_node_t node;		/* OS node (major,minor) */
 
 	unsigned char atr[MAX_ATR];
 	unsigned char rbuf[512];
@@ -168,13 +174,14 @@ static unsigned char fi_di_table[10][14] = {
 /* 9 */ {0x09,0x19,0x29,0x39,0x49,0x59,0x69,0x11,0x11,0x99,0xA9,0xB9,0xC9,0xD9}
 };
 
-#ifndef CM4000_DEBUG
+#ifndef PCMCIA_DEBUG
 #define	xoutb	outb
 #define	xinb	inb
 #else
 static inline void xoutb(unsigned char val, unsigned short port)
 {
-	pr_debug("outb(val=%.2x,port=%.4x)\n", val, port);
+	if (pc_debug >= 7)
+		printk(KERN_DEBUG "outb(val=%.2x,port=%.4x)\n", val, port);
 	outb(val, port);
 }
 static inline unsigned char xinb(unsigned short port)
@@ -182,7 +189,8 @@ static inline unsigned char xinb(unsigned short port)
 	unsigned char val;
 
 	val = inb(port);
-	pr_debug("%.2x=inb(%.4x)\n", val, port);
+	if (pc_debug >= 7)
+		printk(KERN_DEBUG "%.2x=inb(%.4x)\n", val, port);
 
 	return val;
 }
@@ -420,7 +428,7 @@ static struct card_fixup card_fixups[] = {
 static void set_cardparameter(struct cm4000_dev *dev)
 {
 	int i;
-	unsigned int iobase = dev->p_dev->resource[0]->start;
+	unsigned int iobase = dev->p_dev->io.BasePort1;
 	u_int8_t stopbits = 0x02; /* ISO default */
 
 	DEBUGP(3, dev, "-> set_cardparameter\n");
@@ -453,7 +461,7 @@ static int set_protocol(struct cm4000_dev *dev, struct ptsreq *ptsreq)
 	unsigned short num_bytes_read;
 	unsigned char pts_reply[4];
 	ssize_t rc;
-	unsigned int iobase = dev->p_dev->resource[0]->start;
+	unsigned int iobase = dev->p_dev->io.BasePort1;
 
 	rc = 0;
 
@@ -506,10 +514,12 @@ static int set_protocol(struct cm4000_dev *dev, struct ptsreq *ptsreq)
 	for (i = 0; i < 4; i++) {
 		xoutb(i, REG_BUF_ADDR(iobase));
 		xoutb(dev->pts[i], REG_BUF_DATA(iobase));	/* buf data */
-#ifdef CM4000_DEBUG
-		pr_debug("0x%.2x ", dev->pts[i]);
+#ifdef PCMCIA_DEBUG
+		if (pc_debug >= 5)
+			printk("0x%.2x ", dev->pts[i]);
 	}
-	pr_debug("\n");
+	if (pc_debug >= 5)
+		printk("\n");
 #else
 	}
 #endif
@@ -569,13 +579,14 @@ static int set_protocol(struct cm4000_dev *dev, struct ptsreq *ptsreq)
 		pts_reply[i] = inb(REG_BUF_DATA(iobase));
 	}
 
-#ifdef CM4000_DEBUG
+#ifdef PCMCIA_DEBUG
 	DEBUGP(2, dev, "PTSreply: ");
 	for (i = 0; i < num_bytes_read; i++) {
-		pr_debug("0x%.2x ", pts_reply[i]);
+		if (pc_debug >= 5)
+			printk("0x%.2x ", pts_reply[i]);
 	}
-	pr_debug("\n");
-#endif	/* CM4000_DEBUG */
+	printk("\n");
+#endif	/* PCMCIA_DEBUG */
 
 	DEBUGP(5, dev, "Clear Tactive in Flags1\n");
 	xoutb(0x20, REG_FLAGS1(iobase));
@@ -644,7 +655,7 @@ static void terminate_monitor(struct cm4000_dev *dev)
 
 	DEBUGP(5, dev, "Delete timer\n");
 	del_timer_sync(&dev->timer);
-#ifdef CM4000_DEBUG
+#ifdef PCMCIA_DEBUG
 	dev->monitor_running = 0;
 #endif
 
@@ -662,7 +673,7 @@ static void terminate_monitor(struct cm4000_dev *dev)
 static void monitor_card(unsigned long p)
 {
 	struct cm4000_dev *dev = (struct cm4000_dev *) p;
-	unsigned int iobase = dev->p_dev->resource[0]->start;
+	unsigned int iobase = dev->p_dev->io.BasePort1;
 	unsigned short s;
 	struct ptsreq ptsreq;
 	int i, atrc;
@@ -806,7 +817,7 @@ static void monitor_card(unsigned long p)
 		dev->flags1 = 0x01;
 		xoutb(dev->flags1, REG_FLAGS1(iobase));
 
-		/* atr is present (which doesn't mean it's valid) */
+		/* atr is present (which doesnt mean it's valid) */
 		set_bit(IS_ATR_PRESENT, &dev->flags);
 		if (dev->atr[0] == 0x03)
 			str_invert_revert(dev->atr, dev->atr_len);
@@ -830,7 +841,8 @@ static void monitor_card(unsigned long p)
 			    test_bit(IS_ANY_T1, &dev->flags))) {
 				DEBUGP(4, dev, "Perform AUTOPPS\n");
 				set_bit(IS_AUTOPPS_ACT, &dev->flags);
-				ptsreq.protocol = (0x01 << dev->proto);
+				ptsreq.protocol = ptsreq.protocol =
+				    (0x01 << dev->proto);
 				ptsreq.flags = 0x01;
 				ptsreq.pts1 = 0x00;
 				ptsreq.pts2 = 0x00;
@@ -880,12 +892,13 @@ static void monitor_card(unsigned long p)
 		/* slow down warning, but prompt immediately after insertion */
 		if (dev->cwarn == 0 || dev->cwarn == 10) {
 			set_bit(IS_BAD_CARD, &dev->flags);
-			dev_warn(&dev->p_dev->dev, MODULE_NAME ": ");
+			printk(KERN_WARNING MODULE_NAME ": device %s: ",
+			       dev->node.dev_name);
 			if (test_bit(IS_BAD_CSUM, &dev->flags)) {
 				DEBUGP(4, dev, "ATR checksum (0x%.2x, should "
 				       "be zero) failed\n", dev->atr_csum);
 			}
-#ifdef CM4000_DEBUG
+#ifdef PCMCIA_DEBUG
 			else if (test_bit(IS_BAD_LENGTH, &dev->flags)) {
 				DEBUGP(4, dev, "ATR length error\n");
 			} else {
@@ -922,7 +935,7 @@ static ssize_t cmm_read(struct file *filp, __user char *buf, size_t count,
 			loff_t *ppos)
 {
 	struct cm4000_dev *dev = filp->private_data;
-	unsigned int iobase = dev->p_dev->resource[0]->start;
+	unsigned int iobase = dev->p_dev->io.BasePort1;
 	ssize_t rc;
 	int i, j, k;
 
@@ -978,9 +991,8 @@ static ssize_t cmm_read(struct file *filp, __user char *buf, size_t count,
 		if (dev->flags0 & 1) {
 			set_bit(IS_CMM_ABSENT, &dev->flags);
 			rc = -ENODEV;
-		} else {
-			rc = -EIO;
 		}
+		rc = -EIO;
 		goto release_io;
 	}
 
@@ -1022,16 +1034,14 @@ static ssize_t cmm_read(struct file *filp, __user char *buf, size_t count,
 
 	xoutb(0, REG_FLAGS1(iobase));	/* clear detectCMM */
 	/* last check before exit */
-	if (!io_detect_cm4000(iobase, dev)) {
-		rc = -ENODEV;
-		goto release_io;
-	}
+	if (!io_detect_cm4000(iobase, dev))
+		count = -ENODEV;
 
 	if (test_bit(IS_INVREV, &dev->flags) && count > 0)
 		str_invert_revert(dev->rbuf, count);
 
 	if (copy_to_user(buf, dev->rbuf, count))
-		rc = -EFAULT;
+		return -EFAULT;
 
 release_io:
 	clear_bit(LOCK_IO, &dev->flags);
@@ -1045,8 +1055,8 @@ release_io:
 static ssize_t cmm_write(struct file *filp, const char __user *buf,
 			 size_t count, loff_t *ppos)
 {
-	struct cm4000_dev *dev = filp->private_data;
-	unsigned int iobase = dev->p_dev->resource[0]->start;
+	struct cm4000_dev *dev = (struct cm4000_dev *) filp->private_data;
+	unsigned int iobase = dev->p_dev->io.BasePort1;
 	unsigned short s;
 	unsigned char tmp;
 	unsigned char infolen;
@@ -1399,13 +1409,13 @@ static void stop_monitor(struct cm4000_dev *dev)
 static long cmm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	struct cm4000_dev *dev = filp->private_data;
-	unsigned int iobase = dev->p_dev->resource[0]->start;
+	unsigned int iobase = dev->p_dev->io.BasePort1;
 	struct inode *inode = filp->f_path.dentry->d_inode;
 	struct pcmcia_device *link;
 	int size;
 	int rc;
 	void __user *argp = (void __user *)arg;
-#ifdef CM4000_DEBUG
+#ifdef PCMCIA_DEBUG
 	char *ioctl_names[CM_IOC_MAXNR + 1] = {
 		[_IOC_NR(CM_IOCGSTATUS)] "CM_IOCGSTATUS",
 		[_IOC_NR(CM_IOCGATR)] "CM_IOCGATR",
@@ -1413,11 +1423,11 @@ static long cmm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		[_IOC_NR(CM_IOCSPTS)] "CM_IOCSPTS",
 		[_IOC_NR(CM_IOSDBGLVL)] "CM4000_DBGLVL",
 	};
+#endif
 	DEBUGP(3, dev, "cmm_ioctl(device=%d.%d) %s\n", imajor(inode),
 	       iminor(inode), ioctl_names[_IOC_NR(cmd)]);
-#endif
 
-	mutex_lock(&cmm_mutex);
+	lock_kernel();
 	rc = -ENODEV;
 	link = dev_table[iminor(inode)];
 	if (!pcmcia_dev_present(link)) {
@@ -1513,7 +1523,7 @@ static long cmm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		}
 	case CM_IOCARDOFF:
 
-#ifdef CM4000_DEBUG
+#ifdef PCMCIA_DEBUG
 		DEBUGP(4, dev, "... in CM_IOCARDOFF\n");
 		if (dev->flags0 & 0x01) {
 			DEBUGP(4, dev, "    Card inserted\n");
@@ -1615,9 +1625,18 @@ static long cmm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 
 		}
 		break;
-#ifdef CM4000_DEBUG
-	case CM_IOSDBGLVL:
-		rc = -ENOTTY;
+#ifdef PCMCIA_DEBUG
+	case CM_IOSDBGLVL:	/* set debug log level */
+		{
+			int old_pc_debug = 0;
+
+			old_pc_debug = pc_debug;
+			if (copy_from_user(&pc_debug, argp, sizeof(int)))
+				rc = -EFAULT;
+			else if (old_pc_debug != pc_debug)
+				DEBUGP(0, dev, "Changed debug log level "
+				       "to %i\n", pc_debug);
+		}
 		break;
 #endif
 	default:
@@ -1625,7 +1644,7 @@ static long cmm_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 		rc = -ENOTTY;
 	}
 out:
-	mutex_unlock(&cmm_mutex);
+	unlock_kernel();
 	return rc;
 }
 
@@ -1639,7 +1658,7 @@ static int cmm_open(struct inode *inode, struct file *filp)
 	if (minor >= CM4000_MAX_DEV)
 		return -ENODEV;
 
-	mutex_lock(&cmm_mutex);
+	lock_kernel();
 	link = dev_table[minor];
 	if (link == NULL || !pcmcia_dev_present(link)) {
 		ret = -ENODEV;
@@ -1666,7 +1685,7 @@ static int cmm_open(struct inode *inode, struct file *filp)
 	/* opening will always block since the
 	 * monitor will be started by open, which
 	 * means we have to wait for ATR becoming
-	 * valid = block until valid (or card
+	 * vaild = block until valid (or card
 	 * inserted)
 	 */
 	if (filp->f_flags & O_NONBLOCK) {
@@ -1684,7 +1703,7 @@ static int cmm_open(struct inode *inode, struct file *filp)
 	DEBUGP(2, dev, "<- cmm_open\n");
 	ret = nonseekable_open(inode, filp);
 out:
-	mutex_unlock(&cmm_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -1741,25 +1760,47 @@ static void cmm_cm4000_release(struct pcmcia_device * link)
 
 /*==== Interface to PCMCIA Layer =======================================*/
 
-static int cm4000_config_check(struct pcmcia_device *p_dev, void *priv_data)
+static int cm4000_config_check(struct pcmcia_device *p_dev,
+			       cistpl_cftable_entry_t *cfg,
+			       cistpl_cftable_entry_t *dflt,
+			       unsigned int vcc,
+			       void *priv_data)
 {
-	return pcmcia_request_io(p_dev);
+	if (!cfg->io.nwin)
+		return -ENODEV;
+
+	/* Get the IOaddr */
+	p_dev->io.BasePort1 = cfg->io.win[0].base;
+	p_dev->io.NumPorts1 = cfg->io.win[0].len;
+	p_dev->io.Attributes1 = IO_DATA_PATH_WIDTH_AUTO;
+	if (!(cfg->io.flags & CISTPL_IO_8BIT))
+		p_dev->io.Attributes1 = IO_DATA_PATH_WIDTH_16;
+	if (!(cfg->io.flags & CISTPL_IO_16BIT))
+		p_dev->io.Attributes1 = IO_DATA_PATH_WIDTH_8;
+	p_dev->io.IOAddrLines = cfg->io.flags & CISTPL_IO_LINES_MASK;
+
+	return pcmcia_request_io(p_dev, &p_dev->io);
 }
 
 static int cm4000_config(struct pcmcia_device * link, int devno)
 {
 	struct cm4000_dev *dev;
 
-	link->config_flags |= CONF_AUTO_SET_IO;
-
 	/* read the config-tuples */
 	if (pcmcia_loop_config(link, cm4000_config_check, NULL))
 		goto cs_release;
 
-	if (pcmcia_enable_device(link))
+	link->conf.IntType = 00000002;
+
+	if (pcmcia_request_configuration(link, &link->conf))
 		goto cs_release;
 
 	dev = link->priv;
+	sprintf(dev->node.dev_name, DEVICE_NAME "%d", devno);
+	dev->node.major = major;
+	dev->node.minor = devno;
+	dev->node.next = NULL;
+	link->dev_node = &dev->node;
 
 	return 0;
 
@@ -1816,6 +1857,7 @@ static int cm4000_probe(struct pcmcia_device *link)
 
 	dev->p_dev = link;
 	link->priv = dev;
+	link->conf.IntType = INT_MEMORY_AND_IO;
 	dev_table[i] = link;
 
 	init_waitqueue_head(&dev->devq);
@@ -1866,10 +1908,9 @@ static const struct file_operations cm4000_fops = {
 	.unlocked_ioctl	= cmm_ioctl,
 	.open	= cmm_open,
 	.release= cmm_close,
-	.llseek = no_llseek,
 };
 
-static const struct pcmcia_device_id cm4000_ids[] = {
+static struct pcmcia_device_id cm4000_ids[] = {
 	PCMCIA_DEVICE_MANF_CARD(0x0223, 0x0002),
 	PCMCIA_DEVICE_PROD_ID12("CardMan", "4000", 0x2FB368CA, 0xA2BD8C39),
 	PCMCIA_DEVICE_NULL,
@@ -1878,7 +1919,9 @@ MODULE_DEVICE_TABLE(pcmcia, cm4000_ids);
 
 static struct pcmcia_driver cm4000_driver = {
 	.owner	  = THIS_MODULE,
-	.name	  = "cm4000_cs",
+	.drv	  = {
+		.name = "cm4000_cs",
+		},
 	.probe    = cm4000_probe,
 	.remove   = cm4000_detach,
 	.suspend  = cm4000_suspend,
@@ -1889,6 +1932,8 @@ static struct pcmcia_driver cm4000_driver = {
 static int __init cmm_init(void)
 {
 	int rc;
+
+	printk(KERN_INFO "%s\n", version);
 
 	cmm_class = class_create(THIS_MODULE, "cardman_4000");
 	if (IS_ERR(cmm_class))
@@ -1914,6 +1959,7 @@ static int __init cmm_init(void)
 
 static void __exit cmm_exit(void)
 {
+	printk(KERN_INFO MODULE_NAME ": unloading\n");
 	pcmcia_unregister_driver(&cm4000_driver);
 	unregister_chrdev(major, DEVICE_NAME);
 	class_destroy(cmm_class);

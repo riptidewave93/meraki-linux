@@ -96,41 +96,51 @@
 
 /*---------------------  Export Functions  --------------------------*/
 
-unsigned int
+UINT
 BBuGetFrameTime(
-     BYTE byPreambleType,
-     BYTE byFreqType,
-     unsigned int cbFrameLength,
-     WORD wRate
+    IN BYTE byPreambleType,
+    IN BYTE byFreqType,
+    IN UINT cbFrameLength,
+    IN WORD wRate
     );
 
-void BBvCaculateParameter(PSDevice pDevice,
-			  unsigned int cbFrameLength,
-			  WORD wRate,
-			  BYTE byPacketType,
-			  PWORD pwPhyLen,
-			  PBYTE pbyPhySrv,
-			  PBYTE pbyPhySgn);
+VOID
+BBvCaculateParameter (
+    IN  PSDevice pDevice,
+    IN  UINT cbFrameLength,
+    IN  WORD wRate,
+    IN  BYTE byPacketType,
+    OUT PWORD pwPhyLen,
+    OUT PBYTE pbyPhySrv,
+    OUT PBYTE pbyPhySgn
+    );
 
 // timer for antenna diversity
 
-void TimerSQ3CallBack(void *hDeviceContext);
-void TimerSQ3Tmax3CallBack(void *hDeviceContext);
+VOID
+TimerSQ3CallBack (
+    IN  HANDLE      hDeviceContext
+    );
 
-void BBvAntennaDiversity(PSDevice pDevice, BYTE byRxRate, BYTE bySQ3);
-void BBvLoopbackOn(PSDevice pDevice);
-void BBvLoopbackOff(PSDevice pDevice);
-void BBvSoftwareReset(PSDevice pDevice);
+VOID
+TimerSQ3Tmax3CallBack (
+    IN  HANDLE      hDeviceContext
+    );
+
+VOID BBvAntennaDiversity (PSDevice pDevice, BYTE byRxRate, BYTE bySQ3);
+void BBvLoopbackOn (PSDevice pDevice);
+void BBvLoopbackOff (PSDevice pDevice);
+void BBvSoftwareReset (PSDevice pDevice);
 
 void BBvSetShortSlotTime(PSDevice pDevice);
-void BBvSetVGAGainOffset(PSDevice pDevice, BYTE byData);
+VOID BBvSetVGAGainOffset(PSDevice pDevice, BYTE byData);
 void BBvSetAntennaMode(PSDevice pDevice, BYTE byAntennaMode);
-BOOL BBbVT3184Init(PSDevice pDevice);
-void BBvSetDeepSleep(PSDevice pDevice);
-void BBvExitDeepSleep(PSDevice pDevice);
-void BBvUpdatePreEDThreshold(
-       PSDevice    pDevice,
-       BOOL        bScanning
+BOOL BBbVT3184Init (PSDevice pDevice);
+VOID BBvSetDeepSleep (PSDevice pDevice);
+VOID BBvExitDeepSleep (PSDevice pDevice);
+VOID BBvUpdatePreEDThreshold(
+     IN  PSDevice    pDevice,
+     IN  BOOL        bScanning
      );
 
-#endif /* __BASEBAND_H__ */
+#endif // __BASEBAND_H__

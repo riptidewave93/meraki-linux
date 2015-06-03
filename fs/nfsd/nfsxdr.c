@@ -1,10 +1,20 @@
 /*
+ * linux/fs/nfsd/nfsxdr.c
+ *
  * XDR support for nfsd
  *
  * Copyright (C) 1995, 1996 Olaf Kirch <okir@monad.swb.de>
  */
 
-#include "xdr.h"
+#include <linux/types.h>
+#include <linux/time.h>
+#include <linux/nfs.h>
+#include <linux/vfs.h>
+#include <linux/sunrpc/xdr.h>
+#include <linux/sunrpc/svc.h>
+#include <linux/nfsd/nfsd.h>
+#include <linux/nfsd/xdr.h>
+#include <linux/mm.h>
 #include "auth.h"
 
 #define NFSDDBG_FACILITY		NFSDDBG_XDR
@@ -451,7 +461,7 @@ nfssvc_encode_readres(struct svc_rqst *rqstp, __be32 *p,
 	*p++ = htonl(resp->count);
 	xdr_ressize_check(rqstp, p);
 
-	/* now update rqstp->rq_res to reflect data as well */
+	/* now update rqstp->rq_res to reflect data aswell */
 	rqstp->rq_res.page_len = resp->count;
 	if (resp->count & 3) {
 		/* need to pad the tail */

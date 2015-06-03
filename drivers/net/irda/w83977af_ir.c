@@ -46,11 +46,10 @@
 #include <linux/netdevice.h>
 #include <linux/ioport.h>
 #include <linux/delay.h>
+#include <linux/slab.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/rtnetlink.h>
 #include <linux/dma-mapping.h>
-#include <linux/gfp.h>
 
 #include <asm/io.h>
 #include <asm/dma.h>
@@ -66,6 +65,7 @@
 #undef  CONFIG_NETWINDER_TX_DMA_PROBLEMS /* Not needed */
 #define CONFIG_NETWINDER_RX_DMA_PROBLEMS /* Must have this one! */
 #endif
+#undef  CONFIG_USE_INTERNAL_TIMER  /* Just cannot make that timer work */
 #define CONFIG_USE_W977_PNP        /* Currently needed */
 #define PIO_MAX_SPEED       115200 
 
@@ -516,6 +516,7 @@ static netdev_tx_t w83977af_hard_xmit(struct sk_buff *skb,
 		/* Check for empty frame */
 		if (!skb->len) {
 			w83977af_change_speed(self, speed); 
+			dev->trans_start = jiffies;
 			dev_kfree_skb(skb);
 			return NETDEV_TX_OK;
 		} else
@@ -532,6 +533,25 @@ static netdev_tx_t w83977af_hard_xmit(struct sk_buff *skb,
 		self->tx_buff.len = skb->len;
 		
 		mtt = irda_get_mtt(skb);
+#ifdef CONFIG_USE_INTERNAL_TIMER
+	        if (mtt > 50) {
+			/* Adjust for timer resolution */
+			mtt /= 1000+1;
+
+			/* Setup timer */
+			switch_bank(iobase, SET4);
+			outb(mtt & 0xff, iobase+TMRL);
+			outb((mtt >> 8) & 0x0f, iobase+TMRH);
+			
+			/* Start timer */
+			outb(IR_MSL_EN_TMR, iobase+IR_MSL);
+			self->io.direction = IO_XMIT;
+			
+			/* Enable timer interrupt */
+			switch_bank(iobase, SET0);
+			outb(ICR_ETMRI, iobase+ICR);
+		} else {
+#endif
 			IRDA_DEBUG(4, "%s(%ld), mtt=%d\n", __func__ , jiffies, mtt);
 			if (mtt)
 				udelay(mtt);
@@ -540,6 +560,9 @@ static netdev_tx_t w83977af_hard_xmit(struct sk_buff *skb,
 			switch_bank(iobase, SET0);
 	 		outb(ICR_EDMAI, iobase+ICR);
 	     		w83977af_dma_write(self, iobase);
+#ifdef CONFIG_USE_INTERNAL_TIMER
+		}
+#endif
 	} else {
 		self->tx_buff.data = self->tx_buff.head;
 		self->tx_buff.len = async_wrap_skb(skb, self->tx_buff.data, 
@@ -549,6 +572,7 @@ static netdev_tx_t w83977af_hard_xmit(struct sk_buff *skb,
 		switch_bank(iobase, SET0);
 		outb(ICR_ETXTHI, iobase+ICR);
 	}
+	dev->trans_start = jiffies;
 	dev_kfree_skb(skb);
 
 	/* Restore set register */
@@ -677,7 +701,7 @@ static void w83977af_dma_xmit_complete(struct w83977af_ir *self)
 	switch_bank(iobase, SET0);
 	outb(inb(iobase+HCR) & ~HCR_EN_DMA, iobase+HCR);
 	
-	/* Check for underrun! */
+	/* Check for underrrun! */
 	if (inb(iobase+AUDR) & AUDR_UNDR) {
 		IRDA_DEBUG(0, "%s(), Transmit underrun!\n", __func__ );
 		
@@ -852,7 +876,20 @@ static int w83977af_dma_receive_complete(struct w83977af_ir *self)
 			/* Check if we have transferred all data to memory */
 			switch_bank(iobase, SET0);
 			if (inb(iobase+USR) & USR_RDR) {
+#ifdef CONFIG_USE_INTERNAL_TIMER
+				/* Put this entry back in fifo */
+				st_fifo->head--;
+				st_fifo->len++;
+				st_fifo->entries[st_fifo->head].status = status;
+				st_fifo->entries[st_fifo->head].len = len;
+				
+				/* Restore set register */
+				outb(set, iobase+SSR);
+			
+				return FALSE; 	/* I'll be back! */
+#else
 				udelay(80); /* Should be enough!? */
+#endif
 			}
 						
 			skb = dev_alloc_skb(len+1);
@@ -1172,7 +1209,7 @@ static int w83977af_net_open(struct net_device *dev)
 	 * and clean up on failure.
 	 */
 	if (request_dma(self->io.dma, dev->name)) {
-		free_irq(self->io.irq, dev);
+		free_irq(self->io.irq, self);
 		return -EAGAIN;
 	}
 		

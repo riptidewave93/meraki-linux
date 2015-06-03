@@ -12,6 +12,7 @@
 
 #include <linux/kernel.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <asm/uaccess.h>
 #include <asm/prom.h>
@@ -74,10 +75,8 @@ void __init chrp_nvram_init(void)
 		return;
 
 	nbytes_p = of_get_property(nvram, "#bytes", &proplen);
-	if (nbytes_p == NULL || proplen != sizeof(unsigned int)) {
-		of_node_put(nvram);
+	if (nbytes_p == NULL || proplen != sizeof(unsigned int))
 		return;
-	}
 
 	nvram_size = *nbytes_p;
 

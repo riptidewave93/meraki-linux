@@ -13,7 +13,11 @@
  *
  */
 
-/* low level hardware reset hook -- for example, hitting the
- * PSHOLD line on the PMIC to hard reset the system
- */
-extern void (*msm_hw_reset_hook)(void);
+#include <mach/hardware.h>
+
+void arch_idle(void);
+
+static inline void arch_reset(char mode, const char *cmd)
+{
+	for (;;) ;  /* depends on IPC w/ other core */
+}

@@ -176,7 +176,7 @@ config USB_SERIAL_VISOR
 	help
 	  Say Y here if you want to connect to your HandSpring Visor, Palm
 	  m500 or m505 through its USB docking station. See
-	  <http://usbvisor.sourceforge.net/index.php3> for more information on using this
+	  <http://usbvisor.sourceforge.net/> for more information on using this
 	  driver.
 
 	  To compile this driver as a module, choose M here: the
@@ -238,15 +238,6 @@ config USB_SERIAL_EDGEPORT_TI
 	  To compile this driver as a module, choose M here: the
 	  module will be called io_ti.
 
-config USB_SERIAL_F81232
-	tristate "USB Fintek F81232 Single Port Serial Driver"
-	help
-	  Say Y here if you want to use the Fintek F81232 single
-	  port usb to serial adapter.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called f81232.
-
 config USB_SERIAL_GARMIN
        tristate "USB Garmin GPS driver"
        help
@@ -261,7 +252,6 @@ config USB_SERIAL_GARMIN
 
 config USB_SERIAL_IPW
         tristate "USB IPWireless (3G UMTS TDD) Driver"
-	select USB_SERIAL_WWAN
 	help
 	  Say Y here if you want to use a IPWireless USB modem such as
 	  the ones supplied by Axity3G/Sentech South Africa.
@@ -299,7 +289,7 @@ config USB_SERIAL_KEYSPAN
 	  and was developed with their support.  You must also include
 	  firmware to support your particular device(s).
 
-	  See <http://blemings.org/hugh/keyspan.html> for more information.
+	  See <http://misc.nu/hugh/keyspan.html> for more information.
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called keyspan.
@@ -426,14 +416,6 @@ config USB_SERIAL_MCT_U232
 	  To compile this driver as a module, choose M here: the
 	  module will be called mct_u232.
 
-config USB_SERIAL_METRO
-	tristate "USB Metrologic Instruments USB-POS Barcode Scanner Driver"
-	---help---
-	  Say Y here if you want to use a USB POS Metrologic barcode scanner.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called metro-usb.
-
 config USB_SERIAL_MOS7720
 	tristate "USB Moschip 7720 Serial Driver"
 	---help---
@@ -442,16 +424,6 @@ config USB_SERIAL_MOS7720
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called mos7720.
-
-config USB_SERIAL_MOS7715_PARPORT
-	bool "Support for parallel port on the Moschip 7715"
-	depends on USB_SERIAL_MOS7720
-	depends on PARPORT=y || PARPORT=USB_SERIAL_MOS7720
-	select PARPORT_NOT_PC
-	---help---
-	Say Y if you have a Moschip 7715 device and would like to use
-	the parallel port it provides.  The port will register with
-	the parport subsystem as a low-level driver.
 
 config USB_SERIAL_MOS7840
 	tristate "USB Moschip 7840/7820 USB Serial Driver"
@@ -500,20 +472,8 @@ config USB_SERIAL_OTI6858
 	  To compile this driver as a module, choose M here: the
 	  module will be called oti6858.
 
-config USB_SERIAL_QCAUX
-	tristate "USB Qualcomm Auxiliary Serial Port Driver"
-	help
-	  Say Y here if you want to use the auxiliary serial ports provided
-	  by many modems based on Qualcomm chipsets.  These ports often use
-	  a proprietary protocol called DM and cannot be used for AT- or
-	  PPP-based communication.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called qcaux.  If unsure, choose N.
-
 config USB_SERIAL_QUALCOMM
 	tristate "USB Qualcomm Serial modem"
-	select USB_SERIAL_WWAN
 	help
 	  Say Y here if you have a Qualcomm USB modem device.  These are
 	  usually wireless cellular modems.
@@ -605,12 +565,8 @@ config USB_SERIAL_XIRCOM
 	  To compile this driver as a module, choose M here: the
 	  module will be called keyspan_pda.
 
-config USB_SERIAL_WWAN
-	tristate
-
 config USB_SERIAL_OPTION
 	tristate "USB driver for GSM and CDMA modems"
-	select USB_SERIAL_WWAN
 	help
 	  Say Y here if you have a GSM or CDMA modem that's connected to USB.
 
@@ -643,31 +599,6 @@ config USB_SERIAL_OPTICON
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called opticon.
-
-config USB_SERIAL_VIVOPAY_SERIAL
-        tristate "USB ViVOpay serial interface driver"
-        help
-          Say Y here if you want to use a ViVOtech ViVOpay USB device.
-
-          To compile this driver as a module, choose M here: the
-          module will be called vivopay-serial.
-
-config USB_SERIAL_ZIO
-	tristate "ZIO Motherboard USB serial interface driver"
-	help
-	  Say Y here if you want to use ZIO Motherboard.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called zio.
-
-config USB_SERIAL_SSU100
-	tristate "USB Quatech SSU-100 Single Port Serial Driver"
-	help
-	  Say Y here if you want to use the Quatech SSU-100 single
-	  port usb to serial adapter.
-
-	  To compile this driver as a module, choose M here: the
-	  module will be called ssu100.
 
 config USB_SERIAL_DEBUG
 	tristate "USB Debugging Device"

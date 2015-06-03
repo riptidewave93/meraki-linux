@@ -9,6 +9,8 @@
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/miscdevice.h>
+#include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/ioport.h>
 #include <linux/capability.h>
 #include <linux/fcntl.h>
@@ -21,6 +23,7 @@
 
 #include <asm/io.h>
 #include <asm/uaccess.h>
+#include <asm/system.h>
 #include <asm/setup.h>
 
 /*
@@ -33,9 +36,10 @@
 static unsigned char days_in_mo[] =
 {0, 31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31};
 
-static atomic_t rtc_status = ATOMIC_INIT(1);
+static char rtc_status;
 
-static long rtc_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+static int rtc_ioctl(struct inode *inode, struct file *file, unsigned int cmd,
+		     unsigned long arg)
 {
 	volatile RtcPtr_t rtc = (RtcPtr_t)BVME_RTC_BASE;
 	unsigned char msr;
@@ -129,20 +133,29 @@ static long rtc_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 }
 
 /*
- * We enforce only one user at a time here with the open/close.
+ *	We enforce only one user at a time here with the open/close.
+ *	Also clear the previous interrupt data on an open, and clean
+ *	up things on a close.
  */
+
 static int rtc_open(struct inode *inode, struct file *file)
 {
-	if (!atomic_dec_and_test(&rtc_status)) {
-		atomic_inc(&rtc_status);
+	lock_kernel();
+	if(rtc_status) {
+		unlock_kernel();
 		return -EBUSY;
 	}
+
+	rtc_status = 1;
+	unlock_kernel();
 	return 0;
 }
 
 static int rtc_release(struct inode *inode, struct file *file)
 {
-	atomic_inc(&rtc_status);
+	lock_kernel();
+	rtc_status = 0;
+	unlock_kernel();
 	return 0;
 }
 
@@ -151,10 +164,9 @@ static int rtc_release(struct inode *inode, struct file *file)
  */
 
 static const struct file_operations rtc_fops = {
-	.unlocked_ioctl	= rtc_ioctl,
-	.open		= rtc_open,
-	.release	= rtc_release,
-	.llseek		= noop_llseek,
+	.ioctl =	rtc_ioctl,
+	.open =		rtc_open,
+	.release =	rtc_release,
 };
 
 static struct miscdevice rtc_dev = {

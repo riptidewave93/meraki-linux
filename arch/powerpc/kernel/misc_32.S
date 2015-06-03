@@ -8,8 +8,6 @@
  * kexec bits:
  * Copyright (C) 2002-2003 Eric Biederman  <ebiederm@xmission.com>
  * GameCube/ppc32 port Copyright (C) 2004 Albert Herranz
- * PPC44x port. Copyright (C) 2011,  IBM Corporation
- * 		Author: Suzuki Poulose <suzuki@in.ibm.com>
  *
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -32,10 +30,10 @@
 #include <asm/processor.h>
 #include <asm/kexec.h>
 #include <asm/bug.h>
-#include <asm/ptrace.h>
 
 	.text
 
+#ifdef CONFIG_IRQSTACKS
 _GLOBAL(call_do_softirq)
 	mflr	r0
 	stw	r0,4(r1)
@@ -58,6 +56,7 @@ _GLOBAL(call_handle_irq)
 	lwz	r0,4(r1)
 	mtlr	r0
 	blr
+#endif /* CONFIG_IRQSTACKS */
 
 /*
  * This returns the high 64 bits of the product of two 64-bit numbers.
@@ -442,7 +441,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_COHERENT_ICACHE)
 	addi	r3,r3,L1_CACHE_BYTES
 	bdnz	0b
 	sync
-#ifdef CONFIG_44x
+#ifndef CONFIG_44x
 	/* We don't flush the icache on 44x. Those have a virtual icache
 	 * and we don't have access to the virtual address here (it's
 	 * not the page vaddr but where it's mapped in user space). The
@@ -450,19 +449,15 @@ END_FTR_SECTION_IFSET(CPU_FTR_COHERENT_ICACHE)
 	 * a change in the address space occurs, before returning to
 	 * user space
 	 */
-BEGIN_MMU_FTR_SECTION
-	blr
-END_MMU_FTR_SECTION_IFSET(MMU_FTR_TYPE_44x)
-#endif /* CONFIG_44x */
 	mtctr	r4
 1:	icbi	0,r6
 	addi	r6,r6,L1_CACHE_BYTES
 	bdnz	1b
 	sync
 	isync
+#endif /* CONFIG_44x */
 	blr
 
-#ifndef CONFIG_BOOKE
 /*
  * Flush a particular page from the data cache to RAM, identified
  * by its physical address.  We turn off the MMU so we can just use
@@ -495,7 +490,6 @@ END_FTR_SECTION_IFSET(CPU_FTR_COHERENT_ICACHE)
 	mtmsr	r10				/* restore DR */
 	isync
 	blr
-#endif /* CONFIG_BOOKE */
 
 /*
  * Clear pages using the dcbz instruction, which doesn't cause any
@@ -508,7 +502,27 @@ _GLOBAL(clear_pages)
 	li	r0,PAGE_SIZE/L1_CACHE_BYTES
 	slw	r0,r0,r4
 	mtctr	r0
+#ifdef CONFIG_8xx
+	li	r4, 0
+1:	stw	r4, 0(r3)
+	stw	r4, 4(r3)
+	stw	r4, 8(r3)
+	stw	r4, 12(r3)
+#else
+#if defined(CONFIG_APM86xxx) && defined(CONFIG_SMP)
+	li	r4, 0
+1:	stw	r4, 0(r3)
+	stw	r4, 4(r3)
+	stw	r4, 8(r3)
+	stw	r4, 12(r3)
+	stw	r4, 16(r3)
+	stw	r4, 20(r3)
+	stw	r4, 24(r3)
+	stw	r4, 28(r3)
+#else
 1:	dcbz	0,r3
+#endif
+#endif
 	addi	r3,r3,L1_CACHE_BYTES
 	bdnz	1b
 	blr
@@ -519,6 +533,24 @@ _GLOBAL(clear_pages)
  * the destination into cache).  This requires that the destination
  * is cacheable.
  */
+#define COPY_32_BYTES		\
+	lwz	r6,4(r4);	\
+	lwz	r7,8(r4);	\
+	lwz	r8,12(r4);	\
+	lwz	r9,16(r4);	\
+	lwz	r10,20(r4);	\
+	lwz	r11,24(r4);	\
+	lwz	r12,28(r4);	\
+	lwzu	r13,32(r4);	\
+	stw	r6,4(r3);	\
+	stw	r7,8(r3);	\
+	stw	r8,12(r3);	\
+	stw	r9,16(r3);	\
+	stw	r10,20(r3);	\
+	stw	r11,24(r3);	\
+	stw	r12,28(r3);	\
+	stwu	r13,32(r3)
+
 #define COPY_16_BYTES		\
 	lwz	r6,4(r4);	\
 	lwz	r7,8(r4);	\
@@ -533,6 +565,22 @@ _GLOBAL(copy_page)
 	addi	r3,r3,-4
 	addi	r4,r4,-4
 
+#ifdef CONFIG_8xx
+	/* don't use prefetch on 8xx */
+    	li	r0,4096/L1_CACHE_BYTES
+	mtctr	r0
+1:	COPY_16_BYTES
+	bdnz	1b
+	blr
+
+#else	/* not 8xx, we can prefetch */
+#if defined(CONFIG_APM86xxx) && defined(CONFIG_SMP)
+	li      r0,PAGE_SIZE/L1_CACHE_BYTES
+        mtctr   r0
+1:      COPY_32_BYTES
+        bdnz    1b
+        blr
+#endif
 	li	r5,4
 
 #if MAX_COPY_PREFETCH > 1
@@ -573,6 +621,7 @@ _GLOBAL(copy_page)
 	li	r0,MAX_COPY_PREFETCH
 	li	r11,4
 	b	2b
+#endif	/* CONFIG_8xx */
 
 /*
  * void atomic_clear_mask(atomic_t mask, atomic_t *addr)
@@ -696,17 +745,6 @@ _GLOBAL(kernel_thread)
 	addi	r1,r1,16
 	blr
 
-#ifdef CONFIG_SMP
-_GLOBAL(start_secondary_resume)
-	/* Reset stack */
-	rlwinm	r1,r1,0,0,(31-THREAD_SHIFT)	/* current_thread_info() */
-	addi	r1,r1,THREAD_SIZE-STACK_FRAME_OVERHEAD
-	li	r3,0
-	stw	r3,0(r1)		/* Zero the stack frame pointer	*/
-	bl	start_secondary
-	b	.
-#endif /* CONFIG_SMP */
-	
 /*
  * This routine is just here to keep GCC happy - sigh...
  */
@@ -723,191 +761,6 @@ relocate_new_kernel:
 	/* r4 = reboot_code_buffer */
 	/* r5 = start_address      */
 
-#ifdef CONFIG_FSL_BOOKE
-
-	mr	r29, r3
-	mr	r30, r4
-	mr	r31, r5
-
-#define ENTRY_MAPPING_KEXEC_SETUP
-#include "fsl_booke_entry_mapping.S"
-#undef ENTRY_MAPPING_KEXEC_SETUP
-
-	mr      r3, r29
-	mr      r4, r30
-	mr      r5, r31
-
-	li	r0, 0
-#elif defined(CONFIG_44x)  && !defined(CONFIG_PPC_47x)
-
-/*
- * Code for setting up 1:1 mapping for PPC440x for KEXEC
- *
- * We cannot switch off the MMU on PPC44x.
- * So we:
- * 1) Invalidate all the mappings except the one we are running from.
- * 2) Create a tmp mapping for our code in the other address space(TS) and
- *    jump to it. Invalidate the entry we started in.
- * 3) Create a 1:1 mapping for 0-2GiB in chunks of 256M in original TS.
- * 4) Jump to the 1:1 mapping in original TS.
- * 5) Invalidate the tmp mapping.
- *
- * - Based on the kexec support code for FSL BookE
- * - Doesn't support 47x yet.
- *
- */
-	/* Save our parameters */
-	mr	r29, r3
-	mr	r30, r4
-	mr	r31, r5
-
-	/* Load our MSR_IS and TID to MMUCR for TLB search */
-	mfspr	r3,SPRN_PID
-	mfmsr	r4
-	andi.	r4,r4,MSR_IS@l
-	beq	wmmucr
-	oris	r3,r3,PPC44x_MMUCR_STS@h
-wmmucr:
-	mtspr	SPRN_MMUCR,r3
-	sync
-
-	/*
-	 * Invalidate all the TLB entries except the current entry
-	 * where we are running from
-	 */
-	bl	0f				/* Find our address */
-0:	mflr	r5				/* Make it accessible */
-	tlbsx	r23,0,r5			/* Find entry we are in */
-	li	r4,0				/* Start at TLB entry 0 */
-	li	r3,0				/* Set PAGEID inval value */
-1:	cmpw	r23,r4				/* Is this our entry? */
-	beq	skip				/* If so, skip the inval */
-	tlbwe	r3,r4,PPC44x_TLB_PAGEID		/* If not, inval the entry */
-skip:
-	addi	r4,r4,1				/* Increment */
-	cmpwi	r4,64				/* Are we done?	*/
-	bne	1b				/* If not, repeat */
-	isync
-
-	/* Create a temp mapping and jump to it */
-	andi.	r6, r23, 1		/* Find the index to use */
-	addi	r24, r6, 1		/* r24 will contain 1 or 2 */
-
-	mfmsr	r9			/* get the MSR */
-	rlwinm	r5, r9, 27, 31, 31	/* Extract the MSR[IS] */
-	xori	r7, r5, 1		/* Use the other address space */
-
-	/* Read the current mapping entries */
-	tlbre	r3, r23, PPC44x_TLB_PAGEID
-	tlbre	r4, r23, PPC44x_TLB_XLAT
-	tlbre	r5, r23, PPC44x_TLB_ATTRIB
-
-	/* Save our current XLAT entry */
-	mr	r25, r4
-
-	/* Extract the TLB PageSize */
-	li	r10, 1 			/* r10 will hold PageSize */
-	rlwinm	r11, r3, 0, 24, 27	/* bits 24-27 */
-
-	/* XXX: As of now we use 256M, 4K pages */
-	cmpwi	r11, PPC44x_TLB_256M
-	bne	tlb_4k
-	rotlwi	r10, r10, 28		/* r10 = 256M */
-	b	write_out
-tlb_4k:
-	cmpwi	r11, PPC44x_TLB_4K
-	bne	default
-	rotlwi	r10, r10, 12		/* r10 = 4K */
-	b	write_out
-default:
-	rotlwi	r10, r10, 10		/* r10 = 1K */
-
-write_out:
-	/*
-	 * Write out the tmp 1:1 mapping for this code in other address space
-	 * Fixup  EPN = RPN , TS=other address space
-	 */
-	insrwi	r3, r7, 1, 23		/* Bit 23 is TS for PAGEID field */
-
-	/* Write out the tmp mapping entries */
-	tlbwe	r3, r24, PPC44x_TLB_PAGEID
-	tlbwe	r4, r24, PPC44x_TLB_XLAT
-	tlbwe	r5, r24, PPC44x_TLB_ATTRIB
-
-	subi	r11, r10, 1		/* PageOffset Mask = PageSize - 1 */
-	not	r10, r11		/* Mask for PageNum */
-
-	/* Switch to other address space in MSR */
-	insrwi	r9, r7, 1, 26		/* Set MSR[IS] = r7 */
-
-	bl	1f
-1:	mflr	r8
-	addi	r8, r8, (2f-1b)		/* Find the target offset */
-
-	/* Jump to the tmp mapping */
-	mtspr	SPRN_SRR0, r8
-	mtspr	SPRN_SRR1, r9
-	rfi
-
-2:
-	/* Invalidate the entry we were executing from */
-	li	r3, 0
-	tlbwe	r3, r23, PPC44x_TLB_PAGEID
-
-	/* attribute fields. rwx for SUPERVISOR mode */
-	li	r5, 0
-	ori	r5, r5, (PPC44x_TLB_SW | PPC44x_TLB_SR | PPC44x_TLB_SX | PPC44x_TLB_G)
-
-	/* Create 1:1 mapping in 256M pages */
-	xori	r7, r7, 1			/* Revert back to Original TS */
-
-	li	r8, 0				/* PageNumber */
-	li	r6, 3				/* TLB Index, start at 3  */
-
-next_tlb:
-	rotlwi	r3, r8, 28			/* Create EPN (bits 0-3) */
-	mr	r4, r3				/* RPN = EPN  */
-	ori	r3, r3, (PPC44x_TLB_VALID | PPC44x_TLB_256M) /* SIZE = 256M, Valid */
-	insrwi	r3, r7, 1, 23			/* Set TS from r7 */
-
-	tlbwe	r3, r6, PPC44x_TLB_PAGEID	/* PageID field : EPN, V, SIZE */
-	tlbwe	r4, r6, PPC44x_TLB_XLAT		/* Address translation : RPN   */
-	tlbwe	r5, r6, PPC44x_TLB_ATTRIB	/* Attributes */
-
-	addi	r8, r8, 1			/* Increment PN */
-	addi	r6, r6, 1			/* Increment TLB Index */
-	cmpwi	r8, 8				/* Are we done ? */
-	bne	next_tlb
-	isync
-
-	/* Jump to the new mapping 1:1 */
-	li	r9,0
-	insrwi	r9, r7, 1, 26			/* Set MSR[IS] = r7 */
-
-	bl	1f
-1:	mflr	r8
-	and	r8, r8, r11			/* Get our offset within page */
-	addi	r8, r8, (2f-1b)
-
-	and	r5, r25, r10			/* Get our target PageNum */
-	or	r8, r8, r5			/* Target jump address */
-
-	mtspr	SPRN_SRR0, r8
-	mtspr	SPRN_SRR1, r9
-	rfi
-2:
-	/* Invalidate the tmp entry we used */
-	li	r3, 0
-	tlbwe	r3, r24, PPC44x_TLB_PAGEID
-	sync
-
-	/* Restore the parameters */
-	mr	r3, r29
-	mr	r4, r30
-	mr	r5, r31
-
-	li	r0, 0
-#else
 	li	r0, 0
 
 	/*
@@ -924,7 +777,6 @@ next_tlb:
 	rfi
 
 1:
-#endif
 	/* from this point address translation is turned off */
 	/* and interrupts are disabled */
 
@@ -992,9 +844,6 @@ next_tlb:
 	 */
 	isync
 	sync
-
-	mfspr	r3, SPRN_PIR /* current core we are running on */
-	mr	r4, r5 /* load physical address of chunk called */
 
 	/* jump to the entry point, usually the setup routine */
 	mtlr	r5

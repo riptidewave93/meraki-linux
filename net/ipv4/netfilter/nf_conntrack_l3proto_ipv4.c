@@ -22,7 +22,6 @@
 #include <net/netfilter/nf_conntrack_helper.h>
 #include <net/netfilter/nf_conntrack_l4proto.h>
 #include <net/netfilter/nf_conntrack_l3proto.h>
-#include <net/netfilter/nf_conntrack_zones.h>
 #include <net/netfilter/nf_conntrack_core.h>
 #include <net/netfilter/ipv4/nf_conntrack_ipv4.h>
 #include <net/netfilter/nf_nat_helper.h>
@@ -74,12 +73,12 @@ static int ipv4_get_l4proto(const struct sk_buff *skb, unsigned int nhoff,
 
 	iph = skb_header_pointer(skb, nhoff, sizeof(_iph), &_iph);
 	if (iph == NULL)
-		return -NF_ACCEPT;
+		return -NF_DROP;
 
 	/* Conntrack defragments packets, we might still see fragments
 	 * inside ICMP packets though. */
 	if (iph->frag_off & htons(IP_OFFSET))
-		return -NF_ACCEPT;
+		return -NF_DROP;
 
 	*dataoff = nhoff + (iph->ihl << 2);
 	*protonum = iph->protocol;
@@ -109,7 +108,7 @@ static unsigned int ipv4_confirm(unsigned int hooknum,
 
 	/* This is where we call the helper: as the packet goes out. */
 	ct = nf_ct_get(skb, &ctinfo);
-	if (!ct || ctinfo == IP_CT_RELATED_REPLY)
+	if (!ct || ctinfo == IP_CT_RELATED + IP_CT_IS_REPLY)
 		goto out;
 
 	help = nfct_help(ct);
@@ -129,9 +128,7 @@ static unsigned int ipv4_confirm(unsigned int hooknum,
 		return ret;
 	}
 
-	/* adjust seqs for loopback traffic only in outgoing direction */
-	if (test_bit(IPS_SEQ_ADJUST_BIT, &ct->status) &&
-	    !nf_is_loopback_packet(skb)) {
+	if (test_bit(IPS_SEQ_ADJUST_BIT, &ct->status)) {
 		typeof(nf_nat_seq_adjust_hook) seq_adjust;
 
 		seq_adjust = rcu_dereference(nf_nat_seq_adjust_hook);
@@ -206,6 +203,7 @@ static int log_invalid_proto_max = 255;
 
 static ctl_table ip_ct_sysctl_table[] = {
 	{
+		.ctl_name	= NET_IPV4_NF_CONNTRACK_MAX,
 		.procname	= "ip_conntrack_max",
 		.data		= &nf_conntrack_max,
 		.maxlen		= sizeof(int),
@@ -213,6 +211,7 @@ static ctl_table ip_ct_sysctl_table[] = {
 		.proc_handler	= proc_dointvec,
 	},
 	{
+		.ctl_name	= NET_IPV4_NF_CONNTRACK_COUNT,
 		.procname	= "ip_conntrack_count",
 		.data		= &init_net.ct.count,
 		.maxlen		= sizeof(int),
@@ -220,6 +219,7 @@ static ctl_table ip_ct_sysctl_table[] = {
 		.proc_handler	= proc_dointvec,
 	},
 	{
+		.ctl_name	= NET_IPV4_NF_CONNTRACK_BUCKETS,
 		.procname	= "ip_conntrack_buckets",
 		.data		= &init_net.ct.htable_size,
 		.maxlen		= sizeof(unsigned int),
@@ -227,6 +227,7 @@ static ctl_table ip_ct_sysctl_table[] = {
 		.proc_handler	= proc_dointvec,
 	},
 	{
+		.ctl_name	= NET_IPV4_NF_CONNTRACK_CHECKSUM,
 		.procname	= "ip_conntrack_checksum",
 		.data		= &init_net.ct.sysctl_checksum,
 		.maxlen		= sizeof(int),
@@ -234,15 +235,19 @@ static ctl_table ip_ct_sysctl_table[] = {
 		.proc_handler	= proc_dointvec,
 	},
 	{
+		.ctl_name	= NET_IPV4_NF_CONNTRACK_LOG_INVALID,
 		.procname	= "ip_conntrack_log_invalid",
 		.data		= &init_net.ct.sysctl_log_invalid,
 		.maxlen		= sizeof(unsigned int),
 		.mode		= 0644,
 		.proc_handler	= proc_dointvec_minmax,
+		.strategy	= sysctl_intvec,
 		.extra1		= &log_invalid_proto_min,
 		.extra2		= &log_invalid_proto_max,
 	},
-	{ }
+	{
+		.ctl_name	= 0
+	}
 };
 #endif /* CONFIG_SYSCTL && CONFIG_NF_CONNTRACK_PROC_COMPAT */
 
@@ -258,10 +263,10 @@ getorigdst(struct sock *sk, int optval, void __user *user, int *len)
 	struct nf_conntrack_tuple tuple;
 
 	memset(&tuple, 0, sizeof(tuple));
-	tuple.src.u3.ip = inet->inet_rcv_saddr;
-	tuple.src.u.tcp.port = inet->inet_sport;
-	tuple.dst.u3.ip = inet->inet_daddr;
-	tuple.dst.u.tcp.port = inet->inet_dport;
+	tuple.src.u3.ip = inet->rcv_saddr;
+	tuple.src.u.tcp.port = inet->sport;
+	tuple.dst.u3.ip = inet->daddr;
+	tuple.dst.u.tcp.port = inet->dport;
 	tuple.src.l3num = PF_INET;
 	tuple.dst.protonum = sk->sk_protocol;
 
@@ -277,7 +282,7 @@ getorigdst(struct sock *sk, int optval, void __user *user, int *len)
 		return -EINVAL;
 	}
 
-	h = nf_conntrack_find_get(sock_net(sk), NF_CT_DEFAULT_ZONE, &tuple);
+	h = nf_conntrack_find_get(sock_net(sk), &tuple);
 	if (h) {
 		struct sockaddr_in sin;
 		struct nf_conn *ct = nf_ct_tuplehash_to_ctrack(h);
@@ -392,32 +397,32 @@ static int __init nf_conntrack_l3proto_ipv4_init(void)
 
 	ret = nf_conntrack_l4proto_register(&nf_conntrack_l4proto_tcp4);
 	if (ret < 0) {
-		pr_err("nf_conntrack_ipv4: can't register tcp.\n");
+		printk("nf_conntrack_ipv4: can't register tcp.\n");
 		goto cleanup_sockopt;
 	}
 
 	ret = nf_conntrack_l4proto_register(&nf_conntrack_l4proto_udp4);
 	if (ret < 0) {
-		pr_err("nf_conntrack_ipv4: can't register udp.\n");
+		printk("nf_conntrack_ipv4: can't register udp.\n");
 		goto cleanup_tcp;
 	}
 
 	ret = nf_conntrack_l4proto_register(&nf_conntrack_l4proto_icmp);
 	if (ret < 0) {
-		pr_err("nf_conntrack_ipv4: can't register icmp.\n");
+		printk("nf_conntrack_ipv4: can't register icmp.\n");
 		goto cleanup_udp;
 	}
 
 	ret = nf_conntrack_l3proto_register(&nf_conntrack_l3proto_ipv4);
 	if (ret < 0) {
-		pr_err("nf_conntrack_ipv4: can't register ipv4\n");
+		printk("nf_conntrack_ipv4: can't register ipv4\n");
 		goto cleanup_icmp;
 	}
 
 	ret = nf_register_hooks(ipv4_conntrack_ops,
 				ARRAY_SIZE(ipv4_conntrack_ops));
 	if (ret < 0) {
-		pr_err("nf_conntrack_ipv4: can't register hooks.\n");
+		printk("nf_conntrack_ipv4: can't register hooks.\n");
 		goto cleanup_ipv4;
 	}
 #if defined(CONFIG_PROC_FS) && defined(CONFIG_NF_CONNTRACK_PROC_COMPAT)

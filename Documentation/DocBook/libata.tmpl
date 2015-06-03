@@ -22,8 +22,8 @@
    <para>
    The contents of this file are subject to the Open
    Software License version 1.1 that can be found at
-   <ulink url="http://fedoraproject.org/wiki/Licensing:OSL1.1">http://fedoraproject.org/wiki/Licensing:OSL1.1</ulink>
-   and is included herein by reference.
+   <ulink url="http://www.opensource.org/licenses/osl-1.1.txt">http://www.opensource.org/licenses/osl-1.1.txt</ulink> and is included herein
+   by reference.
    </para>
 
    <para>
@@ -81,14 +81,16 @@ void (*port_disable) (struct ata_port *);
 	</programlisting>
 
 	<para>
-	Called from ata_bus_probe() error path, as well as when
-	unregistering from the SCSI module (rmmod, hot unplug).
+	Called from ata_bus_probe() and ata_bus_reset() error paths,
+	as well as when unregistering from the SCSI module (rmmod, hot
+	unplug).
 	This function should do whatever needs to be done to take the
 	port out of use.  In most cases, ata_port_disable() can be used
 	as this hook.
 	</para>
 	<para>
 	Called from ata_bus_probe() on a failed probe.
+	Called from ata_bus_reset() on a failed bus reset.
 	Called from ata_scsi_release().
 	</para>
 
@@ -103,6 +105,10 @@ void (*dev_config) (struct ata_port *, struct ata_device *);
 	Called after IDENTIFY [PACKET] DEVICE is issued to each device
 	found.  Typically used to apply device-specific fixups prior to
 	issue of SET FEATURES - XFER MODE, and prior to operation.
+	</para>
+	<para>
+	Called by ata_device_add() after ata_dev_identify() determines
+	a device is present.
 	</para>
 	<para>
 	This entry may be specified as NULL in ata_port_operations.
@@ -148,8 +154,8 @@ unsigned int (*mode_filter) (struct ata_port *, struct ata_device *, unsigned in
 
 	<sect2><title>Taskfile read/write</title>
 	<programlisting>
-void (*sff_tf_load) (struct ata_port *ap, struct ata_taskfile *tf);
-void (*sff_tf_read) (struct ata_port *ap, struct ata_taskfile *tf);
+void (*tf_load) (struct ata_port *ap, struct ata_taskfile *tf);
+void (*tf_read) (struct ata_port *ap, struct ata_taskfile *tf);
 	</programlisting>
 
 	<para>
@@ -158,35 +164,36 @@ void (*sff_tf_read) (struct ata_port *ap, struct ata_taskfile *tf);
 	hardware registers / DMA buffers, to obtain the current set of
 	taskfile register values.
 	Most drivers for taskfile-based hardware (PIO or MMIO) use
-	ata_sff_tf_load() and ata_sff_tf_read() for these hooks.
+	ata_tf_load() and ata_tf_read() for these hooks.
 	</para>
 
 	</sect2>
 
 	<sect2><title>PIO data read/write</title>
 	<programlisting>
-void (*sff_data_xfer) (struct ata_device *, unsigned char *, unsigned int, int);
+void (*data_xfer) (struct ata_device *, unsigned char *, unsigned int, int);
 	</programlisting>
 
 	<para>
 All bmdma-style drivers must implement this hook.  This is the low-level
 operation that actually copies the data bytes during a PIO data
 transfer.
-Typically the driver will choose one of ata_sff_data_xfer_noirq(),
-ata_sff_data_xfer(), or ata_sff_data_xfer32().
+Typically the driver
+will choose one of ata_pio_data_xfer_noirq(), ata_pio_data_xfer(), or
+ata_mmio_data_xfer().
 	</para>
 
 	</sect2>
 
 	<sect2><title>ATA command execute</title>
 	<programlisting>
-void (*sff_exec_command)(struct ata_port *ap, struct ata_taskfile *tf);
+void (*exec_command)(struct ata_port *ap, struct ata_taskfile *tf);
 	</programlisting>
 
 	<para>
 	causes an ATA command, previously loaded with
 	->tf_load(), to be initiated in hardware.
-	Most drivers for taskfile-based hardware use ata_sff_exec_command()
+	Most drivers for taskfile-based hardware use ata_exec_command()
 	for this hook.
 	</para>
 
@@ -211,8 +218,8 @@ command.
 
 	<sect2><title>Read specific ATA shadow registers</title>
 	<programlisting>
-u8   (*sff_check_status)(struct ata_port *ap);
-u8   (*sff_check_altstatus)(struct ata_port *ap);
+u8   (*check_status)(struct ata_port *ap);
+u8   (*check_altstatus)(struct ata_port *ap);
 	</programlisting>
 
 	<para>
@@ -220,26 +227,20 @@ u8   (*sff_check_altstatus)(struct ata_port *ap);
 	hardware.  On some hardware, reading the Status register has
 	the side effect of clearing the interrupt condition.
 	Most drivers for taskfile-based hardware use
-	ata_sff_check_status() for this hook.
+	ata_check_status() for this hook.
 	</para>
-
-	</sect2>
-
-	<sect2><title>Write specific ATA shadow register</title>
-	<programlisting>
-void (*sff_set_devctl)(struct ata_port *ap, u8 ctl);
-	</programlisting>
-
 	<para>
-	Write the device control ATA shadow register to the hardware.
-	Most drivers don't need to define this.
+	Note that because this is called from ata_device_add(), at
+	least a dummy function that clears device interrupts must be
+	provided for all drivers, even if the controller doesn't
+	actually have a taskfile status register.
 	</para>
 
 	</sect2>
 
 	<sect2><title>Select ATA device on bus</title>
 	<programlisting>
-void (*sff_dev_select)(struct ata_port *ap, unsigned int device);
+void (*dev_select)(struct ata_port *ap, unsigned int device);
 	</programlisting>
 
 	<para>
@@ -250,7 +251,9 @@ void (*sff_dev_select)(struct ata_port *ap, unsigned int device);
 	</para>
 	<para>
 	Most drivers for taskfile-based hardware use
-	ata_sff_dev_select() for this hook.
+	ata_std_dev_select() for this hook.  Controllers which do not
+	support second drives on a port (such as SATA contollers) will
+	use ata_noop_dev_select().
 	</para>
 
 	</sect2>
@@ -438,13 +441,13 @@ void (*irq_clear) (struct ata_port *);
 	to struct ata_host_set.
 	</para>
 	<para>
-	Most legacy IDE drivers use ata_sff_interrupt() for the
+	Most legacy IDE drivers use ata_interrupt() for the
 	irq_handler hook, which scans all ports in the host_set,
 	determines which queued command was active (if any), and calls
-	ata_sff_host_intr(ap,qc).
+	ata_host_intr(ap,qc).
 	</para>
 	<para>
-	Most legacy IDE drivers use ata_sff_irq_clear() for the
+	Most legacy IDE drivers use ata_bmdma_irq_clear() for the
 	irq_clear() hook, which simply clears the interrupt and error
 	flags in the DMA status register.
 	</para>
@@ -487,10 +490,14 @@ void (*host_stop) (struct ata_host_set *host_set);
 	allocates space for a legacy IDE PRD table and returns.
 	</para>
 	<para>
-	->port_stop() is called after ->host_stop().  Its sole function
+	->port_stop() is called after ->host_stop().  It's sole function
 	is to release DMA/memory resources, now that they are no longer
 	actively being used.  Many drivers also free driver-private
 	data from port at this time.
+	</para>
+	<para>
+	Many drivers use ata_port_stop() as this hook, which frees the
+	PRD table.
 	</para>
 	<para>
 	->host_stop() is called after all ->port_stop() calls
@@ -945,7 +952,7 @@ and other resources, etc.
 
         <listitem>
 	<para>
-	!BSY &amp;&amp; ERR after CDB transfer starts but before the
+	!BSY &amp;&amp; ERR after CDB tranfer starts but before the
         last byte of CDB is transferred.  ATA/ATAPI standard states
         that &quot;The device shall not terminate the PACKET command
         with an error before the last byte of the command packet has
@@ -1032,7 +1039,7 @@ and other resources, etc.
 	   <listitem>
 	   <para>
 	   This is indicated by ICRC bit in the ERROR register and
-	   means that corruption occurred during data transfer.  Up to
+	   means that corruption occurred during data transfer.  Upto
 	   ATA/ATAPI-7, the standard specifies that this bit is only
 	   applicable to UDMA transfers but ATA/ATAPI-8 draft revision
 	   1f says that the bit may be applicable to multiword DMA and
@@ -1045,12 +1052,12 @@ and other resources, etc.
 	   <term>ABRT error during data transfer or on completion</term>
 	   <listitem>
 	   <para>
-	   Up to ATA/ATAPI-7, the standard specifies that ABRT could be
+	   Upto ATA/ATAPI-7, the standard specifies that ABRT could be
 	   set on ICRC errors and on cases where a device is not able
 	   to complete a command.  Combined with the fact that MWDMA
-	   and PIO transfer errors aren't allowed to use ICRC bit up to
+	   and PIO transfer errors aren't allowed to use ICRC bit upto
 	   ATA/ATAPI-7, it seems to imply that ABRT bit alone could
-	   indicate transfer errors.
+	   indicate tranfer errors.
 	   </para>
 	   <para>
 	   However, ATA/ATAPI-8 draft revision 1f removes the part
@@ -1122,7 +1129,7 @@ and other resources, etc.
 	<para>
 	Depending on commands, not all STATUS/ERROR bits are
 	applicable.  These non-applicable bits are marked with
-	&quot;na&quot; in the output descriptions but up to ATA/ATAPI-7
+	&quot;na&quot; in the output descriptions but upto ATA/ATAPI-7
 	no definition of &quot;na&quot; can be found.  However,
 	ATA/ATAPI-8 draft revision 1f describes &quot;N/A&quot; as
 	follows.
@@ -1507,7 +1514,7 @@ and other resources, etc.
 
 	<listitem>
 	<para>
-	CHS set up with INITIALIZE DEVICE PARAMETERS (seldom used)
+	CHS set up with INITIALIZE DEVICE PARAMETERS (seldomly used)
 	</para>
 	</listitem>
 

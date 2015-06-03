@@ -9,12 +9,13 @@ struct inotify_event_private_data {
 	int wd;
 };
 
-struct inotify_inode_mark {
-	struct fsnotify_mark fsn_mark;
+struct inotify_inode_mark_entry {
+	/* fsnotify_mark_entry MUST be the first thing */
+	struct fsnotify_mark_entry fsn_entry;
 	int wd;
 };
 
-extern void inotify_ignored_and_remove_idr(struct fsnotify_mark *fsn_mark,
+extern void inotify_ignored_and_remove_idr(struct fsnotify_mark_entry *entry,
 					   struct fsnotify_group *group);
 extern void inotify_free_event_priv(struct fsnotify_event_private_data *event_priv);
 

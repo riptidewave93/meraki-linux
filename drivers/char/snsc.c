@@ -21,7 +21,7 @@
 #include <linux/poll.h>
 #include <linux/module.h>
 #include <linux/slab.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <asm/sn/io.h>
 #include <asm/sn/sn_sal.h>
 #include <asm/sn/module.h>
@@ -34,7 +34,6 @@
 #define SCDRV_BUFSZ	2048
 #define SCDRV_TIMEOUT	1000
 
-static DEFINE_MUTEX(scdrv_mutex);
 static irqreturn_t
 scdrv_interrupt(int irq, void *subch_data)
 {
@@ -106,7 +105,7 @@ scdrv_open(struct inode *inode, struct file *file)
 	file->private_data = sd;
 
 	/* hook this subchannel up to the system controller interrupt */
-	mutex_lock(&scdrv_mutex);
+	lock_kernel();
 	rv = request_irq(SGI_UART_VECTOR, scdrv_interrupt,
 			 IRQF_SHARED | IRQF_DISABLED,
 			 SYSCTL_BASENAME, sd);
@@ -114,10 +113,10 @@ scdrv_open(struct inode *inode, struct file *file)
 		ia64_sn_irtr_close(sd->sd_nasid, sd->sd_subch);
 		kfree(sd);
 		printk("%s: irq request failed (%d)\n", __func__, rv);
-		mutex_unlock(&scdrv_mutex);
+		unlock_kernel();
 		return -EBUSY;
 	}
-	mutex_unlock(&scdrv_mutex);
+	unlock_kernel();
 	return 0;
 }
 
@@ -358,7 +357,6 @@ static const struct file_operations scdrv_fops = {
 	.poll =		scdrv_poll,
 	.open =		scdrv_open,
 	.release =	scdrv_release,
-	.llseek =	noop_llseek,
 };
 
 static struct class *snsc_class;

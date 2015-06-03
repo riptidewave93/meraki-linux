@@ -411,9 +411,11 @@ static int optidma_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 		.port_ops = &optiplus_port_ops
 	};
 	const struct ata_port_info *ppi[] = { &info_82c700, NULL };
+	static int printed_version;
 	int rc;
 
-	ata_print_version_once(&dev->dev, DRV_VERSION);
+	if (!printed_version++)
+		dev_printk(KERN_DEBUG, &dev->dev, "version " DRV_VERSION "\n");
 
 	rc = pcim_enable_device(dev);
 	if (rc)
@@ -427,7 +429,7 @@ static int optidma_init_one(struct pci_dev *dev, const struct pci_device_id *id)
 	if (optiplus_with_udma(dev))
 		ppi[0] = &info_82c700_udma;
 
-	return ata_pci_bmdma_init_one(dev, ppi, &optidma_sht, NULL, 0);
+	return ata_pci_sff_init_one(dev, ppi, &optidma_sht, NULL);
 }
 
 static const struct pci_device_id optidma[] = {

@@ -9,16 +9,20 @@
  */
 
 #include <linux/netfilter.h>
-#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/moduleparam.h>
-#include <linux/export.h>
 
 #include <net/netfilter/nf_conntrack.h>
 #include <net/netfilter/nf_conntrack_extend.h>
 #include <net/netfilter/nf_conntrack_acct.h>
 
-static bool nf_ct_acct __read_mostly;
+#ifdef CONFIG_NF_CT_ACCT
+#define NF_CT_ACCT_DEFAULT 1
+#else
+#define NF_CT_ACCT_DEFAULT 0
+#endif
+
+static int nf_ct_acct __read_mostly = NF_CT_ACCT_DEFAULT;
 
 module_param_named(acct, nf_ct_acct, bool, 0644);
 MODULE_PARM_DESC(acct, "Enable connection tracking flow accounting.");
@@ -26,6 +30,7 @@ MODULE_PARM_DESC(acct, "Enable connection tracking flow accounting.");
 #ifdef CONFIG_SYSCTL
 static struct ctl_table acct_sysctl_table[] = {
 	{
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "nf_conntrack_acct",
 		.data		= &init_net.ct.sysctl_acct,
 		.maxlen		= sizeof(unsigned int),
@@ -46,8 +51,8 @@ seq_print_acct(struct seq_file *s, const struct nf_conn *ct, int dir)
 		return 0;
 
 	return seq_printf(s, "packets=%llu bytes=%llu ",
-			  (unsigned long long)atomic64_read(&acct[dir].packets),
-			  (unsigned long long)atomic64_read(&acct[dir].bytes));
+			  (unsigned long long)acct[dir].packets,
+			  (unsigned long long)acct[dir].bytes);
 };
 EXPORT_SYMBOL_GPL(seq_print_acct);
 
@@ -109,6 +114,12 @@ int nf_conntrack_acct_init(struct net *net)
 	net->ct.sysctl_acct = nf_ct_acct;
 
 	if (net_eq(net, &init_net)) {
+#ifdef CONFIG_NF_CT_ACCT
+	printk(KERN_WARNING "CONFIG_NF_CT_ACCT is deprecated and will be removed soon. Please use\n");
+		printk(KERN_WARNING "nf_conntrack.acct=1 kernel parameter, acct=1 nf_conntrack module option or\n");
+		printk(KERN_WARNING "sysctl net.netfilter.nf_conntrack_acct=1 to enable it.\n");
+#endif
+
 		ret = nf_ct_extend_register(&acct_extend);
 		if (ret < 0) {
 			printk(KERN_ERR "nf_conntrack_acct: Unable to register extension\n");

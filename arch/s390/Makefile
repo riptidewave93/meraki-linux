@@ -14,7 +14,6 @@
 #
 
 ifndef CONFIG_64BIT
-LD_BFD		:= elf32-s390
 LDFLAGS		:= -m elf_s390
 KBUILD_CFLAGS	+= -m31
 KBUILD_AFLAGS	+= -m31
@@ -22,10 +21,8 @@ UTS_MACHINE	:= s390
 STACK_SIZE	:= 8192
 CHECKFLAGS	+= -D__s390__ -msize-long
 else
-LD_BFD		:= elf64-s390
 LDFLAGS		:= -m elf64_s390
-KBUILD_AFLAGS_MODULE += -fpic -D__PIC__
-KBUILD_CFLAGS_MODULE += -fpic -D__PIC__
+MODFLAGS	+= -fpic -D__PIC__
 KBUILD_CFLAGS	+= -m64
 KBUILD_AFLAGS	+= -m64
 UTS_MACHINE	:= s390x
@@ -33,14 +30,11 @@ STACK_SIZE	:= 16384
 CHECKFLAGS	+= -D__s390__ -D__s390x__
 endif
 
-export LD_BFD
-
 cflags-$(CONFIG_MARCH_G5)   += $(call cc-option,-march=g5)
 cflags-$(CONFIG_MARCH_Z900) += $(call cc-option,-march=z900)
 cflags-$(CONFIG_MARCH_Z990) += $(call cc-option,-march=z990)
 cflags-$(CONFIG_MARCH_Z9_109) += $(call cc-option,-march=z9-109)
 cflags-$(CONFIG_MARCH_Z10) += $(call cc-option,-march=z10)
-cflags-$(CONFIG_MARCH_Z196) += $(call cc-option,-march=z196)
 
 #KBUILD_IMAGE is necessary for make rpm
 KBUILD_IMAGE	:=arch/s390/boot/image
@@ -80,7 +74,8 @@ endif
 endif
 
 ifeq ($(call cc-option-yn,-mwarn-dynamicstack),y)
-cflags-$(CONFIG_WARN_DYNAMIC_STACK) += -mwarn-dynamicstack
+cflags-$(CONFIG_WARN_STACK) += -mwarn-dynamicstack
+cflags-$(CONFIG_WARN_STACK) += -mwarn-framesize=$(CONFIG_WARN_STACK_SIZE)
 endif
 
 KBUILD_CFLAGS	+= -mbackchain -msoft-float $(cflags-y)
@@ -88,37 +83,32 @@ KBUILD_CFLAGS	+= -pipe -fno-strength-reduce -Wno-sign-compare
 KBUILD_AFLAGS	+= $(aflags-y)
 
 OBJCOPYFLAGS	:= -O binary
+LDFLAGS_vmlinux := -e start
 
-head-y		:= arch/s390/kernel/head.o
-head-y		+= arch/s390/kernel/$(if $(CONFIG_64BIT),head64.o,head31.o)
+head-y		:= arch/s390/kernel/head.o arch/s390/kernel/init_task.o
 
-# See arch/s390/Kbuild for content of core part of the kernel
-core-y		+= arch/s390/
+core-y		+= arch/s390/mm/ arch/s390/kernel/ arch/s390/crypto/ \
+		   arch/s390/appldata/ arch/s390/hypfs/ arch/s390/kvm/
 
 libs-y		+= arch/s390/lib/
 drivers-y	+= drivers/s390/
+drivers-$(CONFIG_MATHEMU) += arch/s390/math-emu/
 
 # must be linked after kernel
 drivers-$(CONFIG_OPROFILE)	+= arch/s390/oprofile/
 
 boot		:= arch/s390/boot
 
-all: image bzImage
+all: image
 
 install: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) $@
 
-image bzImage: vmlinux
+image: vmlinux
 	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
 
 zfcpdump:
 	$(Q)$(MAKE) $(build)=$(boot) $(boot)/$@
-
-vdso_install:
-ifeq ($(CONFIG_64BIT),y)
-	$(Q)$(MAKE) $(build)=arch/$(ARCH)/kernel/vdso64 $@
-endif
-	$(Q)$(MAKE) $(build)=arch/$(ARCH)/kernel/vdso32 $@
 
 archclean:
 	$(Q)$(MAKE) $(clean)=$(boot)
@@ -126,5 +116,4 @@ archclean:
 # Don't use tabs in echo arguments
 define archhelp
   echo  '* image           - Kernel image for IPL ($(boot)/image)'
-  echo	'* bzImage         - Compressed kernel image for IPL ($(boot)/bzImage)'
 endef

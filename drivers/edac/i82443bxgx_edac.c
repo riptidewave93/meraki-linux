@@ -12,7 +12,7 @@
  * 440GX fix by Jason Uhlenkott <juhlenko@akamai.com>.
  *
  * Written with reference to 82443BX Host Bridge Datasheet:
- * http://download.intel.com/design/chipsets/datashts/29063301.pdf 
+ * http://www.intel.com/design/chipsets/440/documentation.htm
  * references to this document given in [].
  *
  * This module doesn't support the 440LX, but it may be possible to
@@ -27,6 +27,7 @@
 #include <linux/pci.h>
 #include <linux/pci_ids.h>
 
+#include <linux/slab.h>
 
 #include <linux/edac.h>
 #include "edac_core.h"
@@ -178,7 +179,7 @@ static void i82443bxgx_edacmc_check(struct mem_ctl_info *mci)
 {
 	struct i82443bxgx_edacmc_error_info info;
 
-	debugf1("MC%d: %s: %s()\n", mci->mc_idx, __FILE__, __func__);
+	debugf1("MC%d: " __FILE__ ": %s()\n", mci->mc_idx, __func__);
 	i82443bxgx_edacmc_get_error_info(mci, &info);
 	i82443bxgx_edacmc_process_error_info(mci, &info, 1);
 }
@@ -198,13 +199,13 @@ static void i82443bxgx_init_csrows(struct mem_ctl_info *mci,
 	for (index = 0; index < mci->nr_csrows; index++) {
 		csrow = &mci->csrows[index];
 		pci_read_config_byte(pdev, I82443BXGX_DRB + index, &drbar);
-		debugf1("MC%d: %s: %s() Row=%d DRB = %#0x\n",
-			mci->mc_idx, __FILE__, __func__, index, drbar);
+		debugf1("MC%d: " __FILE__ ": %s() Row=%d DRB = %#0x\n",
+			mci->mc_idx, __func__, index, drbar);
 		row_high_limit = ((u32) drbar << 23);
 		/* find the DRAM Chip Select Base address and mask */
-		debugf1("MC%d: %s: %s() Row=%d, "
-			"Boundary Address=%#0x, Last = %#0x\n",
-			mci->mc_idx, __FILE__, __func__, index, row_high_limit,
+		debugf1("MC%d: " __FILE__ ": %s() Row=%d, "
+			"Boundry Address=%#0x, Last = %#0x \n",
+			mci->mc_idx, __func__, index, row_high_limit,
 			row_high_limit_last);
 
 		/* 440GX goes to 2GB, represented with a DRB of 0. */
@@ -237,7 +238,7 @@ static int i82443bxgx_edacmc_probe1(struct pci_dev *pdev, int dev_idx)
 	enum mem_type mtype;
 	enum edac_type edac_mode;
 
-	debugf0("MC: %s: %s()\n", __FILE__, __func__);
+	debugf0("MC: " __FILE__ ": %s()\n", __func__);
 
 	/* Something is really hosed if PCI config space reads from
 	 * the MC aren't working.
@@ -250,7 +251,7 @@ static int i82443bxgx_edacmc_probe1(struct pci_dev *pdev, int dev_idx)
 	if (mci == NULL)
 		return -ENOMEM;
 
-	debugf0("MC: %s: %s(): mci = %p\n", __FILE__, __func__, mci);
+	debugf0("MC: " __FILE__ ": %s(): mci = %p\n", __func__, mci);
 	mci->dev = &pdev->dev;
 	mci->mtype_cap = MEM_FLAG_EDO | MEM_FLAG_SDR | MEM_FLAG_RDR;
 	mci->edac_ctl_cap = EDAC_FLAG_NONE | EDAC_FLAG_EC | EDAC_FLAG_SECDED;
@@ -305,7 +306,7 @@ static int i82443bxgx_edacmc_probe1(struct pci_dev *pdev, int dev_idx)
 	i82443bxgx_init_csrows(mci, pdev, edac_mode, mtype);
 
 	/* Many BIOSes don't clear error flags on boot, so do this
-	 * here, or we get "phantom" errors occurring at module-load
+	 * here, or we get "phantom" errors occuring at module-load
 	 * time. */
 	pci_write_bits32(pdev, I82443BXGX_EAP,
 			(I82443BXGX_EAP_OFFSET_SBE |
@@ -336,7 +337,7 @@ static int i82443bxgx_edacmc_probe1(struct pci_dev *pdev, int dev_idx)
 			__func__);
 	}
 
-	debugf3("MC: %s: %s(): success\n", __FILE__, __func__);
+	debugf3("MC: " __FILE__ ": %s(): success\n", __func__);
 	return 0;
 
 fail:
@@ -352,9 +353,9 @@ static int __devinit i82443bxgx_edacmc_init_one(struct pci_dev *pdev,
 {
 	int rc;
 
-	debugf0("MC: %s: %s()\n", __FILE__, __func__);
+	debugf0("MC: " __FILE__ ": %s()\n", __func__);
 
-	/* don't need to call pci_enable_device() */
+	/* don't need to call pci_device_enable() */
 	rc = i82443bxgx_edacmc_probe1(pdev, ent->driver_data);
 
 	if (mci_pdev == NULL)
@@ -367,7 +368,7 @@ static void __devexit i82443bxgx_edacmc_remove_one(struct pci_dev *pdev)
 {
 	struct mem_ctl_info *mci;
 
-	debugf0("%s: %s()\n", __FILE__, __func__);
+	debugf0(__FILE__ ": %s()\n", __func__);
 
 	if (i82443bxgx_pci)
 		edac_pci_release_generic_ctl(i82443bxgx_pci);
@@ -380,7 +381,7 @@ static void __devexit i82443bxgx_edacmc_remove_one(struct pci_dev *pdev)
 
 EXPORT_SYMBOL_GPL(i82443bxgx_edacmc_remove_one);
 
-static DEFINE_PCI_DEVICE_TABLE(i82443bxgx_pci_tbl) = {
+static const struct pci_device_id i82443bxgx_pci_tbl[] __devinitdata = {
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82443BX_0)},
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82443BX_2)},
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82443GX_0)},

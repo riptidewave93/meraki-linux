@@ -75,11 +75,11 @@ typedef enum tagCMD_STATUS {
 
 typedef struct tagCMD_ITEM {
     CMD_CODE eCmd;
-    unsigned char abyCmdDesireSSID[WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN + 1];
-    bool bNeedRadioOFF;
-    unsigned short wDeAuthenReason;
-    bool bRadioCmd;
-    bool bForceSCAN;
+    BYTE     abyCmdDesireSSID[WLAN_IEHDR_LEN + WLAN_SSID_MAXLEN + 1];
+    BOOL     bNeedRadioOFF;
+    WORD     wDeAuthenReason;
+    BOOL     bRadioCmd;
+    BOOL     bForceSCAN;
 } CMD_ITEM, *PCMD_ITEM;
 
 // Command state
@@ -109,36 +109,36 @@ typedef enum tagCMD_STATE {
 
 
 /*---------------------  Export Functions  --------------------------*/
-void
+VOID
 vResetCommandTimer(
-    void *hDeviceContext
+    IN HANDLE      hDeviceContext
     );
 
-void
+VOID
 vCommandTimer (
-    void *hDeviceContext
+    IN  HANDLE hDeviceContext
     );
 
-bool bClearBSSID_SCAN(
-    void *hDeviceContext
+BOOL bClearBSSID_SCAN(
+    IN HANDLE hDeviceContext
     );
 
-bool
+BOOL
 bScheduleCommand(
-    void *hDeviceContext,
-    CMD_CODE    eCommand,
-    unsigned char *pbyItem0
+    IN HANDLE      hDeviceContext,
+    IN CMD_CODE    eCommand,
+    IN PBYTE       pbyItem0
     );
 
-void
+VOID
 vCommandTimerWait(
-    void *hDeviceContext,
-    unsigned int MSecond
+    IN HANDLE      hDeviceContext,
+    IN UINT MSecond
     );
 #ifdef TxInSleep
-void
+VOID
 BSSvSecondTxData(
-    void *hDeviceContext
+    IN  HANDLE      hDeviceContext
     );
 #endif
 

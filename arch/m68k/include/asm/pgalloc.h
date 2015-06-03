@@ -7,9 +7,7 @@
 
 #ifdef CONFIG_MMU
 #include <asm/virtconvert.h>
-#if defined(CONFIG_COLDFIRE)
-#include <asm/mcf_pgalloc.h>
-#elif defined(CONFIG_SUN3)
+#ifdef CONFIG_SUN3
 #include <asm/sun3_pgalloc.h>
 #else
 #include <asm/motorola_pgalloc.h>

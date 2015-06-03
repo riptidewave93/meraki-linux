@@ -10,10 +10,9 @@
  * of the GNU Public License, incorporated herein by reference.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/fs.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/timer.h>
@@ -32,6 +31,8 @@ enum {
 	ASMTYPE_JUNIPER,
 	ASMTYPE_SPRUCE,
 };
+
+#define PFX "ibmasr: "
 
 #define TOPAZ_ASR_REG_OFFSET	4
 #define TOPAZ_ASR_TOGGLE	0x40
@@ -60,7 +61,7 @@ enum {
 #define SPRUCE_ASR_TOGGLE_MASK	0x02	/* bit 0: 0, then 1, then 0 */
 
 
-static bool nowayout = WATCHDOG_NOWAYOUT;
+static int nowayout = WATCHDOG_NOWAYOUT;
 
 static unsigned long asr_is_open;
 static char asr_expect_close;
@@ -68,7 +69,7 @@ static char asr_expect_close;
 static unsigned int asr_type, asr_base, asr_length;
 static unsigned int asr_read_addr, asr_write_addr;
 static unsigned char asr_toggle_mask, asr_disable_mask;
-static DEFINE_SPINLOCK(asr_lock);
+static spinlock_t asr_lock;
 
 static void __asr_toggle(void)
 {
@@ -234,11 +235,12 @@ static int __init asr_get_base_address(void)
 	}
 
 	if (!request_region(asr_base, asr_length, "ibmasr")) {
-		pr_err("address %#x already in use\n", asr_base);
+		printk(KERN_ERR PFX "address %#x already in use\n",
+			asr_base);
 		return -EBUSY;
 	}
 
-	pr_info("found %sASR @ addr %#x\n", type, asr_base);
+	printk(KERN_INFO PFX "found %sASR @ addr %#x\n", type, asr_base);
 
 	return 0;
 }
@@ -331,7 +333,8 @@ static int asr_release(struct inode *inode, struct file *file)
 	if (asr_expect_close == 42)
 		asr_disable();
 	else {
-		pr_crit("unexpected close, not stopping watchdog!\n");
+		printk(KERN_CRIT PFX
+				"unexpected close, not stopping watchdog!\n");
 		asr_toggle();
 	}
 	clear_bit(0, &asr_is_open);
@@ -384,6 +387,8 @@ static int __init ibmasr_init(void)
 	if (!asr_type)
 		return -ENODEV;
 
+	spin_lock_init(&asr_lock);
+
 	rc = asr_get_base_address();
 	if (rc)
 		return rc;
@@ -391,7 +396,7 @@ static int __init ibmasr_init(void)
 	rc = misc_register(&asr_miscdev);
 	if (rc < 0) {
 		release_region(asr_base, asr_length);
-		pr_err("failed to register misc device\n");
+		printk(KERN_ERR PFX "failed to register misc device\n");
 		return rc;
 	}
 
@@ -411,7 +416,7 @@ static void __exit ibmasr_exit(void)
 module_init(ibmasr_init);
 module_exit(ibmasr_exit);
 
-module_param(nowayout, bool, 0);
+module_param(nowayout, int, 0);
 MODULE_PARM_DESC(nowayout,
 	"Watchdog cannot be stopped once started (default="
 				__MODULE_STRING(WATCHDOG_NOWAYOUT) ")");

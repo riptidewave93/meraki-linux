@@ -22,7 +22,23 @@
 #include <linux/ethtool.h>
 #include <linux/phy.h>
 #include <linux/netdevice.h>
-#include <linux/smscphy.h>
+
+#define MII_LAN83C185_ISF 29 /* Interrupt Source Flags */
+#define MII_LAN83C185_IM  30 /* Interrupt Mask */
+
+#define MII_LAN83C185_ISF_INT1 (1<<1) /* Auto-Negotiation Page Received */
+#define MII_LAN83C185_ISF_INT2 (1<<2) /* Parallel Detection Fault */
+#define MII_LAN83C185_ISF_INT3 (1<<3) /* Auto-Negotiation LP Ack */
+#define MII_LAN83C185_ISF_INT4 (1<<4) /* Link Down */
+#define MII_LAN83C185_ISF_INT5 (1<<5) /* Remote Fault Detected */
+#define MII_LAN83C185_ISF_INT6 (1<<6) /* Auto-Negotiation complete */
+#define MII_LAN83C185_ISF_INT7 (1<<7) /* ENERGYON */
+
+#define MII_LAN83C185_ISF_INT_ALL (0x0e)
+
+#define MII_LAN83C185_ISF_INT_PHYLIB_EVENTS \
+	(MII_LAN83C185_ISF_INT6 | MII_LAN83C185_ISF_INT4)
+
 
 static int smsc_phy_config_intr(struct phy_device *phydev)
 {
@@ -43,23 +59,9 @@ static int smsc_phy_ack_interrupt(struct phy_device *phydev)
 
 static int smsc_phy_config_init(struct phy_device *phydev)
 {
-	int rc = phy_read(phydev, MII_LAN83C185_CTRL_STATUS);
-	if (rc < 0)
-		return rc;
-
-	/* Enable energy detect mode for this SMSC Transceivers */
-	rc = phy_write(phydev, MII_LAN83C185_CTRL_STATUS,
-		       rc | MII_LAN83C185_EDPWRDOWN);
-	if (rc < 0)
-		return rc;
-
 	return smsc_phy_ack_interrupt (phydev);
 }
 
-static int lan911x_config_init(struct phy_device *phydev)
-{
-	return smsc_phy_ack_interrupt(phydev);
-}
 
 static struct phy_driver lan83c185_driver = {
 	.phy_id		= 0x0007c0a0, /* OUI=0x00800f, Model#=0x0a */
@@ -145,7 +147,7 @@ static struct phy_driver lan911x_int_driver = {
 	/* basic functions */
 	.config_aneg	= genphy_config_aneg,
 	.read_status	= genphy_read_status,
-	.config_init	= lan911x_config_init,
+	.config_init	= smsc_phy_config_init,
 
 	/* IRQ related */
 	.ack_interrupt	= smsc_phy_ack_interrupt,
@@ -234,14 +236,3 @@ MODULE_LICENSE("GPL");
 
 module_init(smsc_init);
 module_exit(smsc_exit);
-
-static struct mdio_device_id __maybe_unused smsc_tbl[] = {
-	{ 0x0007c0a0, 0xfffffff0 },
-	{ 0x0007c0b0, 0xfffffff0 },
-	{ 0x0007c0c0, 0xfffffff0 },
-	{ 0x0007c0d0, 0xfffffff0 },
-	{ 0x0007c0f0, 0xfffffff0 },
-	{ }
-};
-
-MODULE_DEVICE_TABLE(mdio, smsc_tbl);

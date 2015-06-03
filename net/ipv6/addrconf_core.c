@@ -3,7 +3,6 @@
  * not configured or static.
  */
 
-#include <linux/export.h>
 #include <net/ipv6.h>
 
 #define IPV6_ADDR_SCOPE_TYPE(scope)	((scope) << 16)
@@ -73,7 +72,7 @@ int __ipv6_addr_type(const struct in6_addr *addr)
 				IPV6_ADDR_SCOPE_TYPE(IPV6_ADDR_SCOPE_GLOBAL));	/* addr-select 3.3 */
 	}
 
-	return (IPV6_ADDR_UNICAST |
+	return (IPV6_ADDR_RESERVED |
 		IPV6_ADDR_SCOPE_TYPE(IPV6_ADDR_SCOPE_GLOBAL));	/* addr-select 3.4 */
 }
 EXPORT_SYMBOL(__ipv6_addr_type);

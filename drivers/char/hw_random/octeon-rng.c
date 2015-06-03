@@ -15,7 +15,6 @@
 #include <linux/device.h>
 #include <linux/hw_random.h>
 #include <linux/io.h>
-#include <linux/gfp.h>
 
 #include <asm/octeon/octeon.h>
 #include <asm/octeon/cvmx-rnm-defs.h>
@@ -131,7 +130,18 @@ static struct platform_driver octeon_rng_driver = {
 	.remove		= __exit_p(octeon_rng_remove),
 };
 
-module_platform_driver(octeon_rng_driver);
+static int __init octeon_rng_mod_init(void)
+{
+	return platform_driver_register(&octeon_rng_driver);
+}
+
+static void __exit octeon_rng_mod_exit(void)
+{
+	platform_driver_unregister(&octeon_rng_driver);
+}
+
+module_init(octeon_rng_mod_init);
+module_exit(octeon_rng_mod_exit);
 
 MODULE_AUTHOR("David Daney");
 MODULE_LICENSE("GPL");

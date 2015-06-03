@@ -37,9 +37,9 @@ MODULE_AUTHOR("Harald Welte <laforge@gnumonks.org>");
 MODULE_DESCRIPTION("Netfilter NAT protocol helper module for GRE");
 
 /* generate unique tuple ... */
-static void
+static bool
 gre_unique_tuple(struct nf_conntrack_tuple *tuple,
-		 const struct nf_nat_ipv4_range *range,
+		 const struct nf_nat_range *range,
 		 enum nf_nat_manip_type maniptype,
 		 const struct nf_conn *ct)
 {
@@ -50,14 +50,14 @@ gre_unique_tuple(struct nf_conntrack_tuple *tuple,
 	/* If there is no master conntrack we are not PPTP,
 	   do not change tuples */
 	if (!ct->master)
-		return;
+		return false;
 
-	if (maniptype == NF_NAT_MANIP_SRC)
+	if (maniptype == IP_NAT_MANIP_SRC)
 		keyptr = &tuple->src.u.gre.key;
 	else
 		keyptr = &tuple->dst.u.gre.key;
 
-	if (!(range->flags & NF_NAT_RANGE_PROTO_SPECIFIED)) {
+	if (!(range->flags & IP_NAT_RANGE_PROTO_SPECIFIED)) {
 		pr_debug("%p: NATing GRE PPTP\n", ct);
 		min = 1;
 		range_size = 0xffff;
@@ -68,14 +68,14 @@ gre_unique_tuple(struct nf_conntrack_tuple *tuple,
 
 	pr_debug("min = %u, range_size = %u\n", min, range_size);
 
-	for (i = 0; ; ++key) {
+	for (i = 0; i < range_size; i++, key++) {
 		*keyptr = htons(min + key % range_size);
-		if (++i == range_size || !nf_nat_used_tuple(tuple, ct))
-			return;
+		if (!nf_nat_used_tuple(tuple, ct))
+			return true;
 	}
 
 	pr_debug("%p: no NAT mapping\n", ct);
-	return;
+	return false;
 }
 
 /* manipulate a GRE packet according to maniptype */
@@ -99,7 +99,7 @@ gre_manip_pkt(struct sk_buff *skb, unsigned int iphdroff,
 
 	/* we only have destination manip of a packet, since 'source key'
 	 * is not present in the packet itself */
-	if (maniptype != NF_NAT_MANIP_DST)
+	if (maniptype != IP_NAT_MANIP_DST)
 		return true;
 	switch (greh->version) {
 	case GRE_VERSION_1701:
@@ -119,10 +119,12 @@ gre_manip_pkt(struct sk_buff *skb, unsigned int iphdroff,
 
 static const struct nf_nat_protocol gre = {
 	.protonum		= IPPROTO_GRE,
+	.me			= THIS_MODULE,
 	.manip_pkt		= gre_manip_pkt,
 	.in_range		= nf_nat_proto_in_range,
 	.unique_tuple		= gre_unique_tuple,
 #if defined(CONFIG_NF_CT_NETLINK) || defined(CONFIG_NF_CT_NETLINK_MODULE)
+	.range_to_nlattr	= nf_nat_proto_range_to_nlattr,
 	.nlattr_to_range	= nf_nat_proto_nlattr_to_range,
 #endif
 };

@@ -50,14 +50,14 @@
 
 struct idr_layer {
 	unsigned long		 bitmap; /* A zero bit means "space here" */
-	struct idr_layer __rcu	*ary[1<<IDR_BITS];
+	struct idr_layer	*ary[1<<IDR_BITS];
 	int			 count;	 /* When zero, we can release it */
 	int			 layer;	 /* distance from leaf */
 	struct rcu_head		 rcu_head;
 };
 
 struct idr {
-	struct idr_layer __rcu *top;
+	struct idr_layer *top;
 	struct idr_layer *id_free;
 	int		  layers; /* only valid without concurrent changes */
 	int		  id_free_cnt;
@@ -81,7 +81,6 @@ struct idr {
 #define _idr_rc_to_errno(rc) ((rc) == -1 ? -EAGAIN : -ENOSPC)
 
 /**
- * DOC: idr sync
  * idr synchronization (stolen from radix-tree.h)
  *
  * idr_find() is able to be called locklessly, using RCU. The caller must
@@ -118,13 +117,10 @@ void idr_init(struct idr *idp);
 /*
  * IDA - IDR based id allocator, use when translation from id to
  * pointer isn't necessary.
- *
- * IDA_BITMAP_LONGS is calculated to be one less to accommodate
- * ida_bitmap->nr_busy so that the whole struct fits in 128 bytes.
  */
 #define IDA_CHUNK_SIZE		128	/* 128 bytes per chunk */
-#define IDA_BITMAP_LONGS	(IDA_CHUNK_SIZE / sizeof(long) - 1)
-#define IDA_BITMAP_BITS 	(IDA_BITMAP_LONGS * sizeof(long) * 8)
+#define IDA_BITMAP_LONGS	(128 / sizeof(long) - 1)
+#define IDA_BITMAP_BITS		(IDA_BITMAP_LONGS * sizeof(long) * 8)
 
 struct ida_bitmap {
 	long			nr_busy;
@@ -146,21 +142,6 @@ void ida_remove(struct ida *ida, int id);
 void ida_destroy(struct ida *ida);
 void ida_init(struct ida *ida);
 
-int ida_simple_get(struct ida *ida, unsigned int start, unsigned int end,
-		   gfp_t gfp_mask);
-void ida_simple_remove(struct ida *ida, unsigned int id);
-
 void __init idr_init_cache(void);
-
-/**
- * idr_for_each_entry - iterate over an idr's elements of a given type
- * @idp:     idr handle
- * @entry:   the type * to use as cursor
- * @id:      id entry's key
- */
-#define idr_for_each_entry(idp, entry, id)				\
-	for (id = 0, entry = (typeof(entry))idr_get_next((idp), &(id)); \
-	     entry != NULL;                                             \
-	     ++id, entry = (typeof(entry))idr_get_next((idp), &(id)))
 
 #endif /* __IDR_H__ */

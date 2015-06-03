@@ -16,7 +16,6 @@
 #include <linux/platform_device.h>
 #include <linux/mutex.h>
 #include <linux/idr.h>
-#include <linux/gfp.h>
 
 #include "../w1.h"
 #include "../w1_int.h"
@@ -97,7 +96,7 @@ int w1_ds2760_recall_eeprom(struct device *dev, int addr)
 	return w1_ds2760_eeprom_cmd(dev, addr, W1_DS2760_RECALL_DATA);
 }
 
-static ssize_t w1_ds2760_read_bin(struct file *filp, struct kobject *kobj,
+static ssize_t w1_ds2760_read_bin(struct kobject *kobj,
 				  struct bin_attribute *bin_attr,
 				  char *buf, loff_t off, size_t count)
 {
@@ -114,7 +113,43 @@ static struct bin_attribute w1_ds2760_bin_attr = {
 	.read = w1_ds2760_read_bin,
 };
 
-static DEFINE_IDA(bat_ida);
+static DEFINE_IDR(bat_idr);
+static DEFINE_MUTEX(bat_idr_lock);
+
+static int new_bat_id(void)
+{
+	int ret;
+
+	while (1) {
+		int id;
+
+		ret = idr_pre_get(&bat_idr, GFP_KERNEL);
+		if (ret == 0)
+			return -ENOMEM;
+
+		mutex_lock(&bat_idr_lock);
+		ret = idr_get_new(&bat_idr, NULL, &id);
+		mutex_unlock(&bat_idr_lock);
+
+		if (ret == 0) {
+			ret = id & MAX_ID_MASK;
+			break;
+		} else if (ret == -EAGAIN) {
+			continue;
+		} else {
+			break;
+		}
+	}
+
+	return ret;
+}
+
+static void release_bat_id(int id)
+{
+	mutex_lock(&bat_idr_lock);
+	idr_remove(&bat_idr, id);
+	mutex_unlock(&bat_idr_lock);
+}
 
 static int w1_ds2760_add_slave(struct w1_slave *sl)
 {
@@ -122,7 +157,7 @@ static int w1_ds2760_add_slave(struct w1_slave *sl)
 	int id;
 	struct platform_device *pdev;
 
-	id = ida_simple_get(&bat_ida, 0, 0, GFP_KERNEL);
+	id = new_bat_id();
 	if (id < 0) {
 		ret = id;
 		goto noid;
@@ -151,7 +186,7 @@ bin_attr_failed:
 pdev_add_failed:
 	platform_device_unregister(pdev);
 pdev_alloc_failed:
-	ida_simple_remove(&bat_ida, id);
+	release_bat_id(id);
 noid:
 success:
 	return ret;
@@ -163,7 +198,7 @@ static void w1_ds2760_remove_slave(struct w1_slave *sl)
 	int id = pdev->id;
 
 	platform_device_unregister(pdev);
-	ida_simple_remove(&bat_ida, id);
+	release_bat_id(id);
 	sysfs_remove_bin_file(&sl->dev.kobj, &w1_ds2760_bin_attr);
 }
 
@@ -181,14 +216,14 @@ static int __init w1_ds2760_init(void)
 {
 	printk(KERN_INFO "1-Wire driver for the DS2760 battery monitor "
 	       " chip  - (c) 2004-2005, Szabolcs Gyurko\n");
-	ida_init(&bat_ida);
+	idr_init(&bat_idr);
 	return w1_register_family(&w1_ds2760_family);
 }
 
 static void __exit w1_ds2760_exit(void)
 {
 	w1_unregister_family(&w1_ds2760_family);
-	ida_destroy(&bat_ida);
+	idr_destroy(&bat_idr);
 }
 
 EXPORT_SYMBOL(w1_ds2760_read);

@@ -17,9 +17,7 @@
 
 #define NFS4_BITMAP_SIZE	2
 #define NFS4_VERIFIER_SIZE	8
-#define NFS4_STATEID_SEQID_SIZE 4
-#define NFS4_STATEID_OTHER_SIZE 12
-#define NFS4_STATEID_SIZE	(NFS4_STATEID_SEQID_SIZE + NFS4_STATEID_OTHER_SIZE)
+#define NFS4_STATEID_SIZE	16
 #define NFS4_FHSIZE		128
 #define NFS4_MAXPATHLEN		PATH_MAX
 #define NFS4_MAXNAMLEN		NAME_MAX
@@ -62,12 +60,6 @@
 #define NFS4_SHARE_WHEN_MASK		0xF0000
 #define NFS4_SHARE_SIGNAL_DELEG_WHEN_RESRC_AVAIL	0x10000
 #define NFS4_SHARE_PUSH_DELEG_WHEN_UNCONTENDED		0x20000
-
-#define NFS4_CDFC4_FORE	0x1
-#define NFS4_CDFC4_BACK 0x2
-#define NFS4_CDFC4_BOTH 0x3
-#define NFS4_CDFC4_FORE_OR_BOTH 0x3
-#define NFS4_CDFC4_BACK_OR_BOTH 0x7
 
 #define NFS4_SET_TO_SERVER_TIME	0
 #define NFS4_SET_TO_CLIENT_TIME	1
@@ -114,13 +106,9 @@
 
 #define EXCHGID4_FLAG_SUPP_MOVED_REFER		0x00000001
 #define EXCHGID4_FLAG_SUPP_MOVED_MIGR		0x00000002
-#define EXCHGID4_FLAG_BIND_PRINC_STATEID	0x00000100
-
 #define EXCHGID4_FLAG_USE_NON_PNFS		0x00010000
 #define EXCHGID4_FLAG_USE_PNFS_MDS		0x00020000
 #define EXCHGID4_FLAG_USE_PNFS_DS		0x00040000
-#define EXCHGID4_FLAG_MASK_PNFS			0x00070000
-
 #define EXCHGID4_FLAG_UPD_CONFIRMED_REC_A	0x40000000
 #define EXCHGID4_FLAG_CONFIRMED_R		0x80000000
 /*
@@ -128,8 +116,8 @@
  * they're set in the argument or response, have separate
  * invalid flag masks for arg (_A) and resp (_R).
  */
-#define EXCHGID4_FLAG_MASK_A			0x40070103
-#define EXCHGID4_FLAG_MASK_R			0x80070103
+#define EXCHGID4_FLAG_MASK_A			0x40070003
+#define EXCHGID4_FLAG_MASK_R			0x80070003
 
 #define SEQ4_STATUS_CB_PATH_DOWN		0x00000001
 #define SEQ4_STATUS_CB_GSS_CONTEXTS_EXPIRING	0x00000002
@@ -140,11 +128,6 @@
 #define SEQ4_STATUS_RECALLABLE_STATE_REVOKED	0x00000040
 #define SEQ4_STATUS_LEASE_MOVED			0x00000080
 #define SEQ4_STATUS_RESTART_RECLAIM_NEEDED	0x00000100
-#define SEQ4_STATUS_CB_PATH_DOWN_SESSION	0x00000200
-#define SEQ4_STATUS_BACKCHANNEL_FAULT		0x00000400
-
-#define NFS4_SECINFO_STYLE4_CURRENT_FH	0
-#define NFS4_SECINFO_STYLE4_PARENT	1
 
 #define NFS4_MAX_UINT64	(~(u64)0)
 
@@ -182,13 +165,7 @@ struct nfs4_acl {
 };
 
 typedef struct { char data[NFS4_VERIFIER_SIZE]; } nfs4_verifier;
-
-struct nfs_stateid4 {
-	__be32 seqid;
-	char other[NFS4_STATEID_OTHER_SIZE];
-} __attribute__ ((packed));
-
-typedef struct nfs_stateid4 nfs4_stateid;
+typedef struct { char data[NFS4_STATEID_SIZE]; } nfs4_stateid;
 
 enum nfs_opnum4 {
 	OP_ACCESS = 3,
@@ -356,7 +333,7 @@ enum nfsstat4 {
 						/* Error 10073 is unused. */
 	NFS4ERR_CLIENTID_BUSY	= 10074,	/* clientid has state */
 	NFS4ERR_PNFS_IO_HOLE	= 10075,	/* IO to _SPARSE file hole */
-	NFS4ERR_SEQ_FALSE_RETRY	= 10076,	/* retry not original */
+	NFS4ERR_SEQ_FALSE_RETRY	= 10076,	/* retry not origional */
 	NFS4ERR_BAD_HIGH_SLOT	= 10077,	/* sequence arg bad */
 	NFS4ERR_DEADSESSION	= 10078,	/* persistent session dead */
 	NFS4ERR_ENCR_ALG_UNSUPP = 10079,	/* SSV alg mismatch */
@@ -369,22 +346,6 @@ enum nfsstat4 {
 	NFS4ERR_RETURNCONFLICT	= 10086,	/* outstanding layoutreturn */
 	NFS4ERR_DELEG_REVOKED	= 10087,	/* deleg./layout revoked */
 };
-
-static inline bool seqid_mutating_err(u32 err)
-{
-	/* rfc 3530 section 8.1.5: */
-	switch (err) {
-	case NFS4ERR_STALE_CLIENTID:
-	case NFS4ERR_STALE_STATEID:
-	case NFS4ERR_BAD_STATEID:
-	case NFS4ERR_BAD_SEQID:
-	case NFS4ERR_BADXDR:
-	case NFS4ERR_RESOURCE:
-	case NFS4ERR_NOFILEHANDLE:
-		return false;
-	};
-	return true;
-}
 
 /*
  * Note: NF4BAD is not actually part of the protocol; it is just used
@@ -407,10 +368,7 @@ enum open_claim_type4 {
 	NFS4_OPEN_CLAIM_NULL = 0,
 	NFS4_OPEN_CLAIM_PREVIOUS = 1,
 	NFS4_OPEN_CLAIM_DELEGATE_CUR = 2,
-	NFS4_OPEN_CLAIM_DELEGATE_PREV = 3,
-	NFS4_OPEN_CLAIM_FH = 4, /* 4.1 */
-	NFS4_OPEN_CLAIM_DELEG_CUR_FH = 5, /* 4.1 */
-	NFS4_OPEN_CLAIM_DELEG_PREV_FH = 6, /* 4.1 */
+	NFS4_OPEN_CLAIM_DELEGATE_PREV = 3
 };
 
 enum opentype4 {
@@ -438,20 +396,7 @@ enum limit_by4 {
 enum open_delegation_type4 {
 	NFS4_OPEN_DELEGATE_NONE = 0,
 	NFS4_OPEN_DELEGATE_READ = 1,
-	NFS4_OPEN_DELEGATE_WRITE = 2,
-	NFS4_OPEN_DELEGATE_NONE_EXT = 3, /* 4.1 */
-};
-
-enum why_no_delegation4 { /* new to v4.1 */
-	WND4_NOT_WANTED = 0,
-	WND4_CONTENTION = 1,
-	WND4_RESOURCE = 2,
-	WND4_NOT_SUPP_FTYPE = 3,
-	WND4_WRITE_DELEG_NOT_SUPP_FTYPE = 4,
-	WND4_NOT_SUPP_UPGRADE = 5,
-	WND4_NOT_SUPP_DOWNGRADE = 6,
-	WND4_CANCELLED = 7,
-	WND4_IS_DIR = 8,
+	NFS4_OPEN_DELEGATE_WRITE = 2
 };
 
 enum lock_type4 {
@@ -524,8 +469,6 @@ enum lock_type4 {
 #define FATTR4_WORD1_TIME_MODIFY        (1UL << 21)
 #define FATTR4_WORD1_TIME_MODIFY_SET    (1UL << 22)
 #define FATTR4_WORD1_MOUNTED_ON_FILEID  (1UL << 23)
-#define FATTR4_WORD1_FS_LAYOUT_TYPES    (1UL << 30)
-#define FATTR4_WORD2_LAYOUT_BLKSIZE     (1UL << 1)
 
 #define NFSPROC4_NULL 0
 #define NFSPROC4_COMPOUND 1
@@ -578,8 +521,6 @@ enum {
 	NFSPROC4_CLNT_GETACL,
 	NFSPROC4_CLNT_SETACL,
 	NFSPROC4_CLNT_FS_LOCATIONS,
-	NFSPROC4_CLNT_RELEASE_LOCKOWNER,
-	NFSPROC4_CLNT_SECINFO,
 
 	/* nfs41 */
 	NFSPROC4_CLNT_EXCHANGE_ID,
@@ -587,15 +528,6 @@ enum {
 	NFSPROC4_CLNT_DESTROY_SESSION,
 	NFSPROC4_CLNT_SEQUENCE,
 	NFSPROC4_CLNT_GET_LEASE_TIME,
-	NFSPROC4_CLNT_RECLAIM_COMPLETE,
-	NFSPROC4_CLNT_LAYOUTGET,
-	NFSPROC4_CLNT_GETDEVICEINFO,
-	NFSPROC4_CLNT_LAYOUTCOMMIT,
-	NFSPROC4_CLNT_LAYOUTRETURN,
-	NFSPROC4_CLNT_SECINFO_NO_NAME,
-	NFSPROC4_CLNT_TEST_STATEID,
-	NFSPROC4_CLNT_FREE_STATEID,
-	NFSPROC4_CLNT_GETDEVICELIST,
 };
 
 /* nfs41 types */
@@ -604,59 +536,14 @@ struct nfs4_sessionid {
 };
 
 /* Create Session Flags */
-#define SESSION4_PERSIST	0x001
-#define SESSION4_BACK_CHAN	0x002
-#define SESSION4_RDMA		0x004
-
-#define SESSION4_FLAG_MASK_A	0x007
+#define SESSION4_PERSIST	 0x001
+#define SESSION4_BACK_CHAN 	 0x002
+#define SESSION4_RDMA		 0x004
 
 enum state_protect_how4 {
 	SP4_NONE	= 0,
 	SP4_MACH_CRED	= 1,
 	SP4_SSV		= 2
-};
-
-enum pnfs_layouttype {
-	LAYOUT_NFSV4_1_FILES  = 1,
-	LAYOUT_OSD2_OBJECTS = 2,
-	LAYOUT_BLOCK_VOLUME = 3,
-};
-
-/* used for both layout return and recall */
-enum pnfs_layoutreturn_type {
-	RETURN_FILE = 1,
-	RETURN_FSID = 2,
-	RETURN_ALL  = 3
-};
-
-enum pnfs_iomode {
-	IOMODE_READ = 1,
-	IOMODE_RW = 2,
-	IOMODE_ANY = 3,
-};
-
-enum pnfs_notify_deviceid_type4 {
-	NOTIFY_DEVICEID4_CHANGE = 1 << 1,
-	NOTIFY_DEVICEID4_DELETE = 1 << 2,
-};
-
-#define NFL4_UFLG_MASK			0x0000003F
-#define NFL4_UFLG_DENSE			0x00000001
-#define NFL4_UFLG_COMMIT_THRU_MDS	0x00000002
-#define NFL4_UFLG_STRIPE_UNIT_SIZE_MASK	0xFFFFFFC0
-
-/* Encoded in the loh_body field of type layouthint4 */
-enum filelayout_hint_care4 {
-	NFLH4_CARE_DENSE		= NFL4_UFLG_DENSE,
-	NFLH4_CARE_COMMIT_THRU_MDS	= NFL4_UFLG_COMMIT_THRU_MDS,
-	NFLH4_CARE_STRIPE_UNIT_SIZE	= 0x00000040,
-	NFLH4_CARE_STRIPE_COUNT		= 0x00000080
-};
-
-#define NFS4_DEVICEID4_SIZE 16
-
-struct nfs4_deviceid {
-	char data[NFS4_DEVICEID4_SIZE];
 };
 
 #endif

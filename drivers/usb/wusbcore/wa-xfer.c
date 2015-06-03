@@ -61,7 +61,7 @@
  *
  *     Two methods it could be done:
  *
- *     (a) set up a timer every time an rpipe's use count drops to 1
+ *     (a) set up a timer everytime an rpipe's use count drops to 1
  *         (which means unused) or when a transfer ends. Reset the
  *         timer when a xfer is queued. If the timer expires, release
  *         the rpipe [see rpipe_ep_disable()].
@@ -76,22 +76,18 @@
  *     xfers-per-ripe, blocks-per-rpipe, rpipes-per-host), at the end
  *     we are going to have to rebuild all this based on an scheduler,
  *     to where we have a list of transactions to do and based on the
- *     availability of the different required components (blocks,
+ *     availability of the different requried components (blocks,
  *     rpipes, segment slots, etc), we go scheduling them. Painful.
  */
 #include <linux/init.h>
 #include <linux/spinlock.h>
-#include <linux/slab.h>
 #include <linux/hash.h>
-#include <linux/ratelimit.h>
-#include <linux/export.h>
 
 #include "wa-hc.h"
 #include "wusbhc.h"
 
 enum {
-	/* [WUSB] section 8.3.3 allocates 7 bits for the segment index. */
-	WA_SEGS_MAX = 128,
+	WA_SEGS_MAX = 255,
 };
 
 enum wa_seg_status {
@@ -143,7 +139,7 @@ struct wa_xfer {
 
 	struct wahc *wa;		/* Wire adapter we are plugged to */
 	struct usb_host_endpoint *ep;
-	struct urb *urb;		/* URB we are transferring for */
+	struct urb *urb;		/* URB we are transfering for */
 	struct wa_seg **seg;		/* transfer segments */
 	u8 segs, segs_submitted, segs_done;
 	unsigned is_inbound:1;
@@ -164,7 +160,7 @@ static inline void wa_xfer_init(struct wa_xfer *xfer)
 }
 
 /*
- * Destroy a transfer structure
+ * Destory a transfer structure
  *
  * Note that the xfer->seg[index] thingies follow the URB life cycle,
  * so we need to put them, not free them.
@@ -445,7 +441,7 @@ static ssize_t __wa_xfer_setup_sizes(struct wa_xfer *xfer,
 	xfer->seg_size = (xfer->seg_size / maxpktsize) * maxpktsize;
 	xfer->segs = (urb->transfer_buffer_length + xfer->seg_size - 1)
 		/ xfer->seg_size;
-	if (xfer->segs > WA_SEGS_MAX) {
+	if (xfer->segs >= WA_SEGS_MAX) {
 		dev_err(dev, "BUG? ops, number of segments %d bigger than %d\n",
 			(int)(urb->transfer_buffer_length / xfer->seg_size),
 			WA_SEGS_MAX);
@@ -477,6 +473,8 @@ static void __wa_xfer_setup_hdr0(struct wa_xfer *xfer,
 		struct wa_xfer_ctl *xfer_ctl =
 			container_of(xfer_hdr0, struct wa_xfer_ctl, hdr);
 		xfer_ctl->bmAttribute = xfer->is_inbound ? 1 : 0;
+		BUG_ON(xfer->urb->transfer_flags & URB_NO_SETUP_DMA_MAP
+		       && xfer->urb->setup_packet == NULL);
 		memcpy(&xfer_ctl->baSetupData, xfer->urb->setup_packet,
 		       sizeof(xfer_ctl->baSetupData));
 		break;
@@ -497,7 +495,7 @@ static void __wa_xfer_setup_hdr0(struct wa_xfer *xfer,
  * function does almost the same thing and they work closely
  * together.
  *
- * If the seg request has failed but this DTO phase has succeeded,
+ * If the seg request has failed but this DTO phase has suceeded,
  * wa_seg_cb() has already failed the segment and moved the
  * status to WA_SEG_ERROR, so this will go through 'case 0' and
  * effectively do nothing.
@@ -560,7 +558,7 @@ static void wa_seg_dto_cb(struct urb *urb)
 /*
  * Callback for the segment request
  *
- * If successful transition state (unless already transitioned or
+ * If succesful transition state (unless already transitioned or
  * outbound transfer); otherwise, take a note of the error, mark this
  * segment done and try completion.
  *
@@ -1220,14 +1218,16 @@ static int wa_xfer_status_to_errno(u8 status)
 	if (status == 0)
 		return 0;
 	if (status >= ARRAY_SIZE(xlat)) {
-		printk_ratelimited(KERN_ERR "%s(): BUG? "
+		if (printk_ratelimit())
+			printk(KERN_ERR "%s(): BUG? "
 			       "Unknown WA transfer status 0x%02x\n",
 			       __func__, real_status);
 		return -EINVAL;
 	}
 	errno = xlat[status];
 	if (unlikely(errno > 0)) {
-		printk_ratelimited(KERN_ERR "%s(): BUG? "
+		if (printk_ratelimit())
+			printk(KERN_ERR "%s(): BUG? "
 			       "Inconsistent WA status: 0x%02x\n",
 			       __func__, real_status);
 		errno = -errno;
@@ -1364,7 +1364,7 @@ segment_aborted:
 /*
  * Callback for the IN data phase
  *
- * If successful transition state; otherwise, take a note of the
+ * If succesful transition state; otherwise, take a note of the
  * error, mark this segment done and try completion.
  *
  * Note we don't access until we are sure that the transfer hasn't

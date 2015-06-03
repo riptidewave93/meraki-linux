@@ -1,14 +1,14 @@
 #ifndef _SCSI_SCSI_DEVICE_H
 #define _SCSI_SCSI_DEVICE_H
 
+#include <linux/device.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/workqueue.h>
 #include <linux/blkdev.h>
 #include <scsi/scsi.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
-struct device;
 struct request_queue;
 struct scsi_cmnd;
 struct scsi_lun;
@@ -81,14 +81,11 @@ struct scsi_device {
 	struct list_head starved_entry;
 	struct scsi_cmnd *current_cmnd;	/* currently active command */
 	unsigned short queue_depth;	/* How deep of a queue we want */
-	unsigned short max_queue_depth;	/* max queue depth */
 	unsigned short last_queue_full_depth; /* These two are used by */
 	unsigned short last_queue_full_count; /* scsi_track_queue_full() */
-	unsigned long last_queue_full_time;	/* last queue full time */
-	unsigned long queue_ramp_up_period;	/* ramp up period in jiffies */
-#define SCSI_DEFAULT_RAMP_UP_PERIOD	(120 * HZ)
-
-	unsigned long last_queue_ramp_up;	/* last queue ramp up time */
+	unsigned long last_queue_full_time;/* don't let QUEUE_FULLs on the same
+					   jiffie count on our counter, they
+					   could all be from the same event. */
 
 	unsigned int id, lun, channel;
 
@@ -136,7 +133,6 @@ struct scsi_device {
 	unsigned use_10_for_ms:1; /* first try 10-byte mode sense/select */
 	unsigned skip_ms_page_8:1;	/* do not use MODE SENSE page 0x08 */
 	unsigned skip_ms_page_3f:1;	/* do not use MODE SENSE page 0x3f */
-	unsigned skip_vpd_pages:1;	/* do not read VPD pages */
 	unsigned use_192_bytes_for_3f:1; /* ask for 192 bytes from page 0x3f */
 	unsigned no_start_on_add:1;	/* do not issue start on add */
 	unsigned allow_restart:1; /* issue START_UNIT in error handler */
@@ -149,9 +145,6 @@ struct scsi_device {
 	unsigned retry_hwerror:1;	/* Retry HARDWARE_ERROR */
 	unsigned last_sector_bug:1;	/* do not use multisector accesses on
 					   SD_LAST_BUGGY_SECTORS */
-	unsigned no_read_disc_info:1;	/* Avoid READ_DISC_INFO cmds */
-	unsigned no_read_capacity_16:1; /* Avoid READ_CAPACITY_16 cmds */
-	unsigned try_rc_10_first:1;	/* Try READ_CAPACACITY_10 first */
 	unsigned is_visible:1;	/* is the device visible in sysfs */
 
 	DECLARE_BITMAP(supported_events, SDEV_EVT_MAXBITS); /* supported events */
@@ -171,7 +164,6 @@ struct scsi_device {
 				sdev_dev;
 
 	struct execute_work	ew; /* used to get process context on put */
-	struct work_struct	requeue_work;
 
 	struct scsi_dh_data	*scsi_dh_data;
 	enum scsi_device_state sdev_state;
@@ -183,7 +175,6 @@ struct scsi_dh_devlist {
 	char *model;
 };
 
-typedef void (*activate_complete)(void *, int);
 struct scsi_device_handler {
 	/* Used by the infrastructure */
 	struct list_head list; /* list of scsi_device_handlers */
@@ -195,10 +186,9 @@ struct scsi_device_handler {
 	int (*check_sense)(struct scsi_device *, struct scsi_sense_hdr *);
 	int (*attach)(struct scsi_device *);
 	void (*detach)(struct scsi_device *);
-	int (*activate)(struct scsi_device *, activate_complete, void *);
+	int (*activate)(struct scsi_device *);
 	int (*prep_fn)(struct scsi_device *, struct request *);
 	int (*set_params)(struct scsi_device *, const char *);
-	bool (*match)(struct scsi_device *);
 };
 
 struct scsi_dh_data {
@@ -248,10 +238,8 @@ struct scsi_target {
 	unsigned int		single_lun:1;	/* Indicates we should only
 						 * allow I/O to one of the luns
 						 * for the device at a time. */
-	unsigned int		pdt_1f_for_no_lun:1;	/* PDT = 0x1f
-						 * means no lun present. */
-	unsigned int		no_report_luns:1;	/* Don't use
-						 * REPORT LUNS for scanning. */
+	unsigned int		pdt_1f_for_no_lun;	/* PDT = 0x1f */
+						/* means no lun present */
 	/* commands actually active on LLD. protected by host lock. */
 	unsigned int		target_busy;
 	/*
@@ -356,8 +344,7 @@ extern int scsi_mode_select(struct scsi_device *sdev, int pf, int sp,
 			    struct scsi_sense_hdr *);
 extern int scsi_test_unit_ready(struct scsi_device *sdev, int timeout,
 				int retries, struct scsi_sense_hdr *sshdr);
-extern int scsi_get_vpd_page(struct scsi_device *, u8 page, unsigned char *buf,
-			     int buf_len);
+extern unsigned char *scsi_get_vpd_page(struct scsi_device *, u8 page);
 extern int scsi_device_set_state(struct scsi_device *sdev,
 				 enum scsi_device_state state);
 extern struct scsi_event *sdev_evt_alloc(enum scsi_device_event evt_type,
@@ -388,14 +375,6 @@ extern int scsi_execute_req(struct scsi_device *sdev, const unsigned char *cmd,
 			    int data_direction, void *buffer, unsigned bufflen,
 			    struct scsi_sense_hdr *, int timeout, int retries,
 			    int *resid);
-
-#ifdef CONFIG_PM_RUNTIME
-extern int scsi_autopm_get_device(struct scsi_device *);
-extern void scsi_autopm_put_device(struct scsi_device *);
-#else
-static inline int scsi_autopm_get_device(struct scsi_device *d) { return 0; }
-static inline void scsi_autopm_put_device(struct scsi_device *d) {}
-#endif /* CONFIG_PM_RUNTIME */
 
 static inline int __must_check scsi_device_reprobe(struct scsi_device *sdev)
 {
@@ -473,11 +452,6 @@ static inline int scsi_device_enclosure(struct scsi_device *sdev)
 static inline int scsi_device_protection(struct scsi_device *sdev)
 {
 	return sdev->scsi_level > SCSI_2 && sdev->inquiry[5] & (1<<0);
-}
-
-static inline int scsi_device_tpgs(struct scsi_device *sdev)
-{
-	return sdev->inquiry ? (sdev->inquiry[5] >> 4) & 0x3 : 0;
 }
 
 #define MODULE_ALIAS_SCSI_DEVICE(type) \

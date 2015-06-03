@@ -460,7 +460,7 @@ static int __devinit bt878_probe(struct pci_dev *dev,
 		goto fail0;
 	}
 
-	bt->revision = dev->revision;
+	pci_read_config_byte(dev, PCI_CLASS_REVISION, &bt->revision);
 	pci_read_config_byte(dev, PCI_LATENCY_TIMER, &lat);
 
 
@@ -576,30 +576,43 @@ static struct pci_driver bt878_pci_driver = {
       .remove	= __devexit_p(bt878_remove),
 };
 
+static int bt878_pci_driver_registered;
+
 /*******************************/
 /* Module management functions */
 /*******************************/
 
-static int __init bt878_init_module(void)
+static int bt878_init_module(void)
 {
 	bt878_num = 0;
+	bt878_pci_driver_registered = 0;
 
 	printk(KERN_INFO "bt878: AUDIO driver version %d.%d.%d loaded\n",
 	       (BT878_VERSION_CODE >> 16) & 0xff,
 	       (BT878_VERSION_CODE >> 8) & 0xff,
 	       BT878_VERSION_CODE & 0xff);
-
+/*
+	bt878_check_chipset();
+*/
+	/* later we register inside of bt878_find_audio_dma()
+	 * because we may want to ignore certain cards */
+	bt878_pci_driver_registered = 1;
 	return pci_register_driver(&bt878_pci_driver);
 }
 
-static void __exit bt878_cleanup_module(void)
+static void bt878_cleanup_module(void)
 {
-	pci_unregister_driver(&bt878_pci_driver);
+	if (bt878_pci_driver_registered) {
+		bt878_pci_driver_registered = 0;
+		pci_unregister_driver(&bt878_pci_driver);
+	}
+	return;
 }
 
 module_init(bt878_init_module);
 module_exit(bt878_cleanup_module);
 
+//MODULE_AUTHOR("XXX");
 MODULE_LICENSE("GPL");
 
 /*

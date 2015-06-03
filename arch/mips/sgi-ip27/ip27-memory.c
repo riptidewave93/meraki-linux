@@ -12,7 +12,6 @@
  */
 #include <linux/init.h>
 #include <linux/kernel.h>
-#include <linux/memblock.h>
 #include <linux/mm.h>
 #include <linux/mmzone.h>
 #include <linux/module.h>
@@ -382,8 +381,8 @@ static void __init szmem(void)
 				continue;
 			}
 			num_physpages += slot_psize;
-			memblock_add_node(PFN_PHYS(slot_getbasepfn(node, slot)),
-					  PFN_PHYS(slot_psize), node);
+			add_active_range(node, slot_getbasepfn(node, slot),
+					 slot_getbasepfn(node, slot) + slot_psize);
 		}
 	}
 }
@@ -506,5 +505,5 @@ void __init mem_init(void)
 	       (num_physpages - tmp) << (PAGE_SHIFT-10),
 	       datasize >> 10,
 	       initsize >> 10,
-	       totalhigh_pages << (PAGE_SHIFT-10));
+	       (unsigned long) (totalhigh_pages << (PAGE_SHIFT-10)));
 }

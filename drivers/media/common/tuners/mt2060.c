@@ -25,7 +25,6 @@
 #include <linux/delay.h>
 #include <linux/dvb/frontend.h>
 #include <linux/i2c.h>
-#include <linux/slab.h>
 
 #include "dvb_frontend.h"
 
@@ -153,9 +152,8 @@ static int mt2060_spurcheck(u32 lo1,u32 lo2,u32 if2)
 #define IF2  36150       // IF2 frequency = 36.150 MHz
 #define FREF 16000       // Quartz oscillator 16 MHz
 
-static int mt2060_set_params(struct dvb_frontend *fe)
+static int mt2060_set_params(struct dvb_frontend *fe, struct dvb_frontend_parameters *params)
 {
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct mt2060_priv *priv;
 	int ret=0;
 	int i=0;
@@ -177,7 +175,8 @@ static int mt2060_set_params(struct dvb_frontend *fe)
 
 	mt2060_writeregs(priv,b,2);
 
-	freq = c->frequency / 1000; /* Hz -> kHz */
+	freq = params->frequency / 1000; // Hz -> kHz
+	priv->bandwidth = (fe->ops.info.type == FE_OFDM) ? params->u.ofdm.bandwidth : 0;
 
 	f_lo1 = freq + if1 * 1000;
 	f_lo1 = (f_lo1 / 250) * 250;
@@ -293,9 +292,10 @@ static int mt2060_get_frequency(struct dvb_frontend *fe, u32 *frequency)
 	return 0;
 }
 
-static int mt2060_get_if_frequency(struct dvb_frontend *fe, u32 *frequency)
+static int mt2060_get_bandwidth(struct dvb_frontend *fe, u32 *bandwidth)
 {
-	*frequency = IF2 * 1000;
+	struct mt2060_priv *priv = fe->tuner_priv;
+	*bandwidth = priv->bandwidth;
 	return 0;
 }
 
@@ -355,7 +355,7 @@ static const struct dvb_tuner_ops mt2060_tuner_ops = {
 
 	.set_params    = mt2060_set_params,
 	.get_frequency = mt2060_get_frequency,
-	.get_if_frequency = mt2060_get_if_frequency,
+	.get_bandwidth = mt2060_get_bandwidth
 };
 
 /* This functions tries to identify a MT2060 tuner by reading the PART/REV register. This is hasty. */

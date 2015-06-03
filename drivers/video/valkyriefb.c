@@ -69,7 +69,7 @@
 #ifdef CONFIG_MAC
 /* We don't yet have functions to read the PRAM... perhaps we can
    adapt them from the PPC code? */
-static int default_vmode = VMODE_CHOOSE;
+static int default_vmode = VMODE_640_480_67;
 static int default_cmode = CMODE_8;
 #else
 static int default_vmode = VMODE_NVRAM;
@@ -326,11 +326,11 @@ int __init valkyriefb_init(void)
 
 #ifdef CONFIG_MAC
 	if (!MACH_IS_MAC)
-		return -ENODEV;
+		return 0;
 	if (!(mac_bi_data.id == MAC_MODEL_Q630
 	      /* I'm not sure about this one */
 	    || mac_bi_data.id == MAC_MODEL_P588))
-		return -ENODEV;
+		return 0;
 
 	/* Hardcoded addresses... welcome to 68k Macintosh country :-) */
 	frame_buffer_phys = 0xf9000000;
@@ -555,7 +555,7 @@ static int __init valkyrie_init_info(struct fb_info *info,
 
 
 /*
- * Parse user specified options (`video=valkyriefb:')
+ * Parse user speficied options (`video=valkyriefb:')
  */
 int __init valkyriefb_setup(char *options)
 {

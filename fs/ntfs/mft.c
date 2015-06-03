@@ -1,7 +1,7 @@
 /**
  * mft.c - NTFS kernel mft record operations. Part of the Linux-NTFS project.
  *
- * Copyright (c) 2001-2012 Anton Altaparmakov and Tuxera Inc.
+ * Copyright (c) 2001-2006 Anton Altaparmakov
  * Copyright (c) 2002 Richard Russon
  *
  * This program/include file is free software; you can redistribute it and/or
@@ -21,7 +21,6 @@
  */
 
 #include <linux/buffer_head.h>
-#include <linux/slab.h>
 #include <linux/swap.h>
 
 #include "attrib.h"
@@ -73,7 +72,7 @@ static inline MFT_RECORD *map_mft_record_page(ntfs_inode *ni)
 		if (index > end_index || (i_size & ~PAGE_CACHE_MASK) < ofs +
 				vol->mft_record_size) {
 			page = ERR_PTR(-ENOENT);
-			ntfs_error(vol->sb, "Attempt to read mft record 0x%lx, "
+			ntfs_error(vol->sb, "Attemt to read mft record 0x%lx, "
 					"which is beyond the end of the mft.  "
 					"This is probably a bug in the ntfs "
 					"driver.", ni->mft_no);
@@ -1367,7 +1366,7 @@ static int ntfs_mft_bitmap_extend_allocation_nolock(ntfs_volume *vol)
 			ntfs_error(vol->sb, "Failed to merge runlists for mft "
 					"bitmap.");
 			if (ntfs_cluster_free_from_rl(vol, rl2)) {
-				ntfs_error(vol->sb, "Failed to deallocate "
+				ntfs_error(vol->sb, "Failed to dealocate "
 						"allocated cluster.%s", es);
 				NVolSetErrors(vol);
 			}
@@ -1442,7 +1441,7 @@ static int ntfs_mft_bitmap_extend_allocation_nolock(ntfs_volume *vol)
 		// Note: It will need to be a special mft record and if none of
 		// those are available it gets rather complicated...
 		ntfs_error(vol->sb, "Not enough space in this mft record to "
-				"accommodate extended mft bitmap attribute "
+				"accomodate extended mft bitmap attribute "
 				"extent.  Cannot handle this yet.");
 		ret = -EOPNOTSUPP;
 		goto undo_alloc;
@@ -1805,7 +1804,7 @@ static int ntfs_mft_data_extend_allocation_nolock(ntfs_volume *vol)
 		ntfs_error(vol->sb, "Failed to merge runlists for mft data "
 				"attribute.");
 		if (ntfs_cluster_free_from_rl(vol, rl2)) {
-			ntfs_error(vol->sb, "Failed to deallocate clusters "
+			ntfs_error(vol->sb, "Failed to dealocate clusters "
 					"from the mft data attribute.%s", es);
 			NVolSetErrors(vol);
 		}
@@ -1879,7 +1878,7 @@ static int ntfs_mft_data_extend_allocation_nolock(ntfs_volume *vol)
 		// and we would then need to update all references to this mft
 		// record appropriately.  This is rather complicated...
 		ntfs_error(vol->sb, "Not enough space in this mft record to "
-				"accommodate extended mft data attribute "
+				"accomodate extended mft data attribute "
 				"extent.  Cannot handle this yet.");
 		ret = -EOPNOTSUPP;
 		goto undo_alloc;
@@ -2357,7 +2356,7 @@ ntfs_inode *ntfs_mft_record_alloc(ntfs_volume *vol, const int mode,
 	}
 #ifdef DEBUG
 	read_lock_irqsave(&mftbmp_ni->size_lock, flags);
-	ntfs_debug("Status of mftbmp after initialized extension: "
+	ntfs_debug("Status of mftbmp after initialized extention: "
 			"allocated_size 0x%llx, data_size 0x%llx, "
 			"initialized_size 0x%llx.",
 			(long long)mftbmp_ni->allocated_size,
@@ -2576,8 +2575,6 @@ mft_rec_already_initialized:
 	flush_dcache_page(page);
 	SetPageUptodate(page);
 	if (base_ni) {
-		MFT_RECORD *m_tmp;
-
 		/*
 		 * Setup the base mft record in the extent mft record.  This
 		 * completes initialization of the allocated extent mft record
@@ -2590,11 +2587,11 @@ mft_rec_already_initialized:
 		 * attach it to the base inode @base_ni and map, pin, and lock
 		 * its, i.e. the allocated, mft record.
 		 */
-		m_tmp = map_extent_mft_record(base_ni, bit, &ni);
-		if (IS_ERR(m_tmp)) {
+		m = map_extent_mft_record(base_ni, bit, &ni);
+		if (IS_ERR(m)) {
 			ntfs_error(vol->sb, "Failed to map allocated extent "
 					"mft record 0x%llx.", (long long)bit);
-			err = PTR_ERR(m_tmp);
+			err = PTR_ERR(m);
 			/* Set the mft record itself not in use. */
 			m->flags &= cpu_to_le16(
 					~le16_to_cpu(MFT_RECORD_IN_USE));
@@ -2605,7 +2602,6 @@ mft_rec_already_initialized:
 			ntfs_unmap_page(page);
 			goto undo_mftbmp_alloc;
 		}
-		BUG_ON(m != m_tmp);
 		/*
 		 * Make sure the allocated mft record is written out to disk.
 		 * No need to set the inode dirty because the caller is going

@@ -35,9 +35,8 @@
  **/
 
 #include <linux/time.h>
-#include <linux/slab.h>
 #include <linux/string.h>
-#include "reiserfs.h"
+#include <linux/reiserfs_fs.h>
 #include <linux/buffer_head.h>
 
 /* To make any changes in the tree we find a node, that contains item
@@ -564,6 +563,9 @@ static int get_num_ver(int mode, struct tree_balance *tb, int h,
 	return needed_nodes;
 }
 
+#ifdef CONFIG_REISERFS_CHECK
+extern struct tree_balance *cur_tb;
+#endif
 
 /* Set parameters for balancing.
  * Performs write of results of analysis of balancing into structure tb,
@@ -832,7 +834,7 @@ static int get_empty_nodes(struct tree_balance *tb, int h)
 		RFALSE(buffer_dirty(new_bh) ||
 		       buffer_journaled(new_bh) ||
 		       buffer_journal_dirty(new_bh),
-		       "PAP-8140: journaled or dirty buffer %b for the new block",
+		       "PAP-8140: journlaled or dirty buffer %b for the new block",
 		       new_bh);
 
 		/* Put empty buffers into the array. */
@@ -1020,11 +1022,7 @@ static int get_far_parent(struct tree_balance *tb,
 	/* Check whether the common parent is locked. */
 
 	if (buffer_locked(*pcom_father)) {
-
-		/* Release the write lock while the buffer is busy */
-		reiserfs_write_unlock(tb->tb_sb);
 		__wait_on_buffer(*pcom_father);
-		reiserfs_write_lock(tb->tb_sb);
 		if (FILESYSTEM_CHANGED_TB(tb)) {
 			brelse(*pcom_father);
 			return REPEAT_SEARCH;
@@ -1929,9 +1927,7 @@ static int get_direct_parent(struct tree_balance *tb, int h)
 		return REPEAT_SEARCH;
 
 	if (buffer_locked(bh)) {
-		reiserfs_write_unlock(tb->tb_sb);
 		__wait_on_buffer(bh);
-		reiserfs_write_lock(tb->tb_sb);
 		if (FILESYSTEM_CHANGED_TB(tb))
 			return REPEAT_SEARCH;
 	}
@@ -1969,9 +1965,7 @@ static int get_neighbors(struct tree_balance *tb, int h)
 		     tb->FL[h]) ? tb->lkey[h] : B_NR_ITEMS(tb->
 								       FL[h]);
 		son_number = B_N_CHILD_NUM(tb->FL[h], child_position);
-		reiserfs_write_unlock(sb);
 		bh = sb_bread(sb, son_number);
-		reiserfs_write_lock(sb);
 		if (!bh)
 			return IO_ERROR;
 		if (FILESYSTEM_CHANGED_TB(tb)) {
@@ -2009,9 +2003,7 @@ static int get_neighbors(struct tree_balance *tb, int h)
 		child_position =
 		    (bh == tb->FR[h]) ? tb->rkey[h] + 1 : 0;
 		son_number = B_N_CHILD_NUM(tb->FR[h], child_position);
-		reiserfs_write_unlock(sb);
 		bh = sb_bread(sb, son_number);
-		reiserfs_write_lock(sb);
 		if (!bh)
 			return IO_ERROR;
 		if (FILESYSTEM_CHANGED_TB(tb)) {
@@ -2286,9 +2278,7 @@ static int wait_tb_buffers_until_unlocked(struct tree_balance *tb)
 				    REPEAT_SEARCH : CARRY_ON;
 			}
 #endif
-			reiserfs_write_unlock(tb->tb_sb);
 			__wait_on_buffer(locked);
-			reiserfs_write_lock(tb->tb_sb);
 			if (FILESYSTEM_CHANGED_TB(tb))
 				return REPEAT_SEARCH;
 		}
@@ -2359,14 +2349,12 @@ int fix_nodes(int op_mode, struct tree_balance *tb,
 
 	/* if it possible in indirect_to_direct conversion */
 	if (buffer_locked(tbS0)) {
-		reiserfs_write_unlock(tb->tb_sb);
 		__wait_on_buffer(tbS0);
-		reiserfs_write_lock(tb->tb_sb);
 		if (FILESYSTEM_CHANGED_TB(tb))
 			return REPEAT_SEARCH;
 	}
 #ifdef CONFIG_REISERFS_CHECK
-	if (REISERFS_SB(tb->tb_sb)->cur_tb) {
+	if (cur_tb) {
 		print_cur_tb("fix_nodes");
 		reiserfs_panic(tb->tb_sb, "PAP-8305",
 			       "there is pending do_balance");

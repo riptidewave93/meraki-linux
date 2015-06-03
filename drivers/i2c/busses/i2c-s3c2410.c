@@ -24,6 +24,7 @@
 #include <linux/module.h>
 
 #include <linux/i2c.h>
+#include <linux/i2c-id.h>
 #include <linux/init.h>
 #include <linux/time.h>
 #include <linux/interrupt.h>
@@ -31,15 +32,11 @@
 #include <linux/errno.h>
 #include <linux/err.h>
 #include <linux/platform_device.h>
-#include <linux/pm_runtime.h>
 #include <linux/clk.h>
 #include <linux/cpufreq.h>
-#include <linux/slab.h>
-#include <linux/io.h>
-#include <linux/of_i2c.h>
-#include <linux/of_gpio.h>
 
 #include <asm/irq.h>
+#include <asm/io.h>
 
 #include <plat/regs-iic.h>
 #include <plat/iic.h>
@@ -81,8 +78,6 @@ struct s3c24xx_i2c {
 	struct resource		*ioarea;
 	struct i2c_adapter	adap;
 
-	struct s3c2410_platform_i2c	*pdata;
-	int			gpios[2];
 #ifdef CONFIG_CPU_FREQ
 	struct notifier_block	freq_transition;
 #endif
@@ -99,12 +94,6 @@ static inline int s3c24xx_i2c_is2440(struct s3c24xx_i2c *i2c)
 {
 	struct platform_device *pdev = to_platform_device(i2c->dev);
 	enum s3c24xx_i2c_type type;
-
-#ifdef CONFIG_OF
-	if (i2c->dev->of_node)
-		return of_device_is_compatible(i2c->dev->of_node,
-				"samsung,s3c2440-i2c");
-#endif
 
 	type = platform_get_device_id(pdev)->driver_data;
 	return type == TYPE_S3C2440;
@@ -259,12 +248,12 @@ static inline int is_msgend(struct s3c24xx_i2c *i2c)
 	return i2c->msg_ptr >= i2c->msg->len;
 }
 
-/* i2c_s3c_irq_nextbyte
+/* i2s_s3c_irq_nextbyte
  *
  * process an interrupt and work out what to do
  */
 
-static int i2c_s3c_irq_nextbyte(struct s3c24xx_i2c *i2c, unsigned long iicstat)
+static int i2s_s3c_irq_nextbyte(struct s3c24xx_i2c *i2c, unsigned long iicstat)
 {
 	unsigned long tmp;
 	unsigned char byte;
@@ -275,6 +264,7 @@ static int i2c_s3c_irq_nextbyte(struct s3c24xx_i2c *i2c, unsigned long iicstat)
 	case STATE_IDLE:
 		dev_err(i2c->dev, "%s: called in STATE_IDLE\n", __func__);
 		goto out;
+		break;
 
 	case STATE_STOP:
 		dev_err(i2c->dev, "%s: called in STATE_STOP\n", __func__);
@@ -454,7 +444,7 @@ static irqreturn_t s3c24xx_i2c_irq(int irqno, void *dev_id)
 	/* pretty much this leaves us with the fact that we've
 	 * transmitted or received whatever byte we last sent */
 
-	i2c_s3c_irq_nextbyte(i2c, status);
+	i2s_s3c_irq_nextbyte(i2c, status);
 
  out:
 	return IRQ_HANDLED;
@@ -491,8 +481,7 @@ static int s3c24xx_i2c_set_master(struct s3c24xx_i2c *i2c)
 static int s3c24xx_i2c_doxfer(struct s3c24xx_i2c *i2c,
 			      struct i2c_msg *msgs, int num)
 {
-	unsigned long iicstat, timeout;
-	int spins = 20;
+	unsigned long timeout;
 	int ret;
 
 	if (i2c->suspended)
@@ -531,22 +520,7 @@ static int s3c24xx_i2c_doxfer(struct s3c24xx_i2c *i2c,
 
 	/* ensure the stop has been through the bus */
 
-	dev_dbg(i2c->dev, "waiting for bus idle\n");
-
-	/* first, try busy waiting briefly */
-	do {
-		cpu_relax();
-		iicstat = readl(i2c->regs + S3C2410_IICSTAT);
-	} while ((iicstat & S3C2410_IICSTAT_START) && --spins);
-
-	/* if that timed out sleep */
-	if (!spins) {
-		msleep(1);
-		iicstat = readl(i2c->regs + S3C2410_IICSTAT);
-	}
-
-	if (iicstat & S3C2410_IICSTAT_START)
-		dev_warn(i2c->dev, "timeout waiting for bus idle\n");
+	msleep(1);
 
  out:
 	return ret;
@@ -565,26 +539,18 @@ static int s3c24xx_i2c_xfer(struct i2c_adapter *adap,
 	int retry;
 	int ret;
 
-	pm_runtime_get_sync(&adap->dev);
-	clk_enable(i2c->clk);
-
 	for (retry = 0; retry < adap->retries; retry++) {
 
 		ret = s3c24xx_i2c_doxfer(i2c, msgs, num);
 
-		if (ret != -EAGAIN) {
-			clk_disable(i2c->clk);
-			pm_runtime_put_sync(&adap->dev);
+		if (ret != -EAGAIN)
 			return ret;
-		}
 
 		dev_dbg(i2c->dev, "Retrying transmission (%d)\n", retry);
 
 		udelay(100);
 	}
 
-	clk_disable(i2c->clk);
-	pm_runtime_put_sync(&adap->dev);
 	return -EREMOTEIO;
 }
 
@@ -640,7 +606,7 @@ static int s3c24xx_i2c_calcdivisor(unsigned long clkin, unsigned int wanted,
 
 static int s3c24xx_i2c_clockrate(struct s3c24xx_i2c *i2c, unsigned int *got)
 {
-	struct s3c2410_platform_i2c *pdata = i2c->pdata;
+	struct s3c2410_platform_i2c *pdata = i2c->dev->platform_data;
 	unsigned long clkin = clk_get_rate(i2c->clk);
 	unsigned int divs, div1;
 	unsigned long target_frequency;
@@ -680,8 +646,8 @@ static int s3c24xx_i2c_clockrate(struct s3c24xx_i2c *i2c, unsigned int *got)
 		unsigned long sda_delay;
 
 		if (pdata->sda_delay) {
-			sda_delay = clkin * pdata->sda_delay;
-			sda_delay = DIV_ROUND_UP(sda_delay, 1000000);
+			sda_delay = (freq / 1000) * pdata->sda_delay;
+			sda_delay /= 1000000;
 			sda_delay = DIV_ROUND_UP(sda_delay, 5);
 			if (sda_delay > 3)
 				sda_delay = 3;
@@ -756,49 +722,6 @@ static inline void s3c24xx_i2c_deregister_cpufreq(struct s3c24xx_i2c *i2c)
 }
 #endif
 
-#ifdef CONFIG_OF
-static int s3c24xx_i2c_parse_dt_gpio(struct s3c24xx_i2c *i2c)
-{
-	int idx, gpio, ret;
-
-	for (idx = 0; idx < 2; idx++) {
-		gpio = of_get_gpio(i2c->dev->of_node, idx);
-		if (!gpio_is_valid(gpio)) {
-			dev_err(i2c->dev, "invalid gpio[%d]: %d\n", idx, gpio);
-			goto free_gpio;
-		}
-
-		ret = gpio_request(gpio, "i2c-bus");
-		if (ret) {
-			dev_err(i2c->dev, "gpio [%d] request failed\n", gpio);
-			goto free_gpio;
-		}
-	}
-	return 0;
-
-free_gpio:
-	while (--idx >= 0)
-		gpio_free(i2c->gpios[idx]);
-	return -EINVAL;
-}
-
-static void s3c24xx_i2c_dt_gpio_free(struct s3c24xx_i2c *i2c)
-{
-	unsigned int idx;
-	for (idx = 0; idx < 2; idx++)
-		gpio_free(i2c->gpios[idx]);
-}
-#else
-static int s3c24xx_i2c_parse_dt_gpio(struct s3c24xx_i2c *i2c)
-{
-	return 0;
-}
-
-static void s3c24xx_i2c_dt_gpio_free(struct s3c24xx_i2c *i2c)
-{
-}
-#endif
-
 /* s3c24xx_i2c_init
  *
  * initialise the controller, set the IO lines and frequency
@@ -812,15 +735,12 @@ static int s3c24xx_i2c_init(struct s3c24xx_i2c *i2c)
 
 	/* get the plafrom data */
 
-	pdata = i2c->pdata;
+	pdata = i2c->dev->platform_data;
 
 	/* inititalise the gpio */
 
 	if (pdata->cfg_gpio)
 		pdata->cfg_gpio(to_platform_device(i2c->dev));
-	else
-		if (s3c24xx_i2c_parse_dt_gpio(i2c))
-			return -EINVAL;
 
 	/* write slave address */
 
@@ -846,34 +766,6 @@ static int s3c24xx_i2c_init(struct s3c24xx_i2c *i2c)
 	return 0;
 }
 
-#ifdef CONFIG_OF
-/* s3c24xx_i2c_parse_dt
- *
- * Parse the device tree node and retreive the platform data.
-*/
-
-static void
-s3c24xx_i2c_parse_dt(struct device_node *np, struct s3c24xx_i2c *i2c)
-{
-	struct s3c2410_platform_i2c *pdata = i2c->pdata;
-
-	if (!np)
-		return;
-
-	pdata->bus_num = -1; /* i2c bus number is dynamically assigned */
-	of_property_read_u32(np, "samsung,i2c-sda-delay", &pdata->sda_delay);
-	of_property_read_u32(np, "samsung,i2c-slave-addr", &pdata->slave_addr);
-	of_property_read_u32(np, "samsung,i2c-max-bus-freq",
-				(u32 *)&pdata->frequency);
-}
-#else
-static void
-s3c24xx_i2c_parse_dt(struct device_node *np, struct s3c24xx_i2c *i2c)
-{
-	return;
-}
-#endif
-
 /* s3c24xx_i2c_probe
  *
  * called by the bus driver when a suitable device is found
@@ -882,34 +774,21 @@ s3c24xx_i2c_parse_dt(struct device_node *np, struct s3c24xx_i2c *i2c)
 static int s3c24xx_i2c_probe(struct platform_device *pdev)
 {
 	struct s3c24xx_i2c *i2c;
-	struct s3c2410_platform_i2c *pdata = NULL;
+	struct s3c2410_platform_i2c *pdata;
 	struct resource *res;
 	int ret;
 
-	if (!pdev->dev.of_node) {
-		pdata = pdev->dev.platform_data;
-		if (!pdata) {
-			dev_err(&pdev->dev, "no platform data\n");
-			return -EINVAL;
-		}
+	pdata = pdev->dev.platform_data;
+	if (!pdata) {
+		dev_err(&pdev->dev, "no platform data\n");
+		return -EINVAL;
 	}
 
-	i2c = devm_kzalloc(&pdev->dev, sizeof(struct s3c24xx_i2c), GFP_KERNEL);
+	i2c = kzalloc(sizeof(struct s3c24xx_i2c), GFP_KERNEL);
 	if (!i2c) {
 		dev_err(&pdev->dev, "no memory for state\n");
 		return -ENOMEM;
 	}
-
-	i2c->pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
-	if (!i2c->pdata) {
-		ret = -ENOMEM;
-		goto err_noclk;
-	}
-
-	if (pdata)
-		memcpy(i2c->pdata, pdata, sizeof(*pdata));
-	else
-		s3c24xx_i2c_parse_dt(pdev->dev.of_node, i2c);
 
 	strlcpy(i2c->adap.name, "s3c2410-i2c", sizeof(i2c->adap.name));
 	i2c->adap.owner   = THIS_MODULE;
@@ -985,7 +864,7 @@ static int s3c24xx_i2c_probe(struct platform_device *pdev)
 		goto err_iomap;
 	}
 
-	ret = request_irq(i2c->irq, s3c24xx_i2c_irq, 0,
+	ret = request_irq(i2c->irq, s3c24xx_i2c_irq, IRQF_DISABLED,
 			  dev_name(&pdev->dev), i2c);
 
 	if (ret != 0) {
@@ -1005,8 +884,7 @@ static int s3c24xx_i2c_probe(struct platform_device *pdev)
 	 * being bus 0.
 	 */
 
-	i2c->adap.nr = i2c->pdata->bus_num;
-	i2c->adap.dev.of_node = pdev->dev.of_node;
+	i2c->adap.nr = pdata->bus_num;
 
 	ret = i2c_add_numbered_adapter(&i2c->adap);
 	if (ret < 0) {
@@ -1014,14 +892,9 @@ static int s3c24xx_i2c_probe(struct platform_device *pdev)
 		goto err_cpufreq;
 	}
 
-	of_i2c_register_devices(&i2c->adap);
 	platform_set_drvdata(pdev, i2c);
 
-	pm_runtime_enable(&pdev->dev);
-	pm_runtime_enable(&i2c->adap.dev);
-
 	dev_info(&pdev->dev, "%s: S3C I2C adapter\n", dev_name(&i2c->adap.dev));
-	clk_disable(i2c->clk);
 	return 0;
 
  err_cpufreq:
@@ -1042,6 +915,7 @@ static int s3c24xx_i2c_probe(struct platform_device *pdev)
 	clk_put(i2c->clk);
 
  err_noclk:
+	kfree(i2c);
 	return ret;
 }
 
@@ -1054,9 +928,6 @@ static int s3c24xx_i2c_remove(struct platform_device *pdev)
 {
 	struct s3c24xx_i2c *i2c = platform_get_drvdata(pdev);
 
-	pm_runtime_disable(&i2c->adap.dev);
-	pm_runtime_disable(&pdev->dev);
-
 	s3c24xx_i2c_deregister_cpufreq(i2c);
 
 	i2c_del_adapter(&i2c->adap);
@@ -1068,8 +939,8 @@ static int s3c24xx_i2c_remove(struct platform_device *pdev)
 	iounmap(i2c->regs);
 
 	release_resource(i2c->ioarea);
-	s3c24xx_i2c_dt_gpio_free(i2c);
 	kfree(i2c->ioarea);
+	kfree(i2c);
 
 	return 0;
 }
@@ -1091,14 +962,12 @@ static int s3c24xx_i2c_resume(struct device *dev)
 	struct s3c24xx_i2c *i2c = platform_get_drvdata(pdev);
 
 	i2c->suspended = 0;
-	clk_enable(i2c->clk);
 	s3c24xx_i2c_init(i2c);
-	clk_disable(i2c->clk);
 
 	return 0;
 }
 
-static const struct dev_pm_ops s3c24xx_i2c_dev_pm_ops = {
+static struct dev_pm_ops s3c24xx_i2c_dev_pm_ops = {
 	.suspend_noirq = s3c24xx_i2c_suspend_noirq,
 	.resume = s3c24xx_i2c_resume,
 };
@@ -1121,17 +990,6 @@ static struct platform_device_id s3c24xx_driver_ids[] = {
 };
 MODULE_DEVICE_TABLE(platform, s3c24xx_driver_ids);
 
-#ifdef CONFIG_OF
-static const struct of_device_id s3c24xx_i2c_match[] = {
-	{ .compatible = "samsung,s3c2410-i2c" },
-	{ .compatible = "samsung,s3c2440-i2c" },
-	{},
-};
-MODULE_DEVICE_TABLE(of, s3c24xx_i2c_match);
-#else
-#define s3c24xx_i2c_match NULL
-#endif
-
 static struct platform_driver s3c24xx_i2c_driver = {
 	.probe		= s3c24xx_i2c_probe,
 	.remove		= s3c24xx_i2c_remove,
@@ -1140,7 +998,6 @@ static struct platform_driver s3c24xx_i2c_driver = {
 		.owner	= THIS_MODULE,
 		.name	= "s3c-i2c",
 		.pm	= S3C24XX_DEV_PM_OPS,
-		.of_match_table = s3c24xx_i2c_match,
 	},
 };
 

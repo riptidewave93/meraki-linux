@@ -10,8 +10,8 @@
  * from enumeration below.  The meaning of further arguments
  * are determined by the operation code.
  *
- * NOTE: This system call is no longer provided, use the perf_events
- *       infrastructure.
+ * int sys_perfctr(int opcode, unsigned long arg0,
+ *                 unsigned long arg1, unsigned long arg2)
  *
  * Pointers which are passed by the user are pointers to 64-bit
  * integers.
@@ -167,29 +167,6 @@ struct vcounter_struct {
   unsigned long long vcnt0;
   unsigned long long vcnt1;
 };
-
-#else /* !(__KERNEL__) */
-
-#ifndef CONFIG_SPARC32
-
-/* Performance counter register access. */
-#define read_pcr(__p)  __asm__ __volatile__("rd	%%pcr, %0" : "=r" (__p))
-#define write_pcr(__p) __asm__ __volatile__("wr	%0, 0x0, %%pcr" : : "r" (__p))
-#define read_pic(__p)  __asm__ __volatile__("rd %%pic, %0" : "=r" (__p))
-
-/* Blackbird errata workaround.  See commentary in
- * arch/sparc64/kernel/smp.c:smp_percpu_timer_interrupt()
- * for more information.
- */
-#define write_pic(__p)  					\
-	__asm__ __volatile__("ba,pt	%%xcc, 99f\n\t"		\
-			     " nop\n\t"				\
-			     ".align	64\n"			\
-			  "99:wr	%0, 0x0, %%pic\n\t"	\
-			     "rd	%%pic, %%g0" : : "r" (__p))
-#define reset_pic()	write_pic(0)
-
-#endif /* !CONFIG_SPARC32 */
 
 #endif /* !(__KERNEL__) */
 

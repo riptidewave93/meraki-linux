@@ -19,18 +19,31 @@
 #include <linux/mtd/partitions.h>
 
 struct map_info;
-struct platform_device;
 
 struct physmap_flash_data {
 	unsigned int		width;
-	int			(*init)(struct platform_device *);
-	void			(*exit)(struct platform_device *);
-	void			(*set_vpp)(struct platform_device *, int);
+	void			(*set_vpp)(struct map_info *, int);
 	unsigned int		nr_parts;
 	unsigned int		pfow_base;
 	char                    *probe_type;
 	struct mtd_partition	*parts;
-	const char		**part_probe_types;
 };
+
+/*
+ * Board needs to specify the exact mapping during their setup time.
+ */
+void physmap_configure(unsigned long addr, unsigned long size,
+		int bankwidth, void (*set_vpp)(struct map_info *, int) );
+
+/*
+ * Machines that wish to do flash partition may want to call this function in
+ * their setup routine.
+ *
+ *	physmap_set_partitions(mypartitions, num_parts);
+ *
+ * Note that one can always override this hard-coded partition with
+ * command line partition (you need to enable CONFIG_MTD_CMDLINE_PARTS).
+ */
+void physmap_set_partitions(struct mtd_partition *parts, int num_parts);
 
 #endif /* __LINUX_MTD_PHYSMAP__ */

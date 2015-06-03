@@ -188,9 +188,11 @@ void __putstr(int error, const char *s)
 		}
 	}
 
+#ifdef CONFIG_X86_32
 	if (real_mode->screen_info.orig_video_mode == 0 &&
 	    lines == 0 && cols == 0)
 		return;
+#endif
 
 	x = real_mode->screen_info.orig_x;
 	y = real_mode->screen_info.orig_y;
@@ -233,35 +235,18 @@ void *memset(void *s, int c, size_t n)
 		ss[i] = c;
 	return s;
 }
-#ifdef CONFIG_X86_32
+
 void *memcpy(void *dest, const void *src, size_t n)
 {
-	int d0, d1, d2;
-	asm volatile(
-		"rep ; movsl\n\t"
-		"movl %4,%%ecx\n\t"
-		"rep ; movsb\n\t"
-		: "=&c" (d0), "=&D" (d1), "=&S" (d2)
-		: "0" (n >> 2), "g" (n & 3), "1" (dest), "2" (src)
-		: "memory");
+	int i;
+	const char *s = src;
+	char *d = dest;
 
+	for (i = 0; i < n; i++)
+		d[i] = s[i];
 	return dest;
 }
-#else
-void *memcpy(void *dest, const void *src, size_t n)
-{
-	long d0, d1, d2;
-	asm volatile(
-		"rep ; movsq\n\t"
-		"movq %4,%%rcx\n\t"
-		"rep ; movsb\n\t"
-		: "=&c" (d0), "=&D" (d1), "=&S" (d2)
-		: "0" (n >> 3), "g" (n & 7), "1" (dest), "2" (src)
-		: "memory");
 
-	return dest;
-}
-#endif
 
 static void error(char *x)
 {
@@ -321,8 +306,6 @@ static void parse_elf(void *output)
 		default: /* Ignore other PT_* */ break;
 		}
 	}
-
-	free(phdrs);
 }
 
 asmlinkage void decompress_kernel(void *rmode, memptr heap,
@@ -361,7 +344,7 @@ asmlinkage void decompress_kernel(void *rmode, memptr heap,
 	if (heap > 0x3fffffffffffUL)
 		error("Destination address too large");
 #else
-	if (heap > ((-__PAGE_OFFSET-(128<<20)-1) & 0x7fffffff))
+	if (heap > ((-__PAGE_OFFSET-(512<<20)-1) & 0x7fffffff))
 		error("Destination address too large");
 #endif
 #ifndef CONFIG_RELOCATABLE

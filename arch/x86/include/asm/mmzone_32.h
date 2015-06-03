@@ -13,6 +13,32 @@ extern struct pglist_data *node_data[];
 #define NODE_DATA(nid)	(node_data[nid])
 
 #include <asm/numaq.h>
+/* summit or generic arch */
+#include <asm/srat.h>
+
+extern int get_memcfg_numa_flat(void);
+/*
+ * This allows any one NUMA architecture to be compiled
+ * for, and still fall back to the flat function if it
+ * fails.
+ */
+static inline void get_memcfg_numa(void)
+{
+
+	if (get_memcfg_numaq())
+		return;
+	if (get_memcfg_from_srat())
+		return;
+	get_memcfg_numa_flat();
+}
+
+extern void resume_map_numa_kva(pgd_t *pgd);
+
+#else /* !CONFIG_NUMA */
+
+#define get_memcfg_numa get_memcfg_numa_flat
+
+static inline void resume_map_numa_kva(pgd_t *pgd) {}
 
 #endif /* CONFIG_NUMA */
 
@@ -21,26 +47,37 @@ extern struct pglist_data *node_data[];
 /*
  * generic node memory support, the following assumptions apply:
  *
- * 1) memory comes in 64Mb contiguous chunks which are either present or not
+ * 1) memory comes in 64Mb contigious chunks which are either present or not
  * 2) we will not have more than 64Gb in total
  *
  * for now assume that 64Gb is max amount of RAM for whole system
  *    64Gb / 4096bytes/page = 16777216 pages
  */
 #define MAX_NR_PAGES 16777216
-#define MAX_SECTIONS 1024
-#define PAGES_PER_SECTION (MAX_NR_PAGES/MAX_SECTIONS)
+#define MAX_ELEMENTS 1024
+#define PAGES_PER_ELEMENT (MAX_NR_PAGES/MAX_ELEMENTS)
 
 extern s8 physnode_map[];
 
 static inline int pfn_to_nid(unsigned long pfn)
 {
 #ifdef CONFIG_NUMA
-	return((int) physnode_map[(pfn) / PAGES_PER_SECTION]);
+	return((int) physnode_map[(pfn) / PAGES_PER_ELEMENT]);
 #else
 	return 0;
 #endif
 }
+
+/*
+ * Following are macros that each numa implmentation must define.
+ */
+
+#define node_start_pfn(nid)	(NODE_DATA(nid)->node_start_pfn)
+#define node_end_pfn(nid)						\
+({									\
+	pg_data_t *__pgdat = NODE_DATA(nid);				\
+	__pgdat->node_start_pfn + __pgdat->node_spanned_pages;		\
+})
 
 static inline int pfn_valid(int pfn)
 {
@@ -50,8 +87,6 @@ static inline int pfn_valid(int pfn)
 		return (pfn < node_end_pfn(nid));
 	return 0;
 }
-
-#define early_pfn_valid(pfn)	pfn_valid((pfn))
 
 #endif /* CONFIG_DISCONTIGMEM */
 

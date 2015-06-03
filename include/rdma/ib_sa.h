@@ -38,7 +38,7 @@
 #include <linux/completion.h>
 #include <linux/compiler.h>
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include <rdma/ib_verbs.h>
 #include <rdma/ib_mad.h>
@@ -378,11 +378,5 @@ int ib_init_ah_from_mcmember(struct ib_device *device, u8 port_num,
 int ib_init_ah_from_path(struct ib_device *device, u8 port_num,
 			 struct ib_sa_path_rec *rec,
 			 struct ib_ah_attr *ah_attr);
-
-/**
- * ib_sa_unpack_path - Convert a path record from MAD format to struct
- * ib_sa_path_rec.
- */
-void ib_sa_unpack_path(void *attribute, struct ib_sa_path_rec *rec);
 
 #endif /* IB_SA_H */

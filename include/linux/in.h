@@ -84,9 +84,6 @@ struct in_addr {
 #define IP_ORIGDSTADDR       20
 #define IP_RECVORIGDSTADDR   IP_ORIGDSTADDR
 
-#define IP_MINTTL       21
-#define IP_NODEFRAG     22
-
 /* IP_MTU_DISCOVER values */
 #define IP_PMTUDISC_DONT		0	/* Never send DF frames */
 #define IP_PMTUDISC_WANT		1	/* Use per route hints	*/
@@ -111,7 +108,6 @@ struct in_addr {
 #define MCAST_LEAVE_SOURCE_GROUP	47
 #define MCAST_MSFILTER			48
 #define IP_MULTICAST_ALL		49
-#define IP_UNICAST_IF			50
 
 #define MCAST_EXCLUDE	0
 #define MCAST_INCLUDE	1
@@ -122,12 +118,14 @@ struct in_addr {
 
 /* Request struct for multicast socket ops */
 
-struct ip_mreq  {
+struct ip_mreq 
+{
 	struct in_addr imr_multiaddr;	/* IP multicast address of group */
 	struct in_addr imr_interface;	/* local IP address of interface */
 };
 
-struct ip_mreqn {
+struct ip_mreqn
+{
 	struct in_addr	imr_multiaddr;		/* IP multicast address of group */
 	struct in_addr	imr_address;		/* local IP address of interface */
 	int		imr_ifindex;		/* Interface index */
@@ -151,18 +149,21 @@ struct ip_msfilter {
 	(sizeof(struct ip_msfilter) - sizeof(__u32) \
 	+ (numsrc) * sizeof(__u32))
 
-struct group_req {
+struct group_req
+{
 	__u32				 gr_interface;	/* interface index */
 	struct __kernel_sockaddr_storage gr_group;	/* group address */
 };
 
-struct group_source_req {
+struct group_source_req
+{
 	__u32				 gsr_interface;	/* interface index */
 	struct __kernel_sockaddr_storage gsr_group;	/* group address */
 	struct __kernel_sockaddr_storage gsr_source;	/* source address */
 };
 
-struct group_filter {
+struct group_filter
+{
 	__u32				 gf_interface;	/* interface index */
 	struct __kernel_sockaddr_storage gf_group;	/* multicast address */
 	__u32				 gf_fmode;	/* filter mode */
@@ -174,7 +175,8 @@ struct group_filter {
 	(sizeof(struct group_filter) - sizeof(struct __kernel_sockaddr_storage) \
 	+ (numsrc) * sizeof(struct __kernel_sockaddr_storage))
 
-struct in_pktinfo {
+struct in_pktinfo
+{
 	int		ipi_ifindex;
 	struct in_addr	ipi_spec_dst;
 	struct in_addr	ipi_addr;
@@ -183,7 +185,7 @@ struct in_pktinfo {
 /* Structure describing an Internet (IP) socket address. */
 #define __SOCK_SIZE__	16		/* sizeof(struct sockaddr)	*/
 struct sockaddr_in {
-  __kernel_sa_family_t	sin_family;	/* Address family		*/
+  sa_family_t		sin_family;	/* Address family		*/
   __be16		sin_port;	/* Port number			*/
   struct in_addr	sin_addr;	/* Internet address		*/
 
@@ -250,25 +252,6 @@ struct sockaddr_in {
 #include <asm/byteorder.h> 
 
 #ifdef __KERNEL__
-
-#include <linux/errno.h>
-
-static inline int proto_ports_offset(int proto)
-{
-	switch (proto) {
-	case IPPROTO_TCP:
-	case IPPROTO_UDP:
-	case IPPROTO_DCCP:
-	case IPPROTO_ESP:	/* SPI */
-	case IPPROTO_SCTP:
-	case IPPROTO_UDPLITE:
-		return 0;
-	case IPPROTO_AH:	/* SPI */
-		return 4;
-	default:
-		return -EINVAL;
-	}
-}
 
 static inline bool ipv4_is_loopback(__be32 addr)
 {

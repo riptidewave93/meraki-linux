@@ -4,25 +4,26 @@
  * Free Software Foundation;  either version 2 of the  License, or (at your
  * option) any later version.
  *
- * Copyright (C) 2003, 04, 11 Ralf Baechle (ralf@linux-mips.org)
- * Copyright (C) 2011 Wind River Systems,
- *   written by Ralf Baechle (ralf@linux-mips.org)
+ * Copyright (C) 2003, 04 Ralf Baechle (ralf@linux-mips.org)
  */
-#include <linux/bug.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/bootmem.h>
-#include <linux/export.h>
 #include <linux/init.h>
 #include <linux/types.h>
 #include <linux/pci.h>
 
-#include <asm/cpu-info.h>
-
 /*
- * If PCI_PROBE_ONLY in pci_flags is set, we don't change any PCI resource
- * assignments.
+ * Indicate whether we respect the PCI setup left by the firmware.
+ *
+ * Make this long-lived  so that we know when shutting down
+ * whether we probed only or not.
  */
+int pci_probe_only;
+
+#define PCI_ASSIGN_ALL_BUSSES	1
+
+unsigned int pci_probe = PCI_ASSIGN_ALL_BUSSES;
 
 /*
  * The PCI controller list.
@@ -48,8 +49,8 @@ static int pci_initialized;
  * but we want to try to avoid allocating at 0x2900-0x2bff
  * which might have be mirrored at 0x0100-0x03ff..
  */
-resource_size_t
-pcibios_align_resource(void *data, const struct resource *res,
+void
+pcibios_align_resource(void *data, struct resource *res,
 		       resource_size_t size, resource_size_t align)
 {
 	struct pci_dev *dev = data;
@@ -72,30 +73,22 @@ pcibios_align_resource(void *data, const struct resource *res,
 			start = PCIBIOS_MIN_MEM + hose->mem_resource->start;
 	}
 
-	return start;
+	res->start = start;
 }
 
 static void __devinit pcibios_scanbus(struct pci_controller *hose)
 {
 	static int next_busno;
 	static int need_domain_info;
-	LIST_HEAD(resources);
 	struct pci_bus *bus;
 
 	if (!hose->iommu)
 		PCI_DMA_BUS_IS_PHYS = 1;
 
-	if (hose->get_busno && pci_has_flag(PCI_PROBE_ONLY))
+	if (hose->get_busno && pci_probe_only)
 		next_busno = (*hose->get_busno)();
 
-	pci_add_resource_offset(&resources,
-				hose->mem_resource, hose->mem_offset);
-	pci_add_resource_offset(&resources, hose->io_resource, hose->io_offset);
-	bus = pci_scan_root_bus(NULL, next_busno, hose->pci_ops, hose,
-				&resources);
-	if (!bus)
-		pci_free_resource_list(&resources);
-
+	bus = pci_scan_bus(next_busno, hose->pci_ops, hose);
 	hose->bus = bus;
 
 	need_domain_info = need_domain_info || hose->index;
@@ -109,7 +102,7 @@ static void __devinit pcibios_scanbus(struct pci_controller *hose)
 			need_domain_info = 1;
 		}
 
-		if (!pci_has_flag(PCI_PROBE_ONLY)) {
+		if (!pci_probe_only) {
 			pci_bus_size_bridges(bus);
 			pci_bus_assign_resources(bus);
 			pci_enable_bridges(bus);
@@ -121,20 +114,9 @@ static DEFINE_MUTEX(pci_scan_mutex);
 
 void __devinit register_pci_controller(struct pci_controller *hose)
 {
-	struct resource *parent;
-
-	parent = hose->mem_resource->parent;
-	if (!parent)
-		parent = &iomem_resource;
-
-	if (request_resource(parent, hose->mem_resource) < 0)
+	if (request_resource(&iomem_resource, hose->mem_resource) < 0)
 		goto out;
-
-	parent = hose->io_resource->parent;
-	if (!parent)
-		parent = &ioport_resource;
-
-	if (request_resource(parent, hose->io_resource) < 0) {
+	if (request_resource(&ioport_resource, hose->io_resource) < 0) {
 		release_resource(hose->mem_resource);
 		goto out;
 	}
@@ -143,7 +125,7 @@ void __devinit register_pci_controller(struct pci_controller *hose)
 	hose_tail = &hose->next;
 
 	/*
-	 * Do not panic here but later - this might happen before console init.
+	 * Do not panic here but later - this might hapen before console init.
 	 */
 	if (!hose->io_map_base) {
 		printk(KERN_WARNING
@@ -167,31 +149,9 @@ out:
 	       "Skipping PCI bus scan due to resource conflict\n");
 }
 
-static void __init pcibios_set_cache_line_size(void)
-{
-	struct cpuinfo_mips *c = &current_cpu_data;
-	unsigned int lsize;
-
-	/*
-	 * Set PCI cacheline size to that of the highest level in the
-	 * cache hierarchy.
-	 */
-	lsize = c->dcache.linesz;
-	lsize = c->scache.linesz ? : lsize;
-	lsize = c->tcache.linesz ? : lsize;
-
-	BUG_ON(!lsize);
-
-	pci_dfl_cache_line_size = lsize >> 2;
-
-	pr_debug("PCI: pci_cache_line_size set to %d bytes\n", lsize);
-}
-
 static int __init pcibios_init(void)
 {
 	struct pci_controller *hose;
-
-	pcibios_set_cache_line_size();
 
 	/* Scan all of the recorded PCI controllers.  */
 	for (hose = hose_head; hose; hose = hose->next)
@@ -244,9 +204,30 @@ static int pcibios_enable_resources(struct pci_dev *dev, int mask)
 	return 0;
 }
 
+/*
+ *  If we set up a device for bus mastering, we need to check the latency
+ *  timer as certain crappy BIOSes forget to set it properly.
+ */
+static unsigned int pcibios_max_latency = 255;
+
+void pcibios_set_master(struct pci_dev *dev)
+{
+	u8 lat;
+	pci_read_config_byte(dev, PCI_LATENCY_TIMER, &lat);
+	if (lat < 16)
+		lat = (64 <= pcibios_max_latency) ? 64 : pcibios_max_latency;
+	else if (lat > pcibios_max_latency)
+		lat = pcibios_max_latency;
+	else
+		return;
+	printk(KERN_DEBUG "PCI: Setting latency timer of device %s to %d\n",
+	       pci_name(dev), lat);
+	pci_write_config_byte(dev, PCI_LATENCY_TIMER, lat);
+}
+
 unsigned int pcibios_assign_all_busses(void)
 {
-	return 1;
+	return (pci_probe & PCI_ASSIGN_ALL_BUSSES) ? 1 : 0;
 }
 
 int pcibios_enable_device(struct pci_dev *dev, int mask)
@@ -259,13 +240,51 @@ int pcibios_enable_device(struct pci_dev *dev, int mask)
 	return pcibios_plat_dev_init(dev);
 }
 
+static void pcibios_fixup_device_resources(struct pci_dev *dev,
+	struct pci_bus *bus)
+{
+	/* Update device resources.  */
+	struct pci_controller *hose = (struct pci_controller *)bus->sysdata;
+	unsigned long offset = 0;
+	int i;
+
+	for (i = 0; i < PCI_NUM_RESOURCES; i++) {
+		if (!dev->resource[i].start)
+			continue;
+		if (dev->resource[i].flags & IORESOURCE_PCI_FIXED)
+			continue;
+		if (dev->resource[i].flags & IORESOURCE_IO)
+			offset = hose->io_offset;
+		else if (dev->resource[i].flags & IORESOURCE_MEM)
+			offset = hose->mem_offset;
+
+		dev->resource[i].start += offset;
+		dev->resource[i].end += offset;
+	}
+}
+
 void __devinit pcibios_fixup_bus(struct pci_bus *bus)
 {
+	/* Propagate hose info into the subordinate devices.  */
+
+	struct pci_controller *hose = bus->sysdata;
+	struct list_head *ln;
 	struct pci_dev *dev = bus->self;
 
-	if (pci_has_flag(PCI_PROBE_ONLY) && dev &&
-	    (dev->class >> 8) == PCI_CLASS_BRIDGE_PCI) {
+	if (!dev) {
+		bus->resource[0] = hose->io_resource;
+		bus->resource[1] = hose->mem_resource;
+	} else if (pci_probe_only &&
+		   (dev->class >> 8) == PCI_CLASS_BRIDGE_PCI) {
 		pci_read_bridge_bases(bus);
+		pcibios_fixup_device_resources(dev, bus);
+	}
+
+	for (ln = bus->devices.next; ln != &bus->devices; ln = ln->next) {
+		dev = pci_dev_b(ln);
+
+		if ((dev->class >> 8) != PCI_CLASS_BRIDGE_PCI)
+			pcibios_fixup_device_resources(dev, bus);
 	}
 }
 
@@ -275,7 +294,40 @@ pcibios_update_irq(struct pci_dev *dev, int irq)
 	pci_write_config_byte(dev, PCI_INTERRUPT_LINE, irq);
 }
 
+void pcibios_resource_to_bus(struct pci_dev *dev, struct pci_bus_region *region,
+			 struct resource *res)
+{
+	struct pci_controller *hose = (struct pci_controller *)dev->sysdata;
+	unsigned long offset = 0;
+
+	if (res->flags & IORESOURCE_IO)
+		offset = hose->io_offset;
+	else if (res->flags & IORESOURCE_MEM)
+		offset = hose->mem_offset;
+
+	region->start = res->start - offset;
+	region->end = res->end - offset;
+}
+
+void __devinit
+pcibios_bus_to_resource(struct pci_dev *dev, struct resource *res,
+			struct pci_bus_region *region)
+{
+	struct pci_controller *hose = (struct pci_controller *)dev->sysdata;
+	unsigned long offset = 0;
+
+	if (res->flags & IORESOURCE_IO)
+		offset = hose->io_offset;
+	else if (res->flags & IORESOURCE_MEM)
+		offset = hose->mem_offset;
+
+	res->start = region->start + offset;
+	res->end = region->end + offset;
+}
+
 #ifdef CONFIG_HOTPLUG
+EXPORT_SYMBOL(pcibios_resource_to_bus);
+EXPORT_SYMBOL(pcibios_bus_to_resource);
 EXPORT_SYMBOL(PCIBIOS_MIN_IO);
 EXPORT_SYMBOL(PCIBIOS_MIN_MEM);
 #endif

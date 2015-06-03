@@ -1,9 +1,6 @@
 #ifndef __ASM_MMU_H
 #define __ASM_MMU_H
 
-typedef struct {
-	unsigned long asid[NR_CPUS];
-	void *vdso;
-} mm_context_t;
+typedef unsigned long mm_context_t[NR_CPUS];
 
 #endif /* __ASM_MMU_H */

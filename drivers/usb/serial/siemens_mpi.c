@@ -22,7 +22,7 @@
 #define DRIVER_DESC "Driver for Siemens USB/MPI adapter"
 
 
-static const struct usb_device_id id_table[] = {
+static struct usb_device_id id_table[] = {
 	/* Vendor and product id for 6ES7-972-0CB20-0XA0 */
 	{ USB_DEVICE(0x908, 0x0004) },
 	{ },
@@ -45,12 +45,33 @@ static struct usb_serial_driver siemens_usb_mpi_device = {
 	.num_ports =		1,
 };
 
-static struct usb_serial_driver * const serial_drivers[] = {
-	&siemens_usb_mpi_device, NULL
-};
+static int __init siemens_usb_mpi_init(void)
+{
+	int retval;
 
-module_usb_serial_driver(siemens_usb_mpi_driver, serial_drivers);
+	retval = usb_serial_register(&siemens_usb_mpi_device);
+	if (retval)
+		goto failed_usb_serial_register;
+	retval = usb_register(&siemens_usb_mpi_driver);
+	if (retval)
+		goto failed_usb_register;
+	printk(KERN_INFO DRIVER_DESC "\n");
+	printk(KERN_INFO DRIVER_VERSION " " DRIVER_AUTHOR "\n");
+	return retval;
+failed_usb_register:
+	usb_serial_deregister(&siemens_usb_mpi_device);
+failed_usb_serial_register:
+	return retval;
+}
 
+static void __exit siemens_usb_mpi_exit(void)
+{
+	usb_deregister(&siemens_usb_mpi_driver);
+	usb_serial_deregister(&siemens_usb_mpi_device);
+}
+
+module_init(siemens_usb_mpi_init);
+module_exit(siemens_usb_mpi_exit);
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");

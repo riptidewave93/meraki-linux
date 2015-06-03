@@ -73,11 +73,12 @@ sun4e_notsup:
 
 	/* The Sparc trap table, bootloader gives us control at _start. */
 	__HEAD
-	.globl	_stext, _start, __stext
+	.globl	start, _stext, _start, __stext
 	.globl  trapbase
 _start:   /* danger danger */
 __stext:
 _stext:
+start:
 trapbase:
 #ifdef CONFIG_SMP
 trapbase_cpu0:
@@ -810,22 +811,6 @@ found_version:
 got_prop:
 #ifdef CONFIG_SPARC_LEON
 	        /* no cpu-type check is needed, it is a SPARC-LEON */
-
-		sethi	%hi(boot_cpu_id), %g2	! boot-cpu index
-
-#ifdef CONFIG_SMP
-		ldub	[%g2 + %lo(boot_cpu_id)], %g1
-		cmp	%g1, 0xff		! unset means first CPU
-		bne	leon_smp_cpu_startup	! continue only with master
-		 nop
-#endif
-		/* Get CPU-ID from most significant 4-bit of ASR17 */
-		rd     %asr17, %g1
-		srl    %g1, 28, %g1
-
-		/* Update boot_cpu_id only on boot cpu */
-		stub	%g1, [%g2 + %lo(boot_cpu_id)]
-
 		ba sun4c_continue_boot
 		 nop
 #endif
@@ -887,6 +872,9 @@ sun4d_init:
 	sta     %g4, [%g0] ASI_M_VIKING_TMP1
 	sethi	%hi(boot_cpu_id), %g5
 	stb	%g4, [%g5 + %lo(boot_cpu_id)]
+	sll	%g4, 2, %g4
+	sethi	%hi(boot_cpu_id4), %g5
+	stb	%g4, [%g5 + %lo(boot_cpu_id4)]
 #endif
 
 	/* Fall through to sun4m_init */
@@ -1015,28 +1003,14 @@ sun4c_continue_boot:
 		bl	1b
 		 add	%o0, 0x1, %o0
 
-		/* If boot_cpu_id has not been setup by machine specific
-		 * init-code above we default it to zero.
-		 */
-		sethi	%hi(boot_cpu_id), %g2
-		ldub	[%g2 + %lo(boot_cpu_id)], %g3
-		cmp	%g3, 0xff
-		bne	1f
-		 nop
-		mov	%g0, %g3
-		stub	%g3, [%g2 + %lo(boot_cpu_id)]
-
-1:		/* boot_cpu_id set. calculate boot_cpu_id4 = boot_cpu_id*4 */
-		sll	%g3, 2, %g3
-		sethi	%hi(boot_cpu_id4), %g2
-		stub	%g3, [%g2 + %lo(boot_cpu_id4)]
-
 		/* Initialize the uwinmask value for init task just in case.
 		 * But first make current_set[boot_cpu_id] point to something useful.
 		 */
 		set	init_thread_union, %g6
 		set	current_set, %g2
 #ifdef CONFIG_SMP
+		sethi	%hi(boot_cpu_id4), %g3
+		ldub	[%g3 + %lo(boot_cpu_id4)], %g3
 		st	%g6, [%g2]
 		add	%g2, %g3, %g2
 #endif

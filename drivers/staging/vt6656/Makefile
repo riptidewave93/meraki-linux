@@ -1,6 +1,6 @@
 # TODO: all of these should be removed
-ccflags-y := -DLINUX -D__KERNEL__ -DEXPORT_SYMTAB -D__NO_VERSION__
-ccflags-y += -DHOSTAP
+EXTRA_CFLAGS += -DLINUX -D__KERNEL__ -DEXPORT_SYMTAB -D__NO_VERSION__
+EXTRA_CFLAGS += -DHOSTAP
 
 vt6656_stage-y +=	main_usb.o \
 			card.o  \

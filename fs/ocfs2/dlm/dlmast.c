@@ -28,6 +28,7 @@
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/types.h>
+#include <linux/slab.h>
 #include <linux/highmem.h>
 #include <linux/init.h>
 #include <linux/sysctl.h>
@@ -88,31 +89,21 @@ static int dlm_should_cancel_bast(struct dlm_ctxt *dlm, struct dlm_lock *lock)
 	return 0;
 }
 
-void __dlm_queue_ast(struct dlm_ctxt *dlm, struct dlm_lock *lock)
+static void __dlm_queue_ast(struct dlm_ctxt *dlm, struct dlm_lock *lock)
 {
-	struct dlm_lock_resource *res;
+	mlog_entry_void();
 
 	BUG_ON(!dlm);
 	BUG_ON(!lock);
 
-	res = lock->lockres;
-
 	assert_spin_locked(&dlm->ast_lock);
-
 	if (!list_empty(&lock->ast_list)) {
-		mlog(ML_ERROR, "%s: res %.*s, lock %u:%llu, "
-		     "AST list not empty, pending %d, newlevel %d\n",
-		     dlm->name, res->lockname.len, res->lockname.name,
-		     dlm_get_lock_cookie_node(be64_to_cpu(lock->ml.cookie)),
-		     dlm_get_lock_cookie_seq(be64_to_cpu(lock->ml.cookie)),
+		mlog(ML_ERROR, "ast list not empty!!  pending=%d, newlevel=%d\n",
 		     lock->ast_pending, lock->ml.type);
 		BUG();
 	}
 	if (lock->ast_pending)
-		mlog(0, "%s: res %.*s, lock %u:%llu, AST getting flushed\n",
-		     dlm->name, res->lockname.len, res->lockname.name,
-		     dlm_get_lock_cookie_node(be64_to_cpu(lock->ml.cookie)),
-		     dlm_get_lock_cookie_seq(be64_to_cpu(lock->ml.cookie)));
+		mlog(0, "lock has an ast getting flushed right now\n");
 
 	/* putting lock on list, add a ref */
 	dlm_lock_get(lock);
@@ -120,10 +111,9 @@ void __dlm_queue_ast(struct dlm_ctxt *dlm, struct dlm_lock *lock)
 
 	/* check to see if this ast obsoletes the bast */
 	if (dlm_should_cancel_bast(dlm, lock)) {
-		mlog(0, "%s: res %.*s, lock %u:%llu, Cancelling BAST\n",
-		     dlm->name, res->lockname.len, res->lockname.name,
-		     dlm_get_lock_cookie_node(be64_to_cpu(lock->ml.cookie)),
-		     dlm_get_lock_cookie_seq(be64_to_cpu(lock->ml.cookie)));
+		struct dlm_lock_resource *res = lock->lockres;
+		mlog(0, "%s: cancelling bast for %.*s\n",
+		     dlm->name, res->lockname.len, res->lockname.name);
 		lock->bast_pending = 0;
 		list_del_init(&lock->bast_list);
 		lock->ml.highest_blocked = LKM_IVMODE;
@@ -133,7 +123,7 @@ void __dlm_queue_ast(struct dlm_ctxt *dlm, struct dlm_lock *lock)
 		dlm_lock_put(lock);
 		/* free up the reserved bast that we are cancelling.
 		 * guaranteed that this will not be the last reserved
-		 * ast because *both* an ast and a bast were reserved
+		 * ast because *both* an ast and a bast were reserved 
 		 * to get to this point.  the res->spinlock will not be
 		 * taken here */
 		dlm_lockres_release_ast(dlm, res);
@@ -145,6 +135,8 @@ void __dlm_queue_ast(struct dlm_ctxt *dlm, struct dlm_lock *lock)
 
 void dlm_queue_ast(struct dlm_ctxt *dlm, struct dlm_lock *lock)
 {
+	mlog_entry_void();
+
 	BUG_ON(!dlm);
 	BUG_ON(!lock);
 
@@ -154,23 +146,17 @@ void dlm_queue_ast(struct dlm_ctxt *dlm, struct dlm_lock *lock)
 }
 
 
-void __dlm_queue_bast(struct dlm_ctxt *dlm, struct dlm_lock *lock)
+static void __dlm_queue_bast(struct dlm_ctxt *dlm, struct dlm_lock *lock)
 {
-	struct dlm_lock_resource *res;
+	mlog_entry_void();
 
 	BUG_ON(!dlm);
 	BUG_ON(!lock);
-
 	assert_spin_locked(&dlm->ast_lock);
-
-	res = lock->lockres;
 
 	BUG_ON(!list_empty(&lock->bast_list));
 	if (lock->bast_pending)
-		mlog(0, "%s: res %.*s, lock %u:%llu, BAST getting flushed\n",
-		     dlm->name, res->lockname.len, res->lockname.name,
-		     dlm_get_lock_cookie_node(be64_to_cpu(lock->ml.cookie)),
-		     dlm_get_lock_cookie_seq(be64_to_cpu(lock->ml.cookie)));
+		mlog(0, "lock has a bast getting flushed right now\n");
 
 	/* putting lock on list, add a ref */
 	dlm_lock_get(lock);
@@ -182,6 +168,8 @@ void __dlm_queue_bast(struct dlm_ctxt *dlm, struct dlm_lock *lock)
 
 void dlm_queue_bast(struct dlm_ctxt *dlm, struct dlm_lock *lock)
 {
+	mlog_entry_void();
+
 	BUG_ON(!dlm);
 	BUG_ON(!lock);
 
@@ -197,8 +185,9 @@ static void dlm_update_lvb(struct dlm_ctxt *dlm, struct dlm_lock_resource *res,
 	BUG_ON(!lksb);
 
 	/* only updates if this node masters the lockres */
-	spin_lock(&res->spinlock);
 	if (res->owner == dlm->node_num) {
+
+		spin_lock(&res->spinlock);
 		/* check the lksb flags for the direction */
 		if (lksb->flags & DLM_LKSB_GET_LVB) {
 			mlog(0, "getting lvb from lockres for %s node\n",
@@ -213,8 +202,8 @@ static void dlm_update_lvb(struct dlm_ctxt *dlm, struct dlm_lock_resource *res,
  		 * here. In the future we might want to clear it at the time
  		 * the put is actually done.
 		 */
+		spin_unlock(&res->spinlock);
 	}
-	spin_unlock(&res->spinlock);
 
 	/* reset any lvb flags on the lksb */
 	lksb->flags &= ~(DLM_LKSB_PUT_LVB|DLM_LKSB_GET_LVB);
@@ -226,10 +215,7 @@ void dlm_do_local_ast(struct dlm_ctxt *dlm, struct dlm_lock_resource *res,
 	dlm_astlockfunc_t *fn;
 	struct dlm_lockstatus *lksb;
 
-	mlog(0, "%s: res %.*s, lock %u:%llu, Local AST\n", dlm->name,
-	     res->lockname.len, res->lockname.name,
-	     dlm_get_lock_cookie_node(be64_to_cpu(lock->ml.cookie)),
-	     dlm_get_lock_cookie_seq(be64_to_cpu(lock->ml.cookie)));
+	mlog_entry_void();
 
 	lksb = lock->lksb;
 	fn = lock->ast;
@@ -247,10 +233,7 @@ int dlm_do_remote_ast(struct dlm_ctxt *dlm, struct dlm_lock_resource *res,
 	struct dlm_lockstatus *lksb;
 	int lksbflags;
 
-	mlog(0, "%s: res %.*s, lock %u:%llu, Remote AST\n", dlm->name,
-	     res->lockname.len, res->lockname.name,
-	     dlm_get_lock_cookie_node(be64_to_cpu(lock->ml.cookie)),
-	     dlm_get_lock_cookie_seq(be64_to_cpu(lock->ml.cookie)));
+	mlog_entry_void();
 
 	lksb = lock->lksb;
 	BUG_ON(lock->ml.node == dlm->node_num);
@@ -269,13 +252,8 @@ void dlm_do_local_bast(struct dlm_ctxt *dlm, struct dlm_lock_resource *res,
 {
 	dlm_bastlockfunc_t *fn = lock->bast;
 
+	mlog_entry_void();
 	BUG_ON(lock->ml.node != dlm->node_num);
-
-	mlog(0, "%s: res %.*s, lock %u:%llu, Local BAST, blocked %d\n",
-	     dlm->name, res->lockname.len, res->lockname.name,
-	     dlm_get_lock_cookie_node(be64_to_cpu(lock->ml.cookie)),
-	     dlm_get_lock_cookie_seq(be64_to_cpu(lock->ml.cookie)),
-	     blocked_type);
 
 	(*fn)(lock->astdata, blocked_type);
 }
@@ -356,8 +334,7 @@ int dlm_proxy_ast_handler(struct o2net_msg *msg, u32 len, void *data,
 	/* cannot get a proxy ast message if this node owns it */
 	BUG_ON(res->owner == dlm->node_num);
 
-	mlog(0, "%s: res %.*s\n", dlm->name, res->lockname.len,
-	     res->lockname.name);
+	mlog(0, "lockres %.*s\n", res->lockname.len, res->lockname.name);
 
 	spin_lock(&res->spinlock);
 	if (res->state & DLM_LOCK_RES_RECOVERING) {
@@ -407,12 +384,8 @@ do_ast:
 	if (past->type == DLM_AST) {
 		/* do not alter lock refcount.  switching lists. */
 		list_move_tail(&lock->list, &res->granted);
-		mlog(0, "%s: res %.*s, lock %u:%llu, Granted type %d => %d\n",
-		     dlm->name, res->lockname.len, res->lockname.name,
-		     dlm_get_lock_cookie_node(be64_to_cpu(cookie)),
-		     dlm_get_lock_cookie_seq(be64_to_cpu(cookie)),
-		     lock->ml.type, lock->ml.convert_type);
-
+		mlog(0, "ast: Adding to granted list... type=%d, "
+		     "convert_type=%d\n", lock->ml.type, lock->ml.convert_type);
 		if (lock->ml.convert_type != LKM_IVMODE) {
 			lock->ml.type = lock->ml.convert_type;
 			lock->ml.convert_type = LKM_IVMODE;
@@ -455,9 +428,9 @@ int dlm_send_proxy_ast_msg(struct dlm_ctxt *dlm, struct dlm_lock_resource *res,
 	size_t veclen = 1;
 	int status;
 
-	mlog(0, "%s: res %.*s, to %u, type %d, blocked_type %d\n", dlm->name,
-	     res->lockname.len, res->lockname.name, lock->ml.node, msg_type,
-	     blocked_type);
+	mlog_entry("res %.*s, to=%u, type=%d, blocked_type=%d\n",
+		   res->lockname.len, res->lockname.name, lock->ml.node,
+		   msg_type, blocked_type);
 
 	memset(&past, 0, sizeof(struct dlm_proxy_ast));
 	past.node_idx = dlm->node_num;
@@ -470,6 +443,7 @@ int dlm_send_proxy_ast_msg(struct dlm_ctxt *dlm, struct dlm_lock_resource *res,
 	vec[0].iov_len = sizeof(struct dlm_proxy_ast);
 	vec[0].iov_base = &past;
 	if (flags & DLM_LKSB_GET_LVB) {
+		mlog(0, "returning requested LVB data\n");
 		be32_add_cpu(&past.flags, LKM_GET_LVB);
 		vec[1].iov_len = DLM_LVB_LEN;
 		vec[1].iov_base = lock->lksb->lvb;
@@ -479,9 +453,7 @@ int dlm_send_proxy_ast_msg(struct dlm_ctxt *dlm, struct dlm_lock_resource *res,
 	ret = o2net_send_message_vec(DLM_PROXY_AST_MSG, dlm->key, vec, veclen,
 				     lock->ml.node, &status);
 	if (ret < 0)
-		mlog(ML_ERROR, "%s: res %.*s, error %d send AST to node %u\n",
-		     dlm->name, res->lockname.len, res->lockname.name, ret,
-		     lock->ml.node);
+		mlog_errno(ret);
 	else {
 		if (status == DLM_RECOVERING) {
 			mlog(ML_ERROR, "sent AST to node %u, it thinks this "

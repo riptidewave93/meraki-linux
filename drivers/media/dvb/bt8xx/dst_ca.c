@@ -20,9 +20,8 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/init.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/string.h>
 #include <linux/dvb/ca.h>
 #include "dvbdev.h"
@@ -52,7 +51,6 @@
 } while(0)
 
 
-static DEFINE_MUTEX(dst_ca_mutex);
 static unsigned int verbose = 5;
 module_param(verbose, int, 0644);
 MODULE_PARM_DESC(verbose, "verbose startup messages, default is 1 (yes)");
@@ -565,8 +563,8 @@ static long dst_ca_ioctl(struct file *file, unsigned int cmd, unsigned long ioct
 	void __user *arg = (void __user *)ioctl_arg;
 	int result = 0;
 
-	mutex_lock(&dst_ca_mutex);
-	dvbdev = file->private_data;
+	lock_kernel();
+	dvbdev = (struct dvb_device *)file->private_data;
 	state = (struct dst_state *)dvbdev->priv;
 	p_ca_message = kmalloc(sizeof (struct ca_msg), GFP_KERNEL);
 	p_ca_slot_info = kmalloc(sizeof (struct ca_slot_info), GFP_KERNEL);
@@ -653,7 +651,7 @@ static long dst_ca_ioctl(struct file *file, unsigned int cmd, unsigned long ioct
 	kfree (p_ca_slot_info);
 	kfree (p_ca_caps);
 
-	mutex_unlock(&dst_ca_mutex);
+	unlock_kernel();
 	return result;
 }
 
@@ -695,8 +693,7 @@ static const struct file_operations dst_ca_fops = {
 	.open = dst_ca_open,
 	.release = dst_ca_release,
 	.read = dst_ca_read,
-	.write = dst_ca_write,
-	.llseek = noop_llseek,
+	.write = dst_ca_write
 };
 
 static struct dvb_device dvbdev_ca = {

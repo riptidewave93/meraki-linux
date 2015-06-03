@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -272,8 +272,8 @@
  * MASK_BITS_ABOVE creates a mask starting AT the position and above
  * MASK_BITS_BELOW creates a mask starting one bit BELOW the position
  */
-#define ACPI_MASK_BITS_ABOVE(position)      (~((ACPI_UINT64_MAX) << ((u32) (position))))
-#define ACPI_MASK_BITS_BELOW(position)      ((ACPI_UINT64_MAX) << ((u32) (position)))
+#define ACPI_MASK_BITS_ABOVE(position)      (~((ACPI_INTEGER_MAX) << ((u32) (position))))
+#define ACPI_MASK_BITS_BELOW(position)      ((ACPI_INTEGER_MAX) << ((u32) (position)))
 
 /* Bitfields within ACPI registers */
 
@@ -338,10 +338,9 @@
  * the plist contains a set of parens to allow variable-length lists.
  * These macros are used for both the debug and non-debug versions of the code.
  */
-#define ACPI_ERROR_NAMESPACE(s, e)      acpi_ut_namespace_error (AE_INFO, s, e);
-#define ACPI_ERROR_METHOD(s, n, p, e)   acpi_ut_method_error (AE_INFO, s, n, p, e);
+#define ACPI_ERROR_NAMESPACE(s, e)      acpi_ns_report_error (AE_INFO, s, e);
+#define ACPI_ERROR_METHOD(s, n, p, e)   acpi_ns_report_method_error (AE_INFO, s, n, p, e);
 #define ACPI_WARN_PREDEFINED(plist)     acpi_ut_predefined_warning plist
-#define ACPI_INFO_PREDEFINED(plist)     acpi_ut_predefined_info plist
 
 #else
 
@@ -350,8 +349,6 @@
 #define ACPI_ERROR_NAMESPACE(s, e)
 #define ACPI_ERROR_METHOD(s, n, p, e)
 #define ACPI_WARN_PREDEFINED(plist)
-#define ACPI_INFO_PREDEFINED(plist)
-
 #endif		/* ACPI_NO_ERROR_MESSAGES */
 
 /*
@@ -414,16 +411,16 @@
 											acpi_ut_ptr_exit (ACPI_DEBUG_PARAMETERS, (u8 *) _s); \
 											return (_s); })
 #define return_VALUE(s)                 ACPI_DO_WHILE0 ({ \
-											register u64 _s = (s); \
+											register acpi_integer _s = (s); \
 											acpi_ut_value_exit (ACPI_DEBUG_PARAMETERS, _s); \
 											return (_s); })
 #define return_UINT8(s)                 ACPI_DO_WHILE0 ({ \
 											register u8 _s = (u8) (s); \
-											acpi_ut_value_exit (ACPI_DEBUG_PARAMETERS, (u64) _s); \
+											acpi_ut_value_exit (ACPI_DEBUG_PARAMETERS, (acpi_integer) _s); \
 											return (_s); })
 #define return_UINT32(s)                ACPI_DO_WHILE0 ({ \
 											register u32 _s = (u32) (s); \
-											acpi_ut_value_exit (ACPI_DEBUG_PARAMETERS, (u64) _s); \
+											acpi_ut_value_exit (ACPI_DEBUG_PARAMETERS, (acpi_integer) _s); \
 											return (_s); })
 #else				/* Use original less-safe macros */
 
@@ -434,7 +431,7 @@
 											acpi_ut_ptr_exit (ACPI_DEBUG_PARAMETERS, (u8 *) (s)); \
 											return((s)); })
 #define return_VALUE(s)                 ACPI_DO_WHILE0 ({ \
-											acpi_ut_value_exit (ACPI_DEBUG_PARAMETERS, (u64) (s)); \
+											acpi_ut_value_exit (ACPI_DEBUG_PARAMETERS, (acpi_integer) (s)); \
 											return((s)); })
 #define return_UINT8(s)                 return_VALUE(s)
 #define return_UINT32(s)                return_VALUE(s)
@@ -515,12 +512,6 @@
 #define return_PTR(s)                   return(s)
 
 #endif				/* ACPI_DEBUG_OUTPUT */
-
-#if (!ACPI_REDUCED_HARDWARE)
-#define ACPI_HW_OPTIONAL_FUNCTION(addr)     addr
-#else
-#define ACPI_HW_OPTIONAL_FUNCTION(addr)     NULL
-#endif
 
 /*
  * Some code only gets executed when the debugger is built in.

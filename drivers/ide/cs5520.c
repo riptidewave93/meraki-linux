@@ -57,11 +57,11 @@ static struct pio_clocks cs5520_pio_clocks[]={
 	{1, 2, 1}
 };
 
-static void cs5520_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void cs5520_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
+	ide_hwif_t *hwif = drive->hwif;
 	struct pci_dev *pdev = to_pci_dev(hwif->dev);
 	int controller = drive->dn > 1 ? 1 : 0;
-	const u8 pio = drive->pio_mode - XFER_PIO_0;
 
 	/* 8bit CAT/CRT - 8bit command timing for channel */
 	pci_write_config_byte(pdev, 0x62 + controller, 
@@ -81,12 +81,11 @@ static void cs5520_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 		(cs5520_pio_clocks[pio].assert));
 }
 
-static void cs5520_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void cs5520_set_dma_mode(ide_drive_t *drive, const u8 speed)
 {
 	printk(KERN_ERR "cs55x0: bad ide timing.\n");
 
-	drive->pio_mode = XFER_PIO_0 + 0;
-	cs5520_set_pio_mode(hwif, drive);
+	cs5520_set_pio_mode(drive, 0);
 }
 
 static const struct ide_port_ops cs5520_port_ops = {

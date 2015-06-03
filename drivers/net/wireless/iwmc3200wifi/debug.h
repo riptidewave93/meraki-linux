@@ -113,10 +113,13 @@ struct iwm_debugfs {
 };
 
 #ifdef CONFIG_IWM_DEBUG
-void iwm_debugfs_init(struct iwm_priv *iwm);
+int iwm_debugfs_init(struct iwm_priv *iwm);
 void iwm_debugfs_exit(struct iwm_priv *iwm);
 #else
-static inline void iwm_debugfs_init(struct iwm_priv *iwm) {}
+static inline int iwm_debugfs_init(struct iwm_priv *iwm)
+{
+	return 0;
+}
 static inline void iwm_debugfs_exit(struct iwm_priv *iwm) {}
 #endif
 

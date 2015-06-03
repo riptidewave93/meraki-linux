@@ -22,7 +22,7 @@
 
 #include <asm/io.h>
 #include <asm/machvec.h>
-#include <asm/setup.h>
+#include <asm/system.h>
 
 void __init
 dig_setup (char **cmdline_p)

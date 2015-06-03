@@ -6,7 +6,7 @@
 /*
  * Physical DRAM offset.
  */
-#define PLAT_PHYS_OFFSET	UL(0x00000000)
+#define PHYS_OFFSET	UL(0x00000000)
 
 #ifndef __ASSEMBLY__
 
@@ -58,15 +58,15 @@ static inline unsigned long __lbus_to_virt(dma_addr_t x)
 		__dma;							\
 	})
 
-#define __arch_pfn_to_dma(dev, pfn)					\
+#define __arch_page_to_dma(dev, page)					\
 	({								\
 		/* __is_lbus_virt() can never be true for RAM pages */	\
-		(dma_addr_t)__pfn_to_phys(pfn);				\
+		(dma_addr_t)page_to_phys(page);				\
 	})
-
-#define __arch_dma_to_pfn(dev, addr)	__phys_to_pfn(addr)
 
 #endif /* CONFIG_ARCH_IOP13XX */
 #endif /* !ASSEMBLY */
+
+#define PFN_TO_NID(addr)	(0)
 
 #endif

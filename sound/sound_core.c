@@ -29,7 +29,7 @@ MODULE_DESCRIPTION("Core sound module");
 MODULE_AUTHOR("Alan Cox");
 MODULE_LICENSE("GPL");
 
-static char *sound_devnode(struct device *dev, umode_t *mode)
+static char *sound_devnode(struct device *dev, mode_t *mode)
 {
 	if (MAJOR(dev->devt) == SOUND_MAJOR)
 		return NULL;
@@ -61,7 +61,7 @@ static void __exit cleanup_soundcore(void)
 	class_destroy(sound_class);
 }
 
-subsys_initcall(init_soundcore);
+module_init(init_soundcore);
 module_exit(cleanup_soundcore);
 
 
@@ -104,6 +104,7 @@ module_exit(cleanup_soundcore);
 
 #include <linux/init.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/sound.h>
@@ -164,7 +165,6 @@ static const struct file_operations soundcore_fops =
 	/* We must have an owner or the module locking fails */
 	.owner	= THIS_MODULE,
 	.open	= soundcore_open,
-	.llseek = noop_llseek,
 };
 
 /*
@@ -353,7 +353,7 @@ static struct sound_unit *chains[SOUND_STEP];
  *      @dev: device pointer
  *
  *	Allocate a special sound device by minor number from the sound
- *	subsystem. The allocated number is returned on success. On failure
+ *	subsystem. The allocated number is returned on succes. On failure
  *	a negative error code is returned.
  */
  
@@ -383,9 +383,6 @@ int register_sound_special_device(const struct file_operations *fops, int unit,
 		break;
 	    case 4:
 		name = "audio";
-		break;
-	    case 5:
-		name = "dspW";
 		break;
 	    case 8:
 		name = "sequencer2";
@@ -579,6 +576,8 @@ static int soundcore_open(struct inode *inode, struct file *file)
 	struct sound_unit *s;
 	const struct file_operations *new_fops = NULL;
 
+	lock_kernel ();
+
 	chain=unit&0x0F;
 	if(chain==4 || chain==5)	/* dsp/audio/dsp16 */
 	{
@@ -631,19 +630,18 @@ static int soundcore_open(struct inode *inode, struct file *file)
 		const struct file_operations *old_fops = file->f_op;
 		file->f_op = new_fops;
 		spin_unlock(&sound_loader_lock);
-
-		if (file->f_op->open)
+		if(file->f_op->open)
 			err = file->f_op->open(inode,file);
-
 		if (err) {
 			fops_put(file->f_op);
 			file->f_op = fops_get(old_fops);
 		}
-
 		fops_put(old_fops);
+		unlock_kernel();
 		return err;
 	}
 	spin_unlock(&sound_loader_lock);
+	unlock_kernel();
 	return -ENODEV;
 }
 

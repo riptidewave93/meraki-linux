@@ -18,10 +18,8 @@
 #include <linux/regulator/driver.h>
 #include <linux/regulator/machine.h>
 #include <linux/power_supply.h>
-#include <linux/mfd/pcf50633/backlight.h>
 
 struct pcf50633;
-struct regmap;
 
 #define PCF50633_NUM_REGULATORS	11
 
@@ -31,12 +29,7 @@ struct pcf50633_platform_data {
 	char **batteries;
 	int num_batteries;
 
-	/*
-	 * Should be set accordingly to the reference resistor used, see
-	 * I_{ch(ref)} charger reference current in the pcf50633 User
-	 * Manual.
-	 */
-	int charger_reference_current_ma;
+	int charging_restart_interval;
 
 	/* Callbacks */
 	void (*probe_done)(struct pcf50633 *);
@@ -45,8 +38,10 @@ struct pcf50633_platform_data {
 	void (*force_shutdown)(struct pcf50633 *);
 
 	u8 resumers[5];
+};
 
-	struct pcf50633_bl_platform_data *backlight_data;
+struct pcf50633_subdev_pdata {
+	struct pcf50633 *pcf;
 };
 
 struct pcf50633_irq {
@@ -135,7 +130,7 @@ enum {
 
 struct pcf50633 {
 	struct device *dev;
-	struct regmap *regmap;
+	struct i2c_client *i2c_client;
 
 	struct pcf50633_platform_data *pdata;
 	int irq;
@@ -156,7 +151,6 @@ struct pcf50633 {
 	struct platform_device *mbc_pdev;
 	struct platform_device *adc_pdev;
 	struct platform_device *input_pdev;
-	struct platform_device *bl_pdev;
 	struct platform_device *regulator_pdev[PCF50633_NUM_REGULATORS];
 };
 
@@ -223,16 +217,5 @@ enum pcf50633_reg_int5 {
 #define PCF50633_REG_LEDCTL 0x2a
 #define PCF50633_REG_LEDDIM 0x2b
 
-static inline struct pcf50633 *dev_to_pcf50633(struct device *dev)
-{
-	return dev_get_drvdata(dev);
-}
-
-int pcf50633_irq_init(struct pcf50633 *pcf, int irq);
-void pcf50633_irq_free(struct pcf50633 *pcf);
-#ifdef CONFIG_PM
-int pcf50633_irq_suspend(struct pcf50633 *pcf);
-int pcf50633_irq_resume(struct pcf50633 *pcf);
 #endif
 
-#endif

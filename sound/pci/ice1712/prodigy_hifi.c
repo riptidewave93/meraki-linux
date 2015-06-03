@@ -297,7 +297,6 @@ static int ak4396_dac_vol_put(struct snd_kcontrol *kcontrol, struct snd_ctl_elem
 }
 
 static const DECLARE_TLV_DB_SCALE(db_scale_wm_dac, -12700, 100, 1);
-static const DECLARE_TLV_DB_LINEAR(ak4396_db_scale, TLV_DB_GAIN_MUTE, 0);
 
 static struct snd_kcontrol_new prodigy_hd2_controls[] __devinitdata = {
     {
@@ -308,7 +307,7 @@ static struct snd_kcontrol_new prodigy_hd2_controls[] __devinitdata = {
 	.info = ak4396_dac_vol_info,
 	.get = ak4396_dac_vol_get,
 	.put = ak4396_dac_vol_put,
-	.tlv = { .p = ak4396_db_scale },
+	.tlv = { .p = db_scale_wm_dac },
     },
 };
 
@@ -1047,7 +1046,7 @@ static int __devinit prodigy_hifi_init(struct snd_ice1712 *ice)
 	* don't call snd_ice1712_gpio_get/put(), otherwise it's overwritten
 	*/
 	ice->gpio.saved[0] = 0;
-	/* to remember the register values */
+	/* to remeber the register values */
 
 	ice->akm = kzalloc(sizeof(struct snd_akm4xxx), GFP_KERNEL);
 	if (! ice->akm)
@@ -1129,7 +1128,7 @@ static int __devinit prodigy_hd2_init(struct snd_ice1712 *ice)
 	* don't call snd_ice1712_gpio_get/put(), otherwise it's overwritten
 	*/
 	ice->gpio.saved[0] = 0;
-	/* to remember the register values */
+	/* to remeber the register values */
 
 	ice->akm = kzalloc(sizeof(struct snd_akm4xxx), GFP_KERNEL);
 	if (! ice->akm)

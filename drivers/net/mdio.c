@@ -162,10 +162,6 @@ static u32 mdio45_get_an(const struct mdio_if_info *mdio, u16 addr)
 		result |= ADVERTISED_100baseT_Half;
 	if (reg & ADVERTISE_100FULL)
 		result |= ADVERTISED_100baseT_Full;
-	if (reg & ADVERTISE_PAUSE_CAP)
-		result |= ADVERTISED_Pause;
-	if (reg & ADVERTISE_PAUSE_ASYM)
-		result |= ADVERTISED_Asym_Pause;
 	return result;
 }
 
@@ -176,9 +172,6 @@ static u32 mdio45_get_an(const struct mdio_if_info *mdio, u16 addr)
  * @npage_adv: Modes currently advertised on next pages
  * @npage_lpa: Modes advertised by link partner on next pages
  *
- * The @ecmd parameter is expected to have been cleared before calling
- * mdio45_ethtool_gset_npage().
- *
  * Since the CSRs for auto-negotiation using next pages are not fully
  * standardised, this function does not attempt to decode them.  The
  * caller must pass them in.
@@ -188,10 +181,6 @@ void mdio45_ethtool_gset_npage(const struct mdio_if_info *mdio,
 			       u32 npage_adv, u32 npage_lpa)
 {
 	int reg;
-	u32 speed;
-
-	BUILD_BUG_ON(MDIO_SUPPORTS_C22 != ETH_MDIO_SUPPORTS_C22);
-	BUILD_BUG_ON(MDIO_SUPPORTS_C45 != ETH_MDIO_SUPPORTS_C45);
 
 	ecmd->transceiver = XCVR_INTERNAL;
 	ecmd->phy_address = mdio->prtad;
@@ -294,36 +283,33 @@ void mdio45_ethtool_gset_npage(const struct mdio_if_info *mdio,
 		if (modes & (ADVERTISED_10000baseT_Full |
 			     ADVERTISED_10000baseKX4_Full |
 			     ADVERTISED_10000baseKR_Full)) {
-			speed = SPEED_10000;
+			ecmd->speed = SPEED_10000;
 			ecmd->duplex = DUPLEX_FULL;
 		} else if (modes & (ADVERTISED_1000baseT_Full |
 				    ADVERTISED_1000baseT_Half |
 				    ADVERTISED_1000baseKX_Full)) {
-			speed = SPEED_1000;
+			ecmd->speed = SPEED_1000;
 			ecmd->duplex = !(modes & ADVERTISED_1000baseT_Half);
 		} else if (modes & (ADVERTISED_100baseT_Full |
 				    ADVERTISED_100baseT_Half)) {
-			speed = SPEED_100;
+			ecmd->speed = SPEED_100;
 			ecmd->duplex = !!(modes & ADVERTISED_100baseT_Full);
 		} else {
-			speed = SPEED_10;
+			ecmd->speed = SPEED_10;
 			ecmd->duplex = !!(modes & ADVERTISED_10baseT_Full);
 		}
 	} else {
 		/* Report forced settings */
 		reg = mdio->mdio_read(mdio->dev, mdio->prtad, MDIO_MMD_PMAPMD,
 				      MDIO_CTRL1);
-		speed = (((reg & MDIO_PMA_CTRL1_SPEED1000) ? 100 : 1)
-			 * ((reg & MDIO_PMA_CTRL1_SPEED100) ? 100 : 10));
+		ecmd->speed = (((reg & MDIO_PMA_CTRL1_SPEED1000) ? 100 : 1) *
+			       ((reg & MDIO_PMA_CTRL1_SPEED100) ? 100 : 10));
 		ecmd->duplex = (reg & MDIO_CTRL1_FULLDPLX ||
-				speed == SPEED_10000);
+				ecmd->speed == SPEED_10000);
 	}
 
-	ethtool_cmd_speed_set(ecmd, speed);
-
 	/* 10GBASE-T MDI/MDI-X */
-	if (ecmd->port == PORT_TP
-	    && (ethtool_cmd_speed(ecmd) == SPEED_10000)) {
+	if (ecmd->port == PORT_TP && ecmd->speed == SPEED_10000) {
 		switch (mdio->mdio_read(mdio->dev, mdio->prtad, MDIO_MMD_PMAPMD,
 					MDIO_PMA_10GBT_SWAPPOL)) {
 		case MDIO_PMA_10GBT_SWAPPOL_ABNX | MDIO_PMA_10GBT_SWAPPOL_CDNX:
@@ -358,9 +344,11 @@ void mdio45_ethtool_spauseparam_an(const struct mdio_if_info *mdio,
 
 	old_adv = mdio->mdio_read(mdio->dev, mdio->prtad, MDIO_MMD_AN,
 				  MDIO_AN_ADVERTISE);
-	adv = ((old_adv & ~(ADVERTISE_PAUSE_CAP | ADVERTISE_PAUSE_ASYM)) |
-	       mii_advertise_flowctrl((ecmd->rx_pause ? FLOW_CTRL_RX : 0) |
-				      (ecmd->tx_pause ? FLOW_CTRL_TX : 0)));
+	adv = old_adv & ~(ADVERTISE_PAUSE_CAP | ADVERTISE_PAUSE_ASYM);
+	if (ecmd->autoneg)
+		adv |= mii_advertise_flowctrl(
+			(ecmd->rx_pause ? FLOW_CTRL_RX : 0) |
+			(ecmd->tx_pause ? FLOW_CTRL_TX : 0));
 	if (adv != old_adv) {
 		mdio->mdio_write(mdio->dev, mdio->prtad, MDIO_MMD_AN,
 				 MDIO_AN_ADVERTISE, adv);

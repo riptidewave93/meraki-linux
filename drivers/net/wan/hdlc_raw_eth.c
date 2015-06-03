@@ -11,7 +11,6 @@
 
 #include <linux/errno.h>
 #include <linux/etherdevice.h>
-#include <linux/gfp.h>
 #include <linux/hdlc.h>
 #include <linux/if_arp.h>
 #include <linux/inetdevice.h>
@@ -22,6 +21,7 @@
 #include <linux/poll.h>
 #include <linux/rtnetlink.h>
 #include <linux/skbuff.h>
+#include <linux/slab.h>
 
 static int raw_eth_ioctl(struct net_device *dev, struct ifreq *ifr);
 
@@ -101,7 +101,7 @@ static int raw_eth_ioctl(struct net_device *dev, struct ifreq *ifr)
 		old_qlen = dev->tx_queue_len;
 		ether_setup(dev);
 		dev->tx_queue_len = old_qlen;
-		eth_hw_addr_random(dev);
+		random_ether_addr(dev->dev_addr);
 		netif_dormant_off(dev);
 		return 0;
 	}

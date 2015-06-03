@@ -7,6 +7,15 @@
 #include <asm/elf.h>
 #endif
 
+struct file;
+
+#ifndef elf_read_implies_exec
+  /* Executables for which elf_read_implies_exec() returns TRUE will
+     have the READ_IMPLIES_EXEC personality flag set automatically.
+     Override in asm/elf.h as needed.  */
+# define elf_read_implies_exec(ex, have_pt_gnu_stack)	0
+#endif
+
 /* 32-bit ELF base types. */
 typedef __u32	Elf32_Addr;
 typedef __u16	Elf32_Half;
@@ -40,28 +49,6 @@ typedef __s64	Elf64_Sxword;
 #define PT_GNU_EH_FRAME		0x6474e550
 
 #define PT_GNU_STACK	(PT_LOOS + 0x474e551)
-
-/*
- * Extended Numbering
- *
- * If the real number of program header table entries is larger than
- * or equal to PN_XNUM(0xffff), it is set to sh_info field of the
- * section header at index 0, and PN_XNUM is set to e_phnum
- * field. Otherwise, the section header at index 0 is zero
- * initialized, if it exists.
- *
- * Specifications are available in:
- *
- * - Sun microsystems: Linker and Libraries.
- *   Part No: 817-1984-17, September 2008.
- *   URL: http://docs.sun.com/app/docs/doc/817-1984
- *
- * - System V ABI AMD64 Architecture Processor Supplement
- *   Draft Version 0.99.,
- *   May 11, 2009.
- *   URL: http://www.x86-64.org/
- */
-#define PN_XNUM 0xffff
 
 /* These constants define the different elf file types */
 #define ET_NONE   0
@@ -299,7 +286,7 @@ typedef struct elf64_phdr {
 #define SHN_COMMON	0xfff2
 #define SHN_HIRESERVE	0xffff
  
-typedef struct elf32_shdr {
+typedef struct {
   Elf32_Word	sh_name;
   Elf32_Word	sh_type;
   Elf32_Word	sh_flags;
@@ -362,11 +349,7 @@ typedef struct elf64_shdr {
 #define ELF_OSABI ELFOSABI_NONE
 #endif
 
-/*
- * Notes used in ET_CORE. Architectures export some of the arch register sets
- * using the corresponding note types via the PTRACE_GETREGSET and
- * PTRACE_SETREGSET requests.
- */
+/* Notes used in ET_CORE */
 #define NT_PRSTATUS	1
 #define NT_PRFPREG	2
 #define NT_PRPSINFO	3
@@ -378,16 +361,7 @@ typedef struct elf64_shdr {
 #define NT_PPC_VSX	0x102		/* PowerPC VSX registers */
 #define NT_386_TLS	0x200		/* i386 TLS slots (struct user_desc) */
 #define NT_386_IOPERM	0x201		/* x86 io permission bitmap (1=deny) */
-#define NT_X86_XSTATE	0x202		/* x86 extended state using xsave */
-#define NT_S390_HIGH_GPRS	0x300	/* s390 upper register halves */
-#define NT_S390_TIMER	0x301		/* s390 timer register */
-#define NT_S390_TODCMP	0x302		/* s390 TOD clock comparator register */
-#define NT_S390_TODPREG	0x303		/* s390 TOD programmable register */
-#define NT_S390_CTRS	0x304		/* s390 control registers */
-#define NT_S390_PREFIX	0x305		/* s390 prefix register */
-#define NT_S390_LAST_BREAK	0x306	/* s390 breaking event address */
-#define NT_S390_SYSTEM_CALL	0x307	/* s390 system call restart data */
-#define NT_ARM_VFP	0x400		/* ARM VFP/NEON registers */
+#define NT_PRXSTATUS	0x300		/* s390 upper register halves */
 
 
 /* Note header in a PT_NOTE section */
@@ -405,38 +379,25 @@ typedef struct elf64_note {
 } Elf64_Nhdr;
 
 #ifdef __KERNEL__
-#ifndef elf_read_implies_exec
-  /* Executables for which elf_read_implies_exec() returns TRUE will
-     have the READ_IMPLIES_EXEC personality flag set automatically.
-     Override in asm/elf.h as needed.  */
-# define elf_read_implies_exec(ex, have_pt_gnu_stack)	0
-#endif
-
 #if ELF_CLASS == ELFCLASS32
 
 extern Elf32_Dyn _DYNAMIC [];
 #define elfhdr		elf32_hdr
 #define elf_phdr	elf32_phdr
-#define elf_shdr	elf32_shdr
 #define elf_note	elf32_note
 #define elf_addr_t	Elf32_Off
-#define Elf_Half	Elf32_Half
 
 #else
 
 extern Elf64_Dyn _DYNAMIC [];
 #define elfhdr		elf64_hdr
 #define elf_phdr	elf64_phdr
-#define elf_shdr	elf64_shdr
 #define elf_note	elf64_note
 #define elf_addr_t	Elf64_Off
-#define Elf_Half	Elf64_Half
 
 #endif
 
 /* Optional callbacks to write extra ELF notes. */
-struct file;
-
 #ifndef ARCH_HAVE_EXTRA_ELF_NOTES
 static inline int elf_coredump_extra_notes_size(void) { return 0; }
 static inline int elf_coredump_extra_notes_write(struct file *file,

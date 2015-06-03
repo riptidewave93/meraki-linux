@@ -16,6 +16,7 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/timer.h>
+#include <linux/slab.h>
 #include <linux/ioport.h>
 #include <linux/delay.h>
 #include <linux/workqueue.h>
@@ -24,9 +25,12 @@
 #include <linux/bitops.h>
 #include <asm/irq.h>
 #include <asm/io.h>
+#include <asm/system.h>
 #include <asm/addrspace.h>
 
+#include <pcmcia/cs_types.h>
 #include <pcmcia/ss.h>
+#include <pcmcia/cs.h>
 
 /* XXX: should be moved into asm/irq.h */
 #define PCC0_IRQ 24
@@ -41,6 +45,16 @@
 
 #define PCC_DEBUG_DBEX
 
+#ifdef CONFIG_PCMCIA_DEBUG
+static int m32r_pcc_debug;
+module_param(m32r_pcc_debug, int, 0644);
+#define debug(lvl, fmt, arg...) do {				\
+	if (m32r_pcc_debug > (lvl))				\
+		printk(KERN_DEBUG "m32r_pcc: " fmt , ## arg);	\
+} while (0)
+#else
+#define debug(n, args...) do { } while (0)
+#endif
 
 /* Poll status interval -- 0 means default to interrupt */
 static int poll_interval = 0;
@@ -344,7 +358,7 @@ static irqreturn_t pcc_interrupt(int irq, void *dev)
 	u_int events, active;
 	int handled = 0;
 
-	pr_debug("m32r_pcc: pcc_interrupt(%d)\n", irq);
+	debug(4, "m32r: pcc_interrupt(%d)\n", irq);
 
 	for (j = 0; j < 20; j++) {
 		active = 0;
@@ -355,14 +369,13 @@ static irqreturn_t pcc_interrupt(int irq, void *dev)
 			handled = 1;
 			irc = pcc_get(i, PCIRC);
 			irc >>=16;
-			pr_debug("m32r_pcc: interrupt: socket %d pcirc 0x%02x ",
-				i, irc);
+			debug(2, "m32r-pcc:interrupt: socket %d pcirc 0x%02x ", i, irc);
 			if (!irc)
 				continue;
 
 			events = (irc) ? SS_DETECT : 0;
 			events |= (pcc_get(i,PCCR) & PCCR_PCEN) ? SS_READY : 0;
-			pr_debug("m32r_pcc: event 0x%02x\n", events);
+			debug(2, " event 0x%02x\n", events);
 
 			if (events)
 				pcmcia_parse_events(&socket[i].socket, events);
@@ -375,7 +388,7 @@ static irqreturn_t pcc_interrupt(int irq, void *dev)
 	if (j == 20)
 		printk(KERN_NOTICE "m32r-pcc: infinite loop in interrupt handler\n");
 
-	pr_debug("m32r_pcc: interrupt done\n");
+	debug(4, "m32r-pcc: interrupt done\n");
 
 	return IRQ_RETVAL(handled);
 } /* pcc_interrupt */
@@ -409,7 +422,7 @@ static int _pcc_get_status(u_short sock, u_int *value)
 	status = pcc_get(sock,PCCSIGCR);
 	*value |= (status & PCCSIGCR_VEN) ? SS_POWERON : 0;
 
-	pr_debug("m32r_pcc: GetStatus(%d) = %#4.4x\n", sock, *value);
+	debug(3, "m32r-pcc: GetStatus(%d) = %#4.4x\n", sock, *value);
 	return 0;
 } /* _get_status */
 
@@ -419,7 +432,7 @@ static int _pcc_set_socket(u_short sock, socket_state_t *state)
 {
 	u_long reg = 0;
 
-	pr_debug("m32r_pcc: SetSocket(%d, flags %#3.3x, Vcc %d, Vpp %d, "
+	debug(3, "m32r-pcc: SetSocket(%d, flags %#3.3x, Vcc %d, Vpp %d, "
 		  "io_irq %d, csc_mask %#2.2x)", sock, state->flags,
 		  state->Vcc, state->Vpp, state->io_irq, state->csc_mask);
 
@@ -435,11 +448,11 @@ static int _pcc_set_socket(u_short sock, socket_state_t *state)
 	}
 
 	if (state->flags & SS_RESET) {
-		pr_debug("m32r_pcc: :RESET\n");
+		debug(3, ":RESET\n");
 		reg |= PCCSIGCR_CRST;
 	}
 	if (state->flags & SS_OUTPUT_ENA){
-		pr_debug("m32r_pcc: :OUTPUT_ENA\n");
+		debug(3, ":OUTPUT_ENA\n");
 		/* bit clear */
 	} else {
 		reg |= PCCSIGCR_SEN;
@@ -447,26 +460,28 @@ static int _pcc_set_socket(u_short sock, socket_state_t *state)
 
 	pcc_set(sock,PCCSIGCR,reg);
 
+#ifdef CONFIG_PCMCIA_DEBUG
 	if(state->flags & SS_IOCARD){
-		pr_debug("m32r_pcc: :IOCARD");
+		debug(3, ":IOCARD");
 	}
 	if (state->flags & SS_PWR_AUTO) {
-		pr_debug("m32r_pcc: :PWR_AUTO");
+		debug(3, ":PWR_AUTO");
 	}
 	if (state->csc_mask & SS_DETECT)
-		pr_debug("m32r_pcc: :csc-SS_DETECT");
+		debug(3, ":csc-SS_DETECT");
 	if (state->flags & SS_IOCARD) {
 		if (state->csc_mask & SS_STSCHG)
-			pr_debug("m32r_pcc: :STSCHG");
+			debug(3, ":STSCHG");
 	} else {
 		if (state->csc_mask & SS_BATDEAD)
-			pr_debug("m32r_pcc: :BATDEAD");
+			debug(3, ":BATDEAD");
 		if (state->csc_mask & SS_BATWARN)
-			pr_debug("m32r_pcc: :BATWARN");
+			debug(3, ":BATWARN");
 		if (state->csc_mask & SS_READY)
-			pr_debug("m32r_pcc: :READY");
+			debug(3, ":READY");
 	}
-	pr_debug("m32r_pcc: \n");
+	debug(3, "\n");
+#endif
 	return 0;
 } /* _set_socket */
 
@@ -476,7 +491,7 @@ static int _pcc_set_io_map(u_short sock, struct pccard_io_map *io)
 {
 	u_char map;
 
-	pr_debug("m32r_pcc: SetIOMap(%d, %d, %#2.2x, %d ns, "
+	debug(3, "m32r-pcc: SetIOMap(%d, %d, %#2.2x, %d ns, "
 		  "%#llx-%#llx)\n", sock, io->map, io->flags,
 		  io->speed, (unsigned long long)io->start,
 		  (unsigned long long)io->stop);
@@ -500,7 +515,7 @@ static int _pcc_set_mem_map(u_short sock, struct pccard_mem_map *mem)
 #endif
 #endif
 
-	pr_debug("m32r_pcc: SetMemMap(%d, %d, %#2.2x, %d ns, "
+	debug(3, "m32r-pcc: SetMemMap(%d, %d, %#2.2x, %d ns, "
 		 "%#llx,  %#x)\n", sock, map, mem->flags,
 		 mem->speed, (unsigned long long)mem->static_start,
 		 mem->card_start);
@@ -647,7 +662,7 @@ static int pcc_set_mem_map(struct pcmcia_socket *s, struct pccard_mem_map *mem)
 
 static int pcc_init(struct pcmcia_socket *s)
 {
-	pr_debug("m32r_pcc: init call\n");
+	debug(4, "m32r-pcc: init call\n");
 	return 0;
 }
 
@@ -659,6 +674,16 @@ static struct pccard_operations pcc_operations = {
 	.set_mem_map		= pcc_set_mem_map,
 };
 
+static int pcc_drv_pcmcia_suspend(struct platform_device *dev,
+				     pm_message_t state)
+{
+	return pcmcia_socket_dev_suspend(&dev->dev);
+}
+
+static int pcc_drv_pcmcia_resume(struct platform_device *dev)
+{
+	return pcmcia_socket_dev_resume(&dev->dev);
+}
 /*====================================================================*/
 
 static struct platform_driver pcc_driver = {
@@ -666,6 +691,8 @@ static struct platform_driver pcc_driver = {
 		.name		= "pcc",
 		.owner		= THIS_MODULE,
 	},
+	.suspend 	= pcc_drv_pcmcia_suspend,
+	.resume 	= pcc_drv_pcmcia_resume,
 };
 
 static struct platform_device pcc_device = {

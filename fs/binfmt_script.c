@@ -8,6 +8,7 @@
 #include <linux/module.h>
 #include <linux/string.h>
 #include <linux/stat.h>
+#include <linux/slab.h>
 #include <linux/binfmts.h>
 #include <linux/init.h>
 #include <linux/file.h>
@@ -16,8 +17,7 @@
 
 static int load_script(struct linux_binprm *bprm,struct pt_regs *regs)
 {
-	const char *i_arg, *i_name;
-	char *cp;
+	char *cp, *i_name, *i_arg;
 	struct file *file;
 	char interp[BINPRM_BUF_SIZE];
 	int retval;
@@ -105,8 +105,7 @@ static struct linux_binfmt script_format = {
 
 static int __init init_script_binfmt(void)
 {
-	register_binfmt(&script_format);
-	return 0;
+	return register_binfmt(&script_format);
 }
 
 static void __exit exit_script_binfmt(void)

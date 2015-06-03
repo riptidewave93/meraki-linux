@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2011, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -71,9 +71,8 @@
 #define ACPI_TOOLS                  0x00002000
 #define ACPI_EXAMPLE                0x00004000
 #define ACPI_DRIVER                 0x00008000
-#define DT_COMPILER                 0x00010000
 
-#define ACPI_ALL_COMPONENTS         0x0001FFFF
+#define ACPI_ALL_COMPONENTS         0x0000FFFF
 #define ACPI_COMPONENT_DEFAULT      (ACPI_ALL_COMPONENTS)
 
 /* Component IDs reserved for ACPI drivers */
@@ -86,8 +85,7 @@
 #define ACPI_LV_INIT                0x00000001
 #define ACPI_LV_DEBUG_OBJECT        0x00000002
 #define ACPI_LV_INFO                0x00000004
-#define ACPI_LV_REPAIR              0x00000008
-#define ACPI_LV_ALL_EXCEPTIONS      0x0000000F
+#define ACPI_LV_ALL_EXCEPTIONS      0x00000007
 
 /* Trace verbosity level 1 [Standard Trace Level] */
 
@@ -145,7 +143,6 @@
 #define ACPI_DB_INIT                ACPI_DEBUG_LEVEL (ACPI_LV_INIT)
 #define ACPI_DB_DEBUG_OBJECT        ACPI_DEBUG_LEVEL (ACPI_LV_DEBUG_OBJECT)
 #define ACPI_DB_INFO                ACPI_DEBUG_LEVEL (ACPI_LV_INFO)
-#define ACPI_DB_REPAIR              ACPI_DEBUG_LEVEL (ACPI_LV_REPAIR)
 #define ACPI_DB_ALL_EXCEPTIONS      ACPI_DEBUG_LEVEL (ACPI_LV_ALL_EXCEPTIONS)
 
 /* Trace level -- also used in the global "DebugLevel" */
@@ -177,25 +174,19 @@
 
 /* Defaults for debug_level, debug and normal */
 
-#define ACPI_DEBUG_DEFAULT          (ACPI_LV_INFO | ACPI_LV_REPAIR)
-#define ACPI_NORMAL_DEFAULT         (ACPI_LV_INIT | ACPI_LV_DEBUG_OBJECT | ACPI_LV_REPAIR)
+#define ACPI_DEBUG_DEFAULT          (ACPI_LV_INFO)
+#define ACPI_NORMAL_DEFAULT         (ACPI_LV_INIT | ACPI_LV_DEBUG_OBJECT)
 #define ACPI_DEBUG_ALL              (ACPI_LV_AML_DISASSEMBLE | ACPI_LV_ALL_EXCEPTIONS | ACPI_LV_ALL)
 
 #if defined (ACPI_DEBUG_OUTPUT) || !defined (ACPI_NO_ERROR_MESSAGES)
 /*
- * The module name is used primarily for error and debug messages.
- * The __FILE__ macro is not very useful for this, because it
- * usually includes the entire pathname to the module making the
- * debug output difficult to read.
+ * Module name is included in both debug and non-debug versions primarily for
+ * error messages. The __FILE__ macro is not very useful for this, because it
+ * often includes the entire pathname to the module
  */
 #define ACPI_MODULE_NAME(name)          static const char ACPI_UNUSED_VAR _acpi_module_name[] = name;
 #else
-/*
- * For the no-debug and no-error-msg cases, we must at least define
- * a null module name.
- */
 #define ACPI_MODULE_NAME(name)
-#define _acpi_module_name ""
 #endif
 
 /*
@@ -213,7 +204,6 @@
 #define ACPI_WARNING(plist)             acpi_warning plist
 #define ACPI_EXCEPTION(plist)           acpi_exception plist
 #define ACPI_ERROR(plist)               acpi_error plist
-#define ACPI_DEBUG_OBJECT(obj,l,i)      acpi_ex_do_debug_object(obj,l,i)
 
 #else
 
@@ -223,7 +213,6 @@
 #define ACPI_WARNING(plist)
 #define ACPI_EXCEPTION(plist)
 #define ACPI_ERROR(plist)
-#define ACPI_DEBUG_OBJECT(obj,l,i)
 
 #endif				/* ACPI_NO_ERROR_MESSAGES */
 

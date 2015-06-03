@@ -24,7 +24,6 @@
 #include <linux/lcd.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/corgi_lcd.h>
-#include <linux/slab.h>
 #include <asm/mach/sharpsl_param.h>
 
 #define POWER_IS_ON(pwr)	((pwr) <= FB_BLANK_NORMAL)
@@ -109,7 +108,7 @@ static unsigned long corgibl_flags;
 #define CORGIBL_BATTLOW       0x02
 
 /*
- * This is only a pseudo I2C interface. We can't use the standard kernel
+ * This is only a psuedo I2C interface. We can't use the standard kernel
  * routines as the interface is write only. We just assume the data is acked...
  */
 static void lcdtg_ssp_i2c_send(struct corgi_lcd *lcd, uint8_t data)
@@ -452,7 +451,7 @@ void corgi_lcd_limit_intensity(int limit)
 }
 EXPORT_SYMBOL(corgi_lcd_limit_intensity);
 
-static const struct backlight_ops corgi_bl_ops = {
+static struct backlight_ops corgi_bl_ops = {
 	.get_brightness	= corgi_bl_get_intensity,
 	.update_status  = corgi_bl_update_status,
 };
@@ -534,7 +533,6 @@ err_free_backlight_on:
 
 static int __devinit corgi_lcd_probe(struct spi_device *spi)
 {
-	struct backlight_properties props;
 	struct corgi_lcd_platform_data *pdata = spi->dev.platform_data;
 	struct corgi_lcd *lcd;
 	int ret = 0;
@@ -561,15 +559,13 @@ static int __devinit corgi_lcd_probe(struct spi_device *spi)
 	lcd->power = FB_BLANK_POWERDOWN;
 	lcd->mode = (pdata) ? pdata->init_mode : CORGI_LCD_MODE_VGA;
 
-	memset(&props, 0, sizeof(struct backlight_properties));
-	props.type = BACKLIGHT_RAW;
-	props.max_brightness = pdata->max_intensity;
-	lcd->bl_dev = backlight_device_register("corgi_bl", &spi->dev, lcd,
-						&corgi_bl_ops, &props);
+	lcd->bl_dev = backlight_device_register("corgi_bl", &spi->dev,
+					lcd, &corgi_bl_ops);
 	if (IS_ERR(lcd->bl_dev)) {
 		ret = PTR_ERR(lcd->bl_dev);
 		goto err_unregister_lcd;
 	}
+	lcd->bl_dev->props.max_brightness = pdata->max_intensity;
 	lcd->bl_dev->props.brightness = pdata->default_intensity;
 	lcd->bl_dev->props.power = FB_BLANK_UNBLANK;
 
@@ -629,7 +625,17 @@ static struct spi_driver corgi_lcd_driver = {
 	.resume		= corgi_lcd_resume,
 };
 
-module_spi_driver(corgi_lcd_driver);
+static int __init corgi_lcd_init(void)
+{
+	return spi_register_driver(&corgi_lcd_driver);
+}
+module_init(corgi_lcd_init);
+
+static void __exit corgi_lcd_exit(void)
+{
+	spi_unregister_driver(&corgi_lcd_driver);
+}
+module_exit(corgi_lcd_exit);
 
 MODULE_DESCRIPTION("LCD and backlight driver for SHARP C7x0/Cxx00");
 MODULE_AUTHOR("Eric Miao <eric.miao@marvell.com>");

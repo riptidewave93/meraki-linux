@@ -6,11 +6,12 @@
  *  Copyright (C) 2006, Timesys Corp., Thomas Gleixner <tglx@timesys.com>
  *
  */
-#include <linux/device.h>
 #include <linux/kthread.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/sched.h>
+#include <linux/smp_lock.h>
 #include <linux/spinlock.h>
+#include <linux/sysdev.h>
 #include <linux/timer.h>
 #include <linux/freezer.h>
 
@@ -26,8 +27,9 @@ struct test_thread_data {
 	int			opcode;
 	int			opdata;
 	int			mutexes[MAX_RT_TEST_MUTEXES];
+	int			bkl;
 	int			event;
-	struct device		dev;
+	struct sys_device	sysdev;
 };
 
 static struct test_thread_data thread_data[MAX_RT_TEST_THREADS];
@@ -44,8 +46,9 @@ enum test_opcodes {
 	RTTEST_LOCKINTNOWAIT,	/* 6 Lock interruptible no wait in wakeup, data = lockindex */
 	RTTEST_LOCKCONT,	/* 7 Continue locking after the wakeup delay */
 	RTTEST_UNLOCK,		/* 8 Unlock, data = lockindex */
-	/* 9, 10 - reserved for BKL commemoration */
-	RTTEST_SIGNAL = 11,	/* 11 Signal other test thread, data = thread id */
+	RTTEST_LOCKBKL,		/* 9 Lock BKL */
+	RTTEST_UNLOCKBKL,	/* 10 Unlock BKL */
+	RTTEST_SIGNAL,		/* 11 Signal other test thread, data = thread id */
 	RTTEST_RESETEVENT = 98,	/* 98 Reset event counter */
 	RTTEST_RESET = 99,	/* 99 Reset all pending operations */
 };
@@ -70,6 +73,11 @@ static int handle_op(struct test_thread_data *td, int lockwakeup)
 				rt_mutex_unlock(&mutexes[i]);
 				td->mutexes[i] = 0;
 			}
+		}
+
+		if (!lockwakeup && td->bkl == 4) {
+			unlock_kernel();
+			td->bkl = 0;
 		}
 		return 0;
 
@@ -121,6 +129,21 @@ static int handle_op(struct test_thread_data *td, int lockwakeup)
 		td->mutexes[id] = 0;
 		return 0;
 
+	case RTTEST_LOCKBKL:
+		if (td->bkl)
+			return 0;
+		td->bkl = 1;
+		lock_kernel();
+		td->bkl = 4;
+		return 0;
+
+	case RTTEST_UNLOCKBKL:
+		if (td->bkl != 4)
+			break;
+		unlock_kernel();
+		td->bkl = 0;
+		return 0;
+
 	default:
 		break;
 	}
@@ -167,6 +190,7 @@ void schedule_rt_mutex_test(struct rt_mutex *mutex)
 		td->event = atomic_add_return(1, &rttest_event);
 		break;
 
+	case RTTEST_LOCKBKL:
 	default:
 		break;
 	}
@@ -199,6 +223,8 @@ void schedule_rt_mutex_test(struct rt_mutex *mutex)
 		td->event = atomic_add_return(1, &rttest_event);
 		return;
 
+	case RTTEST_LOCKBKL:
+		return;
 	default:
 		return;
 	}
@@ -271,7 +297,7 @@ static int test_func(void *data)
  *
  * opcode:data
  */
-static ssize_t sysfs_test_command(struct device *dev, struct device_attribute *attr,
+static ssize_t sysfs_test_command(struct sys_device *dev, struct sysdev_attribute *attr,
 				  const char *buf, size_t count)
 {
 	struct sched_param schedpar;
@@ -279,8 +305,8 @@ static ssize_t sysfs_test_command(struct device *dev, struct device_attribute *a
 	char cmdbuf[32];
 	int op, dat, tid, ret;
 
-	td = container_of(dev, struct test_thread_data, dev);
-	tid = td->dev.id;
+	td = container_of(dev, struct test_thread_data, sysdev);
+	tid = td->sysdev.id;
 
 	/* strings from sysfs write are not 0 terminated! */
 	if (count >= sizeof(cmdbuf))
@@ -334,7 +360,7 @@ static ssize_t sysfs_test_command(struct device *dev, struct device_attribute *a
  * @dev:	thread to query
  * @buf:	char buffer to be filled with thread status info
  */
-static ssize_t sysfs_test_status(struct device *dev, struct device_attribute *attr,
+static ssize_t sysfs_test_status(struct sys_device *dev, struct sysdev_attribute *attr,
 				 char *buf)
 {
 	struct test_thread_data *td;
@@ -342,17 +368,17 @@ static ssize_t sysfs_test_status(struct device *dev, struct device_attribute *at
 	char *curr = buf;
 	int i;
 
-	td = container_of(dev, struct test_thread_data, dev);
-	tsk = threads[td->dev.id];
+	td = container_of(dev, struct test_thread_data, sysdev);
+	tsk = threads[td->sysdev.id];
 
 	spin_lock(&rttest_lock);
 
 	curr += sprintf(curr,
-		"O: %4d, E:%8d, S: 0x%08lx, P: %4d, N: %4d, B: %p, M:",
+		"O: %4d, E:%8d, S: 0x%08lx, P: %4d, N: %4d, B: %p, K: %d, M:",
 		td->opcode, td->event, tsk->state,
 			(MAX_RT_PRIO - 1) - tsk->prio,
 			(MAX_RT_PRIO - 1) - tsk->normal_prio,
-		tsk->pi_blocked_on);
+		tsk->pi_blocked_on, td->bkl);
 
 	for (i = MAX_RT_TEST_MUTEXES - 1; i >=0 ; i--)
 		curr += sprintf(curr, "%d", td->mutexes[i]);
@@ -360,29 +386,28 @@ static ssize_t sysfs_test_status(struct device *dev, struct device_attribute *at
 	spin_unlock(&rttest_lock);
 
 	curr += sprintf(curr, ", T: %p, R: %p\n", tsk,
-			mutexes[td->dev.id].owner);
+			mutexes[td->sysdev.id].owner);
 
 	return curr - buf;
 }
 
-static DEVICE_ATTR(status, 0600, sysfs_test_status, NULL);
-static DEVICE_ATTR(command, 0600, NULL, sysfs_test_command);
+static SYSDEV_ATTR(status, 0600, sysfs_test_status, NULL);
+static SYSDEV_ATTR(command, 0600, NULL, sysfs_test_command);
 
-static struct bus_type rttest_subsys = {
+static struct sysdev_class rttest_sysclass = {
 	.name = "rttest",
-	.dev_name = "rttest",
 };
 
 static int init_test_thread(int id)
 {
-	thread_data[id].dev.bus = &rttest_subsys;
-	thread_data[id].dev.id = id;
+	thread_data[id].sysdev.cls = &rttest_sysclass;
+	thread_data[id].sysdev.id = id;
 
 	threads[id] = kthread_run(test_func, &thread_data[id], "rt-test-%d", id);
 	if (IS_ERR(threads[id]))
 		return PTR_ERR(threads[id]);
 
-	return device_register(&thread_data[id].dev);
+	return sysdev_register(&thread_data[id].sysdev);
 }
 
 static int init_rttest(void)
@@ -394,7 +419,7 @@ static int init_rttest(void)
 	for (i = 0; i < MAX_RT_TEST_MUTEXES; i++)
 		rt_mutex_init(&mutexes[i]);
 
-	ret = subsys_system_register(&rttest_subsys, NULL);
+	ret = sysdev_class_register(&rttest_sysclass);
 	if (ret)
 		return ret;
 
@@ -402,10 +427,10 @@ static int init_rttest(void)
 		ret = init_test_thread(i);
 		if (ret)
 			break;
-		ret = device_create_file(&thread_data[i].dev, &dev_attr_status);
+		ret = sysdev_create_file(&thread_data[i].sysdev, &attr_status);
 		if (ret)
 			break;
-		ret = device_create_file(&thread_data[i].dev, &dev_attr_command);
+		ret = sysdev_create_file(&thread_data[i].sysdev, &attr_command);
 		if (ret)
 			break;
 	}

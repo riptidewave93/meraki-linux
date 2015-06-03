@@ -23,10 +23,8 @@
  * FIXME: docs
  */
 #include <linux/types.h>
-#include <linux/slab.h>
 #include <linux/usb/ch9.h>
 #include <linux/random.h>
-#include <linux/export.h>
 #include "wusbhc.h"
 
 static void wusbhc_set_gtk_callback(struct urb *urb);
@@ -207,15 +205,15 @@ int wusb_dev_sec_add(struct wusbhc *wusbhc,
 	const void *itr, *top;
 	char buf[64];
 
-	secd = kmalloc(sizeof(*secd), GFP_KERNEL);
+	secd = kmalloc(sizeof(struct usb_security_descriptor), GFP_KERNEL);
 	if (secd == NULL) {
 		result = -ENOMEM;
 		goto out;
 	}
 
 	result = usb_get_descriptor(usb_dev, USB_DT_SECURITY,
-				    0, secd, sizeof(*secd));
-	if (result < sizeof(*secd)) {
+				    0, secd, sizeof(struct usb_security_descriptor));
+	if (result < sizeof(secd)) {
 		dev_err(dev, "Can't read security descriptor or "
 			"not enough data: %d\n", result);
 		goto out;
@@ -354,7 +352,7 @@ int wusb_dev_4way_handshake(struct wusbhc *wusbhc, struct wusb_dev *wusb_dev,
 	struct wusb_keydvt_in keydvt_in;
 	struct wusb_keydvt_out keydvt_out;
 
-	hs = kcalloc(3, sizeof(hs[0]), GFP_KERNEL);
+	hs = kzalloc(3*sizeof(hs[0]), GFP_KERNEL);
 	if (hs == NULL) {
 		dev_err(dev, "can't allocate handshake data\n");
 		goto error_kzalloc;

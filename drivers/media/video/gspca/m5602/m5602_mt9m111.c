@@ -16,8 +16,6 @@
  *
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include "m5602_mt9m111.h"
 
 static int mt9m111_set_vflip(struct gspca_dev *gspca_dev, __s32 val);
@@ -50,7 +48,7 @@ static struct v4l2_pix_format mt9m111_modes[] = {
 	}
 };
 
-static const struct ctrl mt9m111_ctrls[] = {
+const static struct ctrl mt9m111_ctrls[] = {
 #define VFLIP_IDX 0
 	{
 		{
@@ -111,14 +109,14 @@ static const struct ctrl mt9m111_ctrls[] = {
 #define GREEN_BALANCE_IDX 4
 	{
 		{
-			.id		= M5602_V4L2_CID_GREEN_BALANCE,
-			.type		= V4L2_CTRL_TYPE_INTEGER,
-			.name		= "green balance",
-			.minimum	= 0x00,
-			.maximum	= 0x7ff,
-			.step		= 0x1,
-			.default_value	= MT9M111_GREEN_GAIN_DEFAULT,
-			.flags		= V4L2_CTRL_FLAG_SLIDER
+			.id 		= M5602_V4L2_CID_GREEN_BALANCE,
+			.type 		= V4L2_CTRL_TYPE_INTEGER,
+			.name 		= "green balance",
+			.minimum 	= 0x00,
+			.maximum 	= 0x7ff,
+			.step 		= 0x1,
+			.default_value 	= MT9M111_GREEN_GAIN_DEFAULT,
+			.flags         	= V4L2_CTRL_FLAG_SLIDER
 		},
 		.set = mt9m111_set_green_balance,
 		.get = mt9m111_get_green_balance
@@ -126,14 +124,14 @@ static const struct ctrl mt9m111_ctrls[] = {
 #define BLUE_BALANCE_IDX 5
 	{
 		{
-			.id		= V4L2_CID_BLUE_BALANCE,
-			.type		= V4L2_CTRL_TYPE_INTEGER,
-			.name		= "blue balance",
-			.minimum	= 0x00,
-			.maximum	= 0x7ff,
-			.step		= 0x1,
-			.default_value	= MT9M111_BLUE_GAIN_DEFAULT,
-			.flags		= V4L2_CTRL_FLAG_SLIDER
+			.id 		= V4L2_CID_BLUE_BALANCE,
+			.type 		= V4L2_CTRL_TYPE_INTEGER,
+			.name 		= "blue balance",
+			.minimum 	= 0x00,
+			.maximum 	= 0x7ff,
+			.step 		= 0x1,
+			.default_value 	= MT9M111_BLUE_GAIN_DEFAULT,
+			.flags         	= V4L2_CTRL_FLAG_SLIDER
 		},
 		.set = mt9m111_set_blue_balance,
 		.get = mt9m111_get_blue_balance
@@ -141,14 +139,14 @@ static const struct ctrl mt9m111_ctrls[] = {
 #define RED_BALANCE_IDX 5
 	{
 		{
-			.id		= V4L2_CID_RED_BALANCE,
-			.type		= V4L2_CTRL_TYPE_INTEGER,
-			.name		= "red balance",
-			.minimum	= 0x00,
-			.maximum	= 0x7ff,
-			.step		= 0x1,
-			.default_value	= MT9M111_RED_GAIN_DEFAULT,
-			.flags		= V4L2_CTRL_FLAG_SLIDER
+			.id 		= V4L2_CID_RED_BALANCE,
+			.type 		= V4L2_CTRL_TYPE_INTEGER,
+			.name 		= "red balance",
+			.minimum 	= 0x00,
+			.maximum 	= 0x7ff,
+			.step 		= 0x1,
+			.default_value 	= MT9M111_RED_GAIN_DEFAULT,
+			.flags         	= V4L2_CTRL_FLAG_SLIDER
 		},
 		.set = mt9m111_set_red_balance,
 		.get = mt9m111_get_red_balance
@@ -165,7 +163,7 @@ int mt9m111_probe(struct sd *sd)
 
 	if (force_sensor) {
 		if (force_sensor == MT9M111_SENSOR) {
-			pr_info("Forcing a %s sensor\n", mt9m111.name);
+			info("Forcing a %s sensor", mt9m111.name);
 			goto sensor_found;
 		}
 		/* If we want to force another sensor, don't try to probe this
@@ -173,7 +171,7 @@ int mt9m111_probe(struct sd *sd)
 		return -ENODEV;
 	}
 
-	PDEBUG(D_PROBE, "Probing for a mt9m111 sensor");
+	info("Probing for a mt9m111 sensor");
 
 	/* Do the preinit */
 	for (i = 0; i < ARRAY_SIZE(preinit_mt9m111); i++) {
@@ -193,7 +191,7 @@ int mt9m111_probe(struct sd *sd)
 		return -ENODEV;
 
 	if ((data[0] == 0x14) && (data[1] == 0x3a)) {
-		pr_info("Detected a mt9m111 sensor\n");
+		info("Detected a mt9m111 sensor");
 		goto sensor_found;
 	}
 
@@ -614,34 +612,34 @@ static void mt9m111_dump_registers(struct sd *sd)
 {
 	u8 address, value[2] = {0x00, 0x00};
 
-	pr_info("Dumping the mt9m111 register state\n");
+	info("Dumping the mt9m111 register state");
 
-	pr_info("Dumping the mt9m111 sensor core registers\n");
+	info("Dumping the mt9m111 sensor core registers");
 	value[1] = MT9M111_SENSOR_CORE;
 	m5602_write_sensor(sd, MT9M111_PAGE_MAP, value, 2);
 	for (address = 0; address < 0xff; address++) {
 		m5602_read_sensor(sd, address, value, 2);
-		pr_info("register 0x%x contains 0x%x%x\n",
-			address, value[0], value[1]);
+		info("register 0x%x contains 0x%x%x",
+		     address, value[0], value[1]);
 	}
 
-	pr_info("Dumping the mt9m111 color pipeline registers\n");
+	info("Dumping the mt9m111 color pipeline registers");
 	value[1] = MT9M111_COLORPIPE;
 	m5602_write_sensor(sd, MT9M111_PAGE_MAP, value, 2);
 	for (address = 0; address < 0xff; address++) {
 		m5602_read_sensor(sd, address, value, 2);
-		pr_info("register 0x%x contains 0x%x%x\n",
-			address, value[0], value[1]);
+		info("register 0x%x contains 0x%x%x",
+		     address, value[0], value[1]);
 	}
 
-	pr_info("Dumping the mt9m111 camera control registers\n");
+	info("Dumping the mt9m111 camera control registers");
 	value[1] = MT9M111_CAMERA_CONTROL;
 	m5602_write_sensor(sd, MT9M111_PAGE_MAP, value, 2);
 	for (address = 0; address < 0xff; address++) {
 		m5602_read_sensor(sd, address, value, 2);
-		pr_info("register 0x%x contains 0x%x%x\n",
-			address, value[0], value[1]);
+		info("register 0x%x contains 0x%x%x",
+		     address, value[0], value[1]);
 	}
 
-	pr_info("mt9m111 register state dump complete\n");
+	info("mt9m111 register state dump complete");
 }

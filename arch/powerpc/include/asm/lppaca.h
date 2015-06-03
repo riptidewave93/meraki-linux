@@ -33,16 +33,8 @@
 //
 //----------------------------------------------------------------------------
 #include <linux/cache.h>
-#include <linux/threads.h>
 #include <asm/types.h>
 #include <asm/mmu.h>
-
-/*
- * We only have to have statically allocated lppaca structs on
- * legacy iSeries, which supports at most 64 cpus.
- */
-#define NR_LPPACAS	1
-
 
 /* The Hypervisor barfs if the lppaca crosses a page boundary.  A 1k
  * alignment is sufficient to prevent this */
@@ -70,10 +62,7 @@ struct lppaca {
 	volatile u32 dyn_pir;		// Dynamic ProcIdReg value	x20-x23
 	u32	dsei_data;           	// DSEI data                  	x24-x27
 	u64	sprg3;               	// SPRG3 value                	x28-x2F
-	u8	reserved3[40];		// Reserved			x30-x57
-	volatile u8 vphn_assoc_counts[8]; // Virtual processor home node
-					// associativity change counters x58-x5F
-	u8	reserved4[32];		// Reserved			x60-x7F
+	u8	reserved3[80];		// Reserved			x30-x7F
 
 //=============================================================================
 // CACHE_LINE_2 0x0080 - 0x00FF Contains local read-write data
@@ -97,7 +86,7 @@ struct lppaca {
 	// processing of external interrupts.  Note that PLIC will store the
 	// XIRR directly into the xXirrValue field so that another XIRR will
 	// not be presented until this one clears.  The layout of the low
-	// 4-bytes of this Dword is up to SLIC - PLIC just checks whether the
+	// 4-bytes of this Dword is upto SLIC - PLIC just checks whether the
 	// entire Dword is zero or not.  A non-zero value in the low order
 	// 2-bytes will result in SLIC being granted the highest thread
 	// priority upon return.  A 0 will return to SLIC as medium priority.
@@ -111,14 +100,7 @@ struct lppaca {
 	// Used to pass parms from the OS to PLIC for SetAsrAndRfid
 	u64	saved_gpr3;		// Saved GPR3                   x20-x27
 	u64	saved_gpr4;		// Saved GPR4                   x28-x2F
-	union {
-		u64	saved_gpr5;	/* Saved GPR5               x30-x37 */
-		struct {
-			u8	cede_latency_hint;  /*			x30 */
-			u8	reserved[7];        /*		    x31-x36 */
-		} fields;
-	} gpr5_dword;
-
+	u64	saved_gpr5;		// Saved GPR5                   x30-x37
 
 	u8	dtl_enable_mask;	// Dispatch Trace Log mask	x38-x38
 	u8	donate_dedicated_cpu;	// Donate dedicated CPU cycles  x39-x39
@@ -164,8 +146,6 @@ struct lppaca {
 
 extern struct lppaca lppaca[];
 
-#define lppaca_of(cpu)	(*paca[cpu].lppaca_ptr)
-
 /*
  * SLB shadow buffer structure as defined in the PAPR.  The save_area
  * contains adjacent ESID and VSID pairs for each shadowed SLB.  The
@@ -182,35 +162,6 @@ struct slb_shadow {
 } ____cacheline_aligned;
 
 extern struct slb_shadow slb_shadow[];
-
-/*
- * Layout of entries in the hypervisor's dispatch trace log buffer.
- */
-struct dtl_entry {
-	u8	dispatch_reason;
-	u8	preempt_reason;
-	u16	processor_id;
-	u32	enqueue_to_dispatch_time;
-	u32	ready_to_enqueue_time;
-	u32	waiting_to_ready_time;
-	u64	timebase;
-	u64	fault_addr;
-	u64	srr0;
-	u64	srr1;
-};
-
-#define DISPATCH_LOG_BYTES	4096	/* bytes per cpu */
-#define N_DISPATCH_LOG		(DISPATCH_LOG_BYTES / sizeof(struct dtl_entry))
-
-extern struct kmem_cache *dtl_cache;
-
-/*
- * When CONFIG_VIRT_CPU_ACCOUNTING = y, the cpu accounting code controls
- * reading from the dispatch trace log.  If other code wants to consume
- * DTL entries, it can set this pointer to a function that will get
- * called once for each DTL entry that gets processed.
- */
-extern void (*dtl_consumer)(struct dtl_entry *entry, u64 index);
 
 #endif /* CONFIG_PPC_BOOK3S */
 #endif /* __KERNEL__ */

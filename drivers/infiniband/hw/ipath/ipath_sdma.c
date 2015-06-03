@@ -31,7 +31,6 @@
  */
 
 #include <linux/spinlock.h>
-#include <linux/gfp.h>
 
 #include "ipath_kernel.h"
 #include "ipath_verbs.h"

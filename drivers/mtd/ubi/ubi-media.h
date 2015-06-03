@@ -130,6 +130,7 @@ enum {
  * @vid_hdr_offset: where the VID header starts
  * @data_offset: where the user data start
  * @image_seq: image sequence number
+ * @peb_size: size of PEB, must be multiple of erase size
  * @padding2: reserved for future, zeroes
  * @hdr_crc: erase counter header CRC checksum
  *
@@ -162,7 +163,8 @@ struct ubi_ec_hdr {
 	__be32  vid_hdr_offset;
 	__be32  data_offset;
 	__be32  image_seq;
-	__u8    padding2[32];
+	__be32	peb_size;
+	__u8    padding2[28];
 	__be32  hdr_crc;
 } __packed;
 

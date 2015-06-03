@@ -47,29 +47,35 @@ static ssize_t show_ctrl (struct device *dev, struct device_attribute *attr, cha
 	bus = pdev->subordinate;
 
 	out += sprintf(buf, "Free resources: memory\n");
-	pci_bus_for_each_resource(bus, res, index) {
+	for (index = 0; index < PCI_BUS_NUM_RESOURCES; index++) {
+		res = bus->resource[index];
 		if (res && (res->flags & IORESOURCE_MEM) &&
 				!(res->flags & IORESOURCE_PREFETCH)) {
-			out += sprintf(out, "start = %8.8llx, length = %8.8llx\n",
-				       (unsigned long long)res->start,
-				       (unsigned long long)resource_size(res));
+			out += sprintf(out, "start = %8.8llx, "
+					"length = %8.8llx\n",
+					(unsigned long long)res->start,
+					(unsigned long long)(res->end - res->start));
 		}
 	}
 	out += sprintf(out, "Free resources: prefetchable memory\n");
-	pci_bus_for_each_resource(bus, res, index) {
+	for (index = 0; index < PCI_BUS_NUM_RESOURCES; index++) {
+		res = bus->resource[index];
 		if (res && (res->flags & IORESOURCE_MEM) &&
 			       (res->flags & IORESOURCE_PREFETCH)) {
-			out += sprintf(out, "start = %8.8llx, length = %8.8llx\n",
-				       (unsigned long long)res->start,
-				       (unsigned long long)resource_size(res));
+			out += sprintf(out, "start = %8.8llx, "
+					"length = %8.8llx\n",
+					(unsigned long long)res->start,
+					(unsigned long long)(res->end - res->start));
 		}
 	}
 	out += sprintf(out, "Free resources: IO\n");
-	pci_bus_for_each_resource(bus, res, index) {
+	for (index = 0; index < PCI_BUS_NUM_RESOURCES; index++) {
+		res = bus->resource[index];
 		if (res && (res->flags & IORESOURCE_IO)) {
-			out += sprintf(out, "start = %8.8llx, length = %8.8llx\n",
-				       (unsigned long long)res->start,
-				       (unsigned long long)resource_size(res));
+			out += sprintf(out, "start = %8.8llx, "
+					"length = %8.8llx\n",
+					(unsigned long long)res->start,
+					(unsigned long long)(res->end - res->start));
 		}
 	}
 	out += sprintf(out, "Free resources: bus numbers\n");

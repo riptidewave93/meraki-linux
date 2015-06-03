@@ -8,7 +8,6 @@
 
 #include <linux/kernel.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
 
 #include <asm/io.h>
 #include <asm/prom.h>
@@ -42,7 +41,7 @@ int i2sbus_control_add_dev(struct i2sbus_control *c,
 {
 	struct device_node *np;
 
-	np = i2sdev->sound.ofdev.dev.of_node;
+	np = i2sdev->sound.ofdev.node;
 	i2sdev->enable = pmf_find_function(np, "enable");
 	i2sdev->cell_enable = pmf_find_function(np, "cell-enable");
 	i2sdev->clock_enable = pmf_find_function(np, "clock-enable");

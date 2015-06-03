@@ -12,7 +12,7 @@
 
 # include <linux/types.h>
 #ifdef __KERNEL__
-# include <linux/nfsd/nfsfh.h>
+# include <linux/in.h>
 #endif
 
 /*
@@ -35,27 +35,15 @@
 #define NFSEXP_NOHIDE		0x0200
 #define NFSEXP_NOSUBTREECHECK	0x0400
 #define	NFSEXP_NOAUTHNLM	0x0800		/* Don't authenticate NLM requests - just trust */
-#define NFSEXP_MSNFS		0x1000	/* do silly things that MS clients expect; no longer supported */
+#define NFSEXP_MSNFS		0x1000	/* do silly things that MS clients expect */
 #define NFSEXP_FSID		0x2000
 #define	NFSEXP_CROSSMOUNT	0x4000
 #define	NFSEXP_NOACL		0x8000	/* reserved for possible ACL related use */
-/*
- * The NFSEXP_V4ROOT flag causes the kernel to give access only to NFSv4
- * clients, and only to the single directory that is the root of the
- * export; further lookup and readdir operations are treated as if every
- * subdirectory was a mountpoint, and ignored if they are not themselves
- * exported.  This is used by nfsd and mountd to construct the NFSv4
- * pseudofilesystem, which provides access only to paths leading to each
- * exported filesystem.
- */
-#define	NFSEXP_V4ROOT		0x10000
-/* All flags that we claim to support.  (Note we don't support NOACL.) */
-#define NFSEXP_ALLFLAGS		0x17E3F
+#define NFSEXP_ALLFLAGS		0xFE3F
 
 /* The flags that may vary depending on security flavor: */
 #define NFSEXP_SECINFO_FLAGS	(NFSEXP_READONLY | NFSEXP_ROOTSQUASH \
-					| NFSEXP_ALLSQUASH \
-					| NFSEXP_INSECURE_PORT)
+					| NFSEXP_ALLSQUASH)
 
 #ifdef __KERNEL__
 
@@ -80,7 +68,7 @@ struct nfsd4_fs_locations {
 
 /*
  * We keep an array of pseudoflavors with the export, in order from most
- * to least preferred.  For the foreseeable future, we don't expect more
+ * to least preferred.  For the forseeable future, we don't expect more
  * than the eight pseudoflavors null, unix, krb5, krb5i, krb5p, skpm3,
  * spkm3i, and spkm3p (and using all 8 at once should be rare).
  */
@@ -96,6 +84,7 @@ struct svc_export {
 	struct auth_domain *	ex_client;
 	int			ex_flags;
 	struct path		ex_path;
+	char			*ex_pathname;
 	uid_t			ex_anon_uid;
 	gid_t			ex_anon_gid;
 	int			ex_fsid;
@@ -119,6 +108,7 @@ struct svc_expkey {
 	struct path		ek_path;
 };
 
+#define EX_SECURE(exp)		(!((exp)->ex_flags & NFSEXP_INSECURE_PORT))
 #define EX_ISSYNC(exp)		(!((exp)->ex_flags & NFSEXP_ASYNC))
 #define EX_NOHIDE(exp)		((exp)->ex_flags & NFSEXP_NOHIDE)
 #define EX_WGATHER(exp)		((exp)->ex_flags & NFSEXP_GATHERED_WRITES)
@@ -132,11 +122,12 @@ __be32 check_nfsd_access(struct svc_export *exp, struct svc_rqst *rqstp);
 int			nfsd_export_init(void);
 void			nfsd_export_shutdown(void);
 void			nfsd_export_flush(void);
+void			exp_readlock(void);
+void			exp_readunlock(void);
 struct svc_export *	rqst_exp_get_by_name(struct svc_rqst *,
 					     struct path *);
 struct svc_export *	rqst_exp_parent(struct svc_rqst *,
 					struct path *);
-struct svc_export *	rqst_find_fsidzero_export(struct svc_rqst *);
 int			exp_rootfh(struct auth_domain *, 
 					char *path, struct knfsd_fh *, int maxsize);
 __be32			exp_pseudoroot(struct svc_rqst *, struct svc_fh *);

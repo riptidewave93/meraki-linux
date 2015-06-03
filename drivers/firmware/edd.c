@@ -15,7 +15,7 @@
  * made in setup.S, copied to safe structures in setup.c,
  * and presents it in sysfs.
  *
- * Please see http://linux.dell.com/edd/results.html for
+ * Please see http://linux.dell.com/edd30/results.html for
  * the list of BIOSs which have been reported to implement EDD.
  *
  * This program is free software; you can redistribute it and/or modify
@@ -122,7 +122,7 @@ edd_attr_show(struct kobject * kobj, struct attribute *attr, char *buf)
 	return ret;
 }
 
-static const struct sysfs_ops edd_attr_ops = {
+static struct sysfs_ops edd_attr_ops = {
 	.show = edd_attr_show,
 };
 
@@ -151,8 +151,7 @@ edd_show_host_bus(struct edd_device *edev, char *buf)
 		p += scnprintf(p, left, "\tbase_address: %x\n",
 			     info->params.interface_path.isa.base_address);
 	} else if (!strncmp(info->params.host_bus_type, "PCIX", 4) ||
-		   !strncmp(info->params.host_bus_type, "PCI", 3) ||
-		   !strncmp(info->params.host_bus_type, "XPRS", 4)) {
+		   !strncmp(info->params.host_bus_type, "PCI", 3)) {
 		p += scnprintf(p, left,
 			     "\t%02x:%02x.%d  channel: %u\n",
 			     info->params.interface_path.pci.bus,
@@ -160,6 +159,7 @@ edd_show_host_bus(struct edd_device *edev, char *buf)
 			     info->params.interface_path.pci.function,
 			     info->params.interface_path.pci.channel);
 	} else if (!strncmp(info->params.host_bus_type, "IBND", 4) ||
+		   !strncmp(info->params.host_bus_type, "XPRS", 4) ||
 		   !strncmp(info->params.host_bus_type, "HTPT", 4)) {
 		p += scnprintf(p, left,
 			     "\tTBD: %llx\n",
@@ -531,8 +531,8 @@ static int
 edd_has_edd30(struct edd_device *edev)
 {
 	struct edd_info *info;
-	int i;
-	u8 csum = 0;
+	int i, nonzero_path = 0;
+	char c;
 
 	if (!edev)
 		return 0;
@@ -544,16 +544,16 @@ edd_has_edd30(struct edd_device *edev)
 		return 0;
 	}
 
-
-	/* We support only T13 spec */
-	if (info->params.device_path_info_length != 44)
+	for (i = 30; i <= 73; i++) {
+		c = *(((uint8_t *) info) + i + 4);
+		if (c) {
+			nonzero_path++;
+			break;
+		}
+	}
+	if (!nonzero_path) {
 		return 0;
-
-	for (i = 30; i < info->params.device_path_info_length + 30; i++)
-		csum += *(((u8 *)&info->params) + i);
-
-	if (csum)
-		return 0;
+	}
 
 	return 1;
 }
@@ -668,7 +668,7 @@ edd_get_pci_dev(struct edd_device *edev)
 {
 	struct edd_info *info = edd_dev_get_info(edev);
 
-	if (edd_dev_is_type(edev, "PCI") || edd_dev_is_type(edev, "XPRS")) {
+	if (edd_dev_is_type(edev, "PCI")) {
 		return pci_get_bus_and_slot(info->params.interface_path.pci.bus,
 				     PCI_DEVFN(info->params.interface_path.pci.slot,
 					       info->params.interface_path.pci.
@@ -744,7 +744,7 @@ static inline int edd_num_devices(void)
 static int __init
 edd_init(void)
 {
-	int i;
+	unsigned int i;
 	int rc=0;
 	struct edd_device *edev;
 
@@ -760,27 +760,21 @@ edd_init(void)
 	if (!edd_kset)
 		return -ENOMEM;
 
-	for (i = 0; i < edd_num_devices(); i++) {
+	for (i = 0; i < edd_num_devices() && !rc; i++) {
 		edev = kzalloc(sizeof (*edev), GFP_KERNEL);
-		if (!edev) {
-			rc = -ENOMEM;
-			goto out;
-		}
+		if (!edev)
+			return -ENOMEM;
 
 		rc = edd_device_register(edev, i);
 		if (rc) {
 			kfree(edev);
-			goto out;
+			break;
 		}
 		edd_devices[i] = edev;
 	}
 
-	return 0;
-
-out:
-	while (--i >= 0)
-		edd_device_unregister(edd_devices[i]);
-	kset_unregister(edd_kset);
+	if (rc)
+		kset_unregister(edd_kset);
 	return rc;
 }
 

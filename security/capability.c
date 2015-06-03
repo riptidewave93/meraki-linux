@@ -12,7 +12,12 @@
 
 #include <linux/security.h>
 
-static int cap_syslog(int type)
+static int cap_acct(struct file *file)
+{
+	return 0;
+}
+
+static int cap_sysctl(ctl_table *table, int op)
 {
 	return 0;
 }
@@ -27,7 +32,7 @@ static int cap_quota_on(struct dentry *dentry)
 	return 0;
 }
 
-static int cap_bprm_check_security(struct linux_binprm *bprm)
+static int cap_bprm_check_security (struct linux_binprm *bprm)
 {
 	return 0;
 }
@@ -54,11 +59,6 @@ static int cap_sb_copy_data(char *orig, char *copy)
 	return 0;
 }
 
-static int cap_sb_remount(struct super_block *sb, void *data)
-{
-	return 0;
-}
-
 static int cap_sb_kern_mount(struct super_block *sb, int flags, void *data)
 {
 	return 0;
@@ -80,14 +80,40 @@ static int cap_sb_mount(char *dev_name, struct path *path, char *type,
 	return 0;
 }
 
+static int cap_sb_check_sb(struct vfsmount *mnt, struct path *path)
+{
+	return 0;
+}
+
 static int cap_sb_umount(struct vfsmount *mnt, int flags)
 {
 	return 0;
 }
 
+static void cap_sb_umount_close(struct vfsmount *mnt)
+{
+}
+
+static void cap_sb_umount_busy(struct vfsmount *mnt)
+{
+}
+
+static void cap_sb_post_remount(struct vfsmount *mnt, unsigned long flags,
+				void *data)
+{
+}
+
+static void cap_sb_post_addmount(struct vfsmount *mnt, struct path *path)
+{
+}
+
 static int cap_sb_pivotroot(struct path *old_path, struct path *new_path)
 {
 	return 0;
+}
+
+static void cap_sb_post_pivotroot(struct path *old_path, struct path *new_path)
+{
 }
 
 static int cap_sb_set_mnt_opts(struct super_block *sb,
@@ -118,14 +144,13 @@ static void cap_inode_free_security(struct inode *inode)
 }
 
 static int cap_inode_init_security(struct inode *inode, struct inode *dir,
-				   const struct qstr *qstr, char **name,
-				   void **value, size_t *len)
+				   char **name, void **value, size_t *len)
 {
 	return -EOPNOTSUPP;
 }
 
 static int cap_inode_create(struct inode *inode, struct dentry *dentry,
-			    umode_t mask)
+			    int mask)
 {
 	return 0;
 }
@@ -148,7 +173,7 @@ static int cap_inode_symlink(struct inode *inode, struct dentry *dentry,
 }
 
 static int cap_inode_mkdir(struct inode *inode, struct dentry *dentry,
-			   umode_t mask)
+			   int mask)
 {
 	return 0;
 }
@@ -159,7 +184,7 @@ static int cap_inode_rmdir(struct inode *inode, struct dentry *dentry)
 }
 
 static int cap_inode_mknod(struct inode *inode, struct dentry *dentry,
-			   umode_t mode, dev_t dev)
+			   int mode, dev_t dev)
 {
 	return 0;
 }
@@ -194,6 +219,10 @@ static int cap_inode_setattr(struct dentry *dentry, struct iattr *iattr)
 static int cap_inode_getattr(struct vfsmount *mnt, struct dentry *dentry)
 {
 	return 0;
+}
+
+static void cap_inode_delete(struct inode *ino)
+{
 }
 
 static void cap_inode_post_setxattr(struct dentry *dentry, const char *name,
@@ -235,13 +264,13 @@ static void cap_inode_getsecid(const struct inode *inode, u32 *secid)
 }
 
 #ifdef CONFIG_SECURITY_PATH
-static int cap_path_mknod(struct path *dir, struct dentry *dentry, umode_t mode,
+static int cap_path_mknod(struct path *dir, struct dentry *dentry, int mode,
 			  unsigned int dev)
 {
 	return 0;
 }
 
-static int cap_path_mkdir(struct path *dir, struct dentry *dentry, umode_t mode)
+static int cap_path_mkdir(struct path *dir, struct dentry *dentry, int mode)
 {
 	return 0;
 }
@@ -274,22 +303,8 @@ static int cap_path_rename(struct path *old_path, struct dentry *old_dentry,
 	return 0;
 }
 
-static int cap_path_truncate(struct path *path)
-{
-	return 0;
-}
-
-static int cap_path_chmod(struct path *path, umode_t mode)
-{
-	return 0;
-}
-
-static int cap_path_chown(struct path *path, uid_t uid, gid_t gid)
-{
-	return 0;
-}
-
-static int cap_path_chroot(struct path *root)
+static int cap_path_truncate(struct path *path, loff_t length,
+			     unsigned int time_attrs)
 {
 	return 0;
 }
@@ -358,10 +373,6 @@ static int cap_task_create(unsigned long clone_flags)
 	return 0;
 }
 
-static void cap_task_free(struct task_struct *task)
-{
-}
-
 static int cap_cred_alloc_blank(struct cred *cred, gfp_t gfp)
 {
 	return 0;
@@ -374,6 +385,10 @@ static void cap_cred_free(struct cred *cred)
 static int cap_cred_prepare(struct cred *new, const struct cred *old, gfp_t gfp)
 {
 	return 0;
+}
+
+static void cap_cred_commit(struct cred *new, const struct cred *old)
+{
 }
 
 static void cap_cred_transfer(struct cred *new, const struct cred *old)
@@ -390,7 +405,17 @@ static int cap_kernel_create_files_as(struct cred *new, struct inode *inode)
 	return 0;
 }
 
-static int cap_kernel_module_request(char *kmod_name)
+static int cap_kernel_module_request(void)
+{
+	return 0;
+}
+
+static int cap_task_setuid(uid_t id0, uid_t id1, uid_t id2, int flags)
+{
+	return 0;
+}
+
+static int cap_task_setgid(gid_t id0, gid_t id1, gid_t id2, int flags)
 {
 	return 0;
 }
@@ -415,13 +440,17 @@ static void cap_task_getsecid(struct task_struct *p, u32 *secid)
 	*secid = 0;
 }
 
+static int cap_task_setgroups(struct group_info *group_info)
+{
+	return 0;
+}
+
 static int cap_task_getioprio(struct task_struct *p)
 {
 	return 0;
 }
 
-static int cap_task_setrlimit(struct task_struct *p, unsigned int resource,
-		struct rlimit *new_rlim)
+static int cap_task_setrlimit(unsigned int resource, struct rlimit *new_rlim)
 {
 	return 0;
 }
@@ -552,7 +581,7 @@ static int cap_sem_semop(struct sem_array *sma, struct sembuf *sops,
 }
 
 #ifdef CONFIG_SECURITY_NETWORK
-static int cap_unix_stream_connect(struct sock *sock, struct sock *other,
+static int cap_unix_stream_connect(struct socket *sock, struct socket *other,
 				   struct sock *newsk)
 {
 	return 0;
@@ -686,18 +715,7 @@ static void cap_inet_conn_established(struct sock *sk, struct sk_buff *skb)
 {
 }
 
-static int cap_secmark_relabel_packet(u32 secid)
-{
-	return 0;
-}
 
-static void cap_secmark_refcount_inc(void)
-{
-}
-
-static void cap_secmark_refcount_dec(void)
-{
-}
 
 static void cap_req_classify_flow(const struct request_sock *req,
 				  struct flowi *fl)
@@ -764,7 +782,7 @@ static int cap_xfrm_policy_lookup(struct xfrm_sec_ctx *ctx, u32 sk_sid, u8 dir)
 
 static int cap_xfrm_state_pol_flow_match(struct xfrm_state *x,
 					 struct xfrm_policy *xp,
-					 const struct flowi *fl)
+					 struct flowi *fl)
 {
 	return 1;
 }
@@ -797,8 +815,7 @@ static int cap_secid_to_secctx(u32 secid, char **secdata, u32 *seclen)
 
 static int cap_secctx_to_secid(const char *secdata, u32 seclen, u32 *secid)
 {
-	*secid = 0;
-	return 0;
+	return -EOPNOTSUPP;
 }
 
 static void cap_release_secctx(char *secdata, u32 seclen)
@@ -842,6 +859,13 @@ static int cap_key_getsecurity(struct key *key, char **_buffer)
 	return 0;
 }
 
+static int cap_key_session_to_parent(const struct cred *cred,
+				     const struct cred *parent_cred,
+				     struct key *key)
+{
+	return 0;
+}
+
 #endif /* CONFIG_KEYS */
 
 #ifdef CONFIG_AUDIT
@@ -866,6 +890,10 @@ static void cap_audit_rule_free(void *lsmrule)
 }
 #endif /* CONFIG_AUDIT */
 
+struct security_operations default_security_ops = {
+	.name	= "default",
+};
+
 #define set_to_cap_if_null(ops, function)				\
 	do {								\
 		if (!ops->function) {					\
@@ -875,15 +903,17 @@ static void cap_audit_rule_free(void *lsmrule)
 			}						\
 	} while (0)
 
-void __init security_fixup_ops(struct security_operations *ops)
+void security_fixup_ops(struct security_operations *ops)
 {
 	set_to_cap_if_null(ops, ptrace_access_check);
 	set_to_cap_if_null(ops, ptrace_traceme);
 	set_to_cap_if_null(ops, capget);
 	set_to_cap_if_null(ops, capset);
+	set_to_cap_if_null(ops, acct);
 	set_to_cap_if_null(ops, capable);
 	set_to_cap_if_null(ops, quotactl);
 	set_to_cap_if_null(ops, quota_on);
+	set_to_cap_if_null(ops, sysctl);
 	set_to_cap_if_null(ops, syslog);
 	set_to_cap_if_null(ops, settime);
 	set_to_cap_if_null(ops, vm_enough_memory);
@@ -895,13 +925,18 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, sb_alloc_security);
 	set_to_cap_if_null(ops, sb_free_security);
 	set_to_cap_if_null(ops, sb_copy_data);
-	set_to_cap_if_null(ops, sb_remount);
 	set_to_cap_if_null(ops, sb_kern_mount);
 	set_to_cap_if_null(ops, sb_show_options);
 	set_to_cap_if_null(ops, sb_statfs);
 	set_to_cap_if_null(ops, sb_mount);
+	set_to_cap_if_null(ops, sb_check_sb);
 	set_to_cap_if_null(ops, sb_umount);
+	set_to_cap_if_null(ops, sb_umount_close);
+	set_to_cap_if_null(ops, sb_umount_busy);
+	set_to_cap_if_null(ops, sb_post_remount);
+	set_to_cap_if_null(ops, sb_post_addmount);
 	set_to_cap_if_null(ops, sb_pivotroot);
+	set_to_cap_if_null(ops, sb_post_pivotroot);
 	set_to_cap_if_null(ops, sb_set_mnt_opts);
 	set_to_cap_if_null(ops, sb_clone_mnt_opts);
 	set_to_cap_if_null(ops, sb_parse_opts_str);
@@ -921,6 +956,7 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, inode_permission);
 	set_to_cap_if_null(ops, inode_setattr);
 	set_to_cap_if_null(ops, inode_getattr);
+	set_to_cap_if_null(ops, inode_delete);
 	set_to_cap_if_null(ops, inode_setxattr);
 	set_to_cap_if_null(ops, inode_post_setxattr);
 	set_to_cap_if_null(ops, inode_getxattr);
@@ -941,9 +977,6 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, path_link);
 	set_to_cap_if_null(ops, path_rename);
 	set_to_cap_if_null(ops, path_truncate);
-	set_to_cap_if_null(ops, path_chmod);
-	set_to_cap_if_null(ops, path_chown);
-	set_to_cap_if_null(ops, path_chroot);
 #endif
 	set_to_cap_if_null(ops, file_permission);
 	set_to_cap_if_null(ops, file_alloc_security);
@@ -958,19 +991,22 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, file_receive);
 	set_to_cap_if_null(ops, dentry_open);
 	set_to_cap_if_null(ops, task_create);
-	set_to_cap_if_null(ops, task_free);
 	set_to_cap_if_null(ops, cred_alloc_blank);
 	set_to_cap_if_null(ops, cred_free);
 	set_to_cap_if_null(ops, cred_prepare);
+	set_to_cap_if_null(ops, cred_commit);
 	set_to_cap_if_null(ops, cred_transfer);
 	set_to_cap_if_null(ops, kernel_act_as);
 	set_to_cap_if_null(ops, kernel_create_files_as);
 	set_to_cap_if_null(ops, kernel_module_request);
+	set_to_cap_if_null(ops, task_setuid);
 	set_to_cap_if_null(ops, task_fix_setuid);
+	set_to_cap_if_null(ops, task_setgid);
 	set_to_cap_if_null(ops, task_setpgid);
 	set_to_cap_if_null(ops, task_getpgid);
 	set_to_cap_if_null(ops, task_getsid);
 	set_to_cap_if_null(ops, task_getsecid);
+	set_to_cap_if_null(ops, task_setgroups);
 	set_to_cap_if_null(ops, task_setnice);
 	set_to_cap_if_null(ops, task_setioprio);
 	set_to_cap_if_null(ops, task_getioprio);
@@ -1003,6 +1039,7 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, sem_semctl);
 	set_to_cap_if_null(ops, sem_semop);
 	set_to_cap_if_null(ops, netlink_send);
+	set_to_cap_if_null(ops, netlink_recv);
 	set_to_cap_if_null(ops, d_instantiate);
 	set_to_cap_if_null(ops, getprocattr);
 	set_to_cap_if_null(ops, setprocattr);
@@ -1039,9 +1076,6 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, inet_conn_request);
 	set_to_cap_if_null(ops, inet_csk_clone);
 	set_to_cap_if_null(ops, inet_conn_established);
-	set_to_cap_if_null(ops, secmark_relabel_packet);
-	set_to_cap_if_null(ops, secmark_refcount_inc);
-	set_to_cap_if_null(ops, secmark_refcount_dec);
 	set_to_cap_if_null(ops, req_classify_flow);
 	set_to_cap_if_null(ops, tun_dev_create);
 	set_to_cap_if_null(ops, tun_dev_post_create);
@@ -1064,6 +1098,7 @@ void __init security_fixup_ops(struct security_operations *ops)
 	set_to_cap_if_null(ops, key_free);
 	set_to_cap_if_null(ops, key_permission);
 	set_to_cap_if_null(ops, key_getsecurity);
+	set_to_cap_if_null(ops, key_session_to_parent);
 #endif	/* CONFIG_KEYS */
 #ifdef CONFIG_AUDIT
 	set_to_cap_if_null(ops, audit_rule_init);

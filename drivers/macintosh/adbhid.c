@@ -328,7 +328,7 @@ adbhid_input_keycode(int id, int scancode, int repeat)
 	switch (keycode) {
 	case ADB_KEY_CAPSLOCK:
 		if (!restore_capslock_events) {
-			/* Generate down/up events for CapsLock every time. */
+			/* Generate down/up events for CapsLock everytime. */
 			input_report_key(ahid->input, KEY_CAPSLOCK, 1);
 			input_sync(ahid->input);
 			input_report_key(ahid->input, KEY_CAPSLOCK, 0);

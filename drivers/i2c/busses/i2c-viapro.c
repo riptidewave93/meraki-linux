@@ -51,7 +51,7 @@
 #include <linux/i2c.h>
 #include <linux/init.h>
 #include <linux/acpi.h>
-#include <linux/io.h>
+#include <asm/io.h>
 
 static struct pci_dev *vt596_pdev;
 
@@ -91,7 +91,7 @@ static unsigned short SMBHSTCFG = 0xD2;
 
 /* If force is set to anything different from 0, we forcibly enable the
    VT596. DANGEROUS! */
-static bool force;
+static int force;
 module_param(force, bool, 0);
 MODULE_PARM_DESC(force, "Forcibly enable the SMBus. DANGEROUS!");
 
@@ -165,10 +165,10 @@ static int vt596_transaction(u8 size)
 	do {
 		msleep(1);
 		temp = inb_p(SMBHSTSTS);
-	} while ((temp & 0x01) && (++timeout < MAX_TIMEOUT));
+	} while ((temp & 0x01) && (timeout++ < MAX_TIMEOUT));
 
 	/* If the SMBus is still busy, we give up */
-	if (timeout == MAX_TIMEOUT) {
+	if (timeout >= MAX_TIMEOUT) {
 		result = -ETIMEDOUT;
 		dev_err(&vt596_adapter.dev, "SMBus timeout!\n");
 	}
@@ -185,8 +185,14 @@ static int vt596_transaction(u8 size)
 	}
 
 	if (temp & 0x04) {
+		int read = inb_p(SMBHSTADD) & 0x01;
 		result = -ENXIO;
-		dev_dbg(&vt596_adapter.dev, "No response\n");
+		/* The quick and receive byte commands are used to probe
+		   for chips, so errors are expected, and we don't want
+		   to frighten the user. */
+		if (!((size == VT596_QUICK && !read) ||
+		      (size == VT596_BYTE && read)))
+			dev_err(&vt596_adapter.dev, "Transaction error!\n");
 	}
 
 	/* Resetting status register */
@@ -441,7 +447,7 @@ release_region:
 	return error;
 }
 
-static DEFINE_PCI_DEVICE_TABLE(vt596_ids) = {
+static struct pci_device_id vt596_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C596_3),
 	  .driver_data = SMBBA1 },
 	{ PCI_DEVICE(PCI_VENDOR_ID_VIA, PCI_DEVICE_ID_VIA_82C596B_3),

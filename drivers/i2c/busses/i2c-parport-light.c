@@ -1,14 +1,14 @@
 /* ------------------------------------------------------------------------ *
  * i2c-parport-light.c I2C bus over parallel port                           *
  * ------------------------------------------------------------------------ *
-   Copyright (C) 2003-2010 Jean Delvare <khali@linux-fr.org>
-
+   Copyright (C) 2003-2007 Jean Delvare <khali@linux-fr.org>
+   
    Based on older i2c-velleman.c driver
    Copyright (C) 1995-2000 Simon G. Vogl
    With some changes from:
    Frodo Looijaard <frodol@dds.nl>
    Kyösti Mälkki <kmalkki@cc.hut.fi>
-
+   
    This program is free software; you can redistribute it and/or modify
    it under the terms of the GNU General Public License as published by
    the Free Software Foundation; either version 2 of the License, or
@@ -27,13 +27,11 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/delay.h>
 #include <linux/platform_device.h>
 #include <linux/ioport.h>
 #include <linux/i2c.h>
 #include <linux/i2c-algo-bit.h>
-#include <linux/i2c-smbus.h>
-#include <linux/io.h>
+#include <asm/io.h>
 #include "i2c-parport.h"
 
 #define DEFAULT_BASE 0x378
@@ -44,10 +42,6 @@ static struct platform_device *pdev;
 static u16 base;
 module_param(base, ushort, 0);
 MODULE_PARM_DESC(base, "Base I/O address");
-
-static int irq;
-module_param(irq, int, 0);
-MODULE_PARM_DESC(irq, "IRQ (optional)");
 
 /* ----- Low-level parallel port access ----------------------------------- */
 
@@ -114,7 +108,7 @@ static struct i2c_algo_bit_data parport_algo_data = {
 	.getscl		= parport_getscl,
 	.udelay		= 50,
 	.timeout	= HZ,
-};
+}; 
 
 /* ----- Driver registration ---------------------------------------------- */
 
@@ -125,16 +119,6 @@ static struct i2c_adapter parport_adapter = {
 	.name		= "Parallel port adapter (light)",
 };
 
-/* SMBus alert support */
-static struct i2c_smbus_alert_setup alert_data = {
-	.alert_edge_triggered	= 1,
-};
-static struct i2c_client *ara;
-static struct lineop parport_ctrl_irq = {
-	.val		= (1 << 4),
-	.port		= PORT_CTRL,
-};
-
 static int __devinit i2c_parport_probe(struct platform_device *pdev)
 {
 	int err;
@@ -143,39 +127,18 @@ static int __devinit i2c_parport_probe(struct platform_device *pdev)
 	parport_setsda(NULL, 1);
 	parport_setscl(NULL, 1);
 	/* Other init if needed (power on...) */
-	if (adapter_parm[type].init.val) {
+	if (adapter_parm[type].init.val)
 		line_set(1, &adapter_parm[type].init);
-		/* Give powered devices some time to settle */
-		msleep(100);
-	}
 
 	parport_adapter.dev.parent = &pdev->dev;
 	err = i2c_bit_add_bus(&parport_adapter);
-	if (err) {
+	if (err)
 		dev_err(&pdev->dev, "Unable to register with I2C\n");
-		return err;
-	}
-
-	/* Setup SMBus alert if supported */
-	if (adapter_parm[type].smbus_alert && irq) {
-		alert_data.irq = irq;
-		ara = i2c_setup_smbus_alert(&parport_adapter, &alert_data);
-		if (ara)
-			line_set(1, &parport_ctrl_irq);
-		else
-			dev_warn(&pdev->dev, "Failed to register ARA client\n");
-	}
-
-	return 0;
+	return err;
 }
 
 static int __devexit i2c_parport_remove(struct platform_device *pdev)
 {
-	if (ara) {
-		line_set(0, &parport_ctrl_irq);
-		i2c_unregister_device(ara);
-		ara = NULL;
-	}
 	i2c_del_adapter(&parport_adapter);
 
 	/* Un-init if needed (power off...) */
@@ -242,10 +205,7 @@ static int __init i2c_parport_init(void)
 	if (!request_region(base, 3, DRVNAME))
 		return -EBUSY;
 
-	if (irq != 0)
-		pr_info(DRVNAME ": using irq %d\n", irq);
-
-	if (!adapter_parm[type].getscl.val)
+        if (!adapter_parm[type].getscl.val)
 		parport_algo_data.getscl = NULL;
 
 	/* Sets global pdev as a side effect */

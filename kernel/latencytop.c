@@ -53,12 +53,13 @@
 #include <linux/notifier.h>
 #include <linux/spinlock.h>
 #include <linux/proc_fs.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/list.h>
+#include <linux/slab.h>
 #include <linux/stacktrace.h>
 
-static DEFINE_RAW_SPINLOCK(latency_lock);
+static DEFINE_SPINLOCK(latency_lock);
 
 #define MAXLR 128
 static struct latency_record latency_record[MAXLR];
@@ -72,19 +73,19 @@ void clear_all_latency_tracing(struct task_struct *p)
 	if (!latencytop_enabled)
 		return;
 
-	raw_spin_lock_irqsave(&latency_lock, flags);
+	spin_lock_irqsave(&latency_lock, flags);
 	memset(&p->latency_record, 0, sizeof(p->latency_record));
 	p->latency_record_count = 0;
-	raw_spin_unlock_irqrestore(&latency_lock, flags);
+	spin_unlock_irqrestore(&latency_lock, flags);
 }
 
 static void clear_global_latency_tracing(void)
 {
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&latency_lock, flags);
+	spin_lock_irqsave(&latency_lock, flags);
 	memset(&latency_record, 0, sizeof(latency_record));
-	raw_spin_unlock_irqrestore(&latency_lock, flags);
+	spin_unlock_irqrestore(&latency_lock, flags);
 }
 
 static void __sched
@@ -153,7 +154,7 @@ static inline void store_stacktrace(struct task_struct *tsk,
 }
 
 /**
- * __account_scheduler_latency - record an occurred latency
+ * __account_scheduler_latency - record an occured latency
  * @tsk - the task struct of the task hitting the latency
  * @usecs - the duration of the latency in microseconds
  * @inter - 1 if the sleep was interruptible, 0 if uninterruptible
@@ -190,7 +191,7 @@ __account_scheduler_latency(struct task_struct *tsk, int usecs, int inter)
 	lat.max = usecs;
 	store_stacktrace(tsk, &lat);
 
-	raw_spin_lock_irqsave(&latency_lock, flags);
+	spin_lock_irqsave(&latency_lock, flags);
 
 	account_global_scheduler_latency(tsk, &lat);
 
@@ -231,7 +232,7 @@ __account_scheduler_latency(struct task_struct *tsk, int usecs, int inter)
 	memcpy(&tsk->latency_record[i], &lat, sizeof(struct latency_record));
 
 out_unlock:
-	raw_spin_unlock_irqrestore(&latency_lock, flags);
+	spin_unlock_irqrestore(&latency_lock, flags);
 }
 
 static int lstats_show(struct seq_file *m, void *v)
@@ -241,19 +242,24 @@ static int lstats_show(struct seq_file *m, void *v)
 	seq_puts(m, "Latency Top version : v0.1\n");
 
 	for (i = 0; i < MAXLR; i++) {
-		struct latency_record *lr = &latency_record[i];
-
-		if (lr->backtrace[0]) {
+		if (latency_record[i].backtrace[0]) {
 			int q;
-			seq_printf(m, "%i %lu %lu",
-				   lr->count, lr->time, lr->max);
+			seq_printf(m, "%i %lu %lu ",
+				latency_record[i].count,
+				latency_record[i].time,
+				latency_record[i].max);
 			for (q = 0; q < LT_BACKTRACEDEPTH; q++) {
-				unsigned long bt = lr->backtrace[q];
-				if (!bt)
+				char sym[KSYM_SYMBOL_LEN];
+				char *c;
+				if (!latency_record[i].backtrace[q])
 					break;
-				if (bt == ULONG_MAX)
+				if (latency_record[i].backtrace[q] == ULONG_MAX)
 					break;
-				seq_printf(m, " %ps", (void *)bt);
+				sprint_symbol(sym, latency_record[i].backtrace[q]);
+				c = strchr(sym, '+');
+				if (c)
+					*c = 0;
+				seq_printf(m, "%s ", sym);
 			}
 			seq_printf(m, "\n");
 		}

@@ -9,9 +9,8 @@ struct ht_irq_msg {
 /* Helper functions.. */
 void fetch_ht_irq_msg(unsigned int irq, struct ht_irq_msg *msg);
 void write_ht_irq_msg(unsigned int irq, struct ht_irq_msg *msg);
-struct irq_data;
-void mask_ht_irq(struct irq_data *data);
-void unmask_ht_irq(struct irq_data *data);
+void mask_ht_irq(unsigned int irq);
+void unmask_ht_irq(unsigned int irq);
 
 /* The arch hook for getting things started */
 int arch_setup_ht_irq(unsigned int irq, struct pci_dev *dev);

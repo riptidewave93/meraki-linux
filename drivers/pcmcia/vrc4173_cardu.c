@@ -461,7 +461,7 @@ static int __devinit vrc4173_cardu_probe(struct pci_dev *dev,
 {
 	vrc4173_socket_t *socket;
 	unsigned long start, len, flags;
-	int slot, err, ret;
+	int slot, err;
 
 	slot = vrc4173_cardu_slots++;
 	socket = &cardu_sockets[slot];
@@ -474,63 +474,43 @@ static int __devinit vrc4173_cardu_probe(struct pci_dev *dev,
 		return err;
 
 	start = pci_resource_start(dev, 0);
-	if (start == 0) {
-		ret = -ENODEV;
-		goto disable;
-	}
+	if (start == 0)
+		return -ENODEV;
 
 	len = pci_resource_len(dev, 0);
-	if (len == 0) {
-		ret = -ENODEV;
-		goto disable;
-	}
+	if (len == 0)
+		return -ENODEV;
 
-	flags = pci_resource_flags(dev, 0);
-	if ((flags & IORESOURCE_MEM) == 0) {
-		ret = -EBUSY;
-		goto disable;
-	}
+	if (((flags = pci_resource_flags(dev, 0)) & IORESOURCE_MEM) == 0)
+		return -EBUSY;
 
-	err = pci_request_regions(dev, socket->name);
-	if (err < 0) {
-		ret = err;
-		goto disable;
-	}
+	if ((err = pci_request_regions(dev, socket->name)) < 0)
+		return err;
 
 	socket->base = ioremap(start, len);
-	if (socket->base == NULL) {
-		ret = -ENODEV;
-		goto release;
-	}
+	if (socket->base == NULL)
+		return -ENODEV;
 
 	socket->dev = dev;
 
 	socket->pcmcia_socket = pcmcia_register_socket(slot, &cardu_operations, 1);
 	if (socket->pcmcia_socket == NULL) {
-		ret =  -ENOMEM;
-		goto unmap;
+		iounmap(socket->base);
+		socket->base = NULL;
+		return -ENOMEM;
 	}
 
 	if (request_irq(dev->irq, cardu_interrupt, IRQF_SHARED, socket->name, socket) < 0) {
-		ret = -EBUSY;
-		goto unregister;
+		pcmcia_unregister_socket(socket->pcmcia_socket);
+		socket->pcmcia_socket = NULL;
+		iounmap(socket->base);
+		socket->base = NULL;
+		return -EBUSY;
 	}
 
 	printk(KERN_INFO "%s at %#08lx, IRQ %d\n", socket->name, start, dev->irq);
 
 	return 0;
-
-unregister:
-	pcmcia_unregister_socket(socket->pcmcia_socket);
-	socket->pcmcia_socket = NULL;
-unmap:
-	iounmap(socket->base);
-	socket->base = NULL;
-release:
-	pci_release_regions(dev);
-disable:
-	pci_disable_device(dev);
-	return ret;
 }
 
 static int __devinit vrc4173_cardu_setup(char *options)
@@ -563,8 +543,11 @@ static int __devinit vrc4173_cardu_setup(char *options)
 
 __setup("vrc4173_cardu=", vrc4173_cardu_setup);
 
-static DEFINE_PCI_DEVICE_TABLE(vrc4173_cardu_id_table) = {
-	{ PCI_DEVICE(PCI_VENDOR_ID_NEC, PCI_DEVICE_ID_NEC_NAPCCARD) },
+static struct pci_device_id vrc4173_cardu_id_table[] __devinitdata = {
+	{	.vendor		= PCI_VENDOR_ID_NEC,
+		.device		= PCI_DEVICE_ID_NEC_NAPCCARD,
+		.subvendor	= PCI_ANY_ID,
+		.subdevice	= PCI_ANY_ID, },
         {0, }
 };
 

@@ -48,6 +48,7 @@
 #include <linux/net.h>
 #include <linux/in.h>
 #include <linux/if.h>
+#include <linux/slab.h>
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/bitops.h>
@@ -110,7 +111,7 @@ static int calc_crc_ccitt(const unsigned char *buf, int cnt)
 	for (; cnt > 0; cnt--)
 		crc = (crc >> 8) ^ crc_ccitt_table[(crc ^ *buf++) & 0xff];
 	crc ^= 0xffff;
-	return crc & 0xffff;
+	return (crc & 0xffff);
 }
 #endif
 
@@ -751,7 +752,7 @@ EXPORT_SYMBOL(hdlcdrv_unregister);
 static int __init hdlcdrv_init_driver(void)
 {
 	printk(KERN_INFO "hdlcdrv: (C) 1996-2000 Thomas Sailer HB9JNX/AE4WA\n");
-	printk(KERN_INFO "hdlcdrv: version 0.8\n");
+	printk(KERN_INFO "hdlcdrv: version 0.8 compiled " __TIME__ " " __DATE__ "\n");
 	return 0;
 }
 

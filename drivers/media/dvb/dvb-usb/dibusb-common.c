@@ -23,7 +23,7 @@ int dibusb_streaming_ctrl(struct dvb_usb_adapter *adap, int onoff)
 	if (adap->priv != NULL) {
 		struct dibusb_state *st = adap->priv;
 		if (st->ops.fifo_ctrl != NULL)
-			if (st->ops.fifo_ctrl(adap->fe_adap[0].fe, onoff)) {
+			if (st->ops.fifo_ctrl(adap->fe,onoff)) {
 				err("error while controlling the fifo of the demod.");
 				return -ENODEV;
 			}
@@ -37,8 +37,7 @@ int dibusb_pid_filter(struct dvb_usb_adapter *adap, int index, u16 pid, int onof
 	if (adap->priv != NULL) {
 		struct dibusb_state *st = adap->priv;
 		if (st->ops.pid_ctrl != NULL)
-			st->ops.pid_ctrl(adap->fe_adap[0].fe,
-					 index, pid, onoff);
+			st->ops.pid_ctrl(adap->fe,index,pid,onoff);
 	}
 	return 0;
 }
@@ -49,7 +48,7 @@ int dibusb_pid_filter_ctrl(struct dvb_usb_adapter *adap, int onoff)
 	if (adap->priv != NULL) {
 		struct dibusb_state *st = adap->priv;
 		if (st->ops.pid_parse != NULL)
-			if (st->ops.pid_parse(adap->fe_adap[0].fe, onoff) < 0)
+			if (st->ops.pid_parse(adap->fe,onoff) < 0)
 				err("could not handle pid_parser");
 	}
 	return 0;
@@ -143,13 +142,8 @@ static int dibusb_i2c_xfer(struct i2c_adapter *adap,struct i2c_msg msg[],int num
 		} else if ((msg[i].flags & I2C_M_RD) == 0) {
 			if (dibusb_i2c_msg(d, msg[i].addr, msg[i].buf,msg[i].len,NULL,0) < 0)
 				break;
-		} else if (msg[i].addr != 0x50) {
-			/* 0x50 is the address of the eeprom - we need to protect it
-			 * from dibusb's bad i2c implementation: reads without
-			 * writing the offset before are forbidden */
-			if (dibusb_i2c_msg(d, msg[i].addr, NULL, 0, msg[i].buf, msg[i].len) < 0)
-				break;
-		}
+		} else
+			break;
 	}
 
 	mutex_unlock(&d->i2c_mutex);
@@ -249,22 +243,8 @@ static struct dib3000mc_config mod3000p_dib3000p_config = {
 
 int dibusb_dib3000mc_frontend_attach(struct dvb_usb_adapter *adap)
 {
-	if (adap->dev->udev->descriptor.idVendor  == USB_VID_LITEON &&
-			adap->dev->udev->descriptor.idProduct ==
-			USB_PID_LITEON_DVB_T_WARM) {
-		msleep(1000);
-	}
-
-	adap->fe_adap[0].fe = dvb_attach(dib3000mc_attach,
-					 &adap->dev->i2c_adap,
-					 DEFAULT_DIB3000P_I2C_ADDRESS,
-					 &mod3000p_dib3000p_config);
-	if ((adap->fe_adap[0].fe) == NULL)
-		adap->fe_adap[0].fe = dvb_attach(dib3000mc_attach,
-						 &adap->dev->i2c_adap,
-						 DEFAULT_DIB3000MC_I2C_ADDRESS,
-						 &mod3000p_dib3000p_config);
-	if ((adap->fe_adap[0].fe) != NULL) {
+	if ((adap->fe = dvb_attach(dib3000mc_attach, &adap->dev->i2c_adap, DEFAULT_DIB3000P_I2C_ADDRESS,  &mod3000p_dib3000p_config)) != NULL ||
+		(adap->fe = dvb_attach(dib3000mc_attach, &adap->dev->i2c_adap, DEFAULT_DIB3000MC_I2C_ADDRESS, &mod3000p_dib3000p_config)) != NULL) {
 		if (adap->priv != NULL) {
 			struct dibusb_state *st = adap->priv;
 			st->ops.pid_parse = dib3000mc_pid_parse;
@@ -318,15 +298,15 @@ int dibusb_dib3000mc_tuner_attach(struct dvb_usb_adapter *adap)
 		}
 	}
 
-	tun_i2c = dib3000mc_get_tuner_i2c_master(adap->fe_adap[0].fe, 1);
-	if (dvb_attach(mt2060_attach, adap->fe_adap[0].fe, tun_i2c, &stk3000p_mt2060_config, if1) == NULL) {
+	tun_i2c = dib3000mc_get_tuner_i2c_master(adap->fe, 1);
+	if (dvb_attach(mt2060_attach, adap->fe, tun_i2c, &stk3000p_mt2060_config, if1) == NULL) {
 		/* not found - use panasonic pll parameters */
-		if (dvb_attach(dvb_pll_attach, adap->fe_adap[0].fe, 0x60, tun_i2c, DVB_PLL_ENV57H1XD5) == NULL)
+		if (dvb_attach(dvb_pll_attach, adap->fe, 0x60, tun_i2c, DVB_PLL_ENV57H1XD5) == NULL)
 			return -ENOMEM;
 	} else {
 		st->mt2060_present = 1;
 		/* set the correct parameters for the dib3000p */
-		dib3000mc_set_config(adap->fe_adap[0].fe, &stk3000p_dib3000p_config);
+		dib3000mc_set_config(adap->fe, &stk3000p_dib3000p_config);
 	}
 	return 0;
 }
@@ -336,7 +316,7 @@ EXPORT_SYMBOL(dibusb_dib3000mc_tuner_attach);
 /*
  * common remote control stuff
  */
-struct rc_map_table rc_map_dibusb_table[] = {
+struct dvb_usb_rc_key dibusb_rc_keys[] = {
 	/* Key codes for the little Artec T1/Twinhan/HAMA/ remote. */
 	{ 0x0016, KEY_POWER },
 	{ 0x0010, KEY_MUTE },
@@ -417,7 +397,7 @@ struct rc_map_table rc_map_dibusb_table[] = {
 
 	{ 0x8008, KEY_DVD },
 	{ 0x8009, KEY_AUDIO },
-	{ 0x800a, KEY_IMAGES },      /* Pictures */
+	{ 0x800a, KEY_MEDIA },      /* Pictures */
 	{ 0x800b, KEY_VIDEO },
 
 	{ 0x800c, KEY_BACK },
@@ -465,7 +445,7 @@ struct rc_map_table rc_map_dibusb_table[] = {
 	{ 0x804e, KEY_ENTER },
 	{ 0x804f, KEY_VOLUMEDOWN },
 };
-EXPORT_SYMBOL(rc_map_dibusb_table);
+EXPORT_SYMBOL(dibusb_rc_keys);
 
 int dibusb_rc_query(struct dvb_usb_device *d, u32 *event, int *state)
 {

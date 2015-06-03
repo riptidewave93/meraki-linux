@@ -20,7 +20,6 @@
  * 02111-1307, USA.
  */
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/user_namespace.h>
 #include <linux/nsproxy.h>
 #include "ecryptfs_kernel.h"
@@ -274,7 +273,7 @@ int ecryptfs_process_response(struct ecryptfs_message *msg, uid_t euid,
 			      struct user_namespace *user_ns, struct pid *pid,
 			      u32 seq)
 {
-	struct ecryptfs_daemon *uninitialized_var(daemon);
+	struct ecryptfs_daemon *daemon;
 	struct ecryptfs_msg_ctx *msg_ctx;
 	size_t msg_size;
 	struct nsproxy *nsproxy;
@@ -473,7 +472,7 @@ sleep:
 	return rc;
 }
 
-int __init ecryptfs_init_messaging(void)
+int ecryptfs_init_messaging(void)
 {
 	int i;
 	int rc = 0;

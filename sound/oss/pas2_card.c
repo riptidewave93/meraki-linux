@@ -41,19 +41,19 @@ static int      pas_irq;
 static int      pas_sb_base;
 DEFINE_SPINLOCK(pas_lock);
 #ifndef CONFIG_PAS_JOYSTICK
-static bool	joystick;
+static int	joystick;
 #else
-static bool 	joystick = 1;
+static int 	joystick = 1;
 #endif
 #ifdef SYMPHONY_PAS
-static bool 	symphony = 1;
+static int 	symphony = 1;
 #else
-static bool 	symphony;
+static int 	symphony;
 #endif
 #ifdef BROKEN_BUS_CLOCK
-static bool	broken_bus_clock = 1;
+static int	broken_bus_clock = 1;
 #else
-static bool	broken_bus_clock;
+static int	broken_bus_clock;
 #endif
 
 static struct address_info cfg;

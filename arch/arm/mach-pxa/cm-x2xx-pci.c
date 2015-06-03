@@ -26,13 +26,40 @@
 
 #include <asm/hardware/it8152.h>
 
-void __iomem *it8152_base_address;
+unsigned long it8152_base_address;
 static int cmx2xx_it8152_irq_gpio;
+
+/*
+ * Only first 64MB of memory can be accessed via PCI.
+ * We use GFP_DMA to allocate safe buffers to do map/unmap.
+ * This is really ugly and we need a better way of specifying
+ * DMA-capable regions of memory.
+ */
+void __init cmx2xx_pci_adjust_zones(int node, unsigned long *zone_size,
+	unsigned long *zhole_size)
+{
+	unsigned int sz = SZ_64M >> PAGE_SHIFT;
+
+	if (machine_is_armcore()) {
+		pr_info("Adjusting zones for CM-X2XX\n");
+
+		/*
+		 * Only adjust if > 64M on current system
+		 */
+		if (node || (zone_size[0] <= sz))
+			return;
+
+		zone_size[1] = zone_size[0] - sz;
+		zone_size[0] = sz;
+		zhole_size[1] = zhole_size[0];
+		zhole_size[0] = 0;
+	}
+}
 
 static void cmx2xx_it8152_irq_demux(unsigned int irq, struct irq_desc *desc)
 {
 	/* clear our parent irq */
-	desc->irq_data.chip->irq_ack(&desc->irq_data);
+	GEDR(cmx2xx_it8152_irq_gpio) = GPIO_bit(cmx2xx_it8152_irq_gpio);
 
 	it8152_irq_demux(irq, desc);
 }
@@ -43,10 +70,9 @@ void __cmx2xx_pci_init_irq(int irq_gpio)
 
 	cmx2xx_it8152_irq_gpio = irq_gpio;
 
-	irq_set_irq_type(gpio_to_irq(irq_gpio), IRQ_TYPE_EDGE_RISING);
+	set_irq_type(gpio_to_irq(irq_gpio), IRQ_TYPE_EDGE_RISING);
 
-	irq_set_chained_handler(gpio_to_irq(irq_gpio),
-				cmx2xx_it8152_irq_demux);
+	set_irq_chained_handler(gpio_to_irq(irq_gpio), cmx2xx_it8152_irq_demux);
 }
 
 #ifdef CONFIG_PM
@@ -77,7 +103,7 @@ void cmx2xx_pci_resume(void) {}
 #endif
 
 /* PCI IRQ mapping*/
-static int __init cmx2xx_pci_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+static int __init cmx2xx_pci_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	int irq;
 
@@ -124,9 +150,6 @@ static int __init cmx2xx_pci_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 static void cmx2xx_pci_preinit(void)
 {
 	pr_info("Initializing CM-X2XX PCI subsystem\n");
-
-	pcibios_min_io = 0;
-	pcibios_min_mem = 0;
 
 	__raw_writel(0x800, IT8152_PCI_CFG_ADDR);
 	if (__raw_readl(IT8152_PCI_CFG_DATA) == 0x81521283) {

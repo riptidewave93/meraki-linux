@@ -9,14 +9,10 @@
  *
  */
 
-#define pr_fmt(fmt) "IPv4: " fmt
-
 #include <linux/capability.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <asm/uaccess.h>
-#include <asm/unaligned.h>
 #include <linux/skbuff.h>
 #include <linux/ip.h>
 #include <linux/icmp.h>
@@ -40,7 +36,7 @@
  */
 
 void ip_options_build(struct sk_buff *skb, struct ip_options *opt,
-		      __be32 daddr, struct rtable *rt, int is_frag)
+			    __be32 daddr, struct rtable *rt, int is_frag)
 {
 	unsigned char *iph = skb_network_header(skb);
 
@@ -53,9 +49,9 @@ void ip_options_build(struct sk_buff *skb, struct ip_options *opt,
 
 	if (!is_frag) {
 		if (opt->rr_needaddr)
-			ip_rt_get_source(iph+opt->rr+iph[opt->rr+2]-5, skb, rt);
+			ip_rt_get_source(iph+opt->rr+iph[opt->rr+2]-5, rt);
 		if (opt->ts_needaddr)
-			ip_rt_get_source(iph+opt->ts+iph[opt->ts+2]-9, skb, rt);
+			ip_rt_get_source(iph+opt->ts+iph[opt->ts+2]-9, rt);
 		if (opt->ts_needtime) {
 			struct timespec tv;
 			__be32 midtime;
@@ -141,11 +137,11 @@ int ip_options_echo(struct ip_options *dopt, struct sk_buff *skb)
 				} else {
 					dopt->ts_needtime = 0;
 
-					if (soffset + 7 <= optlen) {
+					if (soffset + 8 <= optlen) {
 						__be32 addr;
 
-						memcpy(&addr, dptr+soffset-1, 4);
-						if (inet_addr_type(dev_net(skb_dst(skb)->dev), addr) != RTN_UNICAST) {
+						memcpy(&addr, sptr+soffset-1, 4);
+						if (inet_addr_type(dev_net(skb_dst(skb)->dev), addr) != RTN_LOCAL) {
 							dopt->ts_needtime = 1;
 							soffset += 8;
 						}
@@ -239,6 +235,7 @@ void ip_options_fragment(struct sk_buff * skb)
 	opt->rr_needaddr = 0;
 	opt->ts_needaddr = 0;
 	opt->ts_needtime = 0;
+	return;
 }
 
 /*
@@ -278,10 +275,6 @@ int ip_options_compile(struct net *net,
 			l--;
 			optptr++;
 			continue;
-		}
-		if (unlikely(l < 2)) {
-			pp_ptr = optptr;
-			goto error;
 		}
 		optlen = optptr[1];
 		if (optlen<2 || optlen>l) {
@@ -334,7 +327,7 @@ int ip_options_compile(struct net *net,
 					pp_ptr = optptr + 2;
 					goto error;
 				}
-				if (rt) {
+				if (skb) {
 					memcpy(&optptr[optptr[2]-1], &rt->rt_spec_dst, 4);
 					opt->is_changed = 1;
 				}
@@ -357,15 +350,16 @@ int ip_options_compile(struct net *net,
 				goto error;
 			}
 			if (optptr[2] <= optlen) {
-				unsigned char *timeptr = NULL;
+				__be32 *timeptr = NULL;
 				if (optptr[2]+3 > optptr[1]) {
 					pp_ptr = optptr + 2;
 					goto error;
 				}
 				switch (optptr[3]&0xF) {
 				      case IPOPT_TS_TSONLY:
+					opt->ts = optptr - iph;
 					if (skb)
-						timeptr = &optptr[optptr[2]-1];
+						timeptr = (__be32*)&optptr[optptr[2]-1];
 					opt->ts_needtime = 1;
 					optptr[2] += 4;
 					break;
@@ -374,9 +368,10 @@ int ip_options_compile(struct net *net,
 						pp_ptr = optptr + 2;
 						goto error;
 					}
-					if (rt)  {
+					opt->ts = optptr - iph;
+					if (skb) {
 						memcpy(&optptr[optptr[2]-1], &rt->rt_spec_dst, 4);
-						timeptr = &optptr[optptr[2]+3];
+						timeptr = (__be32*)&optptr[optptr[2]+3];
 					}
 					opt->ts_needaddr = 1;
 					opt->ts_needtime = 1;
@@ -387,13 +382,14 @@ int ip_options_compile(struct net *net,
 						pp_ptr = optptr + 2;
 						goto error;
 					}
+					opt->ts = optptr - iph;
 					{
 						__be32 addr;
 						memcpy(&addr, &optptr[optptr[2]-1], 4);
 						if (inet_addr_type(net, addr) == RTN_UNICAST)
 							break;
 						if (skb)
-							timeptr = &optptr[optptr[2]+3];
+							timeptr = (__be32*)&optptr[optptr[2]+3];
 					}
 					opt->ts_needtime = 1;
 					optptr[2] += 8;
@@ -407,10 +403,10 @@ int ip_options_compile(struct net *net,
 				}
 				if (timeptr) {
 					struct timespec tv;
-					u32  midtime;
+					__be32  midtime;
 					getnstimeofday(&tv);
-					midtime = (tv.tv_sec % 86400) * MSEC_PER_SEC + tv.tv_nsec / NSEC_PER_MSEC;
-					put_unaligned_be32(midtime, timeptr);
+					midtime = htonl((tv.tv_sec % 86400) * MSEC_PER_SEC + tv.tv_nsec / NSEC_PER_MSEC);
+					memcpy(timeptr, &midtime, sizeof(__be32));
 					opt->is_changed = 1;
 				}
 			} else {
@@ -419,12 +415,12 @@ int ip_options_compile(struct net *net,
 					pp_ptr = optptr + 3;
 					goto error;
 				}
+				opt->ts = optptr - iph;
 				if (skb) {
 					optptr[3] = (optptr[3]&0xF)|((overflow+1)<<4);
 					opt->is_changed = 1;
 				}
 			}
-			opt->ts = optptr - iph;
 			break;
 		      case IPOPT_RA:
 			if (optlen < 4) {
@@ -468,7 +464,7 @@ error:
 	}
 	return -EINVAL;
 }
-EXPORT_SYMBOL(ip_options_compile);
+
 
 /*
  *	Undo all the changes done by ip_options_compile().
@@ -557,7 +553,7 @@ void ip_forward_options(struct sk_buff *skb)
 
 	if (opt->rr_needaddr) {
 		optptr = (unsigned char *)raw + opt->rr;
-		ip_rt_get_source(&optptr[optptr[2]-5], skb, rt);
+		ip_rt_get_source(&optptr[optptr[2]-5], rt);
 		opt->is_changed = 1;
 	}
 	if (opt->srr_is_hit) {
@@ -571,19 +567,19 @@ void ip_forward_options(struct sk_buff *skb)
 		     ) {
 			if (srrptr + 3 > srrspace)
 				break;
-			if (memcmp(&opt->nexthop, &optptr[srrptr-1], 4) == 0)
+			if (memcmp(&rt->rt_dst, &optptr[srrptr-1], 4) == 0)
 				break;
 		}
 		if (srrptr + 3 <= srrspace) {
 			opt->is_changed = 1;
-			ip_hdr(skb)->daddr = opt->nexthop;
-			ip_rt_get_source(&optptr[srrptr-1], skb, rt);
+			ip_rt_get_source(&optptr[srrptr-1], rt);
+			ip_hdr(skb)->daddr = rt->rt_dst;
 			optptr[2] = srrptr+4;
 		} else if (net_ratelimit())
-			pr_crit("%s(): Argh! Destination lost!\n", __func__);
+			printk(KERN_CRIT "ip_forward(): Argh! Destination lost!\n");
 		if (opt->ts_needaddr) {
 			optptr = raw + opt->ts;
-			ip_rt_get_source(&optptr[optptr[2]-9], skb, rt);
+			ip_rt_get_source(&optptr[optptr[2]-9], rt);
 			opt->is_changed = 1;
 		}
 	}
@@ -602,10 +598,9 @@ int ip_options_rcv_srr(struct sk_buff *skb)
 	unsigned char *optptr = skb_network_header(skb) + opt->srr;
 	struct rtable *rt = skb_rtable(skb);
 	struct rtable *rt2;
-	unsigned long orefdst;
 	int err;
 
-	if (!rt)
+	if (!opt->srr)
 		return 0;
 
 	if (skb->pkt_type != PACKET_HOST)
@@ -626,27 +621,25 @@ int ip_options_rcv_srr(struct sk_buff *skb)
 		}
 		memcpy(&nexthop, &optptr[srrptr-1], 4);
 
-		orefdst = skb->_skb_refdst;
+		rt = skb_rtable(skb);
 		skb_dst_set(skb, NULL);
 		err = ip_route_input(skb, nexthop, iph->saddr, iph->tos, skb->dev);
 		rt2 = skb_rtable(skb);
 		if (err || (rt2->rt_type != RTN_UNICAST && rt2->rt_type != RTN_LOCAL)) {
-			skb_dst_drop(skb);
-			skb->_skb_refdst = orefdst;
+			ip_rt_put(rt2);
+			skb_dst_set(skb, &rt->u.dst);
 			return -EINVAL;
 		}
-		refdst_drop(orefdst);
+		ip_rt_put(rt);
 		if (rt2->rt_type != RTN_LOCAL)
 			break;
 		/* Superfast 8) loopback forward */
-		iph->daddr = nexthop;
+		memcpy(&iph->daddr, &optptr[srrptr-1], 4);
 		opt->is_changed = 1;
 	}
 	if (srrptr <= srrspace) {
 		opt->srr_is_hit = 1;
-		opt->nexthop = nexthop;
 		opt->is_changed = 1;
 	}
 	return 0;
 }
-EXPORT_SYMBOL(ip_options_rcv_srr);

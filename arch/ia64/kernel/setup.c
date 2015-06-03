@@ -46,6 +46,7 @@
 #include <linux/kexec.h>
 #include <linux/crash_dump.h>
 
+#include <asm/ia32.h>
 #include <asm/machvec.h>
 #include <asm/mca.h>
 #include <asm/meminit.h>
@@ -59,6 +60,7 @@
 #include <asm/sections.h>
 #include <asm/setup.h>
 #include <asm/smp.h>
+#include <asm/system.h>
 #include <asm/tlbflush.h>
 #include <asm/unistd.h>
 #include <asm/hpsim.h>
@@ -72,7 +74,7 @@ unsigned long __per_cpu_offset[NR_CPUS];
 EXPORT_SYMBOL(__per_cpu_offset);
 #endif
 
-DEFINE_PER_CPU(struct cpuinfo_ia64, ia64_cpu_info);
+DEFINE_PER_CPU(struct cpuinfo_ia64, cpu_info);
 DEFINE_PER_CPU(unsigned long, local_per_cpu_offset);
 unsigned long ia64_cycles_per_usec;
 struct ia64_boot_param *ia64_boot_param;
@@ -96,6 +98,12 @@ static struct resource bss_resource = {
 };
 
 unsigned long ia64_max_cacheline_size;
+
+int dma_get_cache_alignment(void)
+{
+        return ia64_max_cacheline_size;
+}
+EXPORT_SYMBOL(dma_get_cache_alignment);
 
 unsigned long ia64_iobase;	/* virtual address for I/O accesses */
 EXPORT_SYMBOL(ia64_iobase);
@@ -219,23 +227,6 @@ sort_regions (struct rsvd_region *rsvd_region, int max)
 	}
 }
 
-/* merge overlaps */
-static int __init
-merge_regions (struct rsvd_region *rsvd_region, int max)
-{
-	int i;
-	for (i = 1; i < max; ++i) {
-		if (rsvd_region[i].start >= rsvd_region[i-1].end)
-			continue;
-		if (rsvd_region[i].end > rsvd_region[i-1].end)
-			rsvd_region[i-1].end = rsvd_region[i].end;
-		--max;
-		memmove(&rsvd_region[i], &rsvd_region[i+1],
-			(max - i) * sizeof(struct rsvd_region));
-	}
-	return max;
-}
-
 /*
  * Request address space for all standard resources
  */
@@ -286,7 +277,6 @@ static void __init setup_crashkernel(unsigned long total, int *n)
 	if (ret == 0 && size > 0) {
 		if (!base) {
 			sort_regions(rsvd_region, *n);
-			*n = merge_regions(rsvd_region, *n);
 			base = kdump_find_rsvd_region(size,
 					rsvd_region, *n);
 		}
@@ -390,7 +380,6 @@ reserve_memory (void)
 	BUG_ON(IA64_MAX_RSVD_REGIONS + 1 < n);
 
 	sort_regions(rsvd_region, num_rsvd_regions);
-	num_rsvd_regions = merge_regions(rsvd_region, num_rsvd_regions);
 }
 
 
@@ -485,7 +474,7 @@ mark_bsp_online (void)
 {
 #ifdef CONFIG_SMP
 	/* If we register an early console, allow CPU 0 to printk */
-	set_cpu_online(smp_processor_id(), true);
+	cpu_set(smp_processor_id(), cpu_online_map);
 #endif
 }
 
@@ -497,7 +486,25 @@ static __init int setup_nomca(char *s)
 }
 early_param("nomca", setup_nomca);
 
+/*
+ * Note: elfcorehdr_addr is not just limited to vmcore. It is also used by
+ * is_kdump_kernel() to determine if we are booting after a panic. Hence
+ * ifdef it under CONFIG_CRASH_DUMP and not CONFIG_PROC_VMCORE.
+ */
 #ifdef CONFIG_CRASH_DUMP
+/* elfcorehdr= specifies the location of elf core header
+ * stored by the crashed kernel.
+ */
+static int __init parse_elfcorehdr(char *arg)
+{
+	if (!arg)
+		return -EINVAL;
+
+        elfcorehdr_addr = memparse(arg, &arg);
+	return 0;
+}
+early_param("elfcorehdr", parse_elfcorehdr);
+
 int __init reserve_elfcorehdr(u64 *start, u64 *end)
 {
 	u64 length;
@@ -559,18 +566,19 @@ setup_arch (char **cmdline_p)
 	early_acpi_boot_init();
 # ifdef CONFIG_ACPI_NUMA
 	acpi_numa_init();
-#  ifdef CONFIG_ACPI_HOTPLUG_CPU
+#ifdef CONFIG_ACPI_HOTPLUG_CPU
 	prefill_possible_map();
-#  endif
+#endif
 	per_cpu_scan_finalize((cpus_weight(early_cpu_possible_map) == 0 ?
 		32 : cpus_weight(early_cpu_possible_map)),
 		additional_cpus > 0 ? additional_cpus : 0);
 # endif
+#else
+# ifdef CONFIG_SMP
+	smp_build_cpu_map();	/* happens, e.g., with the Ski simulator */
+# endif
 #endif /* CONFIG_APCI_BOOT */
 
-#ifdef CONFIG_SMP
-	smp_build_cpu_map();
-#endif
 	find_memory();
 
 	/* process SAL system table: */
@@ -593,6 +601,10 @@ setup_arch (char **cmdline_p)
 
 	cpu_init();	/* initialize the bootstrap CPU */
 	mmu_context_init();	/* initialize context_id bitmap */
+
+#ifdef CONFIG_ACPI
+	acpi_boot_init();
+#endif
 
 	paravirt_banner();
 	paravirt_arch_setup_console(cmdline_p);
@@ -844,6 +856,18 @@ identify_cpu (struct cpuinfo_ia64 *c)
 }
 
 /*
+ * In UP configuration, setup_per_cpu_areas() is defined in
+ * include/linux/percpu.h
+ */
+#ifdef CONFIG_SMP
+void __init
+setup_per_cpu_areas (void)
+{
+	/* start_kernel() requires this... */
+}
+#endif
+
+/*
  * Do the following calculations:
  *
  * 1. the max. cache line size.
@@ -956,7 +980,7 @@ cpu_init (void)
 	 * depends on the data returned by identify_cpu().  We break the dependency by
 	 * accessing cpu_data() through the canonical per-CPU address.
 	 */
-	cpu_info = cpu_data + ((char *) &__ia64_per_cpu_var(ia64_cpu_info) - __per_cpu_start);
+	cpu_info = cpu_data + ((char *) &__ia64_per_cpu_var(cpu_info) - __per_cpu_start);
 	identify_cpu(cpu_info);
 
 #ifdef CONFIG_MCKINLEY
@@ -1004,6 +1028,10 @@ cpu_init (void)
 
 	ia64_mmu_init(ia64_imva(cpu_data));
 	ia64_mca_cpu_init(ia64_imva(cpu_data));
+
+#ifdef CONFIG_IA32_SUPPORT
+	ia32_cpu_init();
+#endif
 
 	/* Clear ITC to eliminate sched_clock() overflows in human time.  */
 	ia64_set_itc(0);

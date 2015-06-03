@@ -21,7 +21,7 @@
 static void __init
 pdev_fixup_irq(struct pci_dev *dev,
 	       u8 (*swizzle)(struct pci_dev *, u8 *),
-	       int (*map_irq)(const struct pci_dev *, u8, u8))
+	       int (*map_irq)(struct pci_dev *, u8, u8))
 {
 	u8 pin, slot;
 	int irq = 0;
@@ -34,7 +34,7 @@ pdev_fixup_irq(struct pci_dev *dev,
 
 	pci_read_config_byte(dev, PCI_INTERRUPT_PIN, &pin);
 	/* Cope with illegal. */
-	if (pin > 4)
+	if (pin == 0 || pin > 4)
 		pin = 1;
 
 	if (pin != 0) {
@@ -56,9 +56,10 @@ pdev_fixup_irq(struct pci_dev *dev,
 
 void __init
 pci_fixup_irqs(u8 (*swizzle)(struct pci_dev *, u8 *),
-	       int (*map_irq)(const struct pci_dev *, u8, u8))
+	       int (*map_irq)(struct pci_dev *, u8, u8))
 {
 	struct pci_dev *dev = NULL;
-	for_each_pci_dev(dev)
+	while ((dev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, dev)) != NULL) {
 		pdev_fixup_irq(dev, swizzle, map_irq);
+	}
 }

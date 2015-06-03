@@ -28,7 +28,6 @@
 #include <linux/fs.h>
 #include <linux/err.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/spinlock.h>
 #include <linux/mutex.h>
@@ -83,6 +82,9 @@
  */
 #define INUM_WARN_WATERMARK 0xFFF00000
 #define INUM_WATERMARK      0xFFFFFF00
+
+/* Largest key size supported in this implementation */
+#define CUR_MAX_KEY_LEN UBIFS_SK_LEN
 
 /* Maximum number of entries in each LPT (LEB category) heap */
 #define LPT_HEAP_SZ 256
@@ -227,14 +229,14 @@ enum {
  * LPT cnode flag bits.
  *
  * DIRTY_CNODE: cnode is dirty
- * OBSOLETE_CNODE: cnode is being committed and has been copied (or deleted),
- *                 so it can (and must) be freed when the commit is finished
  * COW_CNODE: cnode is being committed and must be copied before writing
+ * OBSOLETE_CNODE: cnode is being committed and has been copied (or deleted),
+ * so it can (and must) be freed when the commit is finished
  */
 enum {
 	DIRTY_CNODE    = 0,
-	OBSOLETE_CNODE = 1,
-	COW_CNODE      = 2,
+	COW_CNODE      = 1,
+	OBSOLETE_CNODE = 2,
 };
 
 /*
@@ -274,10 +276,10 @@ struct ubifs_old_idx {
 
 /* The below union makes it easier to deal with keys */
 union ubifs_key {
-	uint8_t u8[UBIFS_SK_LEN];
-	uint32_t u32[UBIFS_SK_LEN/4];
-	uint64_t u64[UBIFS_SK_LEN/8];
-	__le32 j32[UBIFS_SK_LEN/4];
+	uint8_t u8[CUR_MAX_KEY_LEN];
+	uint32_t u32[CUR_MAX_KEY_LEN/4];
+	uint64_t u64[CUR_MAX_KEY_LEN/8];
+	__le32 j32[CUR_MAX_KEY_LEN/4];
 };
 
 /**
@@ -386,9 +388,9 @@ struct ubifs_gced_idx_leb {
  * The @ui_size is a "shadow" variable for @inode->i_size and UBIFS uses
  * @ui_size instead of @inode->i_size. The reason for this is that UBIFS cannot
  * make sure @inode->i_size is always changed under @ui_mutex, because it
- * cannot call 'truncate_setsize()' with @ui_mutex locked, because it would
- * deadlock with 'ubifs_writepage()' (see file.c). All the other inode fields
- * are changed under @ui_mutex, so they do not need "shadow" fields. Note, one
+ * cannot call 'vmtruncate()' with @ui_mutex locked, because it would deadlock
+ * with 'ubifs_writepage()' (see file.c). All the other inode fields are
+ * changed under @ui_mutex, so they do not need "shadow" fields. Note, one
  * could consider to rework locking and base it on "shadow" fields.
  */
 struct ubifs_inode {
@@ -719,14 +721,12 @@ struct ubifs_bud {
  * struct ubifs_jhead - journal head.
  * @wbuf: head's write-buffer
  * @buds_list: list of bud LEBs belonging to this journal head
- * @grouped: non-zero if UBIFS groups nodes when writing to this journal head
  *
  * Note, the @buds list is protected by the @c->buds_lock.
  */
 struct ubifs_jhead {
 	struct ubifs_wbuf wbuf;
 	struct list_head buds_list;
-	unsigned int grouped:1;
 };
 
 /**
@@ -905,7 +905,6 @@ struct ubifs_budget_req {
  * @dnext: next orphan to delete
  * @inum: inode number
  * @new: %1 => added since the last commit, otherwise %0
- * @del: %1 => delete pending, otherwise %0
  */
 struct ubifs_orphan {
 	struct rb_node rb;
@@ -915,7 +914,6 @@ struct ubifs_orphan {
 	struct ubifs_orphan *dnext;
 	ino_t inum;
 	int new;
-	unsigned del:1;
 };
 
 /**
@@ -936,40 +934,6 @@ struct ubifs_mount_opts {
 	unsigned int chk_data_crc:2;
 	unsigned int override_compr:1;
 	unsigned int compr_type:2;
-};
-
-/**
- * struct ubifs_budg_info - UBIFS budgeting information.
- * @idx_growth: amount of bytes budgeted for index growth
- * @data_growth: amount of bytes budgeted for cached data
- * @dd_growth: amount of bytes budgeted for cached data that will make
- *             other data dirty
- * @uncommitted_idx: amount of bytes were budgeted for growth of the index, but
- *                   which still have to be taken into account because the index
- *                   has not been committed so far
- * @old_idx_sz: size of index on flash
- * @min_idx_lebs: minimum number of LEBs required for the index
- * @nospace: non-zero if the file-system does not have flash space (used as
- *           optimization)
- * @nospace_rp: the same as @nospace, but additionally means that even reserved
- *              pool is full
- * @page_budget: budget for a page (constant, nenver changed after mount)
- * @inode_budget: budget for an inode (constant, nenver changed after mount)
- * @dent_budget: budget for a directory entry (constant, nenver changed after
- *               mount)
- */
-struct ubifs_budg_info {
-	long long idx_growth;
-	long long data_growth;
-	long long dd_growth;
-	long long uncommitted_idx;
-	unsigned long long old_idx_sz;
-	int min_idx_lebs;
-	unsigned int nospace:1;
-	unsigned int nospace_rp:1;
-	int page_budget;
-	int inode_budget;
-	int dent_budget;
 };
 
 struct ubifs_debug_info;
@@ -1015,7 +979,6 @@ struct ubifs_debug_info;
  * @cmt_wq: wait queue to sleep on if the log is full and a commit is running
  *
  * @big_lpt: flag that LPT is too big to write whole during commit
- * @space_fixup: flag indicating that free space in LEBs needs to be cleaned up
  * @no_chk_data_crc: do not check CRCs when reading data nodes (except during
  *                   recovery)
  * @bulk_read: enable bulk-reads
@@ -1093,14 +1056,32 @@ struct ubifs_debug_info;
  * @dirty_zn_cnt: number of dirty znodes
  * @clean_zn_cnt: number of clean znodes
  *
- * @space_lock: protects @bi and @lst
- * @lst: lprops statistics
- * @bi: budgeting information
+ * @budg_idx_growth: amount of bytes budgeted for index growth
+ * @budg_data_growth: amount of bytes budgeted for cached data
+ * @budg_dd_growth: amount of bytes budgeted for cached data that will make
+ *                  other data dirty
+ * @budg_uncommitted_idx: amount of bytes were budgeted for growth of the index,
+ *                        but which still have to be taken into account because
+ *                        the index has not been committed so far
+ * @space_lock: protects @budg_idx_growth, @budg_data_growth, @budg_dd_growth,
+ *              @budg_uncommited_idx, @min_idx_lebs, @old_idx_sz, @lst,
+ *              @nospace, and @nospace_rp;
+ * @min_idx_lebs: minimum number of LEBs required for the index
+ * @old_idx_sz: size of index on flash
  * @calc_idx_sz: temporary variable which is used to calculate new index size
  *               (contains accurate new index size at end of TNC commit start)
+ * @lst: lprops statistics
+ * @nospace: non-zero if the file-system does not have flash space (used as
+ *           optimization)
+ * @nospace_rp: the same as @nospace, but additionally means that even reserved
+ *              pool is full
+ *
+ * @page_budget: budget for a page
+ * @inode_budget: budget for an inode
+ * @dent_budget: budget for a directory entry
  *
  * @ref_node_alsz: size of the LEB reference node aligned to the min. flash
- *                 I/O unit
+ * I/O unit
  * @mst_node_alsz: master node aligned size
  * @min_idx_node_sz: minimum indexing node aligned on 8-bytes boundary
  * @max_idx_node_sz: maximum indexing node aligned on 8-bytes boundary
@@ -1186,8 +1167,6 @@ struct ubifs_debug_info;
  * @freeable_list: list of freeable non-index LEBs (free + dirty == @leb_size)
  * @frdi_idx_list: list of freeable index LEBs (free + dirty == @leb_size)
  * @freeable_cnt: number of freeable LEBs in @freeable_list
- * @in_a_category_cnt: count of lprops which are in a certain category, which
- *                     basically meants that they were loaded from the flash
  *
  * @ltab_lnum: LEB number of LPT's own lprops table
  * @ltab_offs: offset of LPT's own lprops table
@@ -1209,6 +1188,7 @@ struct ubifs_debug_info;
  * @replaying: %1 during journal replay
  * @mounting: %1 while mounting
  * @remounting_rw: %1 while re-mounting from R/O mode to R/W mode
+ * @replay_tree: temporary tree used during journal replay
  * @replay_list: temporary list used during journal replay
  * @replay_buds: list of buds to replay
  * @cs_sqnum: sequence number of first node in the log (commit start node)
@@ -1257,7 +1237,6 @@ struct ubifs_info {
 	wait_queue_head_t cmt_wq;
 
 	unsigned int big_lpt:1;
-	unsigned int space_fixup:1;
 	unsigned int no_chk_data_crc:1;
 	unsigned int bulk_read:1;
 	unsigned int default_compr:2;
@@ -1328,10 +1307,21 @@ struct ubifs_info {
 	atomic_long_t dirty_zn_cnt;
 	atomic_long_t clean_zn_cnt;
 
+	long long budg_idx_growth;
+	long long budg_data_growth;
+	long long budg_dd_growth;
+	long long budg_uncommitted_idx;
 	spinlock_t space_lock;
-	struct ubifs_lp_stats lst;
-	struct ubifs_budg_info bi;
+	int min_idx_lebs;
+	unsigned long long old_idx_sz;
 	unsigned long long calc_idx_sz;
+	struct ubifs_lp_stats lst;
+	unsigned int nospace:1;
+	unsigned int nospace_rp:1;
+
+	int page_budget;
+	int inode_budget;
+	int dent_budget;
 
 	int ref_node_alsz;
 	int mst_node_alsz;
@@ -1417,7 +1407,6 @@ struct ubifs_info {
 	struct list_head freeable_list;
 	struct list_head frdi_idx_list;
 	int freeable_cnt;
-	int in_a_category_cnt;
 
 	int ltab_lnum;
 	int ltab_offs;
@@ -1440,6 +1429,7 @@ struct ubifs_info {
 	unsigned int replaying:1;
 	unsigned int mounting:1;
 	unsigned int remounting_rw:1;
+	struct rb_root replay_tree;
 	struct list_head replay_list;
 	struct list_head replay_buds;
 	unsigned long long cs_sqnum;
@@ -1470,15 +1460,6 @@ extern struct ubifs_compressor *ubifs_compressors[UBIFS_COMPR_TYPES_CNT];
 
 /* io.c */
 void ubifs_ro_mode(struct ubifs_info *c, int err);
-int ubifs_leb_read(const struct ubifs_info *c, int lnum, void *buf, int offs,
-		   int len, int even_ebadmsg);
-int ubifs_leb_write(struct ubifs_info *c, int lnum, const void *buf, int offs,
-		    int len, int dtype);
-int ubifs_leb_change(struct ubifs_info *c, int lnum, const void *buf, int len,
-		     int dtype);
-int ubifs_leb_unmap(struct ubifs_info *c, int lnum);
-int ubifs_leb_map(struct ubifs_info *c, int lnum, int dtype);
-int ubifs_is_mapped(const struct ubifs_info *c, int lnum);
 int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len);
 int ubifs_wbuf_seek_nolock(struct ubifs_wbuf *wbuf, int lnum, int offs,
 			   int dtype);
@@ -1627,7 +1608,7 @@ int ubifs_tnc_start_commit(struct ubifs_info *c, struct ubifs_zbranch *zroot);
 int ubifs_tnc_end_commit(struct ubifs_info *c);
 
 /* shrinker.c */
-int ubifs_shrinker(struct shrinker *shrink, struct shrink_control *sc);
+int ubifs_shrinker(int nr_to_scan, gfp_t gfp_mask);
 
 /* commit.c */
 int ubifs_bg_thread(void *info);
@@ -1646,7 +1627,6 @@ int ubifs_write_master(struct ubifs_info *c);
 int ubifs_read_superblock(struct ubifs_info *c);
 struct ubifs_sb_node *ubifs_read_sb_node(struct ubifs_info *c);
 int ubifs_write_sb_node(struct ubifs_info *c, struct ubifs_sb_node *sup);
-int ubifs_fixup_free_space(struct ubifs_info *c);
 
 /* replay.c */
 int ubifs_validate_entry(struct ubifs_info *c,
@@ -1731,12 +1711,12 @@ const struct ubifs_lprops *ubifs_fast_find_frdi_idx(struct ubifs_info *c);
 int ubifs_calc_dark(const struct ubifs_info *c, int spc);
 
 /* file.c */
-int ubifs_fsync(struct file *file, loff_t start, loff_t end, int datasync);
+int ubifs_fsync(struct file *file, struct dentry *dentry, int datasync);
 int ubifs_setattr(struct dentry *dentry, struct iattr *attr);
 
 /* dir.c */
 struct inode *ubifs_new_inode(struct ubifs_info *c, const struct inode *dir,
-			      umode_t mode);
+			      int mode);
 int ubifs_getattr(struct vfsmount *mnt, struct dentry *dentry,
 		  struct kstat *stat);
 
@@ -1755,11 +1735,11 @@ struct inode *ubifs_iget(struct super_block *sb, unsigned long inum);
 int ubifs_recover_master_node(struct ubifs_info *c);
 int ubifs_write_rcvrd_mst_node(struct ubifs_info *c);
 struct ubifs_scan_leb *ubifs_recover_leb(struct ubifs_info *c, int lnum,
-					 int offs, void *sbuf, int jhead);
+					 int offs, void *sbuf, int grouped);
 struct ubifs_scan_leb *ubifs_recover_log_leb(struct ubifs_info *c, int lnum,
 					     int offs, void *sbuf);
-int ubifs_recover_inl_heads(struct ubifs_info *c, void *sbuf);
-int ubifs_clean_lebs(struct ubifs_info *c, void *sbuf);
+int ubifs_recover_inl_heads(const struct ubifs_info *c, void *sbuf);
+int ubifs_clean_lebs(const struct ubifs_info *c, void *sbuf);
 int ubifs_rcvry_gc_commit(struct ubifs_info *c);
 int ubifs_recover_size_accum(struct ubifs_info *c, union ubifs_key *key,
 			     int deletion, loff_t new_size);

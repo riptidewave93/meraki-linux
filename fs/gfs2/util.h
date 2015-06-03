@@ -10,8 +10,6 @@
 #ifndef __UTIL_DOT_H__
 #define __UTIL_DOT_H__
 
-#include <linux/mempool.h>
-
 #include "incore.h"
 
 #define fs_printk(level, fs, fmt, arg...) \
@@ -147,12 +145,10 @@ gfs2_io_error_bh_i((sdp), (bh), __func__, __FILE__, __LINE__);
 
 
 extern struct kmem_cache *gfs2_glock_cachep;
-extern struct kmem_cache *gfs2_glock_aspace_cachep;
 extern struct kmem_cache *gfs2_inode_cachep;
 extern struct kmem_cache *gfs2_bufdata_cachep;
 extern struct kmem_cache *gfs2_rgrpd_cachep;
 extern struct kmem_cache *gfs2_quotad_cachep;
-extern mempool_t *gfs2_bh_pool;
 
 static inline unsigned int gfs2_tune_get_i(struct gfs2_tune *gt,
 					   unsigned int *p)

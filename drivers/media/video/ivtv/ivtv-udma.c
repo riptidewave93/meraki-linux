@@ -57,9 +57,9 @@ int ivtv_udma_fill_sg_list (struct ivtv_user_dma *dma, struct ivtv_dma_page_info
 			if (dma->bouncemap[map_offset] == NULL)
 				return -1;
 			local_irq_save(flags);
-			src = kmap_atomic(dma->map[map_offset]) + offset;
+			src = kmap_atomic(dma->map[map_offset], KM_BOUNCE_READ) + offset;
 			memcpy(page_address(dma->bouncemap[map_offset]) + offset, src, len);
-			kunmap_atomic(src);
+			kunmap_atomic(src, KM_BOUNCE_READ);
 			local_irq_restore(flags);
 			sg_set_page(&dma->SGlist[map_offset], dma->bouncemap[map_offset], len, offset);
 		}
@@ -132,12 +132,7 @@ int ivtv_udma_setup(struct ivtv *itv, unsigned long ivtv_dest_addr,
 	if (user_dma.page_count != err) {
 		IVTV_DEBUG_WARN("failed to map user pages, returned %d instead of %d\n",
 			   err, user_dma.page_count);
-		if (err >= 0) {
-			for (i = 0; i < err; i++)
-				put_page(dma->map[i]);
-			return -EINVAL;
-		}
-		return err;
+		return -EINVAL;
 	}
 
 	dma->page_count = user_dma.page_count;
@@ -218,7 +213,6 @@ void ivtv_udma_start(struct ivtv *itv)
 	write_reg_sync(read_reg(IVTV_REG_DMAXFER) | 0x01, IVTV_REG_DMAXFER);
 	set_bit(IVTV_F_I_DMA, &itv->i_flags);
 	set_bit(IVTV_F_I_UDMA, &itv->i_flags);
-	clear_bit(IVTV_F_I_UDMA_PENDING, &itv->i_flags);
 }
 
 void ivtv_udma_prepare(struct ivtv *itv)

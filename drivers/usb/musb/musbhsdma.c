@@ -33,7 +33,6 @@
 #include <linux/device.h>
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 #include "musb_core.h"
 #include "musbhsdma.h"
 
@@ -91,7 +90,7 @@ static struct dma_channel *dma_channel_allocate(struct dma_controller *c,
 			channel = &(musb_channel->channel);
 			channel->private_data = musb_channel;
 			channel->status = MUSB_DMA_STATUS_FREE;
-			channel->max_len = 0x100000;
+			channel->max_len = 0x10000;
 			/* Tx => mode 1; Rx => mode 0 */
 			channel->desired_mode = transmit;
 			channel->actual_len = 0;
@@ -122,20 +121,28 @@ static void configure_channel(struct dma_channel *channel,
 {
 	struct musb_dma_channel *musb_channel = channel->private_data;
 	struct musb_dma_controller *controller = musb_channel->controller;
-	struct musb *musb = controller->private_data;
 	void __iomem *mbase = controller->base;
 	u8 bchannel = musb_channel->idx;
 	u16 csr = 0;
 
-	dev_dbg(musb->controller, "%p, pkt_sz %d, addr 0x%x, len %d, mode %d\n",
+	DBG(4, "%p, pkt_sz %d, addr 0x%x, len %d, mode %d\n",
 			channel, packet_sz, dma_addr, len, mode);
 
 	if (mode) {
 		csr |= 1 << MUSB_HSDMA_MODE1_SHIFT;
 		BUG_ON(len < packet_sz);
+
+		if (packet_sz >= 64) {
+			csr |= MUSB_HSDMA_BURSTMODE_INCR16
+					<< MUSB_HSDMA_BURSTMODE_SHIFT;
+		} else if (packet_sz >= 32) {
+			csr |= MUSB_HSDMA_BURSTMODE_INCR8
+					<< MUSB_HSDMA_BURSTMODE_SHIFT;
+		} else if (packet_sz >= 16) {
+			csr |= MUSB_HSDMA_BURSTMODE_INCR4
+					<< MUSB_HSDMA_BURSTMODE_SHIFT;
+		}
 	}
-	csr |= MUSB_HSDMA_BURSTMODE_INCR16
-				<< MUSB_HSDMA_BURSTMODE_SHIFT;
 
 	csr |= (musb_channel->epnum << MUSB_HSDMA_ENDPOINT_SHIFT)
 		| (1 << MUSB_HSDMA_ENABLE_SHIFT)
@@ -159,10 +166,8 @@ static int dma_channel_program(struct dma_channel *channel,
 				dma_addr_t dma_addr, u32 len)
 {
 	struct musb_dma_channel *musb_channel = channel->private_data;
-	struct musb_dma_controller *controller = musb_channel->controller;
-	struct musb *musb = controller->private_data;
 
-	dev_dbg(musb->controller, "ep%d-%s pkt_sz %d, dma_addr 0x%x length %d, mode %d\n",
+	DBG(2, "ep%d-%s pkt_sz %d, dma_addr 0x%x length %d, mode %d\n",
 		musb_channel->epnum,
 		musb_channel->transmit ? "Tx" : "Rx",
 		packet_sz, dma_addr, len, mode);
@@ -170,33 +175,16 @@ static int dma_channel_program(struct dma_channel *channel,
 	BUG_ON(channel->status == MUSB_DMA_STATUS_UNKNOWN ||
 		channel->status == MUSB_DMA_STATUS_BUSY);
 
-	/* Let targets check/tweak the arguments */
-	if (musb->ops->adjust_channel_params) {
-		int ret = musb->ops->adjust_channel_params(channel,
-			packet_sz, &mode, &dma_addr, &len);
-		if (ret)
-			return ret;
-	}
-
-	/*
-	 * The DMA engine in RTL1.8 and above cannot handle
-	 * DMA addresses that are not aligned to a 4 byte boundary.
-	 * It ends up masking the last two bits of the address
-	 * programmed in DMA_ADDR.
-	 *
-	 * Fail such DMA transfers, so that the backup PIO mode
-	 * can carry out the transfer
-	 */
-	if ((musb->hwvers >= MUSB_HWVERS_1800) && (dma_addr % 4))
-		return false;
-
 	channel->actual_len = 0;
 	musb_channel->start_addr = dma_addr;
 	musb_channel->len = len;
 	musb_channel->max_packet_sz = packet_sz;
 	channel->status = MUSB_DMA_STATUS_BUSY;
 
-	configure_channel(channel, packet_sz, mode, dma_addr, len);
+	if ((mode == 1) && (len >= packet_sz))
+		configure_channel(channel, packet_sz, 1, dma_addr, len);
+	else
+		configure_channel(channel, packet_sz, 0, dma_addr, len);
 
 	return true;
 }
@@ -262,38 +250,14 @@ static irqreturn_t dma_controller_irq(int irq, void *private_data)
 	u8 bchannel;
 	u8 int_hsdma;
 
-	u32 addr, count;
+	u32 addr;
 	u16 csr;
 
 	spin_lock_irqsave(&musb->lock, flags);
 
 	int_hsdma = musb_readb(mbase, MUSB_HSDMA_INTR);
-
-#ifdef CONFIG_BLACKFIN
-	/* Clear DMA interrupt flags */
-	musb_writeb(mbase, MUSB_HSDMA_INTR, int_hsdma);
-#endif
-
-	if (!int_hsdma) {
-		dev_dbg(musb->controller, "spurious DMA irq\n");
-
-		for (bchannel = 0; bchannel < MUSB_HSDMA_CHANNELS; bchannel++) {
-			musb_channel = (struct musb_dma_channel *)
-					&(controller->channel[bchannel]);
-			channel = &musb_channel->channel;
-			if (channel->status == MUSB_DMA_STATUS_BUSY) {
-				count = musb_read_hsdma_count(mbase, bchannel);
-
-				if (count == 0)
-					int_hsdma |= (1 << bchannel);
-			}
-		}
-
-		dev_dbg(musb->controller, "int_hsdma = 0x%x\n", int_hsdma);
-
-		if (!int_hsdma)
-			goto done;
-	}
+	if (!int_hsdma)
+		goto done;
 
 	for (bchannel = 0; bchannel < MUSB_HSDMA_CHANNELS; bchannel++) {
 		if (int_hsdma & (1 << bchannel)) {
@@ -316,7 +280,7 @@ static irqreturn_t dma_controller_irq(int irq, void *private_data)
 				channel->actual_len = addr
 					- musb_channel->start_addr;
 
-				dev_dbg(musb->controller, "ch %p, 0x%x -> 0x%x (%zu / %d) %s\n",
+				DBG(2, "ch %p, 0x%x -> 0x%x (%d / %d) %s\n",
 					channel, musb_channel->start_addr,
 					addr, channel->actual_len,
 					musb_channel->len,
@@ -360,6 +324,11 @@ static irqreturn_t dma_controller_irq(int irq, void *private_data)
 		}
 	}
 
+#ifdef CONFIG_BLACKFIN
+	/* Clear DMA interrup flags */
+	musb_writeb(mbase, MUSB_HSDMA_INTR, int_hsdma);
+#endif
+
 	retval = IRQ_HANDLED;
 done:
 	spin_unlock_irqrestore(&musb->lock, flags);
@@ -386,7 +355,7 @@ dma_controller_create(struct musb *musb, void __iomem *base)
 	struct musb_dma_controller *controller;
 	struct device *dev = musb->controller;
 	struct platform_device *pdev = to_platform_device(dev);
-	int irq = platform_get_irq_byname(pdev, "dma");
+	int irq = platform_get_irq(pdev, 1);
 
 	if (irq == 0) {
 		dev_err(dev, "No DMA interrupt line!\n");
@@ -408,7 +377,7 @@ dma_controller_create(struct musb *musb, void __iomem *base)
 	controller->controller.channel_program = dma_channel_program;
 	controller->controller.channel_abort = dma_channel_abort;
 
-	if (request_irq(irq, dma_controller_irq, 0,
+	if (request_irq(irq, dma_controller_irq, IRQF_DISABLED,
 			dev_name(musb->controller), &controller->controller)) {
 		dev_err(dev, "request_irq %d failed!\n", irq);
 		dma_controller_destroy(&controller->controller);

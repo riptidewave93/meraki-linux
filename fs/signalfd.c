@@ -22,7 +22,6 @@
 #include <linux/init.h>
 #include <linux/fs.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/signal.h>
 #include <linux/list.h>
@@ -113,16 +112,6 @@ static int signalfd_copyinfo(struct signalfd_siginfo __user *uinfo,
 		err |= __put_user((long) kinfo->si_addr, &uinfo->ssi_addr);
 #ifdef __ARCH_SI_TRAPNO
 		err |= __put_user(kinfo->si_trapno, &uinfo->ssi_trapno);
-#endif
-#ifdef BUS_MCEERR_AO
-		/* 
-		 * Other callers might not initialize the si_lsb field,
-		 * so check explicitly for the right codes here.
-		 */
-		if (kinfo->si_code == BUS_MCEERR_AR ||
-		    kinfo->si_code == BUS_MCEERR_AO)
-			err |= __put_user((short) kinfo->si_addr_lsb,
-					  &uinfo->ssi_addr_lsb);
 #endif
 		break;
 	case __SI_CHLD:
@@ -231,7 +220,6 @@ static const struct file_operations signalfd_fops = {
 	.release	= signalfd_release,
 	.poll		= signalfd_poll,
 	.read		= signalfd_read,
-	.llseek		= noop_llseek,
 };
 
 SYSCALL_DEFINE4(signalfd4, int, ufd, sigset_t __user *, user_mask,
@@ -265,7 +253,7 @@ SYSCALL_DEFINE4(signalfd4, int, ufd, sigset_t __user *, user_mask,
 		 * anon_inode_getfd() will install the fd.
 		 */
 		ufd = anon_inode_getfd("[signalfd]", &signalfd_fops, ctx,
-				       O_RDWR | (flags & (O_CLOEXEC | O_NONBLOCK)));
+				       flags & (O_CLOEXEC | O_NONBLOCK));
 		if (ufd < 0)
 			kfree(ctx);
 	} else {

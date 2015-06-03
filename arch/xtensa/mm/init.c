@@ -18,18 +18,18 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/bootmem.h>
-#include <linux/gfp.h>
 #include <linux/swap.h>
 #include <linux/mman.h>
 #include <linux/nodemask.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 
 #include <asm/bootparam.h>
 #include <asm/page.h>
 
 /* References to section boundaries */
 
-extern char _stext, _etext, _sdata, _edata, _rodata_end;
+extern char _ftext, _etext, _fdata, _edata, _rodata_end;
 extern char __init_begin, __init_end;
 
 /*
@@ -197,8 +197,8 @@ void __init mem_init(void)
 			reservedpages++;
 	}
 
-	codesize =  (unsigned long) &_etext - (unsigned long) &_stext;
-	datasize =  (unsigned long) &_edata - (unsigned long) &_sdata;
+	codesize =  (unsigned long) &_etext - (unsigned long) &_ftext;
+	datasize =  (unsigned long) &_edata - (unsigned long) &_fdata;
 	initsize =  (unsigned long) &__init_end - (unsigned long) &__init_begin;
 
 	printk("Memory: %luk/%luk available (%ldk kernel code, %ldk reserved, "

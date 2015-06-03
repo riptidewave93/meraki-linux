@@ -4,10 +4,9 @@
 #include <linux/types.h>
 #include <linux/list.h>
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/err.h>
 #include <linux/slab.h>
-
-struct module;
 
 struct ts_config;
 
@@ -163,9 +162,9 @@ static inline struct ts_config *alloc_ts_config(size_t payload,
 {
 	struct ts_config *conf;
 
-	conf = kzalloc(TS_PRIV_ALIGN(sizeof(*conf)) + payload, gfp_mask);
+	conf = (struct ts_config *)kzalloc(TS_PRIV_ALIGN(sizeof(*conf)) + payload, gfp_mask);
 	if (conf == NULL)
-		return ERR_PTR(-ENOMEM);
+	  return (struct ts_config *)ERR_PTR(-ENOMEM);
 
 	return conf;
 }

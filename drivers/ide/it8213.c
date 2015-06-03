@@ -17,14 +17,15 @@
 
 /**
  *	it8213_set_pio_mode	-	set host controller for PIO mode
- *	@hwif: port
  *	@drive: drive
+ *	@pio: PIO mode number
  *
  *	Set the interface PIO mode.
  */
 
-static void it8213_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void it8213_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
+	ide_hwif_t *hwif	= drive->hwif;
 	struct pci_dev *dev	= to_pci_dev(hwif->dev);
 	int is_slave		= drive->dn & 1;
 	int master_port		= 0x40;
@@ -34,7 +35,6 @@ static void it8213_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 	u8 slave_data;
 	static DEFINE_SPINLOCK(tune_lock);
 	int control = 0;
-	const u8 pio = drive->pio_mode - XFER_PIO_0;
 
 	static const u8 timings[][2] = {
 					{ 0, 0 },
@@ -74,14 +74,15 @@ static void it8213_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 
 /**
  *	it8213_set_dma_mode	-	set host controller for DMA mode
- *	@hwif: port
  *	@drive: drive
+ *	@speed: DMA mode
  *
  *	Tune the ITE chipset for the DMA mode.
  */
 
-static void it8213_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void it8213_set_dma_mode(ide_drive_t *drive, const u8 speed)
 {
+	ide_hwif_t *hwif	= drive->hwif;
 	struct pci_dev *dev	= to_pci_dev(hwif->dev);
 	u8 maslave		= 0x40;
 	int a_speed		= 3 << (drive->dn * 4);
@@ -91,7 +92,6 @@ static void it8213_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 	int u_speed		= 0;
 	u16			reg4042, reg4a;
 	u8			reg48, reg54, reg55;
-	const u8 speed		= drive->dma_mode;
 
 	pci_read_config_word(dev, maslave, &reg4042);
 	pci_read_config_byte(dev, 0x48, &reg48);
@@ -120,6 +120,7 @@ static void it8213_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 			pci_write_config_byte(dev, 0x54, reg54 & ~v_flag);
 	} else {
 		const u8 mwdma_to_pio[] = { 0, 3, 4 };
+		u8 pio;
 
 		if (reg48 & u_flag)
 			pci_write_config_byte(dev, 0x48, reg48 & ~u_flag);
@@ -131,12 +132,11 @@ static void it8213_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 			pci_write_config_byte(dev, 0x55, (u8) reg55 & ~w_flag);
 
 		if (speed >= XFER_MW_DMA_0)
-			drive->pio_mode =
-				mwdma_to_pio[speed - XFER_MW_DMA_0] + XFER_PIO_0;
+			pio = mwdma_to_pio[speed - XFER_MW_DMA_0];
 		else
-			drive->pio_mode = XFER_PIO_2; /* for SWDMA2 */
+			pio = 2; /* only SWDMA2 is allowed */
 
-		it8213_set_pio_mode(hwif, drive);
+		it8213_set_pio_mode(drive, pio);
 	}
 }
 

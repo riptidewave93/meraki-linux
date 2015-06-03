@@ -3,9 +3,9 @@
  *
  * Licensed under the GPLv2
  *
- * Copyright (C) 2009 Lemote Inc.
+ * Copyright (C) 2009 Lemote Inc. & Insititute of Computing Technology
  * Author: Hu Hongbing <huhb@lemote.com>
- *         Wu Zhangjin <wuzhangjin@gmail.com>
+ *         Wu Zhangjin <wuzj@lemote.com>
  */
 #include <asm/suspend.h>
 #include <asm/fpu.h>

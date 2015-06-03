@@ -113,10 +113,12 @@
 #define DTD_HANGOVER			600	/* 600 samples, or 75ms     */
 #define DC_LOG2BETA			3	/* log2() of DC filter Beta */
 
+
 /* adapting coeffs using the traditional stochastic descent (N)LMS algorithm */
 
 #ifdef __bfin__
-static inline void lms_adapt_bg(struct oslec_state *ec, int clean, int shift)
+static inline void lms_adapt_bg(struct oslec_state *ec, int clean,
+				    int shift)
 {
 	int i, j;
 	int offset1;
@@ -187,7 +189,8 @@ static inline void lms_adapt_bg(struct oslec_state *ec, int clean, int shift)
 */
 
 #else
-static inline void lms_adapt_bg(struct oslec_state *ec, int clean, int shift)
+static inline void lms_adapt_bg(struct oslec_state *ec, int clean,
+				    int shift)
 {
 	int i;
 
@@ -222,7 +225,7 @@ static inline int top_bit(unsigned int bits)
 	if (bits == 0)
 		return -1;
 	else
-		return (int)fls((int32_t) bits) - 1;
+		return (int)fls((int32_t)bits)-1;
 }
 
 struct oslec_state *oslec_create(int len, int adaption_mode)
@@ -405,7 +408,7 @@ int16_t oslec_update(struct oslec_state *ec, int16_t tx, int16_t rx)
 		old = (int)ec->fir_state.history[ec->fir_state.curr_pos] *
 		    (int)ec->fir_state.history[ec->fir_state.curr_pos];
 		ec->Pstates +=
-		    ((new - old) + (1 << (ec->log2taps - 1))) >> ec->log2taps;
+		    ((new - old) + (1 << (ec->log2taps-1))) >> ec->log2taps;
 		if (ec->Pstates < 0)
 			ec->Pstates = 0;
 	}
@@ -463,7 +466,7 @@ int16_t oslec_update(struct oslec_state *ec, int16_t tx, int16_t rx)
 
 		   factor      = (2^30) * (2^-2) * clean_bg_rx/P
 
-		   (30 - 2 - log2(P))
+						(30 - 2 - log2(P))
 		   factor      = clean_bg_rx 2                     ----- (3)
 
 		   To avoid a divide we approximate log2(P) as top_bit(P),
@@ -511,7 +514,7 @@ int16_t oslec_update(struct oslec_state *ec, int16_t tx, int16_t rx)
 			 */
 			ec->adapt = 1;
 			memcpy(ec->fir_taps16[0], ec->fir_taps16[1],
-			       ec->taps * sizeof(int16_t));
+				ec->taps * sizeof(int16_t));
 		} else
 			ec->cond_met++;
 	} else
@@ -541,7 +544,7 @@ int16_t oslec_update(struct oslec_state *ec, int16_t tx, int16_t rx)
 				 * Just random numbers rolled off very vaguely
 				 * Hoth-like.  DR: This noise doesn't sound
 				 * quite right to me - I suspect there are some
-				 * overflow issues in the filtering as it's too
+				 * overlfow issues in the filtering as it's too
 				 * "crackly".
 				 * TODO: debug this, maybe just play noise at
 				 * high level or look at spectrum.
@@ -600,7 +603,7 @@ int16_t oslec_update(struct oslec_state *ec, int16_t tx, int16_t rx)
 }
 EXPORT_SYMBOL_GPL(oslec_update);
 
-/* This function is separated from the echo canceller is it is usually called
+/* This function is seperated from the echo canceller is it is usually called
    as part of the tx process.  See rx HP (DC blocking) filter above, it's
    the same design.
 

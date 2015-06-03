@@ -63,6 +63,7 @@ static inline void bictcp_reset(struct bictcp *ca)
 {
 	ca->cnt = 0;
 	ca->last_max_cwnd = 0;
+	ca->loss_cwnd = 0;
 	ca->last_cwnd = 0;
 	ca->last_time = 0;
 	ca->epoch_start = 0;
@@ -71,11 +72,7 @@ static inline void bictcp_reset(struct bictcp *ca)
 
 static void bictcp_init(struct sock *sk)
 {
-	struct bictcp *ca = inet_csk_ca(sk);
-
-	bictcp_reset(ca);
-	ca->loss_cwnd = 0;
-
+	bictcp_reset(inet_csk_ca(sk));
 	if (initial_ssthresh)
 		tcp_sk(sk)->snd_ssthresh = initial_ssthresh;
 }
@@ -130,7 +127,7 @@ static inline void bictcp_update(struct bictcp *ca, u32 cwnd)
 	}
 
 	/* if in slow start or link utilization is very low */
-	if (ca->last_max_cwnd == 0) {
+	if (ca->loss_cwnd == 0) {
 		if (ca->cnt > 20) /* increase cwnd 5% per RTT */
 			ca->cnt = 20;
 	}
@@ -188,7 +185,7 @@ static u32 bictcp_undo_cwnd(struct sock *sk)
 {
 	const struct tcp_sock *tp = tcp_sk(sk);
 	const struct bictcp *ca = inet_csk_ca(sk);
-	return max(tp->snd_cwnd, ca->loss_cwnd);
+	return max(tp->snd_cwnd, ca->last_max_cwnd);
 }
 
 static void bictcp_state(struct sock *sk, u8 new_state)
@@ -212,7 +209,7 @@ static void bictcp_acked(struct sock *sk, u32 cnt, s32 rtt)
 }
 
 
-static struct tcp_congestion_ops bictcp __read_mostly = {
+static struct tcp_congestion_ops bictcp = {
 	.init		= bictcp_init,
 	.ssthresh	= bictcp_recalc_ssthresh,
 	.cong_avoid	= bictcp_cong_avoid,

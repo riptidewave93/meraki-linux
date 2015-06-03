@@ -16,8 +16,6 @@
  *
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include "m5602_ov7660.h"
 
 static int ov7660_get_gain(struct gspca_dev *gspca_dev, __s32 *val);
@@ -35,7 +33,7 @@ static int ov7660_set_hflip(struct gspca_dev *gspca_dev, __s32 val);
 static int ov7660_get_vflip(struct gspca_dev *gspca_dev, __s32 *val);
 static int ov7660_set_vflip(struct gspca_dev *gspca_dev, __s32 val);
 
-static const struct ctrl ov7660_ctrls[] = {
+const static struct ctrl ov7660_ctrls[] = {
 #define GAIN_IDX 1
 	{
 		{
@@ -56,13 +54,13 @@ static const struct ctrl ov7660_ctrls[] = {
 #define AUTO_WHITE_BALANCE_IDX 4
 	{
 		{
-			.id		= V4L2_CID_AUTO_WHITE_BALANCE,
-			.type		= V4L2_CTRL_TYPE_BOOLEAN,
-			.name		= "auto white balance",
-			.minimum	= 0,
-			.maximum	= 1,
-			.step		= 1,
-			.default_value	= 1
+			.id 		= V4L2_CID_AUTO_WHITE_BALANCE,
+			.type 		= V4L2_CTRL_TYPE_BOOLEAN,
+			.name 		= "auto white balance",
+			.minimum 	= 0,
+			.maximum 	= 1,
+			.step 		= 1,
+			.default_value 	= 1
 		},
 		.set = ov7660_set_auto_white_balance,
 		.get = ov7660_get_auto_white_balance
@@ -70,13 +68,13 @@ static const struct ctrl ov7660_ctrls[] = {
 #define AUTO_GAIN_CTRL_IDX 5
 	{
 		{
-			.id		= V4L2_CID_AUTOGAIN,
-			.type		= V4L2_CTRL_TYPE_BOOLEAN,
-			.name		= "auto gain control",
-			.minimum	= 0,
-			.maximum	= 1,
-			.step		= 1,
-			.default_value	= 1
+			.id 		= V4L2_CID_AUTOGAIN,
+			.type 		= V4L2_CTRL_TYPE_BOOLEAN,
+			.name 		= "auto gain control",
+			.minimum 	= 0,
+			.maximum 	= 1,
+			.step 		= 1,
+			.default_value 	= 1
 		},
 		.set = ov7660_set_auto_gain,
 		.get = ov7660_get_auto_gain
@@ -84,13 +82,13 @@ static const struct ctrl ov7660_ctrls[] = {
 #define AUTO_EXPOSURE_IDX 6
 	{
 		{
-			.id		= V4L2_CID_EXPOSURE_AUTO,
-			.type		= V4L2_CTRL_TYPE_BOOLEAN,
-			.name		= "auto exposure",
-			.minimum	= 0,
-			.maximum	= 1,
-			.step		= 1,
-			.default_value	= 1
+			.id 		= V4L2_CID_EXPOSURE_AUTO,
+			.type 		= V4L2_CTRL_TYPE_BOOLEAN,
+			.name 		= "auto exposure",
+			.minimum 	= 0,
+			.maximum 	= 1,
+			.step 		= 1,
+			.default_value 	= 1
 		},
 		.set = ov7660_set_auto_exposure,
 		.get = ov7660_get_auto_exposure
@@ -98,13 +96,13 @@ static const struct ctrl ov7660_ctrls[] = {
 #define HFLIP_IDX 7
 	{
 		{
-			.id		= V4L2_CID_HFLIP,
-			.type		= V4L2_CTRL_TYPE_BOOLEAN,
-			.name		= "horizontal flip",
-			.minimum	= 0,
-			.maximum	= 1,
-			.step		= 1,
-			.default_value	= 0
+			.id 		= V4L2_CID_HFLIP,
+			.type 		= V4L2_CTRL_TYPE_BOOLEAN,
+			.name 		= "horizontal flip",
+			.minimum 	= 0,
+			.maximum 	= 1,
+			.step 		= 1,
+			.default_value 	= 0
 		},
 		.set = ov7660_set_hflip,
 		.get = ov7660_get_hflip
@@ -112,13 +110,13 @@ static const struct ctrl ov7660_ctrls[] = {
 #define VFLIP_IDX 8
 	{
 		{
-			.id		= V4L2_CID_VFLIP,
-			.type		= V4L2_CTRL_TYPE_BOOLEAN,
-			.name		= "vertical flip",
-			.minimum	= 0,
-			.maximum	= 1,
-			.step		= 1,
-			.default_value	= 0
+			.id 		= V4L2_CID_VFLIP,
+			.type 		= V4L2_CTRL_TYPE_BOOLEAN,
+			.name 		= "vertical flip",
+			.minimum 	= 0,
+			.maximum 	= 1,
+			.step 		= 1,
+			.default_value 	= 0
 		},
 		.set = ov7660_set_vflip,
 		.get = ov7660_get_vflip
@@ -151,7 +149,7 @@ int ov7660_probe(struct sd *sd)
 
 	if (force_sensor) {
 		if (force_sensor == OV7660_SENSOR) {
-			pr_info("Forcing an %s sensor\n", ov7660.name);
+			info("Forcing an %s sensor", ov7660.name);
 			goto sensor_found;
 		}
 		/* If we want to force another sensor,
@@ -182,10 +180,10 @@ int ov7660_probe(struct sd *sd)
 	if (m5602_read_sensor(sd, OV7660_VER, &ver_id, 1))
 		return -ENODEV;
 
-	pr_info("Sensor reported 0x%x%x\n", prod_id, ver_id);
+	info("Sensor reported 0x%x%x", prod_id, ver_id);
 
 	if ((prod_id == 0x76) && (ver_id == 0x60)) {
-		pr_info("Detected a ov7660 sensor\n");
+		info("Detected a ov7660 sensor");
 		goto sensor_found;
 	}
 	return -ENODEV;
@@ -459,16 +457,17 @@ static int ov7660_set_vflip(struct gspca_dev *gspca_dev, __s32 val)
 static void ov7660_dump_registers(struct sd *sd)
 {
 	int address;
-	pr_info("Dumping the ov7660 register state\n");
+	info("Dumping the ov7660 register state");
 	for (address = 0; address < 0xa9; address++) {
 		u8 value;
 		m5602_read_sensor(sd, address, &value, 1);
-		pr_info("register 0x%x contains 0x%x\n", address, value);
+		info("register 0x%x contains 0x%x",
+		     address, value);
 	}
 
-	pr_info("ov7660 register state dump complete\n");
+	info("ov7660 register state dump complete");
 
-	pr_info("Probing for which registers that are read/write\n");
+	info("Probing for which registers that are read/write");
 	for (address = 0; address < 0xff; address++) {
 		u8 old_value, ctrl_value;
 		u8 test_value[2] = {0xff, 0xff};
@@ -478,9 +477,9 @@ static void ov7660_dump_registers(struct sd *sd)
 		m5602_read_sensor(sd, address, &ctrl_value, 1);
 
 		if (ctrl_value == test_value[0])
-			pr_info("register 0x%x is writeable\n", address);
+			info("register 0x%x is writeable", address);
 		else
-			pr_info("register 0x%x is read only\n", address);
+			info("register 0x%x is read only", address);
 
 		/* Restore original value */
 		m5602_write_sensor(sd, address, &old_value, 1);

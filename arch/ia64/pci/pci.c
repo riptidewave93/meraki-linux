@@ -20,10 +20,10 @@
 #include <linux/slab.h>
 #include <linux/spinlock.h>
 #include <linux/bootmem.h>
-#include <linux/export.h>
 
 #include <asm/machvec.h>
 #include <asm/page.h>
+#include <asm/system.h>
 #include <asm/io.h>
 #include <asm/sal.h>
 #include <asm/smp.h>
@@ -131,9 +131,7 @@ alloc_pci_controller (int seg)
 }
 
 struct pci_root_info {
-	struct acpi_device *bridge;
 	struct pci_controller *controller;
-	struct list_head resources;
 	char *name;
 };
 
@@ -299,41 +297,41 @@ static __devinit acpi_status add_window(struct acpi_resource *res, void *data)
 	window->offset = offset;
 
 	if (insert_resource(root, &window->resource)) {
-		dev_err(&info->bridge->dev,
-			"can't allocate host bridge window %pR\n",
-			&window->resource);
-	} else {
-		if (offset)
-			dev_info(&info->bridge->dev, "host bridge window %pR "
-				 "(PCI address [%#llx-%#llx])\n",
-				 &window->resource,
-				 window->resource.start - offset,
-				 window->resource.end - offset);
-		else
-			dev_info(&info->bridge->dev,
-				 "host bridge window %pR\n",
-				 &window->resource);
+		printk(KERN_ERR "alloc 0x%llx-0x%llx from %s for %s failed\n",
+			window->resource.start, window->resource.end,
+			root->name, info->name);
 	}
-
-	/* HP's firmware has a hack to work around a Windows bug.
-	 * Ignore these tiny memory ranges */
-	if (!((window->resource.flags & IORESOURCE_MEM) &&
-	      (window->resource.end - window->resource.start < 16)))
-		pci_add_resource_offset(&info->resources, &window->resource,
-					window->offset);
 
 	return AE_OK;
 }
 
-struct pci_bus * __devinit
-pci_acpi_scan_root(struct acpi_pci_root *root)
+static void __devinit
+pcibios_setup_root_windows(struct pci_bus *bus, struct pci_controller *ctrl)
 {
-	struct acpi_device *device = root->device;
-	int domain = root->segment;
-	int bus = root->secondary.start;
+	int i, j;
+
+	j = 0;
+	for (i = 0; i < ctrl->windows; i++) {
+		struct resource *res = &ctrl->window[i].resource;
+		/* HP's firmware has a hack to work around a Windows bug.
+		 * Ignore these tiny memory ranges */
+		if ((res->flags & IORESOURCE_MEM) &&
+		    (res->end - res->start < 16))
+			continue;
+		if (j >= PCI_BUS_NUM_RESOURCES) {
+			printk("Ignoring range [%#llx-%#llx] (%lx)\n",
+					res->start, res->end, res->flags);
+			continue;
+		}
+		bus->resource[j++] = res;
+	}
+}
+
+struct pci_bus * __devinit
+pci_acpi_scan_root(struct acpi_device *device, int domain, int bus)
+{
 	struct pci_controller *controller;
 	unsigned int windows = 0;
-	struct pci_root_info info;
 	struct pci_bus *pbus;
 	char *name;
 	int pxm;
@@ -350,10 +348,11 @@ pci_acpi_scan_root(struct acpi_pci_root *root)
 		controller->node = pxm_to_node(pxm);
 #endif
 
-	INIT_LIST_HEAD(&info.resources);
 	acpi_walk_resources(device->handle, METHOD_NAME__CRS, count_window,
 			&windows);
 	if (windows) {
+		struct pci_root_info info;
+
 		controller->window =
 			kmalloc_node(sizeof(*controller->window) * windows,
 				     GFP_KERNEL, controller->node);
@@ -365,7 +364,6 @@ pci_acpi_scan_root(struct acpi_pci_root *root)
 			goto out3;
 
 		sprintf(name, "PCI Bus %04x:%02x", domain, bus);
-		info.bridge = device;
 		info.controller = controller;
 		info.name = name;
 		acpi_walk_resources(device->handle, METHOD_NAME__CRS,
@@ -377,14 +375,8 @@ pci_acpi_scan_root(struct acpi_pci_root *root)
 	 * should handle the case here, but it appears that IA64 hasn't
 	 * such quirk. So we just ignore the case now.
 	 */
-	pbus = pci_create_root_bus(NULL, bus, &pci_root_ops, controller,
-				   &info.resources);
-	if (!pbus) {
-		pci_free_resource_list(&info.resources);
-		return NULL;
-	}
+	pbus = pci_scan_bus_parented(NULL, bus, &pci_root_ops, controller);
 
-	pbus->subordinate = pci_scan_child_bus(pbus);
 	return pbus;
 
 out3:
@@ -395,15 +387,64 @@ out1:
 	return NULL;
 }
 
+void pcibios_resource_to_bus(struct pci_dev *dev,
+		struct pci_bus_region *region, struct resource *res)
+{
+	struct pci_controller *controller = PCI_CONTROLLER(dev);
+	unsigned long offset = 0;
+	int i;
+
+	for (i = 0; i < controller->windows; i++) {
+		struct pci_window *window = &controller->window[i];
+		if (!(window->resource.flags & res->flags))
+			continue;
+		if (window->resource.start > res->start)
+			continue;
+		if (window->resource.end < res->end)
+			continue;
+		offset = window->offset;
+		break;
+	}
+
+	region->start = res->start - offset;
+	region->end = res->end - offset;
+}
+EXPORT_SYMBOL(pcibios_resource_to_bus);
+
+void pcibios_bus_to_resource(struct pci_dev *dev,
+		struct resource *res, struct pci_bus_region *region)
+{
+	struct pci_controller *controller = PCI_CONTROLLER(dev);
+	unsigned long offset = 0;
+	int i;
+
+	for (i = 0; i < controller->windows; i++) {
+		struct pci_window *window = &controller->window[i];
+		if (!(window->resource.flags & res->flags))
+			continue;
+		if (window->resource.start - window->offset > region->start)
+			continue;
+		if (window->resource.end - window->offset < region->end)
+			continue;
+		offset = window->offset;
+		break;
+	}
+
+	res->start = region->start + offset;
+	res->end = region->end + offset;
+}
+EXPORT_SYMBOL(pcibios_bus_to_resource);
+
 static int __devinit is_valid_resource(struct pci_dev *dev, int idx)
 {
 	unsigned int i, type_mask = IORESOURCE_IO | IORESOURCE_MEM;
-	struct resource *devr = &dev->resource[idx], *busr;
+	struct resource *devr = &dev->resource[idx];
 
 	if (!dev->bus)
 		return 0;
+	for (i=0; i<PCI_BUS_NUM_RESOURCES; i++) {
+		struct resource *busr = dev->bus->resource[i];
 
-	pci_bus_for_each_resource(dev->bus, busr, i) {
 		if (!busr || ((busr->flags ^ devr->flags) & type_mask))
 			continue;
 		if ((devr->start) && (devr->start >= busr->start) &&
@@ -416,11 +457,15 @@ static int __devinit is_valid_resource(struct pci_dev *dev, int idx)
 static void __devinit
 pcibios_fixup_resources(struct pci_dev *dev, int start, int limit)
 {
+	struct pci_bus_region region;
 	int i;
 
 	for (i = start; i < limit; i++) {
 		if (!dev->resource[i].flags)
 			continue;
+		region.start = dev->resource[i].start;
+		region.end = dev->resource[i].end;
+		pcibios_bus_to_resource(dev, &dev->resource[i], &region);
 		if ((is_valid_resource(dev, i)))
 			pci_claim_resource(dev, i);
 	}
@@ -448,15 +493,14 @@ pcibios_fixup_bus (struct pci_bus *b)
 	if (b->self) {
 		pci_read_bridge_bases(b);
 		pcibios_fixup_bridge_resources(b->self);
+	} else {
+		pcibios_setup_root_windows(b, b->sysdata);
 	}
 	list_for_each_entry(dev, &b->devices, bus_list)
 		pcibios_fixup_device_resources(dev);
 	platform_pci_fixup_bus(b);
-}
 
-void pcibios_set_master (struct pci_dev *dev)
-{
-	/* No special bus mastering setup handling */
+	return;
 }
 
 void __devinit
@@ -489,11 +533,10 @@ pcibios_disable_device (struct pci_dev *dev)
 		acpi_pci_irq_disable(dev);
 }
 
-resource_size_t
-pcibios_align_resource (void *data, const struct resource *res,
+void
+pcibios_align_resource (void *data, struct resource *res,
 		        resource_size_t size, resource_size_t align)
 {
-	return res->start;
 }
 
 /*
@@ -677,6 +720,9 @@ int ia64_pci_legacy_write(struct pci_bus *bus, u16 port, u32 val, u8 size)
 	return ret;
 }
 
+/* It's defined in drivers/pci/pci.c */
+extern u8 pci_cache_line_size;
+
 /**
  * set_pci_cacheline_size - determine cacheline size for PCI devices
  *
@@ -685,7 +731,7 @@ int ia64_pci_legacy_write(struct pci_bus *bus, u16 port, u32 val, u8 size)
  *
  * Code mostly taken from arch/ia64/kernel/palinfo.c:cache_info().
  */
-static void __init set_pci_dfl_cacheline_size(void)
+static void __init set_pci_cacheline_size(void)
 {
 	unsigned long levels, unique_caches;
 	long status;
@@ -705,7 +751,7 @@ static void __init set_pci_dfl_cacheline_size(void)
 			"(status=%ld)\n", __func__, status);
 		return;
 	}
-	pci_dfl_cache_line_size = (1 << cci.pcci_line_size) / 4;
+	pci_cache_line_size = (1 << cci.pcci_line_size) / 4;
 }
 
 u64 ia64_dma_get_required_mask(struct device *dev)
@@ -736,7 +782,7 @@ EXPORT_SYMBOL_GPL(dma_get_required_mask);
 
 static int __init pcibios_init(void)
 {
-	set_pci_dfl_cacheline_size();
+	set_pci_cacheline_size();
 	return 0;
 }
 

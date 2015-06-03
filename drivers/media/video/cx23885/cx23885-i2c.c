@@ -99,7 +99,7 @@ static int i2c_sendbytes(struct i2c_adapter *i2c_adap,
 		if (!i2c_wait_done(i2c_adap))
 			return -EIO;
 		if (!i2c_slave_did_ack(i2c_adap))
-			return -ENXIO;
+			return -EIO;
 
 		dprintk(1, "%s() returns 0\n", __func__);
 		return 0;
@@ -120,7 +120,10 @@ static int i2c_sendbytes(struct i2c_adapter *i2c_adap,
 	cx_write(bus->reg_wdata, wdata);
 	cx_write(bus->reg_ctrl, ctrl);
 
-	if (!i2c_wait_done(i2c_adap))
+	retval = i2c_wait_done(i2c_adap);
+	if (retval < 0)
+		goto err;
+	if (retval == 0)
 		goto eio;
 	if (i2c_debug) {
 		printk(" <W %02x %02x", msg->addr << 1, msg->buf[0]);
@@ -142,7 +145,10 @@ static int i2c_sendbytes(struct i2c_adapter *i2c_adap,
 		cx_write(bus->reg_wdata, wdata);
 		cx_write(bus->reg_ctrl, ctrl);
 
-		if (!i2c_wait_done(i2c_adap))
+		retval = i2c_wait_done(i2c_adap);
+		if (retval < 0)
+			goto err;
+		if (retval == 0)
 			goto eio;
 		if (i2c_debug) {
 			dprintk(1, " %02x", msg->buf[cnt]);
@@ -154,6 +160,7 @@ static int i2c_sendbytes(struct i2c_adapter *i2c_adap,
 
  eio:
 	retval = -EIO;
+ err:
 	if (i2c_debug)
 		printk(KERN_ERR " ERR: %d\n", retval);
 	return retval;
@@ -178,7 +185,7 @@ static int i2c_readbytes(struct i2c_adapter *i2c_adap,
 		if (!i2c_wait_done(i2c_adap))
 			return -EIO;
 		if (!i2c_slave_did_ack(i2c_adap))
-			return -ENXIO;
+			return -EIO;
 
 
 		dprintk(1, "%s() returns 0\n", __func__);
@@ -202,7 +209,10 @@ static int i2c_readbytes(struct i2c_adapter *i2c_adap,
 		cx_write(bus->reg_addr, msg->addr << 25);
 		cx_write(bus->reg_ctrl, ctrl);
 
-		if (!i2c_wait_done(i2c_adap))
+		retval = i2c_wait_done(i2c_adap);
+		if (retval < 0)
+			goto err;
+		if (retval == 0)
 			goto eio;
 		msg->buf[cnt] = cx_read(bus->reg_rdata) & 0xff;
 		if (i2c_debug) {
@@ -215,6 +225,7 @@ static int i2c_readbytes(struct i2c_adapter *i2c_adap,
 
  eio:
 	retval = -EIO;
+ err:
 	if (i2c_debug)
 		printk(KERN_ERR " ERR: %d\n", retval);
 	return retval;
@@ -287,7 +298,6 @@ static char *i2c_devs[128] = {
 	[0x32 >> 1] = "cx24227",
 	[0x88 >> 1] = "cx25837",
 	[0x84 >> 1] = "tda8295",
-	[0x98 >> 1] = "flatiron",
 	[0xa0 >> 1] = "eeprom",
 	[0xc0 >> 1] = "tuner/mt2131/tda8275",
 	[0xc2 >> 1] = "tuner/mt2131/tda8275/xc5000/xc3028",
@@ -309,7 +319,7 @@ static void do_i2c_scan(char *name, struct i2c_client *c)
 	}
 }
 
-/* init + register i2c adapter */
+/* init + register i2c algo-bit adapter */
 int cx23885_i2c_register(struct cx23885_i2c *bus)
 {
 	struct cx23885_dev *dev = bus->dev;
@@ -355,10 +365,17 @@ int cx23885_i2c_register(struct cx23885_i2c *bus)
 
 		memset(&info, 0, sizeof(struct i2c_board_info));
 		strlcpy(info.type, "ir_video", I2C_NAME_SIZE);
-		/* Use quick read command for probe, some IR chips don't
-		 * support writes */
-		i2c_new_probed_device(&bus->i2c_adap, &info, addr_list,
-				      i2c_probe_func_quick_read);
+		/*
+		 * We can't call i2c_new_probed_device() because it uses
+		 * quick writes for probing and the IR receiver device only
+		 * replies to reads.
+		 */
+		if (i2c_smbus_xfer(&bus->i2c_adap, addr_list[0], 0,
+				   I2C_SMBUS_READ, 0, I2C_SMBUS_QUICK,
+				   NULL) >= 0) {
+			info.addr = addr_list[0];
+			i2c_new_device(&bus->i2c_adap, &info);
+		}
 	}
 
 	return bus->i2c_rc;

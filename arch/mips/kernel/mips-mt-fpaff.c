@@ -3,7 +3,6 @@
  * Copyright (C) 2005 Mips Technologies, Inc
  */
 #include <linux/cpu.h>
-#include <linux/cpuset.h>
 #include <linux/cpumask.h>
 #include <linux/delay.h>
 #include <linux/kernel.h>
@@ -40,21 +39,6 @@ static inline struct task_struct *find_process_by_pid(pid_t pid)
 	return pid ? find_task_by_vpid(pid) : current;
 }
 
-/*
- * check the target process has a UID that matches the current process's
- */
-static bool check_same_owner(struct task_struct *p)
-{
-	const struct cred *cred = current_cred(), *pcred;
-	bool match;
-
-	rcu_read_lock();
-	pcred = __task_cred(p);
-	match = (cred->euid == pcred->euid ||
-		 cred->euid == pcred->uid);
-	rcu_read_unlock();
-	return match;
-}
 
 /*
  * mipsmt_sys_sched_setaffinity - set the cpu affinity of a process
@@ -62,10 +46,12 @@ static bool check_same_owner(struct task_struct *p)
 asmlinkage long mipsmt_sys_sched_setaffinity(pid_t pid, unsigned int len,
 				      unsigned long __user *user_mask_ptr)
 {
-	cpumask_var_t cpus_allowed, new_mask, effective_mask;
-	struct thread_info *ti;
-	struct task_struct *p;
+	cpumask_t new_mask;
+	cpumask_t effective_mask;
 	int retval;
+	struct task_struct *p;
+	struct thread_info *ti;
+	uid_t euid;
 
 	if (len < sizeof(new_mask))
 		return -EINVAL;
@@ -74,74 +60,53 @@ asmlinkage long mipsmt_sys_sched_setaffinity(pid_t pid, unsigned int len,
 		return -EFAULT;
 
 	get_online_cpus();
-	rcu_read_lock();
+	read_lock(&tasklist_lock);
 
 	p = find_process_by_pid(pid);
 	if (!p) {
-		rcu_read_unlock();
+		read_unlock(&tasklist_lock);
 		put_online_cpus();
 		return -ESRCH;
 	}
 
-	/* Prevent p going away */
+	/*
+	 * It is not safe to call set_cpus_allowed with the
+	 * tasklist_lock held.  We will bump the task_struct's
+	 * usage count and drop tasklist_lock before invoking
+	 * set_cpus_allowed.
+	 */
 	get_task_struct(p);
-	rcu_read_unlock();
 
-	if (!alloc_cpumask_var(&cpus_allowed, GFP_KERNEL)) {
-		retval = -ENOMEM;
-		goto out_put_task;
-	}
-	if (!alloc_cpumask_var(&new_mask, GFP_KERNEL)) {
-		retval = -ENOMEM;
-		goto out_free_cpus_allowed;
-	}
-	if (!alloc_cpumask_var(&effective_mask, GFP_KERNEL)) {
-		retval = -ENOMEM;
-		goto out_free_new_mask;
-	}
+	euid = current_euid();
 	retval = -EPERM;
-	if (!check_same_owner(p) && !capable(CAP_SYS_NICE))
+	if (euid != p->cred->euid && euid != p->cred->uid &&
+	    !capable(CAP_SYS_NICE)) {
+		read_unlock(&tasklist_lock);
 		goto out_unlock;
+	}
 
-	retval = security_task_setscheduler(p);
+	retval = security_task_setscheduler(p, 0, NULL);
 	if (retval)
 		goto out_unlock;
 
 	/* Record new user-specified CPU set for future reference */
-	cpumask_copy(&p->thread.user_cpus_allowed, new_mask);
+	p->thread.user_cpus_allowed = new_mask;
 
- again:
+	/* Unlock the task list */
+	read_unlock(&tasklist_lock);
+
 	/* Compute new global allowed CPU set if necessary */
 	ti = task_thread_info(p);
 	if (test_ti_thread_flag(ti, TIF_FPUBOUND) &&
-	    cpus_intersects(*new_mask, mt_fpu_cpumask)) {
-		cpus_and(*effective_mask, *new_mask, mt_fpu_cpumask);
-		retval = set_cpus_allowed_ptr(p, effective_mask);
+	    cpus_intersects(new_mask, mt_fpu_cpumask)) {
+		cpus_and(effective_mask, new_mask, mt_fpu_cpumask);
+		retval = set_cpus_allowed(p, effective_mask);
 	} else {
-		cpumask_copy(effective_mask, new_mask);
 		clear_ti_thread_flag(ti, TIF_FPUBOUND);
-		retval = set_cpus_allowed_ptr(p, new_mask);
+		retval = set_cpus_allowed(p, new_mask);
 	}
 
-	if (!retval) {
-		cpuset_cpus_allowed(p, cpus_allowed);
-		if (!cpumask_subset(effective_mask, cpus_allowed)) {
-			/*
-			 * We must have raced with a concurrent cpuset
-			 * update. Just reset the cpus_allowed to the
-			 * cpuset's cpus_allowed
-			 */
-			cpumask_copy(new_mask, cpus_allowed);
-			goto again;
-		}
-	}
 out_unlock:
-	free_cpumask_var(effective_mask);
-out_free_new_mask:
-	free_cpumask_var(new_mask);
-out_free_cpus_allowed:
-	free_cpumask_var(cpus_allowed);
-out_put_task:
 	put_task_struct(p);
 	put_online_cpus();
 	return retval;
@@ -173,7 +138,7 @@ asmlinkage long mipsmt_sys_sched_getaffinity(pid_t pid, unsigned int len,
 	if (retval)
 		goto out_unlock;
 
-	cpumask_and(&mask, &p->thread.user_cpus_allowed, cpu_possible_mask);
+	cpus_and(mask, p->thread.user_cpus_allowed, cpu_possible_map);
 
 out_unlock:
 	read_unlock(&tasklist_lock);

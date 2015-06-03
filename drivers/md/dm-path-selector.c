@@ -10,7 +10,6 @@
  */
 
 #include <linux/device-mapper.h>
-#include <linux/module.h>
 
 #include "dm-path-selector.h"
 

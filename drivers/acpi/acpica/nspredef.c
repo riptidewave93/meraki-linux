@@ -6,7 +6,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -193,20 +193,14 @@ acpi_ns_check_predefined_names(struct acpi_namespace_node *node,
 	}
 
 	/*
-	 * Return value validation and possible repair.
+	 * 1) We have a return value, but if one wasn't expected, just exit, this is
+	 * not a problem. For example, if the "Implicit Return" feature is
+	 * enabled, methods will always return a value.
 	 *
-	 * 1) Don't perform return value validation/repair if this feature
-	 * has been disabled via a global option.
-	 *
-	 * 2) We have a return value, but if one wasn't expected, just exit,
-	 * this is not a problem. For example, if the "Implicit Return"
-	 * feature is enabled, methods will always return a value.
-	 *
-	 * 3) If the return value can be of any type, then we cannot perform
-	 * any validation, just exit.
+	 * 2) If the return value can be of any type, then we cannot perform any
+	 * validation, exit.
 	 */
-	if (acpi_gbl_disable_auto_repair ||
-	    (!predefined->info.expected_btypes) ||
+	if ((!predefined->info.expected_btypes) ||
 	    (predefined->info.expected_btypes == ACPI_RTYPE_ALL)) {
 		goto cleanup;
 	}
@@ -218,44 +212,27 @@ acpi_ns_check_predefined_names(struct acpi_namespace_node *node,
 		goto cleanup;
 	}
 	data->predefined = predefined;
-	data->node = node;
 	data->node_flags = node->flags;
 	data->pathname = pathname;
 
 	/*
-	 * Check that the type of the main return object is what is expected
-	 * for this predefined name
+	 * Check that the type of the return object is what is expected for
+	 * this predefined name
 	 */
 	status = acpi_ns_check_object_type(data, return_object_ptr,
 					   predefined->info.expected_btypes,
 					   ACPI_NOT_PACKAGE_ELEMENT);
 	if (ACPI_FAILURE(status)) {
-		goto exit;
+		goto check_validation_status;
 	}
 
-	/*
-	 * For returned Package objects, check the type of all sub-objects.
-	 * Note: Package may have been newly created by call above.
-	 */
-	if ((*return_object_ptr)->common.type == ACPI_TYPE_PACKAGE) {
-		data->parent_package = *return_object_ptr;
+	/* For returned Package objects, check the type of all sub-objects */
+
+	if (return_object->common.type == ACPI_TYPE_PACKAGE) {
 		status = acpi_ns_check_package(data, return_object_ptr);
-		if (ACPI_FAILURE(status)) {
-			goto exit;
-		}
 	}
 
-	/*
-	 * The return object was OK, or it was successfully repaired above.
-	 * Now make some additional checks such as verifying that package
-	 * objects are sorted correctly (if required) or buffer objects have
-	 * the correct data width (bytes vs. dwords). These repairs are
-	 * performed on a per-name basis, i.e., the code is specific to
-	 * particular predefined names.
-	 */
-	status = acpi_ns_complex_repairs(data, node, status, return_object_ptr);
-
-exit:
+check_validation_status:
 	/*
 	 * If the object validation failed or if we successfully repaired one
 	 * or more objects, mark the parent node to suppress further warning
@@ -444,13 +421,6 @@ acpi_ns_check_package(struct acpi_predefined_data *data,
 			  data->pathname, package->ret_info.type,
 			  return_object->package.count));
 
-	/*
-	 * For variable-length Packages, we can safely remove all embedded
-	 * and trailing NULL package elements
-	 */
-	acpi_ns_remove_null_elements(data, package->ret_info.type,
-				     return_object);
-
 	/* Extract package count and elements array */
 
 	elements = return_object->package.elements;
@@ -485,11 +455,11 @@ acpi_ns_check_package(struct acpi_predefined_data *data,
 		if (count < expected_count) {
 			goto package_too_small;
 		} else if (count > expected_count) {
-			ACPI_DEBUG_PRINT((ACPI_DB_REPAIR,
-					  "%s: Return Package is larger than needed - "
-					  "found %u, expected %u\n",
-					  data->pathname, count,
-					  expected_count));
+			ACPI_WARN_PREDEFINED((AE_INFO, data->pathname,
+					      data->node_flags,
+					      "Return Package is larger than needed - "
+					      "found %u, expected %u", count,
+					      expected_count));
 		}
 
 		/* Validate all elements of the returned package */
@@ -620,7 +590,6 @@ acpi_ns_check_package(struct acpi_predefined_data *data,
 	case ACPI_PTYPE2_FIXED:
 	case ACPI_PTYPE2_MIN:
 	case ACPI_PTYPE2_COUNT:
-	case ACPI_PTYPE2_FIX_VAR:
 
 		/*
 		 * These types all return a single Package that consists of a
@@ -632,14 +601,13 @@ acpi_ns_check_package(struct acpi_predefined_data *data,
 		 * there is only one entry). We may be able to repair this by
 		 * wrapping the returned Package with a new outer Package.
 		 */
-		if (*elements
-		    && ((*elements)->common.type != ACPI_TYPE_PACKAGE)) {
+		if ((*elements)->common.type != ACPI_TYPE_PACKAGE) {
 
 			/* Create the new outer package and populate it */
 
 			status =
-			    acpi_ns_wrap_with_package(data, return_object,
-						      return_object_ptr);
+			    acpi_ns_repair_package_list(data,
+							return_object_ptr);
 			if (ACPI_FAILURE(status)) {
 				return (status);
 			}
@@ -709,17 +677,11 @@ acpi_ns_check_package_list(struct acpi_predefined_data *data,
 	u32 i;
 	u32 j;
 
-	/*
-	 * Validate each sub-Package in the parent Package
-	 *
-	 * NOTE: assumes list of sub-packages contains no NULL elements.
-	 * Any NULL elements should have been removed by earlier call
-	 * to acpi_ns_remove_null_elements.
-	 */
+	/* Validate each sub-Package in the parent Package */
+
 	for (i = 0; i < count; i++) {
 		sub_package = *elements;
 		sub_elements = sub_package->package.elements;
-		data->parent_package = sub_package;
 
 		/* Each sub-object must be of type Package */
 
@@ -731,7 +693,6 @@ acpi_ns_check_package_list(struct acpi_predefined_data *data,
 
 		/* Examine the different types of expected sub-packages */
 
-		data->parent_package = sub_package;
 		switch (package->ret_info.type) {
 		case ACPI_PTYPE2:
 		case ACPI_PTYPE2_PKG_COUNT:
@@ -755,34 +716,6 @@ acpi_ns_check_package_list(struct acpi_predefined_data *data,
 							   object_type2,
 							   package->ret_info.
 							   count2, 0);
-			if (ACPI_FAILURE(status)) {
-				return (status);
-			}
-			break;
-
-		case ACPI_PTYPE2_FIX_VAR:
-			/*
-			 * Each subpackage has a fixed number of elements and an
-			 * optional element
-			 */
-			expected_count =
-			    package->ret_info.count1 + package->ret_info.count2;
-			if (sub_package->package.count < expected_count) {
-				goto package_too_small;
-			}
-
-			status =
-			    acpi_ns_check_package_elements(data, sub_elements,
-							   package->ret_info.
-							   object_type1,
-							   package->ret_info.
-							   count1,
-							   package->ret_info.
-							   object_type2,
-							   sub_package->package.
-							   count -
-							   package->ret_info.
-							   count1, 0);
 			if (ACPI_FAILURE(status)) {
 				return (status);
 			}
@@ -839,7 +772,7 @@ acpi_ns_check_package_list(struct acpi_predefined_data *data,
 
 			/*
 			 * First element is the (Integer) count of elements, including
-			 * the count field (the ACPI name is num_elements)
+			 * the count field.
 			 */
 			status = acpi_ns_check_object_type(data, sub_elements,
 							   ACPI_RTYPE_INTEGER,
@@ -860,16 +793,6 @@ acpi_ns_check_package_list(struct acpi_predefined_data *data,
 			    package->ret_info.count1) {
 				expected_count = package->ret_info.count1;
 				goto package_too_small;
-			}
-			if (expected_count == 0) {
-				/*
-				 * Either the num_entries element was originally zero or it was
-				 * a NULL element and repaired to an Integer of value zero.
-				 * In either case, repair it by setting num_entries to be the
-				 * actual size of the subpackage.
-				 */
-				expected_count = sub_package->package.count;
-				(*sub_elements)->integer.value = expected_count;
 			}
 
 			/* Check the type of each sub-package element */
@@ -994,18 +917,10 @@ acpi_ns_check_object_type(struct acpi_predefined_data *data,
 	char type_buffer[48];	/* Room for 5 types */
 
 	/*
-	 * If we get a NULL return_object here, it is a NULL package element.
-	 * Since all extraneous NULL package elements were removed earlier by a
-	 * call to acpi_ns_remove_null_elements, this is an unexpected NULL element.
-	 * We will attempt to repair it.
+	 * If we get a NULL return_object here, it is a NULL package element,
+	 * and this is always an error.
 	 */
 	if (!return_object) {
-		status = acpi_ns_repair_null_element(data, expected_btypes,
-						     package_index,
-						     return_object_ptr);
-		if (ACPI_SUCCESS(status)) {
-			return (AE_OK);	/* Repair was successful */
-		}
 		goto type_error_exit;
 	}
 
@@ -1057,24 +972,26 @@ acpi_ns_check_object_type(struct acpi_predefined_data *data,
 
 	/* Is the object one of the expected types? */
 
-	if (return_btype & expected_btypes) {
+	if (!(return_btype & expected_btypes)) {
 
-		/* For reference objects, check that the reference type is correct */
+		/* Type mismatch -- attempt repair of the returned object */
 
-		if (return_object->common.type == ACPI_TYPE_LOCAL_REFERENCE) {
-			status = acpi_ns_check_reference(data, return_object);
+		status = acpi_ns_repair_object(data, expected_btypes,
+					       package_index,
+					       return_object_ptr);
+		if (ACPI_SUCCESS(status)) {
+			return (AE_OK);	/* Repair was successful */
 		}
-
-		return (status);
+		goto type_error_exit;
 	}
 
-	/* Type mismatch -- attempt repair of the returned object */
+	/* For reference objects, check that the reference type is correct */
 
-	status = acpi_ns_repair_object(data, expected_btypes,
-				       package_index, return_object_ptr);
-	if (ACPI_SUCCESS(status)) {
-		return (AE_OK);	/* Repair was successful */
+	if (return_object->common.type == ACPI_TYPE_LOCAL_REFERENCE) {
+		status = acpi_ns_check_reference(data, return_object);
 	}
+
+	return (status);
 
       type_error_exit:
 

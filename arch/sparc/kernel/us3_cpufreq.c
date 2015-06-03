@@ -71,7 +71,7 @@ static unsigned long get_current_freq(unsigned int cpu, unsigned long safari_cfg
 		break;
 	default:
 		BUG();
-	}
+	};
 
 	return ret;
 }
@@ -85,13 +85,13 @@ static unsigned int us3_freq_get(unsigned int cpu)
 	if (!cpu_online(cpu))
 		return 0;
 
-	cpumask_copy(&cpus_allowed, tsk_cpus_allowed(current));
-	set_cpus_allowed_ptr(current, cpumask_of(cpu));
+	cpus_allowed = current->cpus_allowed;
+	set_cpus_allowed(current, cpumask_of_cpu(cpu));
 
 	reg = read_safari_cfg();
 	ret = get_current_freq(cpu, reg);
 
-	set_cpus_allowed_ptr(current, &cpus_allowed);
+	set_cpus_allowed(current, cpus_allowed);
 
 	return ret;
 }
@@ -105,8 +105,8 @@ static void us3_set_cpu_divider_index(unsigned int cpu, unsigned int index)
 	if (!cpu_online(cpu))
 		return;
 
-	cpumask_copy(&cpus_allowed, tsk_cpus_allowed(current));
-	set_cpus_allowed_ptr(current, cpumask_of(cpu));
+	cpus_allowed = current->cpus_allowed;
+	set_cpus_allowed(current, cpumask_of_cpu(cpu));
 
 	new_freq = sparc64_get_clock_tick(cpu) / 1000;
 	switch (index) {
@@ -125,7 +125,7 @@ static void us3_set_cpu_divider_index(unsigned int cpu, unsigned int index)
 
 	default:
 		BUG();
-	}
+	};
 
 	reg = read_safari_cfg();
 
@@ -140,7 +140,7 @@ static void us3_set_cpu_divider_index(unsigned int cpu, unsigned int index)
 
 	cpufreq_notify_transition(&freqs, CPUFREQ_POSTCHANGE);
 
-	set_cpus_allowed_ptr(current, &cpus_allowed);
+	set_cpus_allowed(current, cpus_allowed);
 }
 
 static int us3_freq_target(struct cpufreq_policy *policy,

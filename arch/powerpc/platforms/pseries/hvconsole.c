@@ -24,8 +24,7 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/export.h>
-#include <linux/errno.h>
+#include <linux/module.h>
 #include <asm/hvcall.h>
 #include <asm/hvconsole.h>
 #include "plpar_wrappers.h"

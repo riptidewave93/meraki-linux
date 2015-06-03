@@ -1,8 +1,14 @@
 00-INDEX
 	- This file
 
-bfin-gpio-notes.txt
-	- Notes in developing/using bfin-gpio driver.
+cache-lock.txt
+	- HOWTO for blackfin cache locking.
 
-bfin-spi-notes.txt
-	- Notes for using bfin spi bus driver.
+cachefeatures.txt
+	- Supported cache features.
+
+Filesystems
+	- Requirements for mounting the root file system.
+
+bfin-gpio-note.txt
+	- Notes in developing/using bfin-gpio driver.

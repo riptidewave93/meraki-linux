@@ -17,6 +17,7 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/io.h>
+#include <linux/sysdev.h>
 
 #include <plat/mfp.h>
 
@@ -109,7 +110,6 @@ static const unsigned long mfpr_lpm[] = {
 	MFPR_LPM_PULL_LOW,
 	MFPR_LPM_PULL_HIGH,
 	MFPR_LPM_FLOAT,
-	MFPR_LPM_INPUT,
 };
 
 /* mapping of MFP_PULL_* definitions to MFPR_PULL_* register bits */
@@ -138,11 +138,10 @@ static const unsigned long mfpr_edge[] = {
 #define mfp_configured(p)	((p)->config != -1)
 
 /*
- * perform a read-back of any valid MFPR register to make sure the
+ * perform a read-back of any MFPR register to make sure the
  * previous writings are finished
  */
-static unsigned long mfpr_off_readback;
-#define mfpr_sync()	(void)__raw_readl(mfpr_mmio_base + mfpr_off_readback)
+#define mfpr_sync()	(void)__raw_readl(mfpr_mmio_base + 0)
 
 static inline void __mfp_config_run(struct mfp_pin *p)
 {
@@ -229,7 +228,7 @@ void mfp_write(int mfp, unsigned long val)
 	spin_unlock_irqrestore(&mfp_spin_lock, flags);
 }
 
-void __init mfp_init_base(void __iomem *mfpr_base)
+void __init mfp_init_base(unsigned long mfpr_base)
 {
 	int i;
 
@@ -237,7 +236,7 @@ void __init mfp_init_base(void __iomem *mfpr_base)
 	for (i = 0; i < ARRAY_SIZE(mfp_table); i++)
 		mfp_table[i].config = -1;
 
-	mfpr_mmio_base = mfpr_base;
+	mfpr_mmio_base = (void __iomem *)mfpr_base;
 }
 
 void __init mfp_init_addr(struct mfp_addr_map *map)
@@ -247,9 +246,6 @@ void __init mfp_init_addr(struct mfp_addr_map *map)
 	int i;
 
 	spin_lock_irqsave(&mfp_spin_lock, flags);
-
-	/* mfp offset for readback */
-	mfpr_off_readback = map[0].offset;
 
 	for (p = map; p->start != MFP_PIN_INVALID; p++) {
 		offset = p->offset;

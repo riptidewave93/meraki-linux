@@ -1,6 +1,5 @@
 #include <asm/div64.h>
 #include <linux/reciprocal_div.h>
-#include <linux/export.h>
 
 u32 reciprocal_value(u32 k)
 {
@@ -8,4 +7,3 @@ u32 reciprocal_value(u32 k)
 	do_div(val, k);
 	return (u32)val;
 }
-EXPORT_SYMBOL(reciprocal_value);

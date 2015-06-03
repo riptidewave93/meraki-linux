@@ -14,7 +14,6 @@
  */
 
 #include <linux/types.h>
-#include <linux/gpio.h>
 #include <linux/init.h>
 #include <linux/mm.h>
 #include <linux/module.h>
@@ -24,13 +23,10 @@
 #include <linux/gpio_keys.h>
 #include <linux/input.h>
 #include <linux/leds.h>
-#include <linux/atmel-mci.h>
-#include <linux/delay.h>
+#include <linux/clk.h>
 
 #include <mach/hardware.h>
 #include <video/atmel_lcdc.h>
-#include <media/soc_camera.h>
-#include <media/atmel-isi.h>
 
 #include <asm/setup.h>
 #include <asm/mach-types.h>
@@ -40,19 +36,20 @@
 #include <asm/mach/map.h>
 #include <asm/mach/irq.h>
 
+#include <mach/hardware.h>
 #include <mach/board.h>
+#include <mach/gpio.h>
 #include <mach/at91sam9_smc.h>
 #include <mach/at91_shdwc.h>
-#include <mach/system_rev.h>
 
 #include "sam9_smc.h"
 #include "generic.h"
 
 
-static void __init ek_init_early(void)
+static void __init ek_map_io(void)
 {
 	/* Initialize processor: 12.000 MHz crystal */
-	at91_initialize(12000000);
+	at91sam9g45_initialize(12000000);
 
 	/* DGBU on ttyS0. (Rx & Tx only) */
 	at91_register_uart(0, 0, 0);
@@ -65,14 +62,18 @@ static void __init ek_init_early(void)
 	at91_set_serial_console(0);
 }
 
+static void __init ek_init_irq(void)
+{
+	at91sam9g45_init_interrupts(NULL);
+}
+
+
 /*
  * USB HS Host port (common to OHCI & EHCI)
  */
 static struct at91_usbh_data __initdata ek_usbh_hs_data = {
 	.ports		= 2,
 	.vbus_pin	= {AT91_PIN_PD1, AT91_PIN_PD3},
-	.vbus_pin_active_low = {1, 1},
-	.overcurrent_pin= {-EINVAL, -EINVAL},
 };
 
 
@@ -98,29 +99,9 @@ static struct spi_board_info ek_spi_devices[] = {
 
 
 /*
- * MCI (SD/MMC)
- */
-static struct mci_platform_data __initdata mci0_data = {
-	.slot[0] = {
-		.bus_width	= 4,
-		.detect_pin	= AT91_PIN_PD10,
-		.wp_pin		= -EINVAL,
-	},
-};
-
-static struct mci_platform_data __initdata mci1_data = {
-	.slot[0] = {
-		.bus_width	= 4,
-		.detect_pin	= AT91_PIN_PD11,
-		.wp_pin		= AT91_PIN_PD29,
-	},
-};
-
-
-/*
  * MACB Ethernet device
  */
-static struct macb_platform_data __initdata ek_macb_data = {
+static struct at91_eth_data __initdata ek_macb_data = {
 	.phy_irq_pin	= AT91_PIN_PD5,
 	.is_rmii	= 1,
 };
@@ -142,17 +123,24 @@ static struct mtd_partition __initdata ek_nand_partition[] = {
 	},
 };
 
+static struct mtd_partition * __init nand_partitions(int size, int *num_partitions)
+{
+	*num_partitions = ARRAY_SIZE(ek_nand_partition);
+	return ek_nand_partition;
+}
+
 /* det_pin is not connected */
 static struct atmel_nand_data __initdata ek_nand_data = {
 	.ale		= 21,
 	.cle		= 22,
 	.rdy_pin	= AT91_PIN_PC8,
 	.enable_pin	= AT91_PIN_PC14,
-	.det_pin	= -EINVAL,
-	.ecc_mode	= NAND_ECC_SOFT,
-	.on_flash_bbt	= 1,
-	.parts		= ek_nand_partition,
-	.num_parts	= ARRAY_SIZE(ek_nand_partition),
+	.partition_info	= nand_partitions,
+#if defined(CONFIG_MTD_NAND_AT91_BUSWIDTH_16)
+	.bus_width_16	= 1,
+#else
+	.bus_width_16	= 0,
+#endif
 };
 
 static struct sam9_smc_config __initdata ek_nand_smc_config = {
@@ -175,7 +163,6 @@ static struct sam9_smc_config __initdata ek_nand_smc_config = {
 
 static void __init ek_add_device_nand(void)
 {
-	ek_nand_data.bus_width_16 = board_have_nand_16bit();
 	/* setup bus-width (8 or 16) */
 	if (ek_nand_data.bus_width_16)
 		ek_nand_smc_config.mode |= AT91_SMC_DBW_16;
@@ -183,75 +170,10 @@ static void __init ek_add_device_nand(void)
 		ek_nand_smc_config.mode |= AT91_SMC_DBW_8;
 
 	/* configure chip-select 3 (NAND) */
-	sam9_smc_configure(0, 3, &ek_nand_smc_config);
+	sam9_smc_configure(3, &ek_nand_smc_config);
 
 	at91_add_device_nand(&ek_nand_data);
 }
-
-
-/*
- *  ISI
- */
-static struct isi_platform_data __initdata isi_data = {
-	.frate			= ISI_CFG1_FRATE_CAPTURE_ALL,
-	/* to use codec and preview path simultaneously */
-	.full_mode		= 1,
-	.data_width_flags	= ISI_DATAWIDTH_8 | ISI_DATAWIDTH_10,
-	/* ISI_MCK is provided by programmable clock or external clock */
-	.mck_hz			= 25000000,
-};
-
-
-/*
- * soc-camera OV2640
- */
-#if defined(CONFIG_SOC_CAMERA_OV2640) || \
-	defined(CONFIG_SOC_CAMERA_OV2640_MODULE)
-static unsigned long isi_camera_query_bus_param(struct soc_camera_link *link)
-{
-	/* ISI board for ek using default 8-bits connection */
-	return SOCAM_DATAWIDTH_8;
-}
-
-static int i2c_camera_power(struct device *dev, int on)
-{
-	/* enable or disable the camera */
-	pr_debug("%s: %s the camera\n", __func__, on ? "ENABLE" : "DISABLE");
-	at91_set_gpio_output(AT91_PIN_PD13, !on);
-
-	if (!on)
-		goto out;
-
-	/* If enabled, give a reset impulse */
-	at91_set_gpio_output(AT91_PIN_PD12, 0);
-	msleep(20);
-	at91_set_gpio_output(AT91_PIN_PD12, 1);
-	msleep(100);
-
-out:
-	return 0;
-}
-
-static struct i2c_board_info i2c_camera = {
-	I2C_BOARD_INFO("ov2640", 0x30),
-};
-
-static struct soc_camera_link iclink_ov2640 = {
-	.bus_id			= 0,
-	.board_info		= &i2c_camera,
-	.i2c_adapter_id		= 0,
-	.power			= i2c_camera_power,
-	.query_bus_param	= isi_camera_query_bus_param,
-};
-
-static struct platform_device isi_ov2640 = {
-	.name	= "soc-camera-pdrv",
-	.id	= 0,
-	.dev	= {
-		.platform_data = &iclink_ov2640,
-	},
-};
-#endif
 
 
 /*
@@ -304,16 +226,6 @@ static struct atmel_lcdfb_info __initdata ek_lcdc_data = {
 #else
 static struct atmel_lcdfb_info __initdata ek_lcdc_data;
 #endif
-
-
-/*
- * Touchscreen
- */
-static struct at91_tsadcc_data ek_tsadcc_data = {
-	.adc_clock		= 300000,
-	.pendet_debounce	= 0x0d,
-	.ts_sample_hold_time	= 0x0a,
-};
 
 
 /*
@@ -403,7 +315,6 @@ static void __init ek_add_device_buttons(void) {}
  * reset_pin is not connected: NRST
  */
 static struct ac97c_platform_data ek_ac97_data = {
-	.reset_pin	= -EINVAL,
 };
 
 
@@ -447,12 +358,7 @@ static struct gpio_led ek_pwm_led[] = {
 #endif
 };
 
-static struct platform_device *devices[] __initdata = {
-#if defined(CONFIG_SOC_CAMERA_OV2640) || \
-	defined(CONFIG_SOC_CAMERA_OV2640_MODULE)
-	&isi_ov2640,
-#endif
-};
+
 
 static void __init ek_board_init(void)
 {
@@ -460,26 +366,18 @@ static void __init ek_board_init(void)
 	at91_add_device_serial();
 	/* USB HS Host */
 	at91_add_device_usbh_ohci(&ek_usbh_hs_data);
-	at91_add_device_usbh_ehci(&ek_usbh_hs_data);
 	/* USB HS Device */
 	at91_add_device_usba(&ek_usba_udc_data);
 	/* SPI */
 	at91_add_device_spi(ek_spi_devices, ARRAY_SIZE(ek_spi_devices));
-	/* MMC */
-	at91_add_device_mci(0, &mci0_data);
-	at91_add_device_mci(1, &mci1_data);
 	/* Ethernet */
 	at91_add_device_eth(&ek_macb_data);
 	/* NAND */
 	ek_add_device_nand();
 	/* I2C */
 	at91_add_device_i2c(0, NULL, 0);
-	/* ISI, using programmable clock as ISI_MCK */
-	at91_add_device_isi(&isi_data, true);
 	/* LCD Controller */
 	at91_add_device_lcdc(&ek_lcdc_data);
-	/* Touch Screen */
-	at91_add_device_tsadcc(&ek_tsadcc_data);
 	/* Push Buttons */
 	ek_add_device_buttons();
 	/* AC97 */
@@ -487,15 +385,15 @@ static void __init ek_board_init(void)
 	/* LEDs */
 	at91_gpio_leds(ek_leds, ARRAY_SIZE(ek_leds));
 	at91_pwm_leds(ek_pwm_led, ARRAY_SIZE(ek_pwm_led));
-	/* Other platform devices */
-	platform_add_devices(devices, ARRAY_SIZE(devices));
 }
 
-MACHINE_START(AT91SAM9M10G45EK, "Atmel AT91SAM9M10G45-EK")
+MACHINE_START(AT91SAM9G45EKES, "Atmel AT91SAM9G45-EKES")
 	/* Maintainer: Atmel */
+	.phys_io	= AT91_BASE_SYS,
+	.io_pg_offst	= (AT91_VA_BASE_SYS >> 18) & 0xfffc,
+	.boot_params	= AT91_SDRAM_BASE + 0x100,
 	.timer		= &at91sam926x_timer,
-	.map_io		= at91_map_io,
-	.init_early	= ek_init_early,
-	.init_irq	= at91_init_irq_default,
+	.map_io		= ek_map_io,
+	.init_irq	= ek_init_irq,
 	.init_machine	= ek_board_init,
 MACHINE_END

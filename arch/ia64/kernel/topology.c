@@ -17,12 +17,10 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/node.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/bootmem.h>
 #include <linux/nodemask.h>
 #include <linux/notifier.h>
-#include <linux/export.h>
 #include <asm/mmzone.h>
 #include <asm/numa.h>
 #include <asm/cpu.h>
@@ -44,7 +42,7 @@ int __ref arch_register_cpu(int num)
 {
 #ifdef CONFIG_ACPI
 	/*
-	 * If CPEI can be re-targeted or if this is not
+	 * If CPEI can be re-targetted or if this is not
 	 * CPEI target, then it is hotpluggable
 	 */
 	if (can_cpei_retarget() || !is_cpu_cpei_target(num))
@@ -220,8 +218,7 @@ static ssize_t show_shared_cpu_map(struct cache_info *this_leaf, char *buf)
 	ssize_t	len;
 	cpumask_t shared_cpu_map;
 
-	cpumask_and(&shared_cpu_map,
-				&this_leaf->shared_cpu_map, cpu_online_mask);
+	cpus_and(shared_cpu_map, this_leaf->shared_cpu_map, cpu_online_map);
 	len = cpumask_scnprintf(buf, NR_CPUS+1, &shared_cpu_map);
 	len += sprintf(buf+len, "\n");
 	return len;
@@ -285,7 +282,7 @@ static ssize_t cache_show(struct kobject * kobj, struct attribute * attr, char *
 	return ret;
 }
 
-static const struct sysfs_ops cache_sysfs_ops = {
+static struct sysfs_ops cache_sysfs_ops = {
 	.show   = cache_show
 };
 
@@ -351,7 +348,7 @@ static int __cpuinit cpu_cache_sysfs_init(unsigned int cpu)
 }
 
 /* Add cache interface for CPU device */
-static int __cpuinit cache_add_dev(struct device * sys_dev)
+static int __cpuinit cache_add_dev(struct sys_device * sys_dev)
 {
 	unsigned int cpu = sys_dev->id;
 	unsigned long i, j;
@@ -363,12 +360,12 @@ static int __cpuinit cache_add_dev(struct device * sys_dev)
 		return 0;
 
 	oldmask = current->cpus_allowed;
-	retval = set_cpus_allowed_ptr(current, cpumask_of(cpu));
+	retval = set_cpus_allowed(current, cpumask_of_cpu(cpu));
 	if (unlikely(retval))
 		return retval;
 
 	retval = cpu_cache_sysfs_init(cpu);
-	set_cpus_allowed_ptr(current, &oldmask);
+	set_cpus_allowed(current, oldmask);
 	if (unlikely(retval < 0))
 		return retval;
 
@@ -401,7 +398,7 @@ static int __cpuinit cache_add_dev(struct device * sys_dev)
 }
 
 /* Remove cache interface for CPU device */
-static int __cpuinit cache_remove_dev(struct device * sys_dev)
+static int __cpuinit cache_remove_dev(struct sys_device * sys_dev)
 {
 	unsigned int cpu = sys_dev->id;
 	unsigned long i;
@@ -429,9 +426,9 @@ static int __cpuinit cache_cpu_callback(struct notifier_block *nfb,
 		unsigned long action, void *hcpu)
 {
 	unsigned int cpu = (unsigned long)hcpu;
-	struct device *sys_dev;
+	struct sys_device *sys_dev;
 
-	sys_dev = get_cpu_device(cpu);
+	sys_dev = get_cpu_sysdev(cpu);
 	switch (action) {
 	case CPU_ONLINE:
 	case CPU_ONLINE_FROZEN:
@@ -455,7 +452,7 @@ static int __init cache_sysfs_init(void)
 	int i;
 
 	for_each_online_cpu(i) {
-		struct device *sys_dev = get_cpu_device((unsigned int)i);
+		struct sys_device *sys_dev = get_cpu_sysdev((unsigned int)i);
 		cache_add_dev(sys_dev);
 	}
 

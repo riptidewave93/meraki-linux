@@ -17,17 +17,18 @@
 #include <linux/mm.h>
 #include <linux/stddef.h>
 #include <linux/ptrace.h>
+#include <linux/slab.h>
 #include <linux/user.h>
 #include <linux/smp.h>
 #include <linux/reboot.h>
 #include <linux/delay.h>
 #include <linux/pm.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 
 #include <asm/auxio.h>
 #include <asm/oplib.h>
 #include <asm/uaccess.h>
+#include <asm/system.h>
 #include <asm/page.h>
 #include <asm/pgalloc.h>
 #include <asm/pgtable.h>
@@ -37,7 +38,6 @@
 #include <asm/elf.h>
 #include <asm/prom.h>
 #include <asm/unistd.h>
-#include <asm/setup.h>
 
 /* 
  * Power management idle function 
@@ -113,7 +113,9 @@ void cpu_idle(void)
 			while (!need_resched())
 				cpu_relax();
 		}
-		schedule_preempt_disabled();
+		preempt_enable_no_resched();
+		schedule();
+		preempt_disable();
 		check_pgt_cache();
 	}
 }
@@ -126,17 +128,11 @@ void cpu_idle(void)
         set_thread_flag(TIF_POLLING_NRFLAG);
 	/* endless idle loop with no priority at all */
 	while(1) {
-#ifdef CONFIG_SPARC_LEON
-		if (pm_idle) {
-			while (!need_resched())
-				(*pm_idle)();
-		} else
-#endif
-		{
-			while (!need_resched())
-				cpu_relax();
-		}
-		schedule_preempt_disabled();
+		while (!need_resched())
+			cpu_relax();
+		preempt_enable_no_resched();
+		schedule();
+		preempt_disable();
 		check_pgt_cache();
 	}
 }
@@ -376,7 +372,8 @@ void flush_thread(void)
 #endif
 	}
 
-	/* This task is no longer a kernel thread. */
+	/* Now, this task is no longer a kernel thread. */
+	current->thread.current_ds = USER_DS;
 	if (current->thread.flags & SPARC_FLAG_KTHREAD) {
 		current->thread.flags &= ~SPARC_FLAG_KTHREAD;
 
@@ -636,10 +633,8 @@ asmlinkage int sparc_execve(struct pt_regs *regs)
 	if(IS_ERR(filename))
 		goto out;
 	error = do_execve(filename,
-			  (const char __user *const  __user *)
-			  regs->u_regs[base + UREG_I1],
-			  (const char __user *const  __user *)
-			  regs->u_regs[base + UREG_I2],
+			  (char __user * __user *)regs->u_regs[base + UREG_I1],
+			  (char __user * __user *)regs->u_regs[base + UREG_I2],
 			  regs);
 	putname(filename);
 out:

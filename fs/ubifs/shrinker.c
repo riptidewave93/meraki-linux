@@ -128,6 +128,7 @@ static int shrink_tnc(struct ubifs_info *c, int nr, int age, int *contention)
 			freed = ubifs_destroy_tnc_subtree(znode);
 			atomic_long_sub(freed, &ubifs_clean_zn_cnt);
 			atomic_long_sub(freed, &c->clean_zn_cnt);
+			ubifs_assert(atomic_long_read(&c->clean_zn_cnt) >= 0);
 			total_freed += freed;
 			znode = zprev;
 		}
@@ -276,9 +277,8 @@ static int kick_a_thread(void)
 	return 0;
 }
 
-int ubifs_shrinker(struct shrinker *shrink, struct shrink_control *sc)
+int ubifs_shrinker(int nr, gfp_t gfp_mask)
 {
-	int nr = sc->nr_to_scan;
 	int freed, contention = 0;
 	long clean_zn_cnt = atomic_long_read(&ubifs_clean_zn_cnt);
 

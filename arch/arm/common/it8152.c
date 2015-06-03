@@ -21,21 +21,19 @@
 #include <linux/ptrace.h>
 #include <linux/interrupt.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/ioport.h>
 #include <linux/irq.h>
 #include <linux/io.h>
-#include <linux/export.h>
 
 #include <asm/mach/pci.h>
 #include <asm/hardware/it8152.h>
 
 #define MAX_SLOTS		21
 
-static void it8152_mask_irq(struct irq_data *d)
+static void it8152_mask_irq(unsigned int irq)
 {
-	unsigned int irq = d->irq;
-
        if (irq >= IT8152_LD_IRQ(0)) {
 	       __raw_writel((__raw_readl(IT8152_INTC_LDCNIMR) |
 			    (1 << (irq - IT8152_LD_IRQ(0)))),
@@ -51,10 +49,8 @@ static void it8152_mask_irq(struct irq_data *d)
        }
 }
 
-static void it8152_unmask_irq(struct irq_data *d)
+static void it8152_unmask_irq(unsigned int irq)
 {
-	unsigned int irq = d->irq;
-
        if (irq >= IT8152_LD_IRQ(0)) {
 	       __raw_writel((__raw_readl(IT8152_INTC_LDCNIMR) &
 			     ~(1 << (irq - IT8152_LD_IRQ(0)))),
@@ -72,9 +68,9 @@ static void it8152_unmask_irq(struct irq_data *d)
 
 static struct irq_chip it8152_irq_chip = {
 	.name		= "it8152",
-	.irq_ack	= it8152_mask_irq,
-	.irq_mask	= it8152_mask_irq,
-	.irq_unmask	= it8152_unmask_irq,
+	.ack		= it8152_mask_irq,
+	.mask		= it8152_mask_irq,
+	.unmask		= it8152_unmask_irq,
 };
 
 void it8152_init_irq(void)
@@ -89,8 +85,8 @@ void it8152_init_irq(void)
 	__raw_writel((0), IT8152_INTC_LDCNIRR);
 
 	for (irq = IT8152_IRQ(0); irq <= IT8152_LAST_IRQ; irq++) {
-		irq_set_chip_and_handler(irq, &it8152_irq_chip,
-					 handle_level_irq);
+		set_irq_chip(irq, &it8152_irq_chip);
+		set_irq_handler(irq, handle_level_irq);
 		set_irq_flags(irq, IRQF_VALID | IRQF_PROBE);
 	}
 }
@@ -145,7 +141,7 @@ void it8152_irq_demux(unsigned int irq, struct irq_desc *desc)
 }
 
 /* mapping for on-chip devices */
-int __init it8152_pci_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+int __init it8152_pci_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	if ((dev->vendor == PCI_VENDOR_ID_ITE) &&
 	    (dev->device == PCI_DEVICE_ID_ITE_8152)) {
@@ -241,15 +237,9 @@ static struct resource it8152_mem = {
 
 /*
  * The following functions are needed for DMA bouncing.
- * ITE8152 chip can address up to 64MByte, so all the devices
+ * ITE8152 chip can addrees up to 64MByte, so all the devices
  * connected to ITE8152 (PCI and USB) should have limited DMA window
  */
-static int it8152_needs_bounce(struct device *dev, dma_addr_t dma_addr, size_t size)
-{
-	dev_dbg(dev, "%s: dma_addr %08x, size %08x\n",
-		__func__, dma_addr, size);
-	return (dma_addr + size - PHYS_OFFSET) >= SZ_64M;
-}
 
 /*
  * Setup DMA mask to 64MB on devices connected to ITE8152. Ignore all
@@ -261,7 +251,7 @@ static int it8152_pci_platform_notify(struct device *dev)
 		if (dev->dma_mask)
 			*dev->dma_mask = (SZ_64M - 1) | PHYS_OFFSET;
 		dev->coherent_dma_mask = (SZ_64M - 1) | PHYS_OFFSET;
-		dmabounce_register_dev(dev, 2048, 4096, it8152_needs_bounce);
+		dmabounce_register_dev(dev, 2048, 4096);
 	}
 	return 0;
 }
@@ -274,8 +264,35 @@ static int it8152_pci_platform_notify_remove(struct device *dev)
 	return 0;
 }
 
-int dma_set_coherent_mask(struct device *dev, u64 mask)
+int dma_needs_bounce(struct device *dev, dma_addr_t dma_addr, size_t size)
 {
+	dev_dbg(dev, "%s: dma_addr %08x, size %08x\n",
+		__func__, dma_addr, size);
+	return (dev->bus == &pci_bus_type) &&
+		((dma_addr + size - PHYS_OFFSET) >= SZ_64M);
+}
+
+/*
+ * We override these so we properly do dmabounce otherwise drivers
+ * are able to set the dma_mask to 0xffffffff and we can no longer
+ * trap bounces. :(
+ *
+ * We just return true on everyhing except for < 64MB in which case
+ * we will fail miseralby and die since we can't handle that case.
+ */
+int pci_set_dma_mask(struct pci_dev *dev, u64 mask)
+{
+	dev_dbg(&dev->dev, "%s: %llx\n", __func__, mask);
+	if (mask >= PHYS_OFFSET + SZ_64M - 1)
+		return 0;
+
+	return -EIO;
+}
+
+int
+pci_set_consistent_dma_mask(struct pci_dev *dev, u64 mask)
+{
+	dev_dbg(&dev->dev, "%s: %llx\n", __func__, mask);
 	if (mask >= PHYS_OFFSET + SZ_64M - 1)
 		return 0;
 
@@ -299,8 +316,8 @@ int __init it8152_pci_setup(int nr, struct pci_sys_data *sys)
 		goto err1;
 	}
 
-	pci_add_resource_offset(&sys->resources, &it8152_io, sys->io_offset);
-	pci_add_resource_offset(&sys->resources, &it8152_mem, sys->mem_offset);
+	sys->resource[0] = &it8152_io;
+	sys->resource[1] = &it8152_mem;
 
 	if (platform_notify || platform_notify_remove) {
 		printk(KERN_ERR "PCI: Can't use platform_notify\n");
@@ -320,9 +337,13 @@ err0:
 	return -EBUSY;
 }
 
-/* ITE bridge requires setting latency timer to avoid early bus access
-   termination by PCI bus master devices
-*/
+/*
+ * If we set up a device for bus mastering, we need to check the latency
+ * timer as we don't have even crappy BIOSes to set it properly.
+ * The implementation is from arch/i386/pci/i386.c
+ */
+unsigned int pcibios_max_latency = 255;
+
 void pcibios_set_master(struct pci_dev *dev)
 {
 	u8 lat;
@@ -348,7 +369,6 @@ void pcibios_set_master(struct pci_dev *dev)
 
 struct pci_bus * __init it8152_pci_scan_bus(int nr, struct pci_sys_data *sys)
 {
-	return pci_scan_root_bus(NULL, nr, &it8152_ops, sys, &sys->resources);
+	return pci_scan_bus(nr, &it8152_ops, sys);
 }
 
-EXPORT_SYMBOL(dma_set_coherent_mask);

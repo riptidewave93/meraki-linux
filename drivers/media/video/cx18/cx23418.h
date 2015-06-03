@@ -177,7 +177,7 @@
    IN[0] - Task handle.
    IN[1] - luma type: 0 = disable, 1 = 1D horizontal only, 2 = 1D vertical only,
 		      3 = 2D H/V separable, 4 = 2D symmetric non-separable
-   IN[2] - chroma type: 0 - disable, 1 = 1D horizontal
+   IN[2] - chroma type: 0 - diable, 1 = 1D horizontal
    ReturnCode - One of the ERR_CAPTURE_... */
 #define CX18_CPU_SET_SPATIAL_FILTER_TYPE     	(CPU_CMD_MASK_CAPTURE | 0x000C)
 
@@ -191,8 +191,7 @@
 #define CX18_CPU_SET_MEDIAN_CORING           	(CPU_CMD_MASK_CAPTURE | 0x000E)
 
 /* Description: This command set the picture type mask for index file
-   IN[0] - Task handle (ignored by firmware)
-   IN[1] - 	0 = disable index file output
+   IN[0] - 	0 = disable index file output
 			1 = output I picture
 			2 = P picture
 			4 = B picture
@@ -342,12 +341,6 @@
    ReturnCode */
 #define CX18_CPU_GET_ENC_PTS			(CPU_CMD_MASK_CAPTURE | 0x0022)
 
-/* Description: Set VFC parameters
-   IN[0] - task handle
-   IN[1] - VFC enable flag, 1 - enable, 0 - disable
-*/
-#define CX18_CPU_SET_VFC_PARAM                  (CPU_CMD_MASK_CAPTURE | 0x0023)
-
 /* Below is the list of commands related to the data exchange */
 #define CPU_CMD_MASK_DE 			(CPU_CMD_MASK | 0x040000)
 
@@ -370,7 +363,7 @@
 /* Description: This command provides the offset to a Memory Descriptor List
    IN[0] - Task handle. Handle of the task to start
    IN[1] - Offset of the MDL from the beginning of the local DDR.
-   IN[2] - Number of cx18_mdl_ent structures in the array pointed to by IN[1]
+   IN[2] - Number of cx18_mdl structures in the array pointed to by IN[1]
    IN[3] - Buffer ID
    IN[4] - Total buffer length
    ReturnCode - One of the ERR_DE_... */
@@ -483,7 +476,7 @@
 /* The are no buffers ready. Try again soon! */
 #define CXERR_NODATA_AGAIN      0x00001E
 
-/* The stream is stopping. Function not allowed now! */
+/* The stream is stopping. Function not alllowed now! */
 #define CXERR_STOPPING_STATUS   0x00001F
 
 /* Trying to access hardware when the power is turned OFF */

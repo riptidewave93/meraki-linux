@@ -24,16 +24,16 @@
 
 static DEFINE_SPINLOCK(ebt_log_lock);
 
-static int ebt_log_tg_check(const struct xt_tgchk_param *par)
+static bool ebt_log_tg_check(const struct xt_tgchk_param *par)
 {
 	struct ebt_log_info *info = par->targinfo;
 
 	if (info->bitmask & ~EBT_LOG_MASK)
-		return -EINVAL;
+		return false;
 	if (info->loglevel >= 8)
-		return -EINVAL;
+		return false;
 	info->prefix[EBT_LOG_PREFIX_SIZE - 1] = '\0';
-	return 0;
+	return true;
 }
 
 struct tcpudphdr
@@ -107,13 +107,12 @@ ebt_log_packet(u_int8_t pf, unsigned int hooknum,
 		goto out;
 	}
 
-#if IS_ENABLED(CONFIG_BRIDGE_EBT_IP6)
+#if defined(CONFIG_BRIDGE_EBT_IP6) || defined(CONFIG_BRIDGE_EBT_IP6_MODULE)
 	if ((bitmask & EBT_LOG_IP6) && eth_hdr(skb)->h_proto ==
 	   htons(ETH_P_IPV6)) {
 		const struct ipv6hdr *ih;
 		struct ipv6hdr _iph;
 		uint8_t nexthdr;
-		__be16 frag_off;
 		int offset_ph;
 
 		ih = skb_header_pointer(skb, 0, sizeof(_iph), &_iph);
@@ -124,7 +123,7 @@ ebt_log_packet(u_int8_t pf, unsigned int hooknum,
 		printk(" IPv6 SRC=%pI6 IPv6 DST=%pI6, IPv6 priority=0x%01X, Next Header=%d",
 		       &ih->saddr, &ih->daddr, ih->priority, ih->nexthdr);
 		nexthdr = ih->nexthdr;
-		offset_ph = ipv6_skip_exthdr(skb, sizeof(_iph), &nexthdr, &frag_off);
+		offset_ph = ipv6_skip_exthdr(skb, sizeof(_iph), &nexthdr);
 		if (offset_ph == -1)
 			goto out;
 		print_ports(skb, nexthdr, offset_ph);
@@ -172,7 +171,7 @@ out:
 }
 
 static unsigned int
-ebt_log_tg(struct sk_buff *skb, const struct xt_action_param *par)
+ebt_log_tg(struct sk_buff *skb, const struct xt_target_param *par)
 {
 	const struct ebt_log_info *info = par->targinfo;
 	struct nf_loginfo li;
@@ -196,7 +195,7 @@ static struct xt_target ebt_log_tg_reg __read_mostly = {
 	.family		= NFPROTO_BRIDGE,
 	.target		= ebt_log_tg,
 	.checkentry	= ebt_log_tg_check,
-	.targetsize	= sizeof(struct ebt_log_info),
+	.targetsize	= XT_ALIGN(sizeof(struct ebt_log_info)),
 	.me		= THIS_MODULE,
 };
 

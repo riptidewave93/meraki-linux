@@ -19,6 +19,7 @@
 #include <asm/io.h>
 #include <asm/irq.h>
 #include <asm/reboot.h>
+#include <asm/system.h>
 #include <asm/sgialib.h>
 #include <asm/sn/addrs.h>
 #include <asm/sn/arch.h>

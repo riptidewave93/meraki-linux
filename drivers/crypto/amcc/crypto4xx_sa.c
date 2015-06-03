@@ -17,7 +17,7 @@
  * @file crypto4xx_sa.c
  *
  * This file implements the security context
- * associate format.
+ * assoicate format.
  */
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -84,6 +84,119 @@ u32 get_dynamic_sa_offset_state_ptr_field(struct crypto4xx_ctx *ctx)
 	return sizeof(struct dynamic_sa_ctl) + offset * 4;
 }
 
+u32 get_dynamic_sa_offset_arc4_state_ptr(struct crypto4xx_ctx *ctx)
+{
+	u32 offset;
+	union dynamic_sa_contents cts;
+
+	if (ctx->direction == DIR_INBOUND)
+		cts.w = ((struct dynamic_sa_ctl *)(ctx->sa_in))->sa_contents;
+	else
+		cts.w = ((struct dynamic_sa_ctl *)(ctx->sa_out))->sa_contents;
+	offset = cts.bf.key_size
+		+ cts.bf.inner_size
+		+ cts.bf.outer_size
+		+ cts.bf.spi
+		+ cts.bf.seq_num0
+		+ cts.bf.seq_num1
+		+ cts.bf.seq_num_mask0
+		+ cts.bf.seq_num_mask1
+		+ cts.bf.seq_num_mask2
+		+ cts.bf.seq_num_mask3
+		+ cts.bf.iv0
+		+ cts.bf.iv1
+		+ cts.bf.iv2
+		+ cts.bf.iv3
+		+ cts.bf.state_ptr
+		+ cts.bf.arc4_ij_ptr;
+
+	return sizeof(struct dynamic_sa_ctl) + offset * 4;
+}
+
+u32 get_dynamic_sa_offset_inner_digest(struct crypto4xx_ctx *ctx)
+{
+	u32 offset;
+	union dynamic_sa_contents cts;
+
+	if (ctx->direction == DIR_INBOUND)
+		cts.w = ((struct dynamic_sa_ctl *)(ctx->sa_in))->sa_contents;
+	else
+		cts.w = ((struct dynamic_sa_ctl *)(ctx->sa_out))->sa_contents;
+	offset = cts.bf.key_size;
+
+	return sizeof(struct dynamic_sa_ctl) + offset * 4;
+}
+
+u32 get_dynamic_sa_offset_outer_digest(struct crypto4xx_ctx *ctx)
+{
+	u32 offset;
+	union dynamic_sa_contents cts;
+
+	if (ctx->direction == DIR_INBOUND)
+		cts.w = ((struct dynamic_sa_ctl *)(ctx->sa_in))->sa_contents;
+	else
+		cts.w = ((struct dynamic_sa_ctl *)(ctx->sa_out))->sa_contents;
+
+	offset = cts.bf.key_size
+		+ cts.bf.inner_size;
+
+	return sizeof(struct dynamic_sa_ctl) + offset * 4;
+}
+
+u32 get_dynamic_sa_offset_spi(struct crypto4xx_ctx *ctx)
+{
+	u32 offset;
+	union dynamic_sa_contents cts;
+
+	if (ctx->direction == DIR_INBOUND)
+		cts.w = ((struct dynamic_sa_ctl *)(ctx->sa_in))->sa_contents;
+	else
+		cts.w = ((struct dynamic_sa_ctl *)(ctx->sa_out))->sa_contents;
+
+	offset = cts.bf.key_size
+		+ cts.bf.inner_size
+		+ cts.bf.outer_size;
+
+	return sizeof(struct dynamic_sa_ctl) + offset * 4;
+}
+
+u32 get_dynamic_sa_offset_seq_num(struct crypto4xx_ctx *ctx)
+{
+	u32 offset;
+	union dynamic_sa_contents cts;
+
+	if (ctx->direction == DIR_INBOUND)
+		cts.w = ((struct dynamic_sa_ctl *)(ctx->sa_in))->sa_contents;
+	else
+		cts.w = ((struct dynamic_sa_ctl *)(ctx->sa_out))->sa_contents;
+
+	offset = cts.bf.key_size
+		+ cts.bf.inner_size
+		+ cts.bf.outer_size
+		+ cts.bf.spi;
+	return sizeof(struct dynamic_sa_ctl) + offset * 4;
+}
+
+u32 get_dynamic_sa_offset_seq_num_mask(struct crypto4xx_ctx *ctx)
+{
+	u32 offset;
+	union dynamic_sa_contents cts;
+
+	if (ctx->direction == DIR_INBOUND)
+		cts.w = ((struct dynamic_sa_ctl *)(ctx->sa_in))->sa_contents;
+	else
+		cts.w = ((struct dynamic_sa_ctl *)(ctx->sa_out))->sa_contents;
+
+	offset = cts.bf.key_size
+		+ cts.bf.inner_size
+		+ cts.bf.outer_size
+		+ cts.bf.spi
+		+ cts.bf.seq_num0
+		+ cts.bf.seq_num1;
+
+	return sizeof(struct dynamic_sa_ctl) + offset * 4;
+}
+
 u32 get_dynamic_sa_iv_size(struct crypto4xx_ctx *ctx)
 {
 	union dynamic_sa_contents cts;
@@ -92,6 +205,7 @@ u32 get_dynamic_sa_iv_size(struct crypto4xx_ctx *ctx)
 		cts.w = ((struct dynamic_sa_ctl *) ctx->sa_in)->sa_contents;
 	else
 		cts.w = ((struct dynamic_sa_ctl *) ctx->sa_out)->sa_contents;
+
 	return (cts.bf.iv0 + cts.bf.iv1 + cts.bf.iv2 + cts.bf.iv3) * 4;
 }
 

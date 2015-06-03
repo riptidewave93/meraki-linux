@@ -13,7 +13,6 @@
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/device.h>
 #include <linux/err.h>
 #include <linux/power_supply.h>
@@ -22,8 +21,6 @@
 /* exported for the APM Power driver, APM emulation */
 struct class *power_supply_class;
 EXPORT_SYMBOL_GPL(power_supply_class);
-
-static struct device_type power_supply_dev_type;
 
 static int __power_supply_changed_work(struct device *dev, void *data)
 {
@@ -98,9 +95,7 @@ static int __power_supply_is_system_supplied(struct device *dev, void *data)
 {
 	union power_supply_propval ret = {0,};
 	struct power_supply *psy = dev_get_drvdata(dev);
-	unsigned int *count = data;
 
-	(*count)++;
 	if (psy->type != POWER_SUPPLY_TYPE_BATTERY) {
 		if (psy->get_property(psy, POWER_SUPPLY_PROP_ONLINE, &ret))
 			return 0;
@@ -113,17 +108,9 @@ static int __power_supply_is_system_supplied(struct device *dev, void *data)
 int power_supply_is_system_supplied(void)
 {
 	int error;
-	unsigned int count = 0;
 
-	error = class_for_each_device(power_supply_class, NULL, &count,
+	error = class_for_each_device(power_supply_class, NULL, NULL,
 				      __power_supply_is_system_supplied);
-
-	/*
-	 * If no power class device was found at all, most probably we are
-	 * running on a desktop system, so assume we are on mains power.
-	 */
-	if (count == 0)
-		return 1;
 
 	return error;
 }
@@ -157,45 +144,22 @@ struct power_supply *power_supply_get_by_name(char *name)
 }
 EXPORT_SYMBOL_GPL(power_supply_get_by_name);
 
-int power_supply_powers(struct power_supply *psy, struct device *dev)
-{
-	return sysfs_create_link(&psy->dev->kobj, &dev->kobj, "powers");
-}
-EXPORT_SYMBOL_GPL(power_supply_powers);
-
-static void power_supply_dev_release(struct device *dev)
-{
-	pr_debug("device: '%s': %s\n", dev_name(dev), __func__);
-	kfree(dev);
-}
-
 int power_supply_register(struct device *parent, struct power_supply *psy)
 {
-	struct device *dev;
-	int rc;
+	int rc = 0;
 
-	dev = kzalloc(sizeof(*dev), GFP_KERNEL);
-	if (!dev)
-		return -ENOMEM;
-
-	device_initialize(dev);
-
-	dev->class = power_supply_class;
-	dev->type = &power_supply_dev_type;
-	dev->parent = parent;
-	dev->release = power_supply_dev_release;
-	dev_set_drvdata(dev, psy);
-	psy->dev = dev;
+	psy->dev = device_create(power_supply_class, parent, 0, psy,
+				 "%s", psy->name);
+	if (IS_ERR(psy->dev)) {
+		rc = PTR_ERR(psy->dev);
+		goto dev_create_failed;
+	}
 
 	INIT_WORK(&psy->changed_work, power_supply_changed_work);
 
-	rc = kobject_set_name(&dev->kobj, "%s", psy->name);
+	rc = power_supply_create_attrs(psy);
 	if (rc)
-		goto kobject_set_name_failed;
-
-	rc = device_add(dev);
-	if (rc)
-		goto device_add_failed;
+		goto create_attrs_failed;
 
 	rc = power_supply_create_triggers(psy);
 	if (rc)
@@ -206,10 +170,10 @@ int power_supply_register(struct device *parent, struct power_supply *psy)
 	goto success;
 
 create_triggers_failed:
-	device_del(dev);
-kobject_set_name_failed:
-device_add_failed:
-	put_device(dev);
+	power_supply_remove_attrs(psy);
+create_attrs_failed:
+	device_unregister(psy->dev);
+dev_create_failed:
 success:
 	return rc;
 }
@@ -217,9 +181,9 @@ EXPORT_SYMBOL_GPL(power_supply_register);
 
 void power_supply_unregister(struct power_supply *psy)
 {
-	cancel_work_sync(&psy->changed_work);
-	sysfs_remove_link(&psy->dev->kobj, "powers");
+	flush_scheduled_work();
 	power_supply_remove_triggers(psy);
+	power_supply_remove_attrs(psy);
 	device_unregister(psy->dev);
 }
 EXPORT_SYMBOL_GPL(power_supply_unregister);
@@ -232,7 +196,6 @@ static int __init power_supply_class_init(void)
 		return PTR_ERR(power_supply_class);
 
 	power_supply_class->dev_uevent = power_supply_uevent;
-	power_supply_init_attrs(&power_supply_dev_type);
 
 	return 0;
 }

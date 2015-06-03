@@ -18,7 +18,6 @@
 #include <linux/gpio.h>
 #include <linux/fb.h>
 #include <linux/backlight.h>
-#include <linux/slab.h>
 
 #include <asm/mach/sharpsl_param.h>
 
@@ -73,7 +72,7 @@ static int tosa_bl_get_brightness(struct backlight_device *dev)
 	return props->brightness;
 }
 
-static const struct backlight_ops bl_ops = {
+static struct backlight_ops bl_ops = {
 	.get_brightness		= tosa_bl_get_brightness,
 	.update_status		= tosa_bl_update_status,
 };
@@ -81,7 +80,6 @@ static const struct backlight_ops bl_ops = {
 static int __devinit tosa_bl_probe(struct i2c_client *client,
 		const struct i2c_device_id *id)
 {
-	struct backlight_properties props;
 	struct tosa_bl_data *data = kzalloc(sizeof(struct tosa_bl_data), GFP_KERNEL);
 	int ret = 0;
 	if (!data)
@@ -101,17 +99,15 @@ static int __devinit tosa_bl_probe(struct i2c_client *client,
 	i2c_set_clientdata(client, data);
 	data->i2c = client;
 
-	memset(&props, 0, sizeof(struct backlight_properties));
-	props.type = BACKLIGHT_RAW;
-	props.max_brightness = 512 - 1;
-	data->bl = backlight_device_register("tosa-bl", &client->dev, data,
-					     &bl_ops, &props);
+	data->bl = backlight_device_register("tosa-bl", &client->dev,
+			data, &bl_ops);
 	if (IS_ERR(data->bl)) {
 		ret = PTR_ERR(data->bl);
 		goto err_reg;
 	}
 
 	data->bl->props.brightness = 69;
+	data->bl->props.max_brightness = 512 - 1;
 	data->bl->props.power = FB_BLANK_UNBLANK;
 
 	backlight_update_status(data->bl);
@@ -120,6 +116,7 @@ static int __devinit tosa_bl_probe(struct i2c_client *client,
 
 err_reg:
 	data->bl = NULL;
+	i2c_set_clientdata(client, NULL);
 err_gpio_dir:
 	gpio_free(TOSA_GPIO_BL_C20MA);
 err_gpio_bl:
@@ -133,6 +130,7 @@ static int __devexit tosa_bl_remove(struct i2c_client *client)
 
 	backlight_device_unregister(data->bl);
 	data->bl = NULL;
+	i2c_set_clientdata(client, NULL);
 
 	gpio_free(TOSA_GPIO_BL_C20MA);
 
@@ -181,7 +179,18 @@ static struct i2c_driver tosa_bl_driver = {
 	.id_table	= tosa_bl_id,
 };
 
-module_i2c_driver(tosa_bl_driver);
+static int __init tosa_bl_init(void)
+{
+	return i2c_add_driver(&tosa_bl_driver);
+}
+
+static void __exit tosa_bl_exit(void)
+{
+	i2c_del_driver(&tosa_bl_driver);
+}
+
+module_init(tosa_bl_init);
+module_exit(tosa_bl_exit);
 
 MODULE_AUTHOR("Dmitry Baryshkov");
 MODULE_LICENSE("GPL v2");

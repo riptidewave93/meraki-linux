@@ -48,9 +48,6 @@
  * be incorporated into the next SCTP release.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/random.h>
 #include <net/sctp/sctp.h>
@@ -66,6 +63,9 @@ static struct sctp_transport *sctp_transport_init(struct sctp_transport *peer,
 	/* Copy in the address.  */
 	peer->ipaddr = *addr;
 	peer->af_specific = sctp_get_af_specific(addr->sa.sa_family);
+	peer->asoc = NULL;
+
+	peer->dst = NULL;
 	memset(&peer->saddr, 0, sizeof(union sctp_addr));
 
 	/* From 6.3.1 RTO Calculation:
@@ -75,20 +75,34 @@ static struct sctp_transport *sctp_transport_init(struct sctp_transport *peer,
 	 * parameter 'RTO.Initial'.
 	 */
 	peer->rto = msecs_to_jiffies(sctp_rto_initial);
+	peer->rtt = 0;
+	peer->rttvar = 0;
+	peer->srtt = 0;
+	peer->rto_pending = 0;
+	peer->hb_sent = 0;
+	peer->fast_recovery = 0;
 
 	peer->last_time_heard = jiffies;
+	peer->last_time_used = jiffies;
 	peer->last_time_ecne_reduced = jiffies;
+
+	peer->init_sent_count = 0;
 
 	peer->param_flags = SPP_HB_DISABLE |
 			    SPP_PMTUD_ENABLE |
 			    SPP_SACKDELAY_ENABLE;
+	peer->hbinterval  = 0;
 
 	/* Initialize the default path max_retrans.  */
 	peer->pathmaxrxt  = sctp_max_retrans_path;
+	peer->error_count = 0;
 
 	INIT_LIST_HEAD(&peer->transmitted);
 	INIT_LIST_HEAD(&peer->send_ready);
 	INIT_LIST_HEAD(&peer->transports);
+
+	peer->T3_rtx_timer.expires = 0;
+	peer->hb_timer.expires = 0;
 
 	setup_timer(&peer->T3_rtx_timer, sctp_generate_t3_rtx_event,
 			(unsigned long)peer);
@@ -101,6 +115,15 @@ static struct sctp_transport *sctp_transport_init(struct sctp_transport *peer,
 	get_random_bytes(&peer->hb_nonce, sizeof(peer->hb_nonce));
 
 	atomic_set(&peer->refcnt, 1);
+	peer->dead = 0;
+
+	peer->malloced = 0;
+
+	/* Initialize the state information for SFR-CACC */
+	peer->cacc.changeover_active = 0;
+	peer->cacc.cycling_changeover = 0;
+	peer->cacc.next_tsn_at_change = 0;
+	peer->cacc.cacc_saw_newack = 0;
 
 	return peer;
 }
@@ -150,10 +173,6 @@ void sctp_transport_free(struct sctp_transport *transport)
 	    del_timer(&transport->T3_rtx_timer))
 		sctp_transport_put(transport);
 
-	/* Delete the ICMP proto unreachable timer if it's active. */
-	if (timer_pending(&transport->proto_unreach_timer) &&
-	    del_timer(&transport->proto_unreach_timer))
-		sctp_association_put(transport->asoc);
 
 	sctp_transport_put(transport);
 }
@@ -178,7 +197,7 @@ static void sctp_transport_destroy(struct sctp_transport *transport)
 /* Start T3_rtx timer if it is not already running and update the heartbeat
  * timer.  This routine is called every time a DATA chunk is sent.
  */
-void sctp_transport_reset_timers(struct sctp_transport *transport)
+void sctp_transport_reset_timers(struct sctp_transport *transport, int force)
 {
 	/* RFC 2960 6.3.2 Retransmission Timer Rules
 	 *
@@ -188,7 +207,7 @@ void sctp_transport_reset_timers(struct sctp_transport *transport)
 	 * address.
 	 */
 
-	if (!timer_pending(&transport->T3_rtx_timer))
+	if (force || !timer_pending(&transport->T3_rtx_timer))
 		if (!mod_timer(&transport->T3_rtx_timer,
 			       jiffies + transport->rto))
 			sctp_transport_hold(transport);
@@ -211,19 +230,34 @@ void sctp_transport_set_owner(struct sctp_transport *transport,
 }
 
 /* Initialize the pmtu of a transport. */
-void sctp_transport_pmtu(struct sctp_transport *transport, struct sock *sk)
+void sctp_transport_pmtu(struct sctp_transport *transport)
 {
-	/* If we don't have a fresh route, look one up */
-	if (!transport->dst || transport->dst->obsolete > 1) {
-		dst_release(transport->dst);
-		transport->af_specific->get_dst(transport, &transport->saddr,
-						&transport->fl, sk);
-	}
+	struct dst_entry *dst;
 
-	if (transport->dst) {
-		transport->pathmtu = dst_mtu(transport->dst);
+	dst = transport->af_specific->get_dst(NULL, &transport->ipaddr, NULL);
+
+	if (dst) {
+		transport->pathmtu = dst_mtu(dst);
+		dst_release(dst);
 	} else
 		transport->pathmtu = SCTP_DEFAULT_MAXSEGMENT;
+}
+
+/* this is a complete rip-off from __sk_dst_check
+ * the cookie is always 0 since this is how it's used in the
+ * pmtu code
+ */
+static struct dst_entry *sctp_transport_dst_check(struct sctp_transport *t)
+{
+	struct dst_entry *dst = t->dst;
+
+	if (dst && dst->obsolete && dst->ops->check(dst, 0) == NULL) {
+		dst_release(t->dst);
+		t->dst = NULL;
+		return NULL;
+	}
+
+	return dst;
 }
 
 void sctp_transport_update_pmtu(struct sctp_transport *t, u32 pmtu)
@@ -231,9 +265,10 @@ void sctp_transport_update_pmtu(struct sctp_transport *t, u32 pmtu)
 	struct dst_entry *dst;
 
 	if (unlikely(pmtu < SCTP_DEFAULT_MINSEGMENT)) {
-		pr_warn("%s: Reported pmtu %d too low, using default minimum of %d\n",
-			__func__, pmtu,
-			SCTP_DEFAULT_MINSEGMENT);
+		printk(KERN_WARNING "%s: Reported pmtu %d too low, "
+		       "using default minimum of %d\n",
+		       __func__, pmtu,
+		       SCTP_DEFAULT_MINSEGMENT);
 		/* Use default minimum segment size and disable
 		 * pmtu discovery on this transport.
 		 */
@@ -255,19 +290,22 @@ void sctp_transport_route(struct sctp_transport *transport,
 {
 	struct sctp_association *asoc = transport->asoc;
 	struct sctp_af *af = transport->af_specific;
+	union sctp_addr *daddr = &transport->ipaddr;
+	struct dst_entry *dst;
 
-	af->get_dst(transport, saddr, &transport->fl, sctp_opt2sk(opt));
+	dst = af->get_dst(asoc, daddr, saddr);
 
 	if (saddr)
 		memcpy(&transport->saddr, saddr, sizeof(union sctp_addr));
 	else
-		af->get_saddr(opt, transport, &transport->fl);
+		af->get_saddr(opt, asoc, dst, daddr, &transport->saddr);
 
+	transport->dst = dst;
 	if ((transport->param_flags & SPP_PMTUD_DISABLE) && transport->pathmtu) {
 		return;
 	}
-	if (transport->dst) {
-		transport->pathmtu = dst_mtu(transport->dst);
+	if (dst) {
+		transport->pathmtu = dst_mtu(dst);
 
 		/* Initialize sk->sk_rcv_saddr, if the transport is the
 		 * association's active path for getsockname().
@@ -367,16 +405,15 @@ void sctp_transport_update_rto(struct sctp_transport *tp, __u32 rtt)
 void sctp_transport_raise_cwnd(struct sctp_transport *transport,
 			       __u32 sack_ctsn, __u32 bytes_acked)
 {
-	struct sctp_association *asoc = transport->asoc;
 	__u32 cwnd, ssthresh, flight_size, pba, pmtu;
 
 	cwnd = transport->cwnd;
 	flight_size = transport->flight_size;
 
 	/* See if we need to exit Fast Recovery first */
-	if (asoc->fast_recovery &&
-	    TSN_lte(asoc->fast_recovery_exit, sack_ctsn))
-		asoc->fast_recovery = 0;
+	if (transport->fast_recovery &&
+	    TSN_lte(transport->fast_recovery_exit, sack_ctsn))
+		transport->fast_recovery = 0;
 
 	/* The appropriate cwnd increase algorithm is performed if, and only
 	 * if the cumulative TSN whould advanced and the congestion window is
@@ -405,7 +442,7 @@ void sctp_transport_raise_cwnd(struct sctp_transport *transport,
 		 *    2) the destination's path MTU.  This upper bound protects
 		 *    against the ACK-Splitting attack outlined in [SAVAGE99].
 		 */
-		if (asoc->fast_recovery)
+		if (transport->fast_recovery)
 			return;
 
 		if (bytes_acked > pmtu)
@@ -456,8 +493,6 @@ void sctp_transport_raise_cwnd(struct sctp_transport *transport,
 void sctp_transport_lower_cwnd(struct sctp_transport *transport,
 			       sctp_lower_cwnd_t reason)
 {
-	struct sctp_association *asoc = transport->asoc;
-
 	switch (reason) {
 	case SCTP_LOWER_CWND_T3_RTX:
 		/* RFC 2960 Section 7.2.3, sctpimpguide
@@ -468,11 +503,11 @@ void sctp_transport_lower_cwnd(struct sctp_transport *transport,
 		 *      partial_bytes_acked = 0
 		 */
 		transport->ssthresh = max(transport->cwnd/2,
-					  4*asoc->pathmtu);
-		transport->cwnd = asoc->pathmtu;
+					  4*transport->asoc->pathmtu);
+		transport->cwnd = transport->asoc->pathmtu;
 
-		/* T3-rtx also clears fast recovery */
-		asoc->fast_recovery = 0;
+		/* T3-rtx also clears fast recovery on the transport */
+		transport->fast_recovery = 0;
 		break;
 
 	case SCTP_LOWER_CWND_FAST_RTX:
@@ -488,15 +523,15 @@ void sctp_transport_lower_cwnd(struct sctp_transport *transport,
 		 *      cwnd = ssthresh
 		 *      partial_bytes_acked = 0
 		 */
-		if (asoc->fast_recovery)
+		if (transport->fast_recovery)
 			return;
 
 		/* Mark Fast recovery */
-		asoc->fast_recovery = 1;
-		asoc->fast_recovery_exit = asoc->next_tsn - 1;
+		transport->fast_recovery = 1;
+		transport->fast_recovery_exit = transport->asoc->next_tsn - 1;
 
 		transport->ssthresh = max(transport->cwnd/2,
-					  4*asoc->pathmtu);
+					  4*transport->asoc->pathmtu);
 		transport->cwnd = transport->ssthresh;
 		break;
 
@@ -516,7 +551,7 @@ void sctp_transport_lower_cwnd(struct sctp_transport *transport,
 		if (time_after(jiffies, transport->last_time_ecne_reduced +
 					transport->rtt)) {
 			transport->ssthresh = max(transport->cwnd/2,
-						  4*asoc->pathmtu);
+						  4*transport->asoc->pathmtu);
 			transport->cwnd = transport->ssthresh;
 			transport->last_time_ecne_reduced = jiffies;
 		}
@@ -531,8 +566,10 @@ void sctp_transport_lower_cwnd(struct sctp_transport *transport,
 		 * to be done every RTO interval, we do it every hearbeat
 		 * interval.
 		 */
-		transport->cwnd = max(transport->cwnd/2,
-					 4*asoc->pathmtu);
+		if (time_after(jiffies, transport->last_time_used +
+					transport->rto))
+			transport->cwnd = max(transport->cwnd/2,
+						 4*transport->asoc->pathmtu);
 		break;
 	}
 
@@ -541,43 +578,6 @@ void sctp_transport_lower_cwnd(struct sctp_transport *transport,
 			  "%d ssthresh: %d\n", __func__,
 			  transport, reason,
 			  transport->cwnd, transport->ssthresh);
-}
-
-/* Apply Max.Burst limit to the congestion window:
- * sctpimpguide-05 2.14.2
- * D) When the time comes for the sender to
- * transmit new DATA chunks, the protocol parameter Max.Burst MUST
- * first be applied to limit how many new DATA chunks may be sent.
- * The limit is applied by adjusting cwnd as follows:
- * 	if ((flightsize+ Max.Burst * MTU) < cwnd)
- * 		cwnd = flightsize + Max.Burst * MTU
- */
-
-void sctp_transport_burst_limited(struct sctp_transport *t)
-{
-	struct sctp_association *asoc = t->asoc;
-	u32 old_cwnd = t->cwnd;
-	u32 max_burst_bytes;
-
-	if (t->burst_limited)
-		return;
-
-	max_burst_bytes = t->flight_size + (asoc->max_burst * asoc->pathmtu);
-	if (max_burst_bytes < old_cwnd) {
-		t->cwnd = max_burst_bytes;
-		t->burst_limited = old_cwnd;
-	}
-}
-
-/* Restore the old cwnd congestion window, after the burst had it's
- * desired effect.
- */
-void sctp_transport_burst_reset(struct sctp_transport *t)
-{
-	if (t->burst_limited) {
-		t->cwnd = t->burst_limited;
-		t->burst_limited = 0;
-	}
 }
 
 /* What is the next timeout value for this transport? */
@@ -602,7 +602,6 @@ void sctp_transport_reset(struct sctp_transport *t)
 	 * (see Section 6.2.1)
 	 */
 	t->cwnd = min(4*asoc->pathmtu, max_t(__u32, 2*asoc->pathmtu, 4380));
-	t->burst_limited = 0;
 	t->ssthresh = asoc->peer.i.a_rwnd;
 	t->rto = asoc->rto_initial;
 	t->rtt = 0;
@@ -617,26 +616,11 @@ void sctp_transport_reset(struct sctp_transport *t)
 	t->error_count = 0;
 	t->rto_pending = 0;
 	t->hb_sent = 0;
+	t->fast_recovery = 0;
 
 	/* Initialize the state information for SFR-CACC */
 	t->cacc.changeover_active = 0;
 	t->cacc.cycling_changeover = 0;
 	t->cacc.next_tsn_at_change = 0;
 	t->cacc.cacc_saw_newack = 0;
-}
-
-/* Schedule retransmission on the given transport */
-void sctp_transport_immediate_rtx(struct sctp_transport *t)
-{
-	/* Stop pending T3_rtx_timer */
-	if (timer_pending(&t->T3_rtx_timer)) {
-		(void)del_timer(&t->T3_rtx_timer);
-		sctp_transport_put(t);
-	}
-	sctp_retransmit(&t->asoc->outqueue, t, SCTP_RTXR_T3_RTX);
-	if (!timer_pending(&t->T3_rtx_timer)) {
-		if (!mod_timer(&t->T3_rtx_timer, jiffies + t->rto))
-			sctp_transport_hold(t);
-	}
-	return;
 }

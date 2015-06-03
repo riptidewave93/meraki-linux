@@ -19,7 +19,6 @@
  */
 
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/hrtimer.h>
@@ -105,7 +104,7 @@ static int snd_hrtimer_stop(struct snd_timer *t)
 }
 
 static struct snd_timer_hardware hrtimer_hw = {
-	.flags =	SNDRV_TIMER_HW_AUTO | SNDRV_TIMER_HW_TASKLET,
+	.flags =	SNDRV_TIMER_HW_AUTO,
 	.open =		snd_hrtimer_open,
 	.close =	snd_hrtimer_close,
 	.start =	snd_hrtimer_start,

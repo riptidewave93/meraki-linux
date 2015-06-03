@@ -4,9 +4,8 @@
  */
 
 #include <linux/mm.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/swap.h>
-#include <linux/gfp.h>
 #include <linux/bio.h>
 #include <linux/pagemap.h>
 #include <linux/mempool.h>
@@ -14,7 +13,6 @@
 #include <linux/init.h>
 #include <linux/hash.h>
 #include <linux/highmem.h>
-#include <linux/bootmem.h>
 #include <asm/tlbflush.h>
 
 #include <trace/events/block.h>
@@ -27,10 +25,12 @@ static mempool_t *page_pool, *isa_page_pool;
 #ifdef CONFIG_HIGHMEM
 static __init int init_emergency_pool(void)
 {
-#ifndef CONFIG_MEMORY_HOTPLUG
-	if (max_pfn <= max_low_pfn)
+	struct sysinfo i;
+	si_meminfo(&i);
+	si_swapinfo(&i);
+
+	if (!i.totalhigh)
 		return 0;
-#endif
 
 	page_pool = mempool_create_page_pool(POOL_SIZE, 0);
 	BUG_ON(!page_pool);
@@ -50,9 +50,9 @@ static void bounce_copy_vec(struct bio_vec *to, unsigned char *vfrom)
 	unsigned char *vto;
 
 	local_irq_save(flags);
-	vto = kmap_atomic(to->bv_page);
+	vto = kmap_atomic(to->bv_page, KM_BOUNCE_READ);
 	memcpy(vto + to->bv_offset, vfrom, to->bv_len);
-	kunmap_atomic(vto);
+	kunmap_atomic(vto, KM_BOUNCE_READ);
 	local_irq_restore(flags);
 }
 

@@ -119,7 +119,7 @@ static int init_freecom(struct us_data *us);
 { USB_DEVICE_VER(id_vendor, id_product, bcdDeviceMin, bcdDeviceMax), \
   .driver_info = (flags)|(USB_US_TYPE_STOR<<24) }
 
-static struct usb_device_id freecom_usb_ids[] = {
+struct usb_device_id freecom_usb_ids[] = {
 #	include "unusual_freecom.h"
 	{ }		/* Terminating entry */
 };
@@ -269,7 +269,7 @@ static int freecom_transport(struct scsi_cmnd *srb, struct us_data *us)
 	/* The firmware will time-out commands after 20 seconds. Some commands
 	 * can legitimately take longer than this, so we use a different
 	 * command that only waits for the interrupt and then sends status,
-	 * without having to send a new ATAPI command to the device.
+	 * without having to send a new ATAPI command to the device. 
 	 *
 	 * NOTE: There is some indication that a data transfer after a timeout
 	 * may not work, but that is a condition that should never happen.
@@ -324,14 +324,14 @@ static int freecom_transport(struct scsi_cmnd *srb, struct us_data *us)
 
 	/* Find the length we desire to read. */
 	switch (srb->cmnd[0]) {
-	case INQUIRY:
-	case REQUEST_SENSE:	/* 16 or 18 bytes? spec says 18, lots of devices only have 16 */
-	case MODE_SENSE:
-	case MODE_SENSE_10:
-		length = le16_to_cpu(fst->Count);
-		break;
-	default:
-		length = scsi_bufflen(srb);
+		case INQUIRY:
+		case REQUEST_SENSE:		/* 16 or 18 bytes? spec says 18, lots of devices only have 16 */
+		case MODE_SENSE:
+		case MODE_SENSE_10:
+			length = le16_to_cpu(fst->Count);
+			break;
+		default:
+			length = scsi_bufflen(srb);
 	}
 
 	/* verify that this amount is legal */
@@ -414,7 +414,7 @@ static int freecom_transport(struct scsi_cmnd *srb, struct us_data *us)
 		/* should never hit here -- filtered in usb.c */
 		US_DEBUGP ("freecom unimplemented direction: %d\n",
 				us->srb->sc_data_direction);
-		/* Return fail, SCSI seems to handle this better. */
+		// Return fail, SCSI seems to handle this better.
 		return USB_STOR_TRANSPORT_FAILED;
 		break;
 	}
@@ -494,7 +494,8 @@ static void pdump (void *ibuffer, int length)
 				offset = 0;
 			}
 			offset += sprintf (line+offset, "%08x:", i);
-		} else if ((i & 7) == 0) {
+		}
+		else if ((i & 7) == 0) {
 			offset += sprintf (line+offset, " -");
 		}
 		offset += sprintf (line+offset, " %02x", buffer[i] & 0xff);
@@ -553,7 +554,17 @@ static struct usb_driver freecom_driver = {
 	.post_reset =	usb_stor_post_reset,
 	.id_table =	freecom_usb_ids,
 	.soft_unbind =	1,
-	.no_dynamic_id = 1,
 };
 
-module_usb_driver(freecom_driver);
+static int __init freecom_init(void)
+{
+	return usb_register(&freecom_driver);
+}
+
+static void __exit freecom_exit(void)
+{
+	usb_deregister(&freecom_driver);
+}
+
+module_init(freecom_init);
+module_exit(freecom_exit);

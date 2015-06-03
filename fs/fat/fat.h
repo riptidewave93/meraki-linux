@@ -6,7 +6,6 @@
 #include <linux/nls.h>
 #include <linux/fs.h>
 #include <linux/mutex.h>
-#include <linux/ratelimit.h>
 #include <linux/msdos_fs.h>
 
 /*
@@ -45,8 +44,7 @@ struct fat_mount_options {
 		 nocase:1,	  /* Does this need case conversion? 0=need case conversion*/
 		 usefree:1,	  /* Use free_clusters for FAT32 */
 		 tz_utc:1,	  /* Filesystem timestamps are in UTC */
-		 rodir:1,	  /* allow ATTR_RO for directory */
-		 discard:1;	  /* Issue discard requests on deletions */
+		 rodir:1;	  /* allow ATTR_RO for directory */
 };
 
 #define FAT_HASH_BITS	8
@@ -83,8 +81,6 @@ struct msdos_sb_info {
 	struct fatent_operations *fatent_ops;
 	struct inode *fat_inode;
 
-	struct ratelimit_state ratelimit;
-
 	spinlock_t inode_hash_lock;
 	struct hlist_head inode_hashtable[FAT_HASH_SIZE];
 };
@@ -109,7 +105,6 @@ struct msdos_inode_info {
 	int i_attrs;		/* unused attribute bits */
 	loff_t i_pos;		/* on-disk position of directory entry or 0 */
 	struct hlist_node i_fat_hash;	/* hash by i_location */
-	struct rw_semaphore truncate_lock; /* protect bmap against truncate */
 	struct inode vfs_inode;
 };
 
@@ -141,7 +136,7 @@ static inline struct msdos_inode_info *MSDOS_I(struct inode *inode)
 static inline int fat_mode_can_hold_ro(struct inode *inode)
 {
 	struct msdos_sb_info *sbi = MSDOS_SB(inode->i_sb);
-	umode_t mask;
+	mode_t mask;
 
 	if (S_ISDIR(inode->i_mode)) {
 		if (!sbi->options.rodir)
@@ -156,8 +151,8 @@ static inline int fat_mode_can_hold_ro(struct inode *inode)
 }
 
 /* Convert attribute bits and a mask to the UNIX mode. */
-static inline umode_t fat_make_mode(struct msdos_sb_info *sbi,
-				   u8 attrs, umode_t mode)
+static inline mode_t fat_make_mode(struct msdos_sb_info *sbi,
+				   u8 attrs, mode_t mode)
 {
 	if (attrs & ATTR_RO && !((attrs & ATTR_DIR) && !sbi->options.rodir))
 		mode &= ~S_IWUGO;
@@ -302,15 +297,15 @@ extern int fat_free_clusters(struct inode *inode, int cluster);
 extern int fat_count_free_clusters(struct super_block *sb);
 
 /* fat/file.c */
-extern long fat_generic_ioctl(struct file *filp, unsigned int cmd,
-			      unsigned long arg);
+extern int fat_generic_ioctl(struct inode *inode, struct file *filp,
+			     unsigned int cmd, unsigned long arg);
 extern const struct file_operations fat_file_operations;
 extern const struct inode_operations fat_file_inode_operations;
 extern int fat_setattr(struct dentry * dentry, struct iattr * attr);
-extern void fat_truncate_blocks(struct inode *inode, loff_t offset);
+extern void fat_truncate(struct inode *inode);
 extern int fat_getattr(struct vfsmount *mnt, struct dentry *dentry,
 		       struct kstat *stat);
-extern int fat_file_fsync(struct file *file, loff_t start, loff_t end,
+extern int fat_file_fsync(struct file *file, struct dentry *dentry,
 			  int datasync);
 
 /* fat/inode.c */
@@ -321,19 +316,13 @@ extern struct inode *fat_build_inode(struct super_block *sb,
 			struct msdos_dir_entry *de, loff_t i_pos);
 extern int fat_sync_inode(struct inode *inode);
 extern int fat_fill_super(struct super_block *sb, void *data, int silent,
-			  int isvfat, void (*setup)(struct super_block *));
+			const struct inode_operations *fs_dir_inode_ops, int isvfat);
 
 extern int fat_flush_inodes(struct super_block *sb, struct inode *i1,
 		            struct inode *i2);
 /* fat/misc.c */
-extern __printf(3, 4) __cold
-void __fat_fs_error(struct super_block *sb, int report, const char *fmt, ...);
-#define fat_fs_error(sb, fmt, args...)		\
-	__fat_fs_error(sb, 1, fmt , ## args)
-#define fat_fs_error_ratelimit(sb, fmt, args...) \
-	__fat_fs_error(sb, __ratelimit(&MSDOS_SB(sb)->ratelimit), fmt , ## args)
-__printf(3, 4) __cold
-void fat_msg(struct super_block *sb, const char *level, const char *fmt, ...);
+extern void fat_fs_error(struct super_block *s, const char *fmt, ...)
+	__attribute__ ((format (printf, 2, 3))) __cold;
 extern int fat_clusters_flush(struct super_block *sb);
 extern int fat_chain_add(struct inode *inode, int new_dclus, int nr_cluster);
 extern void fat_time_fat2unix(struct msdos_sb_info *sbi, struct timespec *ts,

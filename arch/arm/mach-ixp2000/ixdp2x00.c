@@ -14,7 +14,6 @@
  *  Free Software Foundation;  either version 2 of the  License, or (at your
  *  option) any later version.
  */
-#include <linux/gpio.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/mm.h>
@@ -24,12 +23,14 @@
 #include <linux/bitops.h>
 #include <linux/pci.h>
 #include <linux/ioport.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/io.h>
 
 #include <asm/irq.h>
 #include <asm/pgtable.h>
 #include <asm/page.h>
+#include <asm/system.h>
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
 
@@ -40,7 +41,8 @@
 #include <asm/mach/flash.h>
 #include <asm/mach/arch.h>
 
-#include <mach/gpio-ixp2000.h>
+#include <mach/gpio.h>
+
 
 /*************************************************************************
  * IXDP2x00 IRQ Initialization
@@ -62,7 +64,7 @@ static struct slowport_cfg slowport_cpld_cfg = {
 };
 #endif
 
-static void ixdp2x00_irq_mask(struct irq_data *d)
+static void ixdp2x00_irq_mask(unsigned int irq)
 {
 	unsigned long dummy;
 	static struct slowport_cfg old_cfg;
@@ -77,7 +79,7 @@ static void ixdp2x00_irq_mask(struct irq_data *d)
 #endif
 
 	dummy = *board_irq_mask;
-	dummy |=  IXP2000_BOARD_IRQ_MASK(d->irq);
+	dummy |=  IXP2000_BOARD_IRQ_MASK(irq);
 	ixp2000_reg_wrb(board_irq_mask, dummy);
 
 #ifdef CONFIG_ARCH_IXDP2400
@@ -86,7 +88,7 @@ static void ixdp2x00_irq_mask(struct irq_data *d)
 #endif
 }
 
-static void ixdp2x00_irq_unmask(struct irq_data *d)
+static void ixdp2x00_irq_unmask(unsigned int irq)
 {
 	unsigned long dummy;
 	static struct slowport_cfg old_cfg;
@@ -97,7 +99,7 @@ static void ixdp2x00_irq_unmask(struct irq_data *d)
 #endif
 
 	dummy = *board_irq_mask;
-	dummy &=  ~IXP2000_BOARD_IRQ_MASK(d->irq);
+	dummy &=  ~IXP2000_BOARD_IRQ_MASK(irq);
 	ixp2000_reg_wrb(board_irq_mask, dummy);
 
 	if (machine_is_ixdp2400()) 
@@ -110,7 +112,7 @@ static void ixdp2x00_irq_handler(unsigned int irq, struct irq_desc *desc)
 	static struct slowport_cfg old_cfg;
 	int i;
 
-	desc->irq_data.chip->irq_mask(&desc->irq_data);
+	desc->chip->mask(irq);
 
 #ifdef CONFIG_ARCH_IXDP2400
 	if (machine_is_ixdp2400())
@@ -132,13 +134,13 @@ static void ixdp2x00_irq_handler(unsigned int irq, struct irq_desc *desc)
 		}
 	}
 
-	desc->irq_data.chip->irq_unmask(&desc->irq_data);
+	desc->chip->unmask(irq);
 }
 
 static struct irq_chip ixdp2x00_cpld_irq_chip = {
-	.irq_ack	= ixdp2x00_irq_mask,
-	.irq_mask	= ixdp2x00_irq_mask,
-	.irq_unmask	= ixdp2x00_irq_unmask
+	.ack	= ixdp2x00_irq_mask,
+	.mask	= ixdp2x00_irq_mask,
+	.unmask	= ixdp2x00_irq_unmask
 };
 
 void __init ixdp2x00_init_irq(volatile unsigned long *stat_reg, volatile unsigned long *mask_reg, unsigned long nr_of_irqs)
@@ -157,13 +159,13 @@ void __init ixdp2x00_init_irq(volatile unsigned long *stat_reg, volatile unsigne
 	*board_irq_mask = 0xffffffff;
 
 	for(irq = IXP2000_BOARD_IRQ(0); irq < IXP2000_BOARD_IRQ(board_irq_count); irq++) {
-		irq_set_chip_and_handler(irq, &ixdp2x00_cpld_irq_chip,
-					 handle_level_irq);
+		set_irq_chip(irq, &ixdp2x00_cpld_irq_chip);
+		set_irq_handler(irq, handle_level_irq);
 		set_irq_flags(irq, IRQF_VALID);
 	}
 
 	/* Hook into PCI interrupt */
-	irq_set_chained_handler(IRQ_IXP2000_PCIB, ixdp2x00_irq_handler);
+	set_irq_chained_handler(IRQ_IXP2000_PCIB, ixdp2x00_irq_handler);
 }
 
 /*************************************************************************
@@ -238,12 +240,12 @@ void ixdp2x00_slave_pci_postinit(void)
 	 * Remove PMC device is there is one
 	 */
 	if((dev = pci_get_bus_and_slot(1, IXDP2X00_PMC_DEVFN))) {
-		pci_stop_and_remove_bus_device(dev);
+		pci_remove_bus_device(dev);
 		pci_dev_put(dev);
 	}
 
 	dev = pci_get_bus_and_slot(0, IXDP2X00_21555_DEVFN);
-	pci_stop_and_remove_bus_device(dev);
+	pci_remove_bus_device(dev);
 	pci_dev_put(dev);
 }
 

@@ -24,8 +24,7 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/time.h>
-#include <linux/slab.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <sound/core.h>
@@ -40,7 +39,7 @@ MODULE_SUPPORTED_DEVICE("{{SiS,SiS7019 Audio Accelerator}}");
 
 static int index = SNDRV_DEFAULT_IDX1;	/* Index 0-MAX */
 static char *id = SNDRV_DEFAULT_STR1;	/* ID for this card */
-static bool enable = 1;
+static int enable = 1;
 static int codecs = 1;
 
 module_param(index, int, 0444);
@@ -52,7 +51,7 @@ MODULE_PARM_DESC(enable, "Enable SiS7019 Audio Accelerator.");
 module_param(codecs, int, 0444);
 MODULE_PARM_DESC(codecs, "Set bit to indicate that codec number is expected to be present (default 1)");
 
-static DEFINE_PCI_DEVICE_TABLE(snd_sis7019_ids) = {
+static struct pci_device_id snd_sis7019_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_SI, 0x7019) },
 	{ 0, }
 };
@@ -270,13 +269,11 @@ static void sis_update_voice(struct voice *voice)
 		 * if using small periods.
 		 *
 		 * If we're less than 9 samples behind, we're on target.
-		 * Otherwise, shorten the next vperiod by the amount we've
-		 * been delayed.
 		 */
 		if (sync > -9)
 			voice->vperiod = voice->sync_period_size + 1;
 		else
-			voice->vperiod = voice->sync_period_size + sync + 10;
+			voice->vperiod = voice->sync_period_size - 4;
 
 		if (voice->vperiod < voice->buffer_size) {
 			sis_update_sso(voice, voice->vperiod);
@@ -314,7 +311,7 @@ static irqreturn_t sis_interrupt(int irq, void *dev)
 	u32 intr, status;
 
 	/* We only use the DMA interrupts, and we don't enable any other
-	 * source of interrupts. But, it is possible to see an interrupt
+	 * source of interrupts. But, it is possible to see an interupt
 	 * status that didn't actually interrupt us, so eliminate anything
 	 * we're not expecting to avoid falsely claiming an IRQ, and an
 	 * ensuing endless loop.
@@ -744,7 +741,7 @@ static void sis_prepare_timing_voice(struct voice *voice,
 	period_size = buffer_size;
 
 	/* Initially, we want to interrupt just a bit behind the end of
-	 * the period we're clocking out. 12 samples seems to give a good
+	 * the period we're clocking out. 10 samples seems to give a good
 	 * delay.
 	 *
 	 * We want to spread our interrupts throughout the virtual period,
@@ -755,7 +752,7 @@ static void sis_prepare_timing_voice(struct voice *voice,
 	 *
 	 * This is all moot if we don't need to use virtual periods.
 	 */
-	vperiod = runtime->period_size + 12;
+	vperiod = runtime->period_size + 10;
 	if (vperiod > period_size) {
 		u16 tail = vperiod % period_size;
 		u16 quarter_period = period_size / 4;
@@ -779,12 +776,12 @@ static void sis_prepare_timing_voice(struct voice *voice,
 		vperiod = 0;
 	}
 
-	/* The interrupt handler implements the timing synchronization, so
+	/* The interrupt handler implements the timing syncronization, so
 	 * setup its state.
 	 */
 	timing->flags |= VOICE_SYNC_TIMING;
 	timing->sync_base = voice->ctrl_base;
-	timing->sync_cso = runtime->period_size;
+	timing->sync_cso = runtime->period_size - 1;
 	timing->sync_period_size = runtime->period_size;
 	timing->sync_buffer_size = runtime->buffer_size;
 	timing->period_size = period_size;
@@ -983,7 +980,7 @@ timeout:
 	mutex_unlock(&sis->ac97_mutex);
 
 	if (!count) {
-		dev_err(&sis->pci->dev, "ac97 codec %d timeout cmd 0x%08x\n",
+		printk(KERN_ERR "sis7019: ac97 codec %d timeout cmd 0x%08x\n",
 					codec, cmd);
 	}
 
@@ -1055,7 +1052,7 @@ static int sis_chip_free(struct sis7019 *sis)
 	/* Reset the chip, and disable all interrputs.
 	 */
 	outl(SIS_GCR_SOFTWARE_RESET, sis->ioport + SIS_GCR);
-	udelay(25);
+	udelay(10);
 	outl(0, sis->ioport + SIS_GCR);
 	outl(0, sis->ioport + SIS_GIER);
 
@@ -1092,7 +1089,7 @@ static int sis_chip_init(struct sis7019 *sis)
 	/* Reset the audio controller
 	 */
 	outl(SIS_GCR_SOFTWARE_RESET, io + SIS_GCR);
-	udelay(25);
+	udelay(10);
 	outl(0, io + SIS_GCR);
 
 	/* Get the AC-link semaphore, and reset the codecs
@@ -1105,7 +1102,7 @@ static int sis_chip_init(struct sis7019 *sis)
 		return -EIO;
 
 	outl(SIS_AC97_CMD_CODEC_COLD_RESET, io + SIS_AC97_CMD);
-	udelay(250);
+	udelay(10);
 
 	count = 0xffff;
 	while ((inw(io + SIS_AC97_STATUS) & SIS_AC97_STATUS_BUSY) && --count)
@@ -1142,13 +1139,13 @@ static int sis_chip_init(struct sis7019 *sis)
 	/* All done, check for errors.
 	 */
 	if (!sis->codecs_present) {
-		dev_err(&sis->pci->dev, "could not find any codecs\n");
+		printk(KERN_ERR "sis7019: could not find any codecs\n");
 		return -EIO;
 	}
 
 	if (sis->codecs_present != codecs) {
-		dev_warn(&sis->pci->dev, "missing codecs, found %0x, expected %0x\n",
-					 sis->codecs_present, codecs);
+		printk(KERN_WARNING "sis7019: missing codecs, found %0x, expected %0x\n",
+		       sis->codecs_present, codecs);
 	}
 
 	/* Let the hardware know that the audio driver is alive,
@@ -1170,7 +1167,7 @@ static int sis_chip_init(struct sis7019 *sis)
 	 */
 	outl(SIS_DMA_CSR_PCI_SETTINGS, io + SIS_DMA_CSR);
 
-	/* Reset the synchronization groups for all of the channels
+	/* Reset the syncronization groups for all of the channels
 	 * to be asyncronous. If we start doing SPDIF or 5.1 sound, etc.
 	 * we'll need to change how we handle these. Until then, we just
 	 * assign sub-mixer 0 to all playback channels, and avoid any
@@ -1256,18 +1253,18 @@ static int sis_resume(struct pci_dev *pci)
 	pci_restore_state(pci);
 
 	if (pci_enable_device(pci) < 0) {
-		dev_err(&pci->dev, "unable to re-enable device\n");
+		printk(KERN_ERR "sis7019: unable to re-enable device\n");
 		goto error;
 	}
 
 	if (sis_chip_init(sis)) {
-		dev_err(&pci->dev, "unable to re-init controller\n");
+		printk(KERN_ERR "sis7019: unable to re-init controller\n");
 		goto error;
 	}
 
-	if (request_irq(pci->irq, sis_interrupt, IRQF_SHARED,
-			KBUILD_MODNAME, sis)) {
-		dev_err(&pci->dev, "unable to regain IRQ %d\n", pci->irq);
+	if (request_irq(pci->irq, sis_interrupt, IRQF_DISABLED|IRQF_SHARED,
+				card->shortname, sis)) {
+		printk(KERN_ERR "sis7019: unable to regain IRQ %d\n", pci->irq);
 		goto error;
 	}
 
@@ -1335,7 +1332,8 @@ static int __devinit sis_chip_create(struct snd_card *card,
 		goto error_out;
 
 	if (pci_set_dma_mask(pci, DMA_BIT_MASK(30)) < 0) {
-		dev_err(&pci->dev, "architecture does not support 30-bit PCI busmaster DMA");
+		printk(KERN_ERR "sis7019: architecture does not support "
+					"30-bit PCI busmaster DMA");
 		goto error_out_enabled;
 	}
 
@@ -1349,20 +1347,20 @@ static int __devinit sis_chip_create(struct snd_card *card,
 
 	rc = pci_request_regions(pci, "SiS7019");
 	if (rc) {
-		dev_err(&pci->dev, "unable request regions\n");
+		printk(KERN_ERR "sis7019: unable request regions\n");
 		goto error_out_enabled;
 	}
 
 	rc = -EIO;
 	sis->ioaddr = ioremap_nocache(pci_resource_start(pci, 1), 0x4000);
 	if (!sis->ioaddr) {
-		dev_err(&pci->dev, "unable to remap MMIO, aborting\n");
+		printk(KERN_ERR "sis7019: unable to remap MMIO, aborting\n");
 		goto error_out_cleanup;
 	}
 
 	rc = sis_alloc_suspend(sis);
 	if (rc < 0) {
-		dev_err(&pci->dev, "unable to allocate state storage\n");
+		printk(KERN_ERR "sis7019: unable to allocate state storage\n");
 		goto error_out_cleanup;
 	}
 
@@ -1370,9 +1368,9 @@ static int __devinit sis_chip_create(struct snd_card *card,
 	if (rc)
 		goto error_out_cleanup;
 
-	if (request_irq(pci->irq, sis_interrupt, IRQF_SHARED, KBUILD_MODNAME,
-			sis)) {
-		dev_err(&pci->dev, "unable to allocate irq %d\n", sis->irq);
+	if (request_irq(pci->irq, sis_interrupt, IRQF_DISABLED|IRQF_SHARED,
+				card->shortname, sis)) {
+		printk(KERN_ERR "unable to allocate irq %d\n", sis->irq);
 		goto error_out_cleanup;
 	}
 
@@ -1477,7 +1475,7 @@ static void __devexit snd_sis7019_remove(struct pci_dev *pci)
 }
 
 static struct pci_driver sis7019_driver = {
-	.name = KBUILD_MODNAME,
+	.name = "SiS7019",
 	.id_table = snd_sis7019_ids,
 	.probe = snd_sis7019_probe,
 	.remove = __devexit_p(snd_sis7019_remove),

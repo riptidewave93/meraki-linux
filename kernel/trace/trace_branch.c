@@ -143,7 +143,7 @@ static void branch_trace_reset(struct trace_array *tr)
 }
 
 static enum print_line_t trace_branch_print(struct trace_iterator *iter,
-					    int flags, struct trace_event *event)
+					    int flags)
 {
 	struct trace_branch *field;
 
@@ -167,13 +167,9 @@ static void branch_print_header(struct seq_file *s)
 		"    |\n");
 }
 
-static struct trace_event_functions trace_branch_funcs = {
-	.trace		= trace_branch_print,
-};
-
 static struct trace_event trace_branch_event = {
 	.type		= TRACE_BRANCH,
-	.funcs		= &trace_branch_funcs,
+	.trace		= trace_branch_print,
 };
 
 static struct tracer branch_trace __read_mostly =
@@ -311,23 +307,8 @@ static int annotated_branch_stat_cmp(void *p1, void *p2)
 		return -1;
 	if (percent_a > percent_b)
 		return 1;
-
-	if (a->incorrect < b->incorrect)
-		return -1;
-	if (a->incorrect > b->incorrect)
-		return 1;
-
-	/*
-	 * Since the above shows worse (incorrect) cases
-	 * first, we continue that by showing best (correct)
-	 * cases last.
-	 */
-	if (a->correct > b->correct)
-		return -1;
-	if (a->correct < b->correct)
-		return 1;
-
-	return 0;
+	else
+		return 0;
 }
 
 static struct tracer_stat annotated_branch_stats = {

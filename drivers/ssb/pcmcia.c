@@ -3,7 +3,7 @@
  * PCMCIA-Hostbus related functions
  *
  * Copyright 2006 Johannes Berg <johannes@sipsolutions.net>
- * Copyright 2007-2008 Michael Buesch <m@bues.ch>
+ * Copyright 2007-2008 Michael Buesch <mb@bu3sch.de>
  *
  * Licensed under the GNU/GPL. See COPYING for details.
  */
@@ -13,6 +13,8 @@
 #include <linux/io.h>
 #include <linux/etherdevice.h>
 
+#include <pcmcia/cs_types.h>
+#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/ciscode.h>
 #include <pcmcia/ds.h>
@@ -70,9 +72,14 @@
 /* Write to a PCMCIA configuration register. */
 static int ssb_pcmcia_cfg_write(struct ssb_bus *bus, u8 offset, u8 value)
 {
+	conf_reg_t reg;
 	int res;
 
-	res = pcmcia_write_config_byte(bus->host_pcmcia, offset, value);
+	memset(&reg, 0, sizeof(reg));
+	reg.Offset = offset;
+	reg.Action = CS_WRITE;
+	reg.Value = value;
+	res = pcmcia_access_configuration_register(bus->host_pcmcia, &reg);
 	if (unlikely(res != 0))
 		return -EBUSY;
 
@@ -82,11 +89,16 @@ static int ssb_pcmcia_cfg_write(struct ssb_bus *bus, u8 offset, u8 value)
 /* Read from a PCMCIA configuration register. */
 static int ssb_pcmcia_cfg_read(struct ssb_bus *bus, u8 offset, u8 *value)
 {
+	conf_reg_t reg;
 	int res;
 
-	res = pcmcia_read_config_byte(bus->host_pcmcia, offset, value);
+	memset(&reg, 0, sizeof(reg));
+	reg.Offset = offset;
+	reg.Action = CS_READ;
+	res = pcmcia_access_configuration_register(bus->host_pcmcia, &reg);
 	if (unlikely(res != 0))
 		return -EBUSY;
+	*value = reg.Value;
 
 	return 0;
 }
@@ -605,113 +617,15 @@ static int ssb_pcmcia_sprom_check_crc(const u16 *sprom, size_t size)
 	}						\
   } while (0)
 
-static int ssb_pcmcia_get_mac(struct pcmcia_device *p_dev,
-			tuple_t *tuple,
-			void *priv)
-{
-	struct ssb_sprom *sprom = priv;
-
-	if (tuple->TupleData[0] != CISTPL_FUNCE_LAN_NODE_ID)
-		return -EINVAL;
-	if (tuple->TupleDataLen != ETH_ALEN + 2)
-		return -EINVAL;
-	if (tuple->TupleData[1] != ETH_ALEN)
-		return -EINVAL;
-	memcpy(sprom->il0mac, &tuple->TupleData[2], ETH_ALEN);
-	return 0;
-};
-
-static int ssb_pcmcia_do_get_invariants(struct pcmcia_device *p_dev,
-					tuple_t *tuple,
-					void *priv)
-{
-	struct ssb_init_invariants *iv = priv;
-	struct ssb_sprom *sprom = &iv->sprom;
-	struct ssb_boardinfo *bi = &iv->boardinfo;
-	const char *error_description;
-
-	GOTO_ERROR_ON(tuple->TupleDataLen < 1, "VEN tpl < 1");
-	switch (tuple->TupleData[0]) {
-	case SSB_PCMCIA_CIS_ID:
-		GOTO_ERROR_ON((tuple->TupleDataLen != 5) &&
-			      (tuple->TupleDataLen != 7),
-			      "id tpl size");
-		bi->vendor = tuple->TupleData[1] |
-			((u16)tuple->TupleData[2] << 8);
-		break;
-	case SSB_PCMCIA_CIS_BOARDREV:
-		GOTO_ERROR_ON(tuple->TupleDataLen != 2,
-			"boardrev tpl size");
-		sprom->board_rev = tuple->TupleData[1];
-		break;
-	case SSB_PCMCIA_CIS_PA:
-		GOTO_ERROR_ON((tuple->TupleDataLen != 9) &&
-			(tuple->TupleDataLen != 10),
-			"pa tpl size");
-		sprom->pa0b0 = tuple->TupleData[1] |
-			((u16)tuple->TupleData[2] << 8);
-		sprom->pa0b1 = tuple->TupleData[3] |
-			((u16)tuple->TupleData[4] << 8);
-		sprom->pa0b2 = tuple->TupleData[5] |
-			((u16)tuple->TupleData[6] << 8);
-		sprom->itssi_a = tuple->TupleData[7];
-		sprom->itssi_bg = tuple->TupleData[7];
-		sprom->maxpwr_a = tuple->TupleData[8];
-		sprom->maxpwr_bg = tuple->TupleData[8];
-		break;
-	case SSB_PCMCIA_CIS_OEMNAME:
-		/* We ignore this. */
-		break;
-	case SSB_PCMCIA_CIS_CCODE:
-		GOTO_ERROR_ON(tuple->TupleDataLen != 2,
-			"ccode tpl size");
-		sprom->country_code = tuple->TupleData[1];
-		break;
-	case SSB_PCMCIA_CIS_ANTENNA:
-		GOTO_ERROR_ON(tuple->TupleDataLen != 2,
-			"ant tpl size");
-		sprom->ant_available_a = tuple->TupleData[1];
-		sprom->ant_available_bg = tuple->TupleData[1];
-		break;
-	case SSB_PCMCIA_CIS_ANTGAIN:
-		GOTO_ERROR_ON(tuple->TupleDataLen != 2,
-			"antg tpl size");
-		sprom->antenna_gain.a0 = tuple->TupleData[1];
-		sprom->antenna_gain.a1 = tuple->TupleData[1];
-		sprom->antenna_gain.a2 = tuple->TupleData[1];
-		sprom->antenna_gain.a3 = tuple->TupleData[1];
-		break;
-	case SSB_PCMCIA_CIS_BFLAGS:
-		GOTO_ERROR_ON((tuple->TupleDataLen != 3) &&
-			(tuple->TupleDataLen != 5),
-			"bfl tpl size");
-		sprom->boardflags_lo = tuple->TupleData[1] |
-			((u16)tuple->TupleData[2] << 8);
-		break;
-	case SSB_PCMCIA_CIS_LEDS:
-		GOTO_ERROR_ON(tuple->TupleDataLen != 5,
-			"leds tpl size");
-		sprom->gpio0 = tuple->TupleData[1];
-		sprom->gpio1 = tuple->TupleData[2];
-		sprom->gpio2 = tuple->TupleData[3];
-		sprom->gpio3 = tuple->TupleData[4];
-		break;
-	}
-	return -ENOSPC; /* continue with next entry */
-
-error:
-	ssb_printk(KERN_ERR PFX
-		   "PCMCIA: Failed to fetch device invariants: %s\n",
-		   error_description);
-	return -ENODEV;
-}
-
-
 int ssb_pcmcia_get_invariants(struct ssb_bus *bus,
 			      struct ssb_init_invariants *iv)
 {
-	struct ssb_sprom *sprom = &iv->sprom;
+	tuple_t tuple;
 	int res;
+	unsigned char buf[32];
+	struct ssb_sprom *sprom = &iv->sprom;
+	struct ssb_boardinfo *bi = &iv->boardinfo;
+	const char *error_description;
 
 	memset(sprom, 0xFF, sizeof(*sprom));
 	sprom->revision = 1;
@@ -719,22 +633,120 @@ int ssb_pcmcia_get_invariants(struct ssb_bus *bus,
 	sprom->boardflags_hi = 0;
 
 	/* First fetch the MAC address. */
-	res = pcmcia_loop_tuple(bus->host_pcmcia, CISTPL_FUNCE,
-				ssb_pcmcia_get_mac, sprom);
-	if (res != 0) {
-		ssb_printk(KERN_ERR PFX
-			"PCMCIA: Failed to fetch MAC address\n");
-		return -ENODEV;
+	memset(&tuple, 0, sizeof(tuple));
+	tuple.DesiredTuple = CISTPL_FUNCE;
+	tuple.TupleData = buf;
+	tuple.TupleDataMax = sizeof(buf);
+	res = pcmcia_get_first_tuple(bus->host_pcmcia, &tuple);
+	GOTO_ERROR_ON(res != 0, "MAC first tpl");
+	res = pcmcia_get_tuple_data(bus->host_pcmcia, &tuple);
+	GOTO_ERROR_ON(res != 0, "MAC first tpl data");
+	while (1) {
+		GOTO_ERROR_ON(tuple.TupleDataLen < 1, "MAC tpl < 1");
+		if (tuple.TupleData[0] == CISTPL_FUNCE_LAN_NODE_ID)
+			break;
+		res = pcmcia_get_next_tuple(bus->host_pcmcia, &tuple);
+		GOTO_ERROR_ON(res != 0, "MAC next tpl");
+		res = pcmcia_get_tuple_data(bus->host_pcmcia, &tuple);
+		GOTO_ERROR_ON(res != 0, "MAC next tpl data");
 	}
+	GOTO_ERROR_ON(tuple.TupleDataLen != ETH_ALEN + 2, "MAC tpl size");
+	memcpy(sprom->il0mac, &tuple.TupleData[2], ETH_ALEN);
 
 	/* Fetch the vendor specific tuples. */
-	res = pcmcia_loop_tuple(bus->host_pcmcia, SSB_PCMCIA_CIS,
-				ssb_pcmcia_do_get_invariants, iv);
-	if ((res == 0) || (res == -ENOSPC))
-		return 0;
+	memset(&tuple, 0, sizeof(tuple));
+	tuple.DesiredTuple = SSB_PCMCIA_CIS;
+	tuple.TupleData = buf;
+	tuple.TupleDataMax = sizeof(buf);
+	res = pcmcia_get_first_tuple(bus->host_pcmcia, &tuple);
+	GOTO_ERROR_ON(res != 0, "VEN first tpl");
+	res = pcmcia_get_tuple_data(bus->host_pcmcia, &tuple);
+	GOTO_ERROR_ON(res != 0, "VEN first tpl data");
+	while (1) {
+		GOTO_ERROR_ON(tuple.TupleDataLen < 1, "VEN tpl < 1");
+		switch (tuple.TupleData[0]) {
+		case SSB_PCMCIA_CIS_ID:
+			GOTO_ERROR_ON((tuple.TupleDataLen != 5) &&
+				      (tuple.TupleDataLen != 7),
+				      "id tpl size");
+			bi->vendor = tuple.TupleData[1] |
+			       ((u16)tuple.TupleData[2] << 8);
+			break;
+		case SSB_PCMCIA_CIS_BOARDREV:
+			GOTO_ERROR_ON(tuple.TupleDataLen != 2,
+				      "boardrev tpl size");
+			sprom->board_rev = tuple.TupleData[1];
+			break;
+		case SSB_PCMCIA_CIS_PA:
+			GOTO_ERROR_ON((tuple.TupleDataLen != 9) &&
+				      (tuple.TupleDataLen != 10),
+				      "pa tpl size");
+			sprom->pa0b0 = tuple.TupleData[1] |
+				 ((u16)tuple.TupleData[2] << 8);
+			sprom->pa0b1 = tuple.TupleData[3] |
+				 ((u16)tuple.TupleData[4] << 8);
+			sprom->pa0b2 = tuple.TupleData[5] |
+				 ((u16)tuple.TupleData[6] << 8);
+			sprom->itssi_a = tuple.TupleData[7];
+			sprom->itssi_bg = tuple.TupleData[7];
+			sprom->maxpwr_a = tuple.TupleData[8];
+			sprom->maxpwr_bg = tuple.TupleData[8];
+			break;
+		case SSB_PCMCIA_CIS_OEMNAME:
+			/* We ignore this. */
+			break;
+		case SSB_PCMCIA_CIS_CCODE:
+			GOTO_ERROR_ON(tuple.TupleDataLen != 2,
+				      "ccode tpl size");
+			sprom->country_code = tuple.TupleData[1];
+			break;
+		case SSB_PCMCIA_CIS_ANTENNA:
+			GOTO_ERROR_ON(tuple.TupleDataLen != 2,
+				      "ant tpl size");
+			sprom->ant_available_a = tuple.TupleData[1];
+			sprom->ant_available_bg = tuple.TupleData[1];
+			break;
+		case SSB_PCMCIA_CIS_ANTGAIN:
+			GOTO_ERROR_ON(tuple.TupleDataLen != 2,
+				      "antg tpl size");
+			sprom->antenna_gain.ghz24.a0 = tuple.TupleData[1];
+			sprom->antenna_gain.ghz24.a1 = tuple.TupleData[1];
+			sprom->antenna_gain.ghz24.a2 = tuple.TupleData[1];
+			sprom->antenna_gain.ghz24.a3 = tuple.TupleData[1];
+			sprom->antenna_gain.ghz5.a0 = tuple.TupleData[1];
+			sprom->antenna_gain.ghz5.a1 = tuple.TupleData[1];
+			sprom->antenna_gain.ghz5.a2 = tuple.TupleData[1];
+			sprom->antenna_gain.ghz5.a3 = tuple.TupleData[1];
+			break;
+		case SSB_PCMCIA_CIS_BFLAGS:
+			GOTO_ERROR_ON((tuple.TupleDataLen != 3) &&
+				      (tuple.TupleDataLen != 5),
+				      "bfl tpl size");
+			sprom->boardflags_lo = tuple.TupleData[1] |
+					 ((u16)tuple.TupleData[2] << 8);
+			break;
+		case SSB_PCMCIA_CIS_LEDS:
+			GOTO_ERROR_ON(tuple.TupleDataLen != 5,
+				      "leds tpl size");
+			sprom->gpio0 = tuple.TupleData[1];
+			sprom->gpio1 = tuple.TupleData[2];
+			sprom->gpio2 = tuple.TupleData[3];
+			sprom->gpio3 = tuple.TupleData[4];
+			break;
+		}
+		res = pcmcia_get_next_tuple(bus->host_pcmcia, &tuple);
+		if (res == -ENOSPC)
+			break;
+		GOTO_ERROR_ON(res != 0, "VEN next tpl");
+		res = pcmcia_get_tuple_data(bus->host_pcmcia, &tuple);
+		GOTO_ERROR_ON(res != 0, "VEN next tpl data");
+	}
 
+	return 0;
+error:
 	ssb_printk(KERN_ERR PFX
-			"PCMCIA: Failed to fetch device invariants\n");
+		   "PCMCIA: Failed to fetch device invariants: %s\n",
+		   error_description);
 	return -ENODEV;
 }
 

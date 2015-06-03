@@ -99,6 +99,7 @@ struct qt1010_priv {
 	u8 reg25_init_val;
 
 	u32 frequency;
+	u32 bandwidth;
 };
 
 #endif

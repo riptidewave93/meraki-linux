@@ -9,9 +9,8 @@
  *
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/namei.h>
 #include "nodelist.h"
@@ -22,7 +21,7 @@ const struct inode_operations jffs2_symlink_inode_operations =
 {
 	.readlink =	generic_readlink,
 	.follow_link =	jffs2_follow_link,
-	.get_acl =	jffs2_get_acl,
+	.check_acl =	jffs2_check_acl,
 	.setattr =	jffs2_setattr,
 	.setxattr =	jffs2_setxattr,
 	.getxattr =	jffs2_getxattr,
@@ -49,11 +48,10 @@ static void *jffs2_follow_link(struct dentry *dentry, struct nameidata *nd)
 	 */
 
 	if (!p) {
-		pr_err("%s(): can't find symlink target\n", __func__);
+		printk(KERN_ERR "jffs2_follow_link(): can't find symlink target\n");
 		p = ERR_PTR(-EIO);
 	}
-	jffs2_dbg(1, "%s(): target path is '%s'\n",
-		  __func__, (char *)f->target);
+	D1(printk(KERN_DEBUG "jffs2_follow_link(): target path is '%s'\n", (char *) f->target));
 
 	nd_set_link(nd, p);
 

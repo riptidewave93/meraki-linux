@@ -15,6 +15,8 @@
 #include <linux/audit.h>
 #include <linux/lsm_audit.h>
 #include <linux/in6.h>
+#include <linux/path.h>
+#include <asm/system.h>
 #include "flask.h"
 #include "av_permissions.h"
 #include "security.h"
@@ -40,35 +42,11 @@ struct sk_buff;
  */
 struct avc_cache_stats {
 	unsigned int lookups;
+	unsigned int hits;
 	unsigned int misses;
 	unsigned int allocations;
 	unsigned int reclaims;
 	unsigned int frees;
-};
-
-/*
- * We only need this data after we have decided to send an audit message.
- */
-struct selinux_late_audit_data {
-	u32 ssid;
-	u32 tsid;
-	u16 tclass;
-	u32 requested;
-	u32 audited;
-	u32 denied;
-	int result;
-};
-
-/*
- * We collect this at the beginning or during an selinux security operation
- */
-struct selinux_audit_data {
-	/*
-	 * auditdeny is a bit tricky and unintuitive.  See the
-	 * comments in avc.c for it's meaning and usage.
-	 */
-	u32 auditdeny;
-	struct selinux_late_audit_data *slad;
 };
 
 /*
@@ -77,11 +55,11 @@ struct selinux_audit_data {
 
 void __init avc_init(void);
 
-int avc_audit(u32 ssid, u32 tsid,
+void avc_audit(u32 ssid, u32 tsid,
 	       u16 tclass, u32 requested,
 	       struct av_decision *avd,
 	       int result,
-	      struct common_audit_data *a, unsigned flags);
+	       struct common_audit_data *a);
 
 #define AVC_STRICT 1 /* Ignore permissive mode. */
 int avc_has_perm_noaudit(u32 ssid, u32 tsid,
@@ -89,17 +67,9 @@ int avc_has_perm_noaudit(u32 ssid, u32 tsid,
 			 unsigned flags,
 			 struct av_decision *avd);
 
-int avc_has_perm_flags(u32 ssid, u32 tsid,
-		       u16 tclass, u32 requested,
-		       struct common_audit_data *auditdata,
-		       unsigned);
-
-static inline int avc_has_perm(u32 ssid, u32 tsid,
-			       u16 tclass, u32 requested,
-			       struct common_audit_data *auditdata)
-{
-	return avc_has_perm_flags(ssid, tsid, tclass, requested, auditdata, 0);
-}
+int avc_has_perm(u32 ssid, u32 tsid,
+		 u16 tclass, u32 requested,
+		 struct common_audit_data *auditdata);
 
 u32 avc_policy_seqno(void);
 

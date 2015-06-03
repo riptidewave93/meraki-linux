@@ -10,10 +10,10 @@
 #ifndef __ASM_CRIS_PROCESSOR_H
 #define __ASM_CRIS_PROCESSOR_H
 
+#include <asm/system.h>
 #include <asm/page.h>
 #include <asm/ptrace.h>
 #include <arch/processor.h>
-#include <arch/system.h>
 
 struct task_struct;
 
@@ -25,12 +25,13 @@ struct task_struct;
  */
 #define TASK_UNMAPPED_BASE      (PAGE_ALIGN(TASK_SIZE / 3))
 
-/* THREAD_SIZE is the size of the thread_info/kernel_stack combo.
+/* THREAD_SIZE is the size of the task_struct/kernel_stack combo.
  * normally, the stack is found by doing something like p + THREAD_SIZE
  * in CRIS, a page is 8192 bytes, which seems like a sane size
  */
+
 #define THREAD_SIZE       PAGE_SIZE
-#define THREAD_SIZE_ORDER (0)
+#define KERNEL_STACK_SIZE PAGE_SIZE
 
 /*
  * At user->kernel entry, the pt_regs struct is stacked on the top of the kernel-stack.
@@ -70,14 +71,5 @@ static inline void release_thread(struct task_struct *dead_task)
 #define init_stack      (init_thread_union.stack)
 
 #define cpu_relax()     barrier()
-
-/*
- * disable hlt during certain critical i/o operations
- */
-#define HAVE_DISABLE_HLT
-void disable_hlt(void);
-void enable_hlt(void);
-
-void default_idle(void);
 
 #endif /* __ASM_CRIS_PROCESSOR_H */

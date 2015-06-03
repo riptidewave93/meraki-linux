@@ -13,7 +13,6 @@
 #include <linux/circ_buf.h>
 #include <linux/net.h>
 #include <linux/skbuff.h>
-#include <linux/slab.h>
 #include <linux/udp.h>
 #include <net/sock.h>
 #include <net/af_rxrpc.h>
@@ -195,7 +194,7 @@ static void rxrpc_resend(struct rxrpc_call *call)
 		sp = rxrpc_skb(txb);
 
 		if (sp->need_resend) {
-			sp->need_resend = false;
+			sp->need_resend = 0;
 
 			/* each Tx packet has a new serial number */
 			sp->hdr.serial =
@@ -216,7 +215,7 @@ static void rxrpc_resend(struct rxrpc_call *call)
 		}
 
 		if (time_after_eq(jiffies + 1, sp->resend_at)) {
-			sp->need_resend = true;
+			sp->need_resend = 1;
 			resend |= 1;
 		} else if (resend & 2) {
 			if (time_before(sp->resend_at, resend_at))
@@ -245,9 +244,6 @@ static void rxrpc_resend_timer(struct rxrpc_call *call)
 	_enter("%d,%d,%d",
 	       call->acks_tail, call->acks_unacked, call->acks_head);
 
-	if (call->state >= RXRPC_CALL_COMPLETE)
-		return;
-
 	resend = 0;
 	resend_at = 0;
 
@@ -265,7 +261,7 @@ static void rxrpc_resend_timer(struct rxrpc_call *call)
 		if (sp->need_resend) {
 			;
 		} else if (time_after_eq(jiffies + 1, sp->resend_at)) {
-			sp->need_resend = true;
+			sp->need_resend = 1;
 			resend |= 1;
 		} else if (resend & 2) {
 			if (time_before(sp->resend_at, resend_at))
@@ -314,11 +310,11 @@ static int rxrpc_process_soft_ACKs(struct rxrpc_call *call,
 
 		switch (sacks[loop]) {
 		case RXRPC_ACK_TYPE_ACK:
-			sp->need_resend = false;
+			sp->need_resend = 0;
 			*p_txb |= 1;
 			break;
 		case RXRPC_ACK_TYPE_NACK:
-			sp->need_resend = true;
+			sp->need_resend = 1;
 			*p_txb &= ~1;
 			resend = 1;
 			break;
@@ -344,13 +340,13 @@ static int rxrpc_process_soft_ACKs(struct rxrpc_call *call,
 
 		if (*p_txb & 1) {
 			/* packet must have been discarded */
-			sp->need_resend = true;
+			sp->need_resend = 1;
 			*p_txb &= ~1;
 			resend |= 1;
 		} else if (sp->need_resend) {
 			;
 		} else if (time_after_eq(jiffies + 1, sp->resend_at)) {
-			sp->need_resend = true;
+			sp->need_resend = 1;
 			resend |= 1;
 		} else if (resend & 2) {
 			if (time_before(sp->resend_at, resend_at))
@@ -375,6 +371,7 @@ protocol_error:
  */
 static void rxrpc_rotate_tx_window(struct rxrpc_call *call, u32 hard)
 {
+	struct rxrpc_skb_priv *sp;
 	unsigned long _skb;
 	int tail = call->acks_tail, old_tail;
 	int win = CIRC_CNT(call->acks_head, tail, call->acks_winsz);
@@ -386,6 +383,7 @@ static void rxrpc_rotate_tx_window(struct rxrpc_call *call, u32 hard)
 	while (call->acks_hard < hard) {
 		smp_read_barrier_depends();
 		_skb = call->acks_window[tail] & ~1;
+		sp = rxrpc_skb((struct sk_buff *) _skb);
 		rxrpc_free_skb((struct sk_buff *) _skb);
 		old_tail = tail;
 		tail = (tail + 1) & (call->acks_winsz - 1);

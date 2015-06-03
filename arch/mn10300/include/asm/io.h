@@ -206,19 +206,6 @@ static inline void outsl(unsigned long addr, const void *buffer, int count)
 #define iowrite32_rep(p, src, count) \
 	outsl((unsigned long) (p), (src), (count))
 
-#define readsb(p, dst, count) \
-	insb((unsigned long) (p), (dst), (count))
-#define readsw(p, dst, count) \
-	insw((unsigned long) (p), (dst), (count))
-#define readsl(p, dst, count) \
-	insl((unsigned long) (p), (dst), (count))
-
-#define writesb(p, src, count) \
-	outsb((unsigned long) (p), (src), (count))
-#define writesw(p, src, count) \
-	outsw((unsigned long) (p), (src), (count))
-#define writesl(p, src, count) \
-	outsl((unsigned long) (p), (src), (count))
 
 #define IO_SPACE_LIMIT 0xffffffff
 
@@ -229,6 +216,7 @@ static inline void outsl(unsigned long addr, const void *buffer, int count)
 
 /* Create a virtual mapping cookie for a PCI BAR (memory or IO) */
 struct pci_dev;
+extern void __iomem *pci_iomap(struct pci_dev *dev, int bar, unsigned long max);
 static inline void pci_iounmap(struct pci_dev *dev, void __iomem *p)
 {
 }
@@ -250,15 +238,15 @@ static inline void *phys_to_virt(unsigned long address)
 /*
  * Change "struct page" to physical address.
  */
-static inline void __iomem *__ioremap(unsigned long offset, unsigned long size,
-				      unsigned long flags)
+static inline void *__ioremap(unsigned long offset, unsigned long size,
+			      unsigned long flags)
 {
-	return (void __iomem *) offset;
+	return (void *) offset;
 }
 
-static inline void __iomem *ioremap(unsigned long offset, unsigned long size)
+static inline void *ioremap(unsigned long offset, unsigned long size)
 {
-	return (void __iomem *) offset;
+	return (void *) offset;
 }
 
 /*
@@ -266,14 +254,14 @@ static inline void __iomem *ioremap(unsigned long offset, unsigned long size)
  * area.  it's useful if some control registers are in such an area and write
  * combining or read caching is not desirable:
  */
-static inline void __iomem *ioremap_nocache(unsigned long offset, unsigned long size)
+static inline void *ioremap_nocache(unsigned long offset, unsigned long size)
 {
-	return (void __iomem *) (offset | 0x20000000);
+	return (void *) (offset | 0x20000000);
 }
 
 #define ioremap_wc ioremap_nocache
 
-static inline void iounmap(void __iomem *addr)
+static inline void iounmap(void *addr)
 {
 }
 

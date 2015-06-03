@@ -36,27 +36,27 @@ static void show_tty_range(struct seq_file *m, struct tty_driver *p,
 	}
 	switch (p->type) {
 	case TTY_DRIVER_TYPE_SYSTEM:
-		seq_puts(m, "system");
+		seq_printf(m, "system");
 		if (p->subtype == SYSTEM_TYPE_TTY)
-			seq_puts(m, ":/dev/tty");
+			seq_printf(m, ":/dev/tty");
 		else if (p->subtype == SYSTEM_TYPE_SYSCONS)
-			seq_puts(m, ":console");
+			seq_printf(m, ":console");
 		else if (p->subtype == SYSTEM_TYPE_CONSOLE)
-			seq_puts(m, ":vtmaster");
+			seq_printf(m, ":vtmaster");
 		break;
 	case TTY_DRIVER_TYPE_CONSOLE:
-		seq_puts(m, "console");
+		seq_printf(m, "console");
 		break;
 	case TTY_DRIVER_TYPE_SERIAL:
-		seq_puts(m, "serial");
+		seq_printf(m, "serial");
 		break;
 	case TTY_DRIVER_TYPE_PTY:
 		if (p->subtype == PTY_TYPE_MASTER)
-			seq_puts(m, "pty:master");
+			seq_printf(m, "pty:master");
 		else if (p->subtype == PTY_TYPE_SLAVE)
-			seq_puts(m, "pty:slave");
+			seq_printf(m, "pty:slave");
 		else
-			seq_puts(m, "pty");
+			seq_printf(m, "pty");
 		break;
 	default:
 		seq_printf(m, "type:%d.%d", p->type, p->subtype);
@@ -74,19 +74,19 @@ static int show_tty_driver(struct seq_file *m, void *v)
 		/* pseudo-drivers first */
 		seq_printf(m, "%-20s /dev/%-8s ", "/dev/tty", "tty");
 		seq_printf(m, "%3d %7d ", TTYAUX_MAJOR, 0);
-		seq_puts(m, "system:/dev/tty\n");
+		seq_printf(m, "system:/dev/tty\n");
 		seq_printf(m, "%-20s /dev/%-8s ", "/dev/console", "console");
 		seq_printf(m, "%3d %7d ", TTYAUX_MAJOR, 1);
-		seq_puts(m, "system:console\n");
+		seq_printf(m, "system:console\n");
 #ifdef CONFIG_UNIX98_PTYS
 		seq_printf(m, "%-20s /dev/%-8s ", "/dev/ptmx", "ptmx");
 		seq_printf(m, "%3d %7d ", TTYAUX_MAJOR, 2);
-		seq_puts(m, "system\n");
+		seq_printf(m, "system\n");
 #endif
 #ifdef CONFIG_VT
 		seq_printf(m, "%-20s /dev/%-8s ", "/dev/vc/0", "vc/0");
 		seq_printf(m, "%3d %7d ", TTY_MAJOR, 0);
-		seq_puts(m, "system:vtmaster\n");
+		seq_printf(m, "system:vtmaster\n");
 #endif
 	}
 

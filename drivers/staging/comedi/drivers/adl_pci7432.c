@@ -44,8 +44,10 @@ Configuration Options:
 #define PCI_DEVICE_ID_PCI7432 0x7432
 
 static DEFINE_PCI_DEVICE_TABLE(adl_pci7432_pci_table) = {
-	{ PCI_DEVICE(PCI_VENDOR_ID_ADLINK, PCI_DEVICE_ID_PCI7432) },
-	{0}
+	{
+	PCI_VENDOR_ID_ADLINK, PCI_DEVICE_ID_PCI7432, PCI_ANY_ID,
+		    PCI_ANY_ID, 0, 0, 0}, {
+	0}
 };
 
 MODULE_DEVICE_TABLE(pci, adl_pci7432_pci_table);
@@ -84,11 +86,12 @@ static int adl_pci7432_do_insn_bits(struct comedi_device *dev,
 static int adl_pci7432_attach(struct comedi_device *dev,
 			      struct comedi_devconfig *it)
 {
-	struct pci_dev *pcidev = NULL;
+	struct pci_dev *pcidev;
 	struct comedi_subdevice *s;
 	int bus, slot;
 
-	printk(KERN_INFO "comedi%d: attach adl_pci7432\n", dev->minor);
+	printk("comedi: attempt to attach...\n");
+	printk("comedi%d: adl_pci7432\n", dev->minor);
 
 	dev->board_name = "pci7432";
 	bus = it->options[0];
@@ -100,7 +103,10 @@ static int adl_pci7432_attach(struct comedi_device *dev,
 	if (alloc_subdevices(dev, 2) < 0)
 		return -ENOMEM;
 
-	for_each_pci_dev(pcidev) {
+	for (pcidev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, NULL);
+	     pcidev != NULL;
+	     pcidev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, pcidev)) {
+
 		if (pcidev->vendor == PCI_VENDOR_ID_ADLINK &&
 		    pcidev->device == PCI_DEVICE_ID_PCI7432) {
 			if (bus || slot) {
@@ -112,13 +118,13 @@ static int adl_pci7432_attach(struct comedi_device *dev,
 			}
 			devpriv->pci_dev = pcidev;
 			if (comedi_pci_enable(pcidev, "adl_pci7432") < 0) {
-				printk(KERN_ERR "comedi%d: Failed to enable PCI device and request regions\n",
+				printk
+				    ("comedi%d: Failed to enable PCI device and request regions\n",
 				     dev->minor);
 				return -EIO;
 			}
 			dev->iobase = pci_resource_start(pcidev, 2);
-			printk(KERN_INFO "comedi: base addr %4lx\n",
-				dev->iobase);
+			printk("comedi: base addr %4lx\n", dev->iobase);
 
 			s = dev->subdevices + 0;
 			s->type = COMEDI_SUBD_DI;
@@ -142,24 +148,25 @@ static int adl_pci7432_attach(struct comedi_device *dev,
 			s->range_table = &range_digital;
 			s->insn_bits = adl_pci7432_do_insn_bits;
 
-			printk(KERN_DEBUG "comedi%d: adl_pci7432 attached\n",
-				dev->minor);
+			printk("comedi: attached\n");
+
 			return 1;
 		}
 	}
 
-	printk(KERN_ERR "comedi%d: no supported board found! (req. bus/slot : %d/%d)\n",
+	printk("comedi%d: no supported board found! (req. bus/slot : %d/%d)\n",
 	       dev->minor, bus, slot);
 	return -EIO;
 }
 
 static int adl_pci7432_detach(struct comedi_device *dev)
 {
-	printk(KERN_INFO "comedi%d: pci7432: remove\n", dev->minor);
+	printk("comedi%d: pci7432: remove\n", dev->minor);
 
 	if (devpriv && devpriv->pci_dev) {
-		if (dev->iobase)
+		if (dev->iobase) {
 			comedi_pci_disable(devpriv->pci_dev);
+		}
 		pci_dev_put(devpriv->pci_dev);
 	}
 
@@ -171,8 +178,8 @@ static int adl_pci7432_do_insn_bits(struct comedi_device *dev,
 				    struct comedi_insn *insn,
 				    unsigned int *data)
 {
-	printk(KERN_DEBUG "comedi: pci7432_do_insn_bits called\n");
-	printk(KERN_DEBUG "comedi: data0: %8x data1: %8x\n", data[0], data[1]);
+	printk("comedi: pci7432_do_insn_bits called\n");
+	printk("comedi: data0: %8x data1: %8x\n", data[0], data[1]);
 
 	if (insn->n != 2)
 		return -EINVAL;
@@ -181,7 +188,7 @@ static int adl_pci7432_do_insn_bits(struct comedi_device *dev,
 		s->state &= ~data[0];
 		s->state |= (data[0] & data[1]);
 
-		printk(KERN_DEBUG "comedi: out: %8x on iobase %4lx\n", s->state,
+		printk("comedi: out: %8x on iobase %4lx\n", s->state,
 		       dev->iobase + PCI7432_DO);
 		outl(s->state & 0xffffffff, dev->iobase + PCI7432_DO);
 	}
@@ -193,58 +200,16 @@ static int adl_pci7432_di_insn_bits(struct comedi_device *dev,
 				    struct comedi_insn *insn,
 				    unsigned int *data)
 {
-	printk(KERN_DEBUG "comedi: pci7432_di_insn_bits called\n");
-	printk(KERN_DEBUG "comedi: data0: %8x data1: %8x\n", data[0], data[1]);
+	printk("comedi: pci7432_di_insn_bits called\n");
+	printk("comedi: data0: %8x data1: %8x\n", data[0], data[1]);
 
 	if (insn->n != 2)
 		return -EINVAL;
 
 	data[1] = inl(dev->iobase + PCI7432_DI) & 0xffffffff;
-	printk(KERN_DEBUG "comedi: data1 %8x\n", data[1]);
+	printk("comedi: data1 %8x\n", data[1]);
 
 	return 2;
 }
 
-static int __devinit driver_adl_pci7432_pci_probe(struct pci_dev *dev,
-						  const struct pci_device_id
-						  *ent)
-{
-	return comedi_pci_auto_config(dev, driver_adl_pci7432.driver_name);
-}
-
-static void __devexit driver_adl_pci7432_pci_remove(struct pci_dev *dev)
-{
-	comedi_pci_auto_unconfig(dev);
-}
-
-static struct pci_driver driver_adl_pci7432_pci_driver = {
-	.id_table = adl_pci7432_pci_table,
-	.probe = &driver_adl_pci7432_pci_probe,
-	.remove = __devexit_p(&driver_adl_pci7432_pci_remove)
-};
-
-static int __init driver_adl_pci7432_init_module(void)
-{
-	int retval;
-
-	retval = comedi_driver_register(&driver_adl_pci7432);
-	if (retval < 0)
-		return retval;
-
-	driver_adl_pci7432_pci_driver.name =
-	    (char *)driver_adl_pci7432.driver_name;
-	return pci_register_driver(&driver_adl_pci7432_pci_driver);
-}
-
-static void __exit driver_adl_pci7432_cleanup_module(void)
-{
-	pci_unregister_driver(&driver_adl_pci7432_pci_driver);
-	comedi_driver_unregister(&driver_adl_pci7432);
-}
-
-module_init(driver_adl_pci7432_init_module);
-module_exit(driver_adl_pci7432_cleanup_module);
-
-MODULE_AUTHOR("Comedi http://www.comedi.org");
-MODULE_DESCRIPTION("Comedi low-level driver");
-MODULE_LICENSE("GPL");
+COMEDI_PCI_INITCLEANUP(driver_adl_pci7432, adl_pci7432_pci_table);

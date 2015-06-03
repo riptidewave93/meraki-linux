@@ -20,9 +20,6 @@
 #include <linux/delay.h>
 #include <linux/random.h>
 #include <linux/if_arp.h>
-#include <linux/slab.h>
-#include <linux/export.h>
-#include <linux/moduleparam.h>
 
 #include "hostap_wlan.h"
 #include "hostap.h"
@@ -351,7 +348,7 @@ static int ap_control_proc_read(char *page, char **start, off_t off,
 	default:
 		policy_txt = "unknown";
 		break;
-	}
+	};
 	p += sprintf(p, "MAC policy: %s\n", policy_txt);
 	p += sprintf(p, "MAC entries: %u\n", ap->mac_restrictions.entries);
 	p += sprintf(p, "MAC list:\n");
@@ -690,7 +687,7 @@ static void hostap_ap_tx_cb_assoc(struct sk_buff *skb, int ok, void *data)
 	struct ap_data *ap = data;
 	struct net_device *dev = ap->local->dev;
 	struct ieee80211_hdr *hdr;
-	u16 status;
+	u16 fc, status;
 	__le16 *pos;
 	struct sta_info *sta = NULL;
 	char *txt = NULL;
@@ -701,6 +698,7 @@ static void hostap_ap_tx_cb_assoc(struct sk_buff *skb, int ok, void *data)
 	}
 
 	hdr = (struct ieee80211_hdr *) skb->data;
+	fc = le16_to_cpu(hdr->frame_control);
 	if ((!ieee80211_is_assoc_resp(hdr->frame_control) &&
 	     !ieee80211_is_reassoc_resp(hdr->frame_control)) ||
 	    skb->len < IEEE80211_MGMT_HDR_LEN + 4) {
@@ -860,10 +858,7 @@ void hostap_free_data(struct ap_data *ap)
 		return;
 	}
 
-	flush_work_sync(&ap->add_sta_proc_queue);
-
 #ifndef PRISM2_NO_KERNEL_IEEE80211_MGMT
-	flush_work_sync(&ap->wds_oper_queue);
 	if (ap->crypt)
 		ap->crypt->deinit(ap->crypt_priv);
 	ap->crypt = ap->crypt_priv = NULL;
@@ -1229,7 +1224,7 @@ static void ap_crypt_init(struct ap_data *ap)
 
 
 /* Generate challenge data for shared key authentication. IEEE 802.11 specifies
- * that WEP algorithm is used for generating challenge. This should be unique,
+ * that WEP algorithm is used for generating challange. This should be unique,
  * but otherwise there is not really need for randomness etc. Initialize WEP
  * with pseudo random key and then use increasing IV to get unique challenge
  * streams.
@@ -2361,7 +2356,7 @@ int prism2_ap_get_sta_qual(local_info_t *local, struct sockaddr addr[],
 }
 
 
-/* Translate our list of Access Points & Stations to a card independent
+/* Translate our list of Access Points & Stations to a card independant
  * format that the Wireless Tools will understand - Jean II */
 int prism2_ap_translate_scan(struct net_device *dev,
 			     struct iw_request_info *info, char *buffer)

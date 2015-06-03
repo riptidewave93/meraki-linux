@@ -7,7 +7,6 @@
  *  August, 2003
  *
  */
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include <linux/ip.h>
 #include <linux/if_arp.h>
 #include <linux/module.h>
@@ -129,7 +128,7 @@ static int get_ip_src(const struct sk_buff *skb, __be32 *addr)
 }
 
 static bool
-ebt_among_mt(const struct sk_buff *skb, struct xt_action_param *par)
+ebt_among_mt(const struct sk_buff *skb, const struct xt_match_param *par)
 {
 	const struct ebt_among_info *info = par->matchinfo;
 	const char *dmac, *smac;
@@ -172,7 +171,7 @@ ebt_among_mt(const struct sk_buff *skb, struct xt_action_param *par)
 	return true;
 }
 
-static int ebt_among_mt_check(const struct xt_mtchk_param *par)
+static bool ebt_among_mt_check(const struct xt_mtchk_param *par)
 {
 	const struct ebt_among_info *info = par->matchinfo;
 	const struct ebt_entry_match *em =
@@ -187,20 +186,24 @@ static int ebt_among_mt_check(const struct xt_mtchk_param *par)
 	expected_length += ebt_mac_wormhash_size(wh_src);
 
 	if (em->match_size != EBT_ALIGN(expected_length)) {
-		pr_info("wrong size: %d against expected %d, rounded to %Zd\n",
-			em->match_size, expected_length,
-			EBT_ALIGN(expected_length));
-		return -EINVAL;
+		printk(KERN_WARNING
+		       "ebtables: among: wrong size: %d "
+		       "against expected %d, rounded to %Zd\n",
+		       em->match_size, expected_length,
+		       EBT_ALIGN(expected_length));
+		return false;
 	}
 	if (wh_dst && (err = ebt_mac_wormhash_check_integrity(wh_dst))) {
-		pr_info("dst integrity fail: %x\n", -err);
-		return -EINVAL;
+		printk(KERN_WARNING
+		       "ebtables: among: dst integrity fail: %x\n", -err);
+		return false;
 	}
 	if (wh_src && (err = ebt_mac_wormhash_check_integrity(wh_src))) {
-		pr_info("src integrity fail: %x\n", -err);
-		return -EINVAL;
+		printk(KERN_WARNING
+		       "ebtables: among: src integrity fail: %x\n", -err);
+		return false;
 	}
-	return 0;
+	return true;
 }
 
 static struct xt_match ebt_among_mt_reg __read_mostly = {

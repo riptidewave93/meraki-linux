@@ -15,7 +15,6 @@
 
 #include <linux/kernel.h>
 #include <linux/errno.h>
-#include <linux/export.h>
 #include <linux/io.h>
 #include <asm/immap_qe.h>
 #include <asm/qe.h>

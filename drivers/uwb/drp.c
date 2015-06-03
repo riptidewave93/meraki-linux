@@ -20,14 +20,13 @@
  */
 #include <linux/kthread.h>
 #include <linux/freezer.h>
-#include <linux/slab.h>
 #include <linux/delay.h>
 #include "uwb-internal.h"
 
 
 /* DRP Conflict Actions ([ECMA-368 2nd Edition] 17.4.6) */
 enum uwb_drp_conflict_action {
-	/* Reservation is maintained, no action needed */
+	/* Reservation is mantained, no action needed */
 	UWB_DRP_CONFLICT_MANTAIN = 0,
 	
 	/* the device shall not transmit frames in conflicting MASs in
@@ -741,12 +740,12 @@ void uwb_drp_process_all(struct uwb_rc *rc, struct uwb_rc_evt_drp *drp_evt,
  * DRP notifications can occur for three different reasons:
  *
  * - UWB_DRP_NOTIF_DRP_IE_RECVD: one or more DRP IEs with the RC as
- *   the target or source have been received.
+ *   the target or source have been recieved.
  *
  *   These DRP IEs could be new or for an existing reservation.
  *
  *   If the DRP IE for an existing reservation ceases to be to
- *   received for at least mMaxLostBeacons, the reservation should be
+ *   recieved for at least mMaxLostBeacons, the reservation should be
  *   considered to be terminated.  Note that the TERMINATE reason (see
  *   below) may not always be signalled (e.g., the remote device has
  *   two or more reservations established with the RC).

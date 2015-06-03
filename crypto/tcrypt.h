@@ -25,7 +25,6 @@ struct cipher_speed_template {
 struct hash_speed {
 	unsigned int blen;	/* buffer length */
 	unsigned int plen;	/* per-update length */
-	unsigned int klen;	/* key length */
 };
 
 /*
@@ -51,9 +50,7 @@ static u8 speed_template_8_32[] = {8, 32, 0};
 static u8 speed_template_16_32[] = {16, 32, 0};
 static u8 speed_template_16_24_32[] = {16, 24, 32, 0};
 static u8 speed_template_32_40_48[] = {32, 40, 48, 0};
-static u8 speed_template_32_48[] = {32, 48, 0};
 static u8 speed_template_32_48_64[] = {32, 48, 64, 0};
-static u8 speed_template_32_64[] = {32, 64, 0};
 
 /*
  * Digest speed tests
@@ -84,34 +81,6 @@ static struct hash_speed generic_hash_speed_template[] = {
 
 	/* End marker */
 	{  .blen = 0,	.plen = 0, }
-};
-
-static struct hash_speed hash_speed_template_16[] = {
-	{ .blen = 16,	.plen = 16,	.klen = 16, },
-	{ .blen = 64,	.plen = 16,	.klen = 16, },
-	{ .blen = 64,	.plen = 64,	.klen = 16, },
-	{ .blen = 256,	.plen = 16,	.klen = 16, },
-	{ .blen = 256,	.plen = 64,	.klen = 16, },
-	{ .blen = 256,	.plen = 256,	.klen = 16, },
-	{ .blen = 1024,	.plen = 16,	.klen = 16, },
-	{ .blen = 1024,	.plen = 256,	.klen = 16, },
-	{ .blen = 1024,	.plen = 1024,	.klen = 16, },
-	{ .blen = 2048,	.plen = 16,	.klen = 16, },
-	{ .blen = 2048,	.plen = 256,	.klen = 16, },
-	{ .blen = 2048,	.plen = 1024,	.klen = 16, },
-	{ .blen = 2048,	.plen = 2048,	.klen = 16, },
-	{ .blen = 4096,	.plen = 16,	.klen = 16, },
-	{ .blen = 4096,	.plen = 256,	.klen = 16, },
-	{ .blen = 4096,	.plen = 1024,	.klen = 16, },
-	{ .blen = 4096,	.plen = 4096,	.klen = 16, },
-	{ .blen = 8192,	.plen = 16,	.klen = 16, },
-	{ .blen = 8192,	.plen = 256,	.klen = 16, },
-	{ .blen = 8192,	.plen = 1024,	.klen = 16, },
-	{ .blen = 8192,	.plen = 4096,	.klen = 16, },
-	{ .blen = 8192,	.plen = 8192,	.klen = 16, },
-
-	/* End marker */
-	{  .blen = 0,	.plen = 0,	.klen = 0, }
 };
 
 #endif	/* _CRYPTO_TCRYPT_H */

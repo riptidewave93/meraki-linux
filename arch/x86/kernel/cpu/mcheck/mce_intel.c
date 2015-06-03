@@ -5,7 +5,6 @@
  * Author: Andi Kleen
  */
 
-#include <linux/gfp.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/percpu.h>
@@ -28,7 +27,7 @@ static DEFINE_PER_CPU(mce_banks_t, mce_banks_owned);
  * cmci_discover_lock protects against parallel discovery attempts
  * which could race against each other.
  */
-static DEFINE_RAW_SPINLOCK(cmci_discover_lock);
+static DEFINE_SPINLOCK(cmci_discover_lock);
 
 #define CMCI_THRESHOLD 1
 
@@ -85,7 +84,7 @@ static void cmci_discover(int banks, int boot)
 	int hdr = 0;
 	int i;
 
-	raw_spin_lock_irqsave(&cmci_discover_lock, flags);
+	spin_lock_irqsave(&cmci_discover_lock, flags);
 	for (i = 0; i < banks; i++) {
 		u64 val;
 
@@ -95,28 +94,27 @@ static void cmci_discover(int banks, int boot)
 		rdmsrl(MSR_IA32_MCx_CTL2(i), val);
 
 		/* Already owned by someone else? */
-		if (val & MCI_CTL2_CMCI_EN) {
-			if (test_and_clear_bit(i, owned) && !boot)
+		if (val & CMCI_EN) {
+			if (test_and_clear_bit(i, owned) || boot)
 				print_update("SHD", &hdr, i);
 			__clear_bit(i, __get_cpu_var(mce_poll_banks));
 			continue;
 		}
 
-		val &= ~MCI_CTL2_CMCI_THRESHOLD_MASK;
-		val |= MCI_CTL2_CMCI_EN | CMCI_THRESHOLD;
+		val |= CMCI_EN | CMCI_THRESHOLD;
 		wrmsrl(MSR_IA32_MCx_CTL2(i), val);
 		rdmsrl(MSR_IA32_MCx_CTL2(i), val);
 
 		/* Did the enable bit stick? -- the bank supports CMCI */
-		if (val & MCI_CTL2_CMCI_EN) {
-			if (!test_and_set_bit(i, owned) && !boot)
+		if (val & CMCI_EN) {
+			if (!test_and_set_bit(i, owned) || boot)
 				print_update("CMCI", &hdr, i);
 			__clear_bit(i, __get_cpu_var(mce_poll_banks));
 		} else {
 			WARN_ON(!test_bit(i, __get_cpu_var(mce_poll_banks)));
 		}
 	}
-	raw_spin_unlock_irqrestore(&cmci_discover_lock, flags);
+	spin_unlock_irqrestore(&cmci_discover_lock, flags);
 	if (hdr)
 		printk(KERN_CONT "\n");
 }
@@ -130,7 +128,7 @@ void cmci_recheck(void)
 	unsigned long flags;
 	int banks;
 
-	if (!mce_available(__this_cpu_ptr(&cpu_info)) || !cmci_supported(&banks))
+	if (!mce_available(&current_cpu_data) || !cmci_supported(&banks))
 		return;
 	local_irq_save(flags);
 	machine_check_poll(MCP_TIMESTAMP, &__get_cpu_var(mce_banks_owned));
@@ -150,17 +148,17 @@ void cmci_clear(void)
 
 	if (!cmci_supported(&banks))
 		return;
-	raw_spin_lock_irqsave(&cmci_discover_lock, flags);
+	spin_lock_irqsave(&cmci_discover_lock, flags);
 	for (i = 0; i < banks; i++) {
 		if (!test_bit(i, __get_cpu_var(mce_banks_owned)))
 			continue;
 		/* Disable CMCI */
 		rdmsrl(MSR_IA32_MCx_CTL2(i), val);
-		val &= ~(MCI_CTL2_CMCI_EN|MCI_CTL2_CMCI_THRESHOLD_MASK);
+		val &= ~(CMCI_EN|CMCI_THRESHOLD_MASK);
 		wrmsrl(MSR_IA32_MCx_CTL2(i), val);
 		__clear_bit(i, __get_cpu_var(mce_banks_owned));
 	}
-	raw_spin_unlock_irqrestore(&cmci_discover_lock, flags);
+	spin_unlock_irqrestore(&cmci_discover_lock, flags);
 }
 
 /*

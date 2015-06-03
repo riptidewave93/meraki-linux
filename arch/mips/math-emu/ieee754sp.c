@@ -4,6 +4,7 @@
 /*
  * MIPS floating point support
  * Copyright (C) 1994-2000 Algorithmics Ltd.
+ * http://www.algor.co.uk
  *
  * ########################################################################
  *
@@ -148,6 +149,7 @@ ieee754sp ieee754sp_format(int sn, int xe, unsigned xm)
 
 			switch(ieee754_csr.rm) {
 			case IEEE754_RN:
+				return ieee754sp_zero(sn);
 			case IEEE754_RZ:
 				return ieee754sp_zero(sn);
 			case IEEE754_RU:      /* toward +Infinity */

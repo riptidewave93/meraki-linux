@@ -136,21 +136,21 @@ struct analog_port {
 
 #ifdef __i386__
 
-#include <linux/i8253.h>
+#include <asm/i8253.h>
 
 #define GET_TIME(x)	do { if (cpu_has_tsc) rdtscl(x); else x = get_time_pit(); } while (0)
-#define DELTA(x,y)	(cpu_has_tsc ? ((y) - (x)) : ((x) - (y) + ((x) < (y) ? PIT_TICK_RATE / HZ : 0)))
+#define DELTA(x,y)	(cpu_has_tsc ? ((y) - (x)) : ((x) - (y) + ((x) < (y) ? CLOCK_TICK_RATE / HZ : 0)))
 #define TIME_NAME	(cpu_has_tsc?"TSC":"PIT")
 static unsigned int get_time_pit(void)
 {
         unsigned long flags;
         unsigned int count;
 
-        raw_spin_lock_irqsave(&i8253_lock, flags);
+        spin_lock_irqsave(&i8253_lock, flags);
         outb_p(0x00, 0x43);
         count = inb_p(0x40);
         count |= inb_p(0x40) << 8;
-        raw_spin_unlock_irqrestore(&i8253_lock, flags);
+        spin_unlock_irqrestore(&i8253_lock, flags);
 
         return count;
 }

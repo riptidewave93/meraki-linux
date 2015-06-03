@@ -26,6 +26,7 @@
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/timer.h>
 #include <linux/ioport.h>
@@ -38,6 +39,7 @@
 #include <linux/dma-mapping.h>
 
 #include <asm/dma.h>
+#include <asm/system.h>
 #include <asm/io.h>
 
 #include <scsi/scsi.h>
@@ -58,11 +60,11 @@ MODULE_PARM_DESC(trans_mode, "transfer mode (0: BIOS(default) 1: Async 2: Ultra2
 #define ASYNC_MODE    1
 #define ULTRA20M_MODE 2
 
-static bool      auto_param = 0;	/* default: ON */
+static int       auto_param = 0;	/* default: ON */
 module_param     (auto_param, bool, 0);
 MODULE_PARM_DESC(auto_param, "AutoParameter mode (0: ON(default) 1: OFF)");
 
-static bool      disc_priv  = 1;	/* default: OFF */
+static int       disc_priv  = 1;	/* default: OFF */
 module_param     (disc_priv, bool, 0);
 MODULE_PARM_DESC(disc_priv,  "disconnection privilege mode (0: ON 1: OFF(default))");
 
@@ -195,7 +197,8 @@ static void __exit    exit_nsp32  (void);
 static int         nsp32_proc_info   (struct Scsi_Host *, char *, char **, off_t, int, int);
 
 static int         nsp32_detect      (struct pci_dev *pdev);
-static int         nsp32_queuecommand(struct Scsi_Host *, struct scsi_cmnd *);
+static int         nsp32_queuecommand(struct scsi_cmnd *,
+		void (*done)(struct scsi_cmnd *));
 static const char *nsp32_info        (struct Scsi_Host *);
 static int         nsp32_release     (struct Scsi_Host *);
 
@@ -907,7 +910,7 @@ static int nsp32_setup_sg_table(struct scsi_cmnd *SCpnt)
 	return TRUE;
 }
 
-static int nsp32_queuecommand_lck(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
+static int nsp32_queuecommand(struct scsi_cmnd *SCpnt, void (*done)(struct scsi_cmnd *))
 {
 	nsp32_hw_data *data = (nsp32_hw_data *)SCpnt->device->host->hostdata;
 	nsp32_target *target;
@@ -1047,8 +1050,6 @@ static int nsp32_queuecommand_lck(struct scsi_cmnd *SCpnt, void (*done)(struct s
 
 	return 0;
 }
-
-static DEF_SCSI_QCMD(nsp32_queuecommand)
 
 /* initialize asic */
 static int nsp32hw_init(nsp32_hw_data *data)
@@ -1287,7 +1288,7 @@ static irqreturn_t do_nsp32_isr(int irq, void *dev_id)
 			nsp32_dbg(NSP32_DEBUG_INTR, "SSACK=0x%lx", 
 				    nsp32_read4(base, SAVED_SACK_CNT));
 
-			scsi_set_resid(SCpnt, 0); /* all data transferred! */
+			scsi_set_resid(SCpnt, 0); /* all data transfered! */
 		}
 
 		/*
@@ -1418,7 +1419,7 @@ static irqreturn_t do_nsp32_isr(int irq, void *dev_id)
 		nsp32_msg(KERN_ERR, "Received unexpected BMCNTERR IRQ! ");
 		/*
 		 * TODO: To be implemented improving bus master
-		 * transfer reliability when BMCNTERR is occurred in
+		 * transfer reliablity when BMCNTERR is occurred in
 		 * AutoSCSI phase described in specification.
 		 */
 	}
@@ -1629,7 +1630,7 @@ static int nsp32_busfree_occur(struct scsi_cmnd *SCpnt, unsigned short execph)
 
 			/*
 			 * If SAVEDSACKCNT == 0, it means SavedDataPointer is
-			 * come after data transferring.
+			 * come after data transfering.
 			 */
 			if (s_sacklen > 0) {
 				/*
@@ -1784,7 +1785,7 @@ static void nsp32_adjust_busfree(struct scsi_cmnd *SCpnt, unsigned int s_sacklen
 		   the head element of the sg. restlen is correctly calculated. */
 	}
 
-	/* calculate the rest length for transferring */
+	/* calculate the rest length for transfering */
 	restlen = sentlen - s_sacklen;
 
 	/* update adjusting current SG table entry */
@@ -2926,7 +2927,7 @@ static void nsp32_do_bus_reset(nsp32_hw_data *data)
 	 * reset SCSI bus
 	 */
 	nsp32_write1(base, SCSI_BUS_CONTROL, BUSCTL_RST);
-	mdelay(RESET_HOLD_TIME / 1000);
+	udelay(RESET_HOLD_TIME);
 	nsp32_write1(base, SCSI_BUS_CONTROL, 0);
 	for(i = 0; i < 5; i++) {
 		intrdat = nsp32_read2(base, IRQ_STATUS); /* dummy read */

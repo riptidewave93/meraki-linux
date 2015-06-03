@@ -86,7 +86,7 @@ struct stlibrd {
 	unsigned long	magic;
 	unsigned int	brdnr;
 	unsigned int	brdtype;
-	unsigned long	state;
+	unsigned int	state;
 	unsigned int	nrpanels;
 	unsigned int	nrports;
 	unsigned int	nrdevs;

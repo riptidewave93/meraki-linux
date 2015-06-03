@@ -12,7 +12,6 @@
 #include <linux/pci.h>
 #include <linux/moduleparam.h>
 #include <linux/pci_ids.h>
-#include <linux/module.h>
 #include <sound/core.h>
 #include <sound/initval.h>
 #include "ctatc.h"
@@ -32,8 +31,7 @@ module_param(multiple, uint, S_IRUGO);
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
-static unsigned int subsystem[SNDRV_CARDS];
+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;
 
 module_param_array(index, int, NULL, 0444);
 MODULE_PARM_DESC(index, "Index value for Creative X-Fi driver");
@@ -41,10 +39,8 @@ module_param_array(id, charp, NULL, 0444);
 MODULE_PARM_DESC(id, "ID string for Creative X-Fi driver");
 module_param_array(enable, bool, NULL, 0444);
 MODULE_PARM_DESC(enable, "Enable Creative X-Fi driver");
-module_param_array(subsystem, int, NULL, 0444);
-MODULE_PARM_DESC(subsystem, "Override subsystem ID for Creative X-Fi driver");
 
-static DEFINE_PCI_DEVICE_TABLE(ct_pci_dev_ids) = {
+static struct pci_device_id ct_pci_dev_ids[] = {
 	/* only X-Fi is supported, so... */
 	{ PCI_DEVICE(PCI_VENDOR_ID_CREATIVE, PCI_DEVICE_ID_CREATIVE_20K1),
 	  .driver_data = ATC20K1,
@@ -81,15 +77,15 @@ ct_card_probe(struct pci_dev *pci, const struct pci_device_id *pci_id)
 		       "are 48000 and 44100, Value 48000 is assumed.\n");
 		reference_rate = 48000;
 	}
-	if ((multiple != 1) && (multiple != 2) && (multiple != 4)) {
+	if ((multiple != 1) && (multiple != 2)) {
 		printk(KERN_ERR "ctxfi: Invalid multiple value %u!!!\n",
 		       multiple);
 		printk(KERN_ERR "ctxfi: The valid values for multiple are "
-		       "1, 2 and 4, Value 2 is assumed.\n");
+		       "1 and 2, Value 2 is assumed.\n");
 		multiple = 2;
 	}
 	err = ct_atc_create(card, pci, reference_rate, multiple,
-			    pci_id->driver_data, subsystem[dev], &atc);
+			    pci_id->driver_data, &atc);
 	if (err < 0)
 		goto error;
 
@@ -144,7 +140,7 @@ static int ct_card_resume(struct pci_dev *pci)
 #endif
 
 static struct pci_driver ct_driver = {
-	.name = KBUILD_MODNAME,
+	.name = "SB-XFi",
 	.id_table = ct_pci_dev_ids,
 	.probe = ct_card_probe,
 	.remove = __devexit_p(ct_card_remove),

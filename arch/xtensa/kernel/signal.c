@@ -260,7 +260,10 @@ asmlinkage long xtensa_rt_sigreturn(long a0, long a1, long a2, long a3,
 		goto badframe;
 
 	sigdelsetmask(&set, ~_BLOCKABLE);
-	set_current_blocked(&set);
+	spin_lock_irq(&current->sighand->siglock);
+	current->blocked = set;
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
 
 	if (restore_sigcontext(regs, frame))
 		goto badframe;
@@ -333,8 +336,8 @@ gen_return_code(unsigned char *codemem)
 }
 
 
-static int setup_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
-		       sigset_t *set, struct pt_regs *regs)
+static void setup_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
+			sigset_t *set, struct pt_regs *regs)
 {
 	struct rt_sigframe *frame;
 	int err = 0;
@@ -343,7 +346,7 @@ static int setup_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
 
 	sp = regs->areg[1];
 
-	if ((ka->sa.sa_flags & SA_ONSTACK) != 0 && sas_ss_flags(sp) == 0) {
+	if ((ka->sa.sa_flags & SA_ONSTACK) != 0 && ! on_sig_stack(sp)) {
 		sp = current->sas_ss_sp + current->sas_ss_size;
 	}
 
@@ -419,11 +422,12 @@ static int setup_frame(int sig, struct k_sigaction *ka, siginfo_t *info,
 		current->comm, current->pid, signal, frame, regs->pc);
 #endif
 
-	return 0;
+	return;
 
 give_sigsegv:
-	force_sigsegv(sig, current);
-	return -EFAULT;
+	if (sig == SIGSEGV)
+		ka->sa.sa_handler = SIG_DFL;
+	force_sig(SIGSEGV, current);
 }
 
 /*
@@ -445,8 +449,11 @@ asmlinkage long xtensa_rt_sigsuspend(sigset_t __user *unewset,
 		return -EFAULT;
 
 	sigdelsetmask(&newset, ~_BLOCKABLE);
+	spin_lock_irq(&current->sighand->siglock);
 	saveset = current->blocked;
-	set_current_blocked(&newset);
+	current->blocked = newset;
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
 
 	regs->areg[2] = -EINTR;
 	while (1) {
@@ -496,7 +503,6 @@ int do_signal(struct pt_regs *regs, sigset_t *oldset)
 	signr = get_signal_to_deliver(&info, &ka, regs, NULL);
 
 	if (signr > 0) {
-		int ret;
 
 		/* Are we from a system call? */
 
@@ -530,11 +536,17 @@ int do_signal(struct pt_regs *regs, sigset_t *oldset)
 
 		/* Whee!  Actually deliver the signal.  */
 		/* Set up the stack frame */
-		ret = setup_frame(signr, &ka, &info, oldset, regs);
-		if (ret)
-			return ret;
+		setup_frame(signr, &ka, &info, oldset, regs);
 
-		block_sigmask(&ka, signr);
+		if (ka.sa.sa_flags & SA_ONESHOT)
+			ka.sa.sa_handler = SIG_DFL;
+
+		spin_lock_irq(&current->sighand->siglock);
+		sigorsets(&current->blocked, &current->blocked, &ka.sa.sa_mask);
+		if (!(ka.sa.sa_flags & SA_NODEFER))
+			sigaddset(&current->blocked, signr);
+		recalc_sigpending();
+		spin_unlock_irq(&current->sighand->siglock);
 		if (current->ptrace & PT_SINGLESTEP)
 			task_pt_regs(current)->icountlevel = 1;
 

@@ -22,6 +22,7 @@
  */
 #include <linux/kernel.h>
 #include <linux/pci.h>
+#include <linux/slab.h>
 #include <linux/ioport.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
@@ -29,10 +30,9 @@
 #include <linux/io.h>
 
 #include <mach/hardware.h>
-#include <mach/platform.h>
-#include <mach/irqs.h>
-
+#include <asm/irq.h>
 #include <asm/signal.h>
+#include <asm/system.h>
 #include <asm/mach/pci.h>
 #include <asm/irq_regs.h>
 
@@ -163,7 +163,7 @@
  *	 7:2	register number
  *  
  */
-static DEFINE_RAW_SPINLOCK(v3_lock);
+static DEFINE_SPINLOCK(v3_lock);
 
 #define PCI_BUS_NONMEM_START	0x00000000
 #define PCI_BUS_NONMEM_SIZE	SZ_256M
@@ -284,7 +284,7 @@ static int v3_read_config(struct pci_bus *bus, unsigned int devfn, int where,
 	unsigned long flags;
 	u32 v;
 
-	raw_spin_lock_irqsave(&v3_lock, flags);
+	spin_lock_irqsave(&v3_lock, flags);
 	addr = v3_open_config_window(bus, devfn, where);
 
 	switch (size) {
@@ -302,7 +302,7 @@ static int v3_read_config(struct pci_bus *bus, unsigned int devfn, int where,
 	}
 
 	v3_close_config_window();
-	raw_spin_unlock_irqrestore(&v3_lock, flags);
+	spin_unlock_irqrestore(&v3_lock, flags);
 
 	*val = v;
 	return PCIBIOS_SUCCESSFUL;
@@ -314,7 +314,7 @@ static int v3_write_config(struct pci_bus *bus, unsigned int devfn, int where,
 	unsigned long addr;
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&v3_lock, flags);
+	spin_lock_irqsave(&v3_lock, flags);
 	addr = v3_open_config_window(bus, devfn, where);
 
 	switch (size) {
@@ -335,7 +335,7 @@ static int v3_write_config(struct pci_bus *bus, unsigned int devfn, int where,
 	}
 
 	v3_close_config_window();
-	raw_spin_unlock_irqrestore(&v3_lock, flags);
+	spin_unlock_irqrestore(&v3_lock, flags);
 
 	return PCIBIOS_SUCCESSFUL;
 }
@@ -359,7 +359,7 @@ static struct resource pre_mem = {
 	.flags	= IORESOURCE_MEM | IORESOURCE_PREFETCH,
 };
 
-static int __init pci_v3_setup_resources(struct pci_sys_data *sys)
+static int __init pci_v3_setup_resources(struct resource **resource)
 {
 	if (request_resource(&iomem_resource, &non_mem)) {
 		printk(KERN_ERR "PCI: unable to allocate non-prefetchable "
@@ -374,14 +374,13 @@ static int __init pci_v3_setup_resources(struct pci_sys_data *sys)
 	}
 
 	/*
-	 * the IO resource for this bus
-	 * the mem resource for this bus
-	 * the prefetch mem resource for this bus
+	 * bus->resource[0] is the IO resource for this bus
+	 * bus->resource[1] is the mem resource for this bus
+	 * bus->resource[2] is the prefetch mem resource for this bus
 	 */
-	pci_add_resource_offset(&sys->resources,
-				&ioport_resource, sys->io_offset);
-	pci_add_resource_offset(&sys->resources, &non_mem, sys->mem_offset);
-	pci_add_resource_offset(&sys->resources, &pre_mem, sys->mem_offset);
+	resource[0] = &ioport_resource;
+	resource[1] = &non_mem;
+	resource[2] = &pre_mem;
 
 	return 1;
 }
@@ -391,9 +390,9 @@ static int __init pci_v3_setup_resources(struct pci_sys_data *sys)
  * means I can't get additional information on the reason for the pm2fb
  * problems.  I suppose I'll just have to mind-meld with the machine. ;)
  */
-#define SC_PCI     IO_ADDRESS(INTEGRATOR_SC_PCIENABLE)
-#define SC_LBFADDR IO_ADDRESS(INTEGRATOR_SC_BASE + 0x20)
-#define SC_LBFCODE IO_ADDRESS(INTEGRATOR_SC_BASE + 0x24)
+#define SC_PCI     (IO_ADDRESS(INTEGRATOR_SC_BASE) + INTEGRATOR_SC_PCIENABLE_OFFSET)
+#define SC_LBFADDR (IO_ADDRESS(INTEGRATOR_SC_BASE) + 0x20)
+#define SC_LBFCODE (IO_ADDRESS(INTEGRATOR_SC_BASE) + 0x24)
 
 static int
 v3_pci_fault(unsigned long addr, unsigned int fsr, struct pt_regs *regs)
@@ -482,7 +481,7 @@ int __init pci_v3_setup(int nr, struct pci_sys_data *sys)
 
 	if (nr == 0) {
 		sys->mem_offset = PHYS_PCI_MEM_BASE;
-		ret = pci_v3_setup_resources(sys);
+		ret = pci_v3_setup_resources(sys->resource);
 	}
 
 	return ret;
@@ -490,8 +489,7 @@ int __init pci_v3_setup(int nr, struct pci_sys_data *sys)
 
 struct pci_bus * __init pci_v3_scan_bus(int nr, struct pci_sys_data *sys)
 {
-	return pci_scan_root_bus(NULL, sys->busnr, &pci_v3_ops, sys,
-				 &sys->resources);
+	return pci_scan_bus(sys->busnr, &pci_v3_ops, sys);
 }
 
 /*
@@ -504,18 +502,15 @@ void __init pci_v3_preinit(void)
 	unsigned int temp;
 	int ret;
 
-	pcibios_min_io = 0x6000;
-	pcibios_min_mem = 0x00100000;
-
 	/*
 	 * Hook in our fault handler for PCI errors
 	 */
-	hook_fault_code(4, v3_pci_fault, SIGBUS, 0, "external abort on linefetch");
-	hook_fault_code(6, v3_pci_fault, SIGBUS, 0, "external abort on linefetch");
-	hook_fault_code(8, v3_pci_fault, SIGBUS, 0, "external abort on non-linefetch");
-	hook_fault_code(10, v3_pci_fault, SIGBUS, 0, "external abort on non-linefetch");
+	hook_fault_code(4, v3_pci_fault, SIGBUS, "external abort on linefetch");
+	hook_fault_code(6, v3_pci_fault, SIGBUS, "external abort on linefetch");
+	hook_fault_code(8, v3_pci_fault, SIGBUS, "external abort on non-linefetch");
+	hook_fault_code(10, v3_pci_fault, SIGBUS, "external abort on non-linefetch");
 
-	raw_spin_lock_irqsave(&v3_lock, flags);
+	spin_lock_irqsave(&v3_lock, flags);
 
 	/*
 	 * Unlock V3 registers, but only if they were previously locked.
@@ -588,7 +583,7 @@ void __init pci_v3_preinit(void)
 		printk(KERN_ERR "PCI: unable to grab PCI error "
 		       "interrupt: %d\n", ret);
 
-	raw_spin_unlock_irqrestore(&v3_lock, flags);
+	spin_unlock_irqrestore(&v3_lock, flags);
 }
 
 void __init pci_v3_postinit(void)

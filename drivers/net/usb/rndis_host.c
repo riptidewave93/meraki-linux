@@ -22,7 +22,6 @@
 #include <linux/etherdevice.h>
 #include <linux/ethtool.h>
 #include <linux/workqueue.h>
-#include <linux/slab.h>
 #include <linux/mii.h>
 #include <linux/usb.h>
 #include <linux/usb/cdc.h>
@@ -58,8 +57,8 @@
  */
 void rndis_status(struct usbnet *dev, struct urb *urb)
 {
-	netdev_dbg(dev->net, "rndis status urb, len %d stat %d\n",
-		   urb->actual_length, urb->status);
+	devdbg(dev, "rndis status urb, len %d stat %d",
+		urb->actual_length, urb->status);
 	// FIXME for keepalives, respond immediately (asynchronously)
 	// if not an RNDIS status, do like cdc_status(dev,urb) does
 }
@@ -104,10 +103,8 @@ static void rndis_msg_indicate(struct usbnet *dev, struct rndis_indicate *msg,
 int rndis_command(struct usbnet *dev, struct rndis_msg_hdr *buf, int buflen)
 {
 	struct cdc_state	*info = (void *) &dev->data;
-	struct usb_cdc_notification notification;
 	int			master_ifnum;
 	int			retval;
-	int			partial;
 	unsigned		count;
 	__le32			rsp;
 	u32			xid = 0, msg_len, request_id;
@@ -117,8 +114,8 @@ int rndis_command(struct usbnet *dev, struct rndis_msg_hdr *buf, int buflen)
 	 */
 
 	/* Issue the request; xid is unique, don't bother byteswapping it */
-	if (likely(buf->msg_type != RNDIS_MSG_HALT &&
-		   buf->msg_type != RNDIS_MSG_RESET)) {
+	if (likely(buf->msg_type != RNDIS_MSG_HALT
+			&& buf->msg_type != RNDIS_MSG_RESET)) {
 		xid = dev->xid++;
 		if (!xid)
 			xid = dev->xid++;
@@ -135,20 +132,13 @@ int rndis_command(struct usbnet *dev, struct rndis_msg_hdr *buf, int buflen)
 	if (unlikely(retval < 0 || xid == 0))
 		return retval;
 
-	/* Some devices don't respond on the control channel until
-	 * polled on the status channel, so do that first. */
-	if (dev->driver_info->data & RNDIS_DRIVER_DATA_POLL_STATUS) {
-		retval = usb_interrupt_msg(
-			dev->udev,
-			usb_rcvintpipe(dev->udev,
-				       dev->status->desc.bEndpointAddress),
-			&notification, sizeof(notification), &partial,
-			RNDIS_CONTROL_TIMEOUT_MS);
-		if (unlikely(retval < 0))
-			return retval;
-	}
+	// FIXME Seems like some devices discard responses when
+	// we time out and cancel our "get response" requests...
+	// so, this is fragile.  Probably need to poll for status.
 
-	/* Poll the control channel; the request probably completed immediately */
+	/* ignore status endpoint, just poll the control channel;
+	 * the request probably completed immediately
+	 */
 	rsp = buf->msg_type | RNDIS_MSG_COMPLETION;
 	for (count = 0; count < 10; count++) {
 		memset(buf, 0, CONTROL_BUFFER_SIZE);
@@ -345,8 +335,8 @@ generic_rndis_bind(struct usbnet *dev, struct usb_interface *intf, int flags)
 
 	dev->maxpacket = usb_maxpacket(dev->udev, dev->out, 1);
 	if (dev->maxpacket == 0) {
-		netif_dbg(dev, probe, dev->net,
-			  "dev->maxpacket can't be 0\n");
+		if (netif_msg_probe(dev))
+			dev_dbg(&intf->dev, "dev->maxpacket can't be 0\n");
 		retval = -EINVAL;
 		goto fail_and_release;
 	}
@@ -404,15 +394,17 @@ generic_rndis_bind(struct usbnet *dev, struct usb_interface *intf, int flags)
 	}
 	if ((flags & FLAG_RNDIS_PHYM_WIRELESS) &&
 			*phym != RNDIS_PHYSICAL_MEDIUM_WIRELESS_LAN) {
-		netif_dbg(dev, probe, dev->net,
-			  "driver requires wireless physical medium, but device is not\n");
+		if (netif_msg_probe(dev))
+			dev_dbg(&intf->dev, "driver requires wireless "
+				"physical medium, but device is not.\n");
 		retval = -ENODEV;
 		goto halt_fail_and_release;
 	}
 	if ((flags & FLAG_RNDIS_PHYM_NOT_WIRELESS) &&
 			*phym == RNDIS_PHYSICAL_MEDIUM_WIRELESS_LAN) {
-		netif_dbg(dev, probe, dev->net,
-			  "driver requires non-wireless physical medium, but device is wireless.\n");
+		if (netif_msg_probe(dev))
+			dev_dbg(&intf->dev, "driver requires non-wireless "
+				"physical medium, but device is wireless.\n");
 		retval = -ENODEV;
 		goto halt_fail_and_release;
 	}
@@ -490,10 +482,6 @@ EXPORT_SYMBOL_GPL(rndis_unbind);
  */
 int rndis_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 {
-	/* This check is no longer done by usbnet */
-	if (skb->len < dev->net->hard_header_len)
-		return 0;
-
 	/* peripheral may have batched packets to us... */
 	while (likely(skb->len)) {
 		struct rndis_data_hdr	*hdr = (void *)skb->data;
@@ -505,13 +493,13 @@ int rndis_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 		data_len = le32_to_cpu(hdr->data_len);
 
 		/* don't choke if we see oob, per-packet data, etc */
-		if (unlikely(hdr->msg_type != RNDIS_MSG_PACKET ||
-			     skb->len < msg_len ||
-			     (data_offset + data_len + 8) > msg_len)) {
+		if (unlikely(hdr->msg_type != RNDIS_MSG_PACKET
+				|| skb->len < msg_len
+				|| (data_offset + data_len + 8) > msg_len)) {
 			dev->net->stats.rx_frame_errors++;
-			netdev_dbg(dev->net, "bad rndis message %d/%d/%d/%d, len %d\n",
-				   le32_to_cpu(hdr->msg_type),
-				   msg_len, data_offset, data_len, skb->len);
+			devdbg(dev, "bad rndis message %d/%d/%d/%d, len %d",
+				le32_to_cpu(hdr->msg_type),
+				msg_len, data_offset, data_len, skb->len);
 			return 0;
 		}
 		skb_pull(skb, 8 + data_offset);
@@ -586,18 +574,7 @@ EXPORT_SYMBOL_GPL(rndis_tx_fixup);
 
 static const struct driver_info	rndis_info = {
 	.description =	"RNDIS device",
-	.flags =	FLAG_ETHER | FLAG_POINTTOPOINT | FLAG_FRAMING_RN | FLAG_NO_SETINT,
-	.bind =		rndis_bind,
-	.unbind =	rndis_unbind,
-	.status =	rndis_status,
-	.rx_fixup =	rndis_rx_fixup,
-	.tx_fixup =	rndis_tx_fixup,
-};
-
-static const struct driver_info	rndis_poll_status_info = {
-	.description =	"RNDIS device (poll status before control)",
-	.flags =	FLAG_ETHER | FLAG_POINTTOPOINT | FLAG_FRAMING_RN | FLAG_NO_SETINT,
-	.data =		RNDIS_DRIVER_DATA_POLL_STATUS,
+	.flags =	FLAG_ETHER | FLAG_FRAMING_RN | FLAG_NO_SETINT,
 	.bind =		rndis_bind,
 	.unbind =	rndis_unbind,
 	.status =	rndis_status,
@@ -609,18 +586,13 @@ static const struct driver_info	rndis_poll_status_info = {
 
 static const struct usb_device_id	products [] = {
 {
-	/* 2Wire HomePortal 1000SW */
-	USB_DEVICE_AND_INTERFACE_INFO(0x1630, 0x0042,
-				      USB_CLASS_COMM, 2 /* ACM */, 0x0ff),
-	.driver_info = (unsigned long) &rndis_poll_status_info,
-}, {
 	/* RNDIS is MSFT's un-official variant of CDC ACM */
 	USB_INTERFACE_INFO(USB_CLASS_COMM, 2 /* ACM */, 0x0ff),
 	.driver_info = (unsigned long) &rndis_info,
 }, {
 	/* "ActiveSync" is an undocumented variant of RNDIS, used in WM5 */
 	USB_INTERFACE_INFO(USB_CLASS_MISC, 1, 1),
-	.driver_info = (unsigned long) &rndis_poll_status_info,
+	.driver_info = (unsigned long) &rndis_info,
 }, {
 	/* RNDIS for tethering */
 	USB_INTERFACE_INFO(USB_CLASS_WIRELESS_CONTROLLER, 1, 3),
@@ -639,7 +611,17 @@ static struct usb_driver rndis_driver = {
 	.resume =	usbnet_resume,
 };
 
-module_usb_driver(rndis_driver);
+static int __init rndis_init(void)
+{
+	return usb_register(&rndis_driver);
+}
+module_init(rndis_init);
+
+static void __exit rndis_exit(void)
+{
+	usb_deregister(&rndis_driver);
+}
+module_exit(rndis_exit);
 
 MODULE_AUTHOR("David Brownell");
 MODULE_DESCRIPTION("USB Host side RNDIS driver");

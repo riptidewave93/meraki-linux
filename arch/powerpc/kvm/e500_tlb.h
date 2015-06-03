@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2011 Freescale Semiconductor, Inc. All rights reserved.
+ * Copyright (C) 2008 Freescale Semiconductor, Inc. All rights reserved.
  *
  * Author: Yu Liu, yu.liu@freescale.com
  *
@@ -20,9 +20,13 @@
 #include <asm/tlb.h>
 #include <asm/kvm_e500.h>
 
-/* This geometry is the legacy default -- can be overridden by userspace */
-#define KVM_E500_TLB0_WAY_SIZE		128
-#define KVM_E500_TLB0_WAY_NUM		2
+#define KVM_E500_TLB0_WAY_SIZE_BIT	7	/* Fixed */
+#define KVM_E500_TLB0_WAY_SIZE		(1UL << KVM_E500_TLB0_WAY_SIZE_BIT)
+#define KVM_E500_TLB0_WAY_SIZE_MASK	(KVM_E500_TLB0_WAY_SIZE - 1)
+
+#define KVM_E500_TLB0_WAY_NUM_BIT	1	/* No greater than 7 */
+#define KVM_E500_TLB0_WAY_NUM		(1UL << KVM_E500_TLB0_WAY_NUM_BIT)
+#define KVM_E500_TLB0_WAY_NUM_MASK	(KVM_E500_TLB0_WAY_NUM - 1)
 
 #define KVM_E500_TLB0_SIZE  (KVM_E500_TLB0_WAY_SIZE * KVM_E500_TLB0_WAY_NUM)
 #define KVM_E500_TLB1_SIZE  16
@@ -51,57 +55,52 @@ extern void kvmppc_e500_tlb_load(struct kvm_vcpu *, int);
 extern int kvmppc_e500_tlb_init(struct kvmppc_vcpu_e500 *);
 extern void kvmppc_e500_tlb_uninit(struct kvmppc_vcpu_e500 *);
 extern void kvmppc_e500_tlb_setup(struct kvmppc_vcpu_e500 *);
-extern void kvmppc_e500_recalc_shadow_pid(struct kvmppc_vcpu_e500 *);
 
 /* TLB helper functions */
-static inline unsigned int
-get_tlb_size(const struct kvm_book3e_206_tlb_entry *tlbe)
+static inline unsigned int get_tlb_size(const struct tlbe *tlbe)
 {
 	return (tlbe->mas1 >> 7) & 0x1f;
 }
 
-static inline gva_t get_tlb_eaddr(const struct kvm_book3e_206_tlb_entry *tlbe)
+static inline gva_t get_tlb_eaddr(const struct tlbe *tlbe)
 {
 	return tlbe->mas2 & 0xfffff000;
 }
 
-static inline u64 get_tlb_bytes(const struct kvm_book3e_206_tlb_entry *tlbe)
+static inline u64 get_tlb_bytes(const struct tlbe *tlbe)
 {
 	unsigned int pgsize = get_tlb_size(tlbe);
 	return 1ULL << 10 << pgsize;
 }
 
-static inline gva_t get_tlb_end(const struct kvm_book3e_206_tlb_entry *tlbe)
+static inline gva_t get_tlb_end(const struct tlbe *tlbe)
 {
 	u64 bytes = get_tlb_bytes(tlbe);
 	return get_tlb_eaddr(tlbe) + bytes - 1;
 }
 
-static inline u64 get_tlb_raddr(const struct kvm_book3e_206_tlb_entry *tlbe)
+static inline u64 get_tlb_raddr(const struct tlbe *tlbe)
 {
-	return tlbe->mas7_3 & ~0xfffULL;
+	u64 rpn = tlbe->mas7;
+	return (rpn << 32) | (tlbe->mas3 & 0xfffff000);
 }
 
-static inline unsigned int
-get_tlb_tid(const struct kvm_book3e_206_tlb_entry *tlbe)
+static inline unsigned int get_tlb_tid(const struct tlbe *tlbe)
 {
 	return (tlbe->mas1 >> 16) & 0xff;
 }
 
-static inline unsigned int
-get_tlb_ts(const struct kvm_book3e_206_tlb_entry *tlbe)
+static inline unsigned int get_tlb_ts(const struct tlbe *tlbe)
 {
 	return (tlbe->mas1 >> 12) & 0x1;
 }
 
-static inline unsigned int
-get_tlb_v(const struct kvm_book3e_206_tlb_entry *tlbe)
+static inline unsigned int get_tlb_v(const struct tlbe *tlbe)
 {
 	return (tlbe->mas1 >> 31) & 0x1;
 }
 
-static inline unsigned int
-get_tlb_iprot(const struct kvm_book3e_206_tlb_entry *tlbe)
+static inline unsigned int get_tlb_iprot(const struct tlbe *tlbe)
 {
 	return (tlbe->mas1 >> 30) & 0x1;
 }
@@ -111,47 +110,59 @@ static inline unsigned int get_cur_pid(struct kvm_vcpu *vcpu)
 	return vcpu->arch.pid & 0xff;
 }
 
-static inline unsigned int get_cur_as(struct kvm_vcpu *vcpu)
+static inline unsigned int get_cur_spid(
+		const struct kvmppc_vcpu_e500 *vcpu_e500)
 {
-	return !!(vcpu->arch.shared->msr & (MSR_IS | MSR_DS));
+	return (vcpu_e500->mas6 >> 16) & 0xff;
 }
 
-static inline unsigned int get_cur_pr(struct kvm_vcpu *vcpu)
+static inline unsigned int get_cur_sas(
+		const struct kvmppc_vcpu_e500 *vcpu_e500)
 {
-	return !!(vcpu->arch.shared->msr & MSR_PR);
+	return vcpu_e500->mas6 & 0x1;
 }
 
-static inline unsigned int get_cur_spid(const struct kvm_vcpu *vcpu)
-{
-	return (vcpu->arch.shared->mas6 >> 16) & 0xff;
-}
-
-static inline unsigned int get_cur_sas(const struct kvm_vcpu *vcpu)
-{
-	return vcpu->arch.shared->mas6 & 0x1;
-}
-
-static inline unsigned int get_tlb_tlbsel(const struct kvm_vcpu *vcpu)
+static inline unsigned int get_tlb_tlbsel(
+		const struct kvmppc_vcpu_e500 *vcpu_e500)
 {
 	/*
 	 * Manual says that tlbsel has 2 bits wide.
 	 * Since we only have two TLBs, only lower bit is used.
 	 */
-	return (vcpu->arch.shared->mas0 >> 28) & 0x1;
+	return (vcpu_e500->mas0 >> 28) & 0x1;
 }
 
-static inline unsigned int get_tlb_nv_bit(const struct kvm_vcpu *vcpu)
+static inline unsigned int get_tlb_nv_bit(
+		const struct kvmppc_vcpu_e500 *vcpu_e500)
 {
-	return vcpu->arch.shared->mas0 & 0xfff;
+	return vcpu_e500->mas0 & 0xfff;
 }
 
-static inline unsigned int get_tlb_esel_bit(const struct kvm_vcpu *vcpu)
+static inline unsigned int get_tlb_esel_bit(
+		const struct kvmppc_vcpu_e500 *vcpu_e500)
 {
-	return (vcpu->arch.shared->mas0 >> 16) & 0xfff;
+	return (vcpu_e500->mas0 >> 16) & 0xfff;
+}
+
+static inline unsigned int get_tlb_esel(
+		const struct kvmppc_vcpu_e500 *vcpu_e500,
+		int tlbsel)
+{
+	unsigned int esel = get_tlb_esel_bit(vcpu_e500);
+
+	if (tlbsel == 0) {
+		esel &= KVM_E500_TLB0_WAY_NUM_MASK;
+		esel |= ((vcpu_e500->mas2 >> 12) & KVM_E500_TLB0_WAY_SIZE_MASK)
+				<< KVM_E500_TLB0_WAY_NUM_BIT;
+	} else {
+		esel &= KVM_E500_TLB1_SIZE - 1;
+	}
+
+	return esel;
 }
 
 static inline int tlbe_is_host_safe(const struct kvm_vcpu *vcpu,
-			const struct kvm_book3e_206_tlb_entry *tlbe)
+			const struct tlbe *tlbe)
 {
 	gpa_t gpa;
 
@@ -160,7 +171,7 @@ static inline int tlbe_is_host_safe(const struct kvm_vcpu *vcpu,
 
 	/* Does it match current guest AS? */
 	/* XXX what about IS != DS? */
-	if (get_tlb_ts(tlbe) != !!(vcpu->arch.shared->msr & MSR_IS))
+	if (get_tlb_ts(tlbe) != !!(vcpu->arch.msr & MSR_IS))
 		return 0;
 
 	gpa = get_tlb_raddr(tlbe);

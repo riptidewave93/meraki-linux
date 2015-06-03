@@ -25,9 +25,8 @@
 #include <linux/interrupt.h>
 #include <linux/pci.h>
 #include <linux/dma-mapping.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/mutex.h>
-#include <linux/slab.h>
 
 #include <sound/core.h>
 #include <sound/initval.h>
@@ -49,7 +48,7 @@ MODULE_SUPPORTED_DEVICE("{{Digigram," CARD_NAME "}}");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;             /* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;              /* ID for this card */
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;     /* Enable this card */
+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;     /* Enable this card */
 
 module_param_array(index, int, NULL, 0444);
 MODULE_PARM_DESC(index, "Index value for Digigram " CARD_NAME " soundcard.");
@@ -61,7 +60,7 @@ MODULE_PARM_DESC(enable, "Enable Digigram " CARD_NAME " soundcard.");
 /*
  */
 
-static DEFINE_PCI_DEVICE_TABLE(snd_mixart_ids) = {
+static struct pci_device_id snd_mixart_ids[] = {
 	{ PCI_VDEVICE(MOTOROLA, 0x0003), 0, }, /* MC8240 */
 	{ 0, }
 };
@@ -1102,17 +1101,73 @@ static int snd_mixart_free(struct mixart_mgr *mgr)
 /*
  * proc interface
  */
+static long long snd_mixart_BA0_llseek(struct snd_info_entry *entry,
+				       void *private_file_data,
+				       struct file *file,
+				       long long offset,
+				       int orig)
+{
+	offset = offset & ~3; /* 4 bytes aligned */
+
+	switch(orig) {
+	case SEEK_SET:
+		file->f_pos = offset;
+		break;
+	case SEEK_CUR:
+		file->f_pos += offset;
+		break;
+	case SEEK_END: /* offset is negative */
+		file->f_pos = MIXART_BA0_SIZE + offset;
+		break;
+	default:
+		return -EINVAL;
+	}
+	if(file->f_pos > MIXART_BA0_SIZE)
+		file->f_pos = MIXART_BA0_SIZE;
+	return file->f_pos;
+}
+
+static long long snd_mixart_BA1_llseek(struct snd_info_entry *entry,
+				       void *private_file_data,
+				       struct file *file,
+				       long long offset,
+				       int orig)
+{
+	offset = offset & ~3; /* 4 bytes aligned */
+
+	switch(orig) {
+	case SEEK_SET:
+		file->f_pos = offset;
+		break;
+	case SEEK_CUR:
+		file->f_pos += offset;
+		break;
+	case SEEK_END: /* offset is negative */
+		file->f_pos = MIXART_BA1_SIZE + offset;
+		break;
+	default:
+		return -EINVAL;
+	}
+	if(file->f_pos > MIXART_BA1_SIZE)
+		file->f_pos = MIXART_BA1_SIZE;
+	return file->f_pos;
+}
 
 /*
   mixart_BA0 proc interface for BAR 0 - read callback
  */
-static ssize_t snd_mixart_BA0_read(struct snd_info_entry *entry,
-				   void *file_private_data,
-				   struct file *file, char __user *buf,
-				   size_t count, loff_t pos)
+static long snd_mixart_BA0_read(struct snd_info_entry *entry, void *file_private_data,
+				struct file *file, char __user *buf,
+				unsigned long count, unsigned long pos)
 {
 	struct mixart_mgr *mgr = entry->private_data;
+	unsigned long maxsize;
 
+	if (pos >= MIXART_BA0_SIZE)
+		return 0;
+	maxsize = MIXART_BA0_SIZE - pos;
+	if (count > maxsize)
+		count = maxsize;
 	count = count & ~3; /* make sure the read size is a multiple of 4 bytes */
 	if (copy_to_user_fromio(buf, MIXART_MEM(mgr, pos), count))
 		return -EFAULT;
@@ -1122,13 +1177,18 @@ static ssize_t snd_mixart_BA0_read(struct snd_info_entry *entry,
 /*
   mixart_BA1 proc interface for BAR 1 - read callback
  */
-static ssize_t snd_mixart_BA1_read(struct snd_info_entry *entry,
-				   void *file_private_data,
-				   struct file *file, char __user *buf,
-				   size_t count, loff_t pos)
+static long snd_mixart_BA1_read(struct snd_info_entry *entry, void *file_private_data,
+				struct file *file, char __user *buf,
+				unsigned long count, unsigned long pos)
 {
 	struct mixart_mgr *mgr = entry->private_data;
+	unsigned long maxsize;
 
+	if (pos > MIXART_BA1_SIZE)
+		return 0;
+	maxsize = MIXART_BA1_SIZE - pos;
+	if (count > maxsize)
+		count = maxsize;
 	count = count & ~3; /* make sure the read size is a multiple of 4 bytes */
 	if (copy_to_user_fromio(buf, MIXART_REG(mgr, pos), count))
 		return -EFAULT;
@@ -1137,10 +1197,12 @@ static ssize_t snd_mixart_BA1_read(struct snd_info_entry *entry,
 
 static struct snd_info_entry_ops snd_mixart_proc_ops_BA0 = {
 	.read   = snd_mixart_BA0_read,
+	.llseek = snd_mixart_BA0_llseek
 };
 
 static struct snd_info_entry_ops snd_mixart_proc_ops_BA1 = {
 	.read   = snd_mixart_BA1_read,
+	.llseek = snd_mixart_BA1_llseek
 };
 
 
@@ -1268,7 +1330,7 @@ static int __devinit snd_mixart_probe(struct pci_dev *pci,
 	}
 
 	if (request_irq(pci->irq, snd_mixart_interrupt, IRQF_SHARED,
-			KBUILD_MODNAME, mgr)) {
+			CARD_NAME, mgr)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		snd_mixart_free(mgr);
 		return -EBUSY;
@@ -1381,7 +1443,7 @@ static void __devexit snd_mixart_remove(struct pci_dev *pci)
 }
 
 static struct pci_driver driver = {
-	.name = KBUILD_MODNAME,
+	.name = "Digigram miXart",
 	.id_table = snd_mixart_ids,
 	.probe = snd_mixart_probe,
 	.remove = __devexit_p(snd_mixart_remove),

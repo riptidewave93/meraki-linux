@@ -17,6 +17,7 @@
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/timex.h>
+#include <linux/slab.h>
 #include <linux/smp.h>
 #include <linux/random.h>
 #include <linux/kernel.h>
@@ -27,6 +28,7 @@
 #include <asm/bootinfo.h>
 #include <asm/io.h>
 #include <asm/mipsregs.h>
+#include <asm/system.h>
 
 #include <asm/processor.h>
 #include <asm/pci/bridge.h>
@@ -40,7 +42,7 @@
  * Linux has a controller-independent x86 interrupt architecture.
  * every controller has a 'controller-template', that is used
  * by the main code to do the right thing. Each driver-visible
- * interrupt source is transparently wired to the appropriate
+ * interrupt source is transparently wired to the apropriate
  * controller. Thus drivers need not be aware of the
  * interrupt-controller.
  *
@@ -72,7 +74,7 @@ static inline int alloc_level(int cpu, int irq)
 
 	level = find_first_zero_bit(hub->irq_alloc_mask, LEVELS_PER_SLICE);
 	if (level >= LEVELS_PER_SLICE)
-		panic("Cpu %d flooded with devices", cpu);
+		panic("Cpu %d flooded with devices\n", cpu);
 
 	__set_bit(level, hub->irq_alloc_mask);
 	si->level_to_irq[level] = irq;
@@ -95,7 +97,7 @@ static inline int find_level(cpuid_t *cpunum, int irq)
 			}
 	}
 
-	panic("Could not identify cpu/level for irq %d", irq);
+	panic("Could not identify cpu/level for irq %d\n", irq);
 }
 
 /*
@@ -115,7 +117,7 @@ static int ms1bit(unsigned long x)
 }
 
 /*
- * This code is unnecessarily complex, because we do
+ * This code is unnecessarily complex, because we do IRQF_DISABLED
  * intr enabling. Basically, once we grab the set of intrs we need
  * to service, we must mask _all_ these interrupts; firstly, to make
  * sure the same intr does not intr again, causing recursion that
@@ -146,10 +148,8 @@ static void ip27_do_irq_mask0(void)
 #ifdef CONFIG_SMP
 	if (pend0 & (1UL << CPU_RESCHED_A_IRQ)) {
 		LOCAL_HUB_CLR_INTR(CPU_RESCHED_A_IRQ);
-		scheduler_ipi();
 	} else if (pend0 & (1UL << CPU_RESCHED_B_IRQ)) {
 		LOCAL_HUB_CLR_INTR(CPU_RESCHED_B_IRQ);
-		scheduler_ipi();
 	} else if (pend0 & (1UL << CPU_CALL_A_IRQ)) {
 		LOCAL_HUB_CLR_INTR(CPU_CALL_A_IRQ);
 		smp_call_function_interrupt();
@@ -241,7 +241,7 @@ static int intr_disconnect_level(int cpu, int bit)
 }
 
 /* Startup one of the (PCI ...) IRQs routes over a bridge.  */
-static unsigned int startup_bridge_irq(struct irq_data *d)
+static unsigned int startup_bridge_irq(unsigned int irq)
 {
 	struct bridge_controller *bc;
 	bridgereg_t device;
@@ -249,16 +249,16 @@ static unsigned int startup_bridge_irq(struct irq_data *d)
 	int pin, swlevel;
 	cpuid_t cpu;
 
-	pin = SLOT_FROM_PCI_IRQ(d->irq);
-	bc = IRQ_TO_BRIDGE(d->irq);
+	pin = SLOT_FROM_PCI_IRQ(irq);
+	bc = IRQ_TO_BRIDGE(irq);
 	bridge = bc->base;
 
-	pr_debug("bridge_startup(): irq= 0x%x  pin=%d\n", d->irq, pin);
+	pr_debug("bridge_startup(): irq= 0x%x  pin=%d\n", irq, pin);
 	/*
 	 * "map" irq to a swlevel greater than 6 since the first 6 bits
 	 * of INT_PEND0 are taken
 	 */
-	swlevel = find_level(&cpu, d->irq);
+	swlevel = find_level(&cpu, irq);
 	bridge->b_int_addr[pin].addr = (0x20000 | swlevel | (bc->nasid << 8));
 	bridge->b_int_enable |= (1 << pin);
 	bridge->b_int_enable |= 0x7ffffe00;	/* more stuff in int_enable */
@@ -289,56 +289,58 @@ static unsigned int startup_bridge_irq(struct irq_data *d)
 }
 
 /* Shutdown one of the (PCI ...) IRQs routes over a bridge.  */
-static void shutdown_bridge_irq(struct irq_data *d)
+static void shutdown_bridge_irq(unsigned int irq)
 {
-	struct bridge_controller *bc = IRQ_TO_BRIDGE(d->irq);
+	struct bridge_controller *bc = IRQ_TO_BRIDGE(irq);
 	bridge_t *bridge = bc->base;
 	int pin, swlevel;
 	cpuid_t cpu;
 
-	pr_debug("bridge_shutdown: irq 0x%x\n", d->irq);
-	pin = SLOT_FROM_PCI_IRQ(d->irq);
+	pr_debug("bridge_shutdown: irq 0x%x\n", irq);
+	pin = SLOT_FROM_PCI_IRQ(irq);
 
 	/*
 	 * map irq to a swlevel greater than 6 since the first 6 bits
 	 * of INT_PEND0 are taken
 	 */
-	swlevel = find_level(&cpu, d->irq);
+	swlevel = find_level(&cpu, irq);
 	intr_disconnect_level(cpu, swlevel);
 
 	bridge->b_int_enable &= ~(1 << pin);
 	bridge->b_wid_tflush;
 }
 
-static inline void enable_bridge_irq(struct irq_data *d)
+static inline void enable_bridge_irq(unsigned int irq)
 {
 	cpuid_t cpu;
 	int swlevel;
 
-	swlevel = find_level(&cpu, d->irq);	/* Criminal offence */
+	swlevel = find_level(&cpu, irq);	/* Criminal offence */
 	intr_connect_level(cpu, swlevel);
 }
 
-static inline void disable_bridge_irq(struct irq_data *d)
+static inline void disable_bridge_irq(unsigned int irq)
 {
 	cpuid_t cpu;
 	int swlevel;
 
-	swlevel = find_level(&cpu, d->irq);	/* Criminal offence */
+	swlevel = find_level(&cpu, irq);	/* Criminal offence */
 	intr_disconnect_level(cpu, swlevel);
 }
 
 static struct irq_chip bridge_irq_type = {
 	.name		= "bridge",
-	.irq_startup	= startup_bridge_irq,
-	.irq_shutdown	= shutdown_bridge_irq,
-	.irq_mask	= disable_bridge_irq,
-	.irq_unmask	= enable_bridge_irq,
+	.startup	= startup_bridge_irq,
+	.shutdown	= shutdown_bridge_irq,
+	.ack		= disable_bridge_irq,
+	.mask		= disable_bridge_irq,
+	.mask_ack	= disable_bridge_irq,
+	.unmask		= enable_bridge_irq,
 };
 
 void register_bridge_irq(unsigned int irq)
 {
-	irq_set_chip_and_handler(irq, &bridge_irq_type, handle_level_irq);
+	set_irq_chip_and_handler(irq, &bridge_irq_type, handle_level_irq);
 }
 
 int request_bridge_irq(struct bridge_controller *bc)

@@ -20,9 +20,7 @@
 
 #include <linux/mtd/nand.h>
 #include <linux/mtd/partitions.h>
-#include <linux/slab.h>
 #include <linux/gpio.h>
-#include <linux/module.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>
@@ -50,6 +48,8 @@ static struct mtd_partition partition_info[] = {
 	}
 };
 #define NUM_PARTITIONS (ARRAY_SIZE(partition_info))
+
+const char *part_probes[] = { "cmdlinepart", NULL };
 
 static u_char cmx270_read_byte(struct mtd_info *mtd)
 {
@@ -150,6 +150,9 @@ static int cmx270_device_ready(struct mtd_info *mtd)
 static int __init cmx270_init(void)
 {
 	struct nand_chip *this;
+	const char *part_type;
+	struct mtd_partition *mtd_parts;
+	int mtd_parts_nb = 0;
 	int ret;
 
 	if (!(machine_is_armcore() && cpu_is_pxa27x()))
@@ -218,9 +221,23 @@ static int __init cmx270_init(void)
 		goto err_scan;
 	}
 
+#ifdef CONFIG_MTD_CMDLINE_PARTS
+	mtd_parts_nb = parse_mtd_partitions(cmx270_nand_mtd, part_probes,
+					    &mtd_parts, 0);
+	if (mtd_parts_nb > 0)
+		part_type = "command line";
+	else
+		mtd_parts_nb = 0;
+#endif
+	if (!mtd_parts_nb) {
+		mtd_parts = partition_info;
+		mtd_parts_nb = NUM_PARTITIONS;
+		part_type = "static";
+	}
+
 	/* Register the partitions */
-	ret = mtd_device_parse_register(cmx270_nand_mtd, NULL, NULL,
-					partition_info, NUM_PARTITIONS);
+	pr_notice("Using %s partition definition\n", part_type);
+	ret = mtd_device_register(cmx270_nand_mtd, mtd_parts, mtd_parts_nb);
 	if (ret)
 		goto err_scan;
 

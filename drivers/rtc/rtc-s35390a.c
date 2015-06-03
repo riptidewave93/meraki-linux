@@ -275,6 +275,7 @@ exit_dummy:
 		if (s35390a->client[i])
 			i2c_unregister_device(s35390a->client[i]);
 	kfree(s35390a);
+	i2c_set_clientdata(client, NULL);
 
 exit:
 	return err;
@@ -291,6 +292,7 @@ static int s35390a_remove(struct i2c_client *client)
 
 	rtc_device_unregister(s35390a->rtc);
 	kfree(s35390a);
+	i2c_set_clientdata(client, NULL);
 
 	return 0;
 }
@@ -304,8 +306,19 @@ static struct i2c_driver s35390a_driver = {
 	.id_table	= s35390a_id,
 };
 
-module_i2c_driver(s35390a_driver);
+static int __init s35390a_rtc_init(void)
+{
+	return i2c_add_driver(&s35390a_driver);
+}
+
+static void __exit s35390a_rtc_exit(void)
+{
+	i2c_del_driver(&s35390a_driver);
+}
 
 MODULE_AUTHOR("Byron Bradley <byron.bbradley@gmail.com>");
 MODULE_DESCRIPTION("S35390A RTC driver");
 MODULE_LICENSE("GPL");
+
+module_init(s35390a_rtc_init);
+module_exit(s35390a_rtc_exit);

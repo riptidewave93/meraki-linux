@@ -26,13 +26,9 @@
  * Vojtech Pavlik, Simunkova 1594, Prague 8, 182 00 Czech Republic
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/debugfs.h>
 #include <linux/seq_file.h>
 #include <linux/sched.h>
-#include <linux/export.h>
-#include <linux/slab.h>
 #include <linux/uaccess.h>
 #include <linux/poll.h>
 
@@ -114,14 +110,6 @@ static const struct hid_usage_entry hid_usage_table[] = {
       {0, 0xbd, "FlareRelease"},
       {0, 0xbe, "LandingGear"},
       {0, 0xbf, "ToeBrake"},
-  {  6, 0, "GenericDeviceControls" },
-      {0, 0x20, "BatteryStrength" },
-      {0, 0x21, "WirelessChannel" },
-      {0, 0x22, "WirelessID" },
-      {0, 0x23, "DiscoverWirelessControl" },
-      {0, 0x24, "SecurityCodeCharacterEntered" },
-      {0, 0x25, "SecurityCodeCharactedErased" },
-      {0, 0x26, "SecurityCodeCleared" },
   {  7, 0, "Keyboard" },
   {  8, 0, "LED" },
       {0, 0x01, "NumLock"},
@@ -350,7 +338,7 @@ static const struct hid_usage_entry hid_usage_table[] = {
     { 0x85, 0x83, "DesignCapacity" },
     { 0x85, 0x85, "ManufacturerDate" },
     { 0x85, 0x89, "iDeviceChemistry" },
-    { 0x85, 0x8b, "Rechargeable" },
+    { 0x85, 0x8b, "Rechargable" },
     { 0x85, 0x8f, "iOEMInformation" },
     { 0x85, 0x8d, "CapacityGranularity1" },
     { 0x85, 0xd0, "ACPresent" },
@@ -404,7 +392,7 @@ char *hid_resolv_usage(unsigned usage, struct seq_file *f) {
 
 	buf = resolv_usage_page(usage >> 16, f);
 	if (IS_ERR(buf)) {
-		pr_err("error allocating HID debug buffer\n");
+		printk(KERN_ERR "error allocating HID debug buffer\n");
 		return NULL;
 	}
 
@@ -458,11 +446,6 @@ void hid_dump_field(struct hid_field *field, int n, struct seq_file *f) {
 		tab(n, f);
 		seq_printf(f, "Logical(");
 		hid_resolv_usage(field->logical, f); seq_printf(f, ")\n");
-	}
-	if (field->application) {
-		tab(n, f);
-		seq_printf(f, "Application(");
-		hid_resolv_usage(field->application, f); seq_printf(f, ")\n");
 	}
 	tab(n, f); seq_printf(f, "Usage(%d)\n", field->maxusage);
 	for (j = 0; j < field->maxusage; j++) {
@@ -581,13 +564,11 @@ void hid_debug_event(struct hid_device *hdev, char *buf)
 	struct hid_debug_list *list;
 
 	list_for_each_entry(list, &hdev->debug_list, node) {
-		for (i = 0; i < strlen(buf); i++)
-			list->hid_debug_buf[(list->tail + i) % HID_DEBUG_BUFSIZE] =
+		for (i = 0; i <= strlen(buf); i++)
+			list->hid_debug_buf[(list->tail + i) % (HID_DEBUG_BUFSIZE - 1)] =
 				buf[i];
-		list->tail = (list->tail + i) % HID_DEBUG_BUFSIZE;
+		list->tail = (list->tail + i) % (HID_DEBUG_BUFSIZE - 1);
         }
-
-	wake_up_interruptible(&hdev->debug_wait);
 }
 EXPORT_SYMBOL_GPL(hid_debug_event);
 
@@ -829,7 +810,7 @@ static const char *relatives[REL_MAX + 1] = {
 	[REL_WHEEL] = "Wheel",		[REL_MISC] = "Misc",
 };
 
-static const char *absolutes[ABS_CNT] = {
+static const char *absolutes[ABS_MAX + 1] = {
 	[ABS_X] = "X",			[ABS_Y] = "Y",
 	[ABS_Z] = "Z",			[ABS_RX] = "Rx",
 	[ABS_RY] = "Ry",		[ABS_RZ] = "Rz",
@@ -883,13 +864,13 @@ static const char **names[EV_MAX + 1] = {
 	[EV_SND] = sounds,			[EV_REP] = repeats,
 };
 
-static void hid_resolv_event(__u8 type, __u16 code, struct seq_file *f)
-{
+void hid_resolv_event(__u8 type, __u16 code, struct seq_file *f) {
+
 	seq_printf(f, "%s.%s", events[type] ? events[type] : "?",
 		names[type] ? (names[type][code] ? names[type][code] : "?") : "?");
 }
 
-static void hid_dump_input_mapping(struct hid_device *hid, struct seq_file *f)
+void hid_dump_input_mapping(struct hid_device *hid, struct seq_file *f)
 {
 	int i, j, k;
 	struct hid_report *report;
@@ -967,8 +948,8 @@ static ssize_t hid_debug_events_read(struct file *file, char __user *buffer,
 	int ret = 0, len;
 	DECLARE_WAITQUEUE(wait, current);
 
-	mutex_lock(&list->read_mutex);
 	while (ret == 0) {
+		mutex_lock(&list->read_mutex);
 		if (list->head == list->tail) {
 			add_wait_queue(&list->hdev->debug_wait, &wait);
 			set_current_state(TASK_INTERRUPTIBLE);
@@ -1069,7 +1050,6 @@ static const struct file_operations hid_debug_events_fops = {
 	.read           = hid_debug_events_read,
 	.poll		= hid_debug_events_poll,
 	.release        = hid_debug_events_release,
-	.llseek		= noop_llseek,
 };
 
 

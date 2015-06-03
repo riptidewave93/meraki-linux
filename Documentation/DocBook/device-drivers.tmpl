@@ -45,20 +45,14 @@
      </sect1>
 
      <sect1><title>Atomic and pointer manipulation</title>
-!Iarch/x86/include/asm/atomic.h
+!Iarch/x86/include/asm/atomic_32.h
+!Iarch/x86/include/asm/unaligned.h
      </sect1>
 
      <sect1><title>Delaying, scheduling, and timer routines</title>
 !Iinclude/linux/sched.h
-!Ekernel/sched/core.c
-!Ikernel/sched/cpupri.c
-!Ikernel/sched/fair.c
-!Iinclude/linux/completion.h
+!Ekernel/sched.c
 !Ekernel/timer.c
-     </sect1>
-     <sect1><title>Wait queues and Wake events</title>
-!Iinclude/linux/wait.h
-!Ekernel/wait.c
      </sect1>
      <sect1><title>High-resolution timers</title>
 !Iinclude/linux/ktime.h
@@ -98,16 +92,13 @@ X!Iinclude/linux/kobject.h
 
   <chapter id="devdrivers">
      <title>Device drivers infrastructure</title>
-     <sect1><title>The Basic Device Driver-Model Structures </title>
-!Iinclude/linux/device.h
-     </sect1>
      <sect1><title>Device Drivers Base</title>
-!Idrivers/base/init.c
+<!--
+X!Iinclude/linux/device.h
+-->
 !Edrivers/base/driver.c
 !Edrivers/base/core.c
-!Edrivers/base/syscore.c
 !Edrivers/base/class.c
-!Idrivers/base/node.c
 !Edrivers/base/firmware_class.c
 !Edrivers/base/transport_class.c
 <!-- Cannot be included, because
@@ -116,18 +107,12 @@ X!Iinclude/linux/kobject.h
      exceed allowed 44 characters maximum
 X!Edrivers/base/attribute_container.c
 -->
-!Edrivers/base/dd.c
+!Edrivers/base/sys.c
 <!--
 X!Edrivers/base/interface.c
 -->
-!Iinclude/linux/platform_device.h
 !Edrivers/base/platform.c
 !Edrivers/base/bus.c
-     </sect1>
-     <sect1><title>Device Drivers DMA Management</title>
-!Edrivers/base/dma-buf.c
-!Edrivers/base/dma-coherent.c
-!Edrivers/base/dma-mapping.c
      </sect1>
      <sect1><title>Device Drivers Power Management</title>
 !Edrivers/base/power/main.c
@@ -226,8 +211,9 @@ X!Isound/sound_firmware.c
 
   <chapter id="uart16x50">
      <title>16x50 UART Driver</title>
-!Edrivers/tty/serial/serial_core.c
-!Edrivers/tty/serial/8250/8250.c
+!Iinclude/linux/serial_core.h
+!Edrivers/serial/serial_core.c
+!Edrivers/serial/8250.c
   </chapter>
 
   <chapter id="fbdev">
@@ -307,27 +293,10 @@ X!Idrivers/video/console/fonts.c
 
   <chapter id="input_subsystem">
      <title>Input Subsystem</title>
-     <sect1><title>Input core</title>
 !Iinclude/linux/input.h
 !Edrivers/input/input.c
 !Edrivers/input/ff-core.c
 !Edrivers/input/ff-memless.c
-     </sect1>
-     <sect1><title>Multitouch Library</title>
-!Iinclude/linux/input/mt.h
-!Edrivers/input/input-mt.c
-     </sect1>
-     <sect1><title>Polled input devices</title>
-!Iinclude/linux/input-polldev.h
-!Edrivers/input/input-polldev.c
-     </sect1>
-     <sect1><title>Matrix keyboars/keypads</title>
-!Iinclude/linux/input/matrix_keypad.h
-     </sect1>
-     <sect1><title>Sparse keymap support</title>
-!Iinclude/linux/input/sparse-keymap.h
-!Edrivers/input/sparse-keymap.c
-     </sect1>
   </chapter>
 
   <chapter id="spi">
@@ -444,23 +413,6 @@ X!Idrivers/video/console/fonts.c
 !Iinclude/linux/i2c.h
 !Fdrivers/i2c/i2c-boardinfo.c i2c_register_board_info
 !Edrivers/i2c/i2c-core.c
-  </chapter>
-
-  <chapter id="hsi">
-     <title>High Speed Synchronous Serial Interface (HSI)</title>
-
-     <para>
-	High Speed Synchronous Serial Interface (HSI) is a
-	serial interface mainly used for connecting application
-	engines (APE) with cellular modem engines (CMT) in cellular
-	handsets.
-
-	HSI provides multiplexing for up to 16 logical channels,
-	low-latency and full duplex communication.
-     </para>
-
-!Iinclude/linux/hsi/hsi.h
-!Edrivers/hsi/hsi.c
   </chapter>
 
 </book>

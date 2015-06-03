@@ -13,8 +13,6 @@
  *
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/ctype.h>
 #include <linux/ieee80211.h>
@@ -40,11 +38,6 @@ struct lib80211_crypto_alg {
 
 static LIST_HEAD(lib80211_crypto_algs);
 static DEFINE_SPINLOCK(lib80211_crypto_lock);
-
-static void lib80211_crypt_deinit_entries(struct lib80211_crypt_info *info,
-					  int force);
-static void lib80211_crypt_quiescing(struct lib80211_crypt_info *info);
-static void lib80211_crypt_deinit_handler(unsigned long data);
 
 const char *print_ssid(char *buf, const char *ssid, u8 ssid_len)
 {
@@ -116,8 +109,7 @@ void lib80211_crypt_info_free(struct lib80211_crypt_info *info)
 }
 EXPORT_SYMBOL(lib80211_crypt_info_free);
 
-static void lib80211_crypt_deinit_entries(struct lib80211_crypt_info *info,
-					  int force)
+void lib80211_crypt_deinit_entries(struct lib80211_crypt_info *info, int force)
 {
 	struct lib80211_crypt_data *entry, *next;
 	unsigned long flags;
@@ -137,9 +129,10 @@ static void lib80211_crypt_deinit_entries(struct lib80211_crypt_info *info,
 	}
 	spin_unlock_irqrestore(info->lock, flags);
 }
+EXPORT_SYMBOL(lib80211_crypt_deinit_entries);
 
 /* After this, crypt_deinit_list won't accept new members */
-static void lib80211_crypt_quiescing(struct lib80211_crypt_info *info)
+void lib80211_crypt_quiescing(struct lib80211_crypt_info *info)
 {
 	unsigned long flags;
 
@@ -147,8 +140,9 @@ static void lib80211_crypt_quiescing(struct lib80211_crypt_info *info)
 	info->crypt_quiesced = 1;
 	spin_unlock_irqrestore(info->lock, flags);
 }
+EXPORT_SYMBOL(lib80211_crypt_quiescing);
 
-static void lib80211_crypt_deinit_handler(unsigned long data)
+void lib80211_crypt_deinit_handler(unsigned long data)
 {
 	struct lib80211_crypt_info *info = (struct lib80211_crypt_info *)data;
 	unsigned long flags;
@@ -164,6 +158,7 @@ static void lib80211_crypt_deinit_handler(unsigned long data)
 	}
 	spin_unlock_irqrestore(info->lock, flags);
 }
+EXPORT_SYMBOL(lib80211_crypt_deinit_handler);
 
 void lib80211_crypt_delayed_deinit(struct lib80211_crypt_info *info,
 				    struct lib80211_crypt_data **crypt)
@@ -229,8 +224,8 @@ int lib80211_unregister_crypto_ops(struct lib80211_crypto_ops *ops)
 	return -EINVAL;
 
       found:
-	printk(KERN_DEBUG "lib80211_crypt: unregistered algorithm '%s'\n",
-	       ops->name);
+	printk(KERN_DEBUG "lib80211_crypt: unregistered algorithm "
+	       "'%s'\n", ops->name);
 	list_del(&alg->list);
 	spin_unlock_irqrestore(&lib80211_crypto_lock, flags);
 	kfree(alg);
@@ -275,7 +270,7 @@ static struct lib80211_crypto_ops lib80211_crypt_null = {
 
 static int __init lib80211_init(void)
 {
-	pr_info(DRV_DESCRIPTION "\n");
+	printk(KERN_INFO DRV_NAME ": " DRV_DESCRIPTION "\n");
 	return lib80211_register_crypto_ops(&lib80211_crypt_null);
 }
 

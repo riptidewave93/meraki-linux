@@ -242,11 +242,32 @@ static int sha384_final(struct shash_desc *desc, u8 *hash)
 	return 0;
 }
 
+static int sha512_partial(struct shash_desc *desc, u8 *data)
+{
+	struct sha512_state *sctx = shash_desc_ctx(desc);
+	int i;
+
+	for (i = 0; i < 8; i++) {
+		*data++ = (sctx->state[i] >> 32) & 0xFF;
+		*data++ = (sctx->state[i] >> 40) & 0xFF;
+		*data++ = (sctx->state[i] >> 48) & 0xFF;
+		*data++ = (sctx->state[i] >> 56) & 0xFF;
+		*data++ = sctx->state[i] & 0xFF;
+		*data++ = (sctx->state[i] >> 8) & 0xFF;
+		*data++ = (sctx->state[i] >> 16) & 0xFF;
+		*data++ = (sctx->state[i] >> 24) & 0xFF;
+	}
+
+	return 0;
+}
+
 static struct shash_alg sha512 = {
 	.digestsize	=	SHA512_DIGEST_SIZE,
 	.init		=	sha512_init,
 	.update		=	sha512_update,
 	.final		=	sha512_final,
+	.partial 	=	sha512_partial,
+	.partialsize	=	SHA512_DIGEST_SIZE,
 	.descsize	=	sizeof(struct sha512_state),
 	.base		=	{
 		.cra_name	=	"sha512",
@@ -261,6 +282,8 @@ static struct shash_alg sha384 = {
 	.init		=	sha384_init,
 	.update		=	sha512_update,
 	.final		=	sha384_final,
+	.partial 	=	sha512_partial,
+	.partialsize	=	SHA512_DIGEST_SIZE,
 	.descsize	=	sizeof(struct sha512_state),
 	.base		=	{
 		.cra_name	=	"sha384",

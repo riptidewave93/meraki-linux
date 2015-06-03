@@ -11,8 +11,6 @@
 #include <linux/fb.h>
 #include <linux/interrupt.h>
 #include <linux/pci.h>
-#include <linux/slab.h>
-#include <linux/module.h>
 
 #include "carminefb.h"
 #include "carminefb_regs.h"
@@ -433,7 +431,7 @@ static int init_hardware(struct carmine_hw *hw)
 	u32 loops;
 	u32 ret;
 
-	/* Initialize Carmine */
+	/* Initalize Carmine */
 	/* Sets internal clock */
 	c_set_hw_reg(hw, CARMINE_CTL_REG + CARMINE_CTL_REG_CLOCK_ENABLE,
 			CARMINE_DFLT_IP_CLOCK_ENABLE);
@@ -655,7 +653,7 @@ static int __devinit carminefb_probe(struct pci_dev *dev,
 		printk(KERN_ERR "carminefb: Memory bar is only %d bytes, %d "
 				"are required.", carminefb_fix.smem_len,
 				CARMINE_TOTAL_DIPLAY_MEM);
-		goto err_unmap_vregs;
+		goto err_free_reg_mmio;
 	}
 
 	if (!request_mem_region(carminefb_fix.smem_start,
@@ -668,6 +666,8 @@ static int __devinit carminefb_probe(struct pci_dev *dev,
 			carminefb_fix.smem_len);
 	if (!hw->screen_mem) {
 		printk(KERN_ERR "carmine: Can't ioremap smem area.\n");
+		release_mem_region(carminefb_fix.smem_start,
+				carminefb_fix.smem_len);
 		goto err_reg_smem;
 	}
 
@@ -709,7 +709,7 @@ err_deinit_hw:
 err_unmap_screen:
 	iounmap(hw->screen_mem);
 err_reg_smem:
-	release_mem_region(carminefb_fix.smem_start, carminefb_fix.smem_len);
+	release_mem_region(carminefb_fix.mmio_start, carminefb_fix.mmio_len);
 err_unmap_vregs:
 	iounmap(hw->v_regs);
 err_free_reg_mmio:

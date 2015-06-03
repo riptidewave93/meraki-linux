@@ -77,8 +77,10 @@ static void
 deadline_add_rq_rb(struct deadline_data *dd, struct request *rq)
 {
 	struct rb_root *root = deadline_rb_root(dd, rq);
+	struct request *__alias;
 
-	elv_rb_add(root, rq);
+	while (unlikely(__alias = elv_rb_add(root, rq)))
+		deadline_move_request(dd, __alias);
 }
 
 static inline void
@@ -324,6 +326,14 @@ dispatch_request:
 	return 1;
 }
 
+static int deadline_queue_empty(struct request_queue *q)
+{
+	struct deadline_data *dd = q->elevator->elevator_data;
+
+	return list_empty(&dd->fifo_list[WRITE])
+		&& list_empty(&dd->fifo_list[READ]);
+}
+
 static void deadline_exit_queue(struct elevator_queue *e)
 {
 	struct deadline_data *dd = e->elevator_data;
@@ -435,6 +445,7 @@ static struct elevator_type iosched_deadline = {
 		.elevator_merge_req_fn =	deadline_merged_requests,
 		.elevator_dispatch_fn =		deadline_dispatch_requests,
 		.elevator_add_req_fn =		deadline_add_request,
+		.elevator_queue_empty_fn =	deadline_queue_empty,
 		.elevator_former_req_fn =	elv_rb_former_request,
 		.elevator_latter_req_fn =	elv_rb_latter_request,
 		.elevator_init_fn =		deadline_init_queue,
@@ -448,7 +459,9 @@ static struct elevator_type iosched_deadline = {
 
 static int __init deadline_init(void)
 {
-	return elv_register(&iosched_deadline);
+	elv_register(&iosched_deadline);
+
+	return 0;
 }
 
 static void __exit deadline_exit(void)

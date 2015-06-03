@@ -31,8 +31,8 @@
 
 static int debug;
 
-#define cx_info(args...) do { printk(KERN_INFO "CX24113: " args); } while (0)
-#define cx_err(args...)  do { printk(KERN_ERR  "CX24113: " args); } while (0)
+#define info(args...) do { printk(KERN_INFO "CX24113: " args); } while (0)
+#define err(args...)  do { printk(KERN_ERR  "CX24113: " args); } while (0)
 
 #define dprintk(args...) \
 	do { \
@@ -341,7 +341,7 @@ static void cx24113_calc_pll_nf(struct cx24113_state *state, u16 *n, s32 *f)
 	} while (N < 6 && R < 3);
 
 	if (N < 6) {
-		cx_err("strange frequency: N < 6\n");
+		err("strange frequency: N < 6\n");
 		return;
 	}
 	F = freq_hz;
@@ -476,21 +476,21 @@ static int cx24113_init(struct dvb_frontend *fe)
 	return ret;
 }
 
-static int cx24113_set_params(struct dvb_frontend *fe)
+static int cx24113_set_params(struct dvb_frontend *fe,
+		struct dvb_frontend_parameters *p)
 {
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct cx24113_state *state = fe->tuner_priv;
 	/* for a ROLL-OFF factor of 0.35, 0.2: 600, 0.25: 625 */
 	u32 roll_off = 675;
 	u32 bw;
 
-	bw  = ((c->symbol_rate/100) * roll_off) / 1000;
+	bw  = ((p->u.qpsk.symbol_rate/100) * roll_off) / 1000;
 	bw += (10000000/100) + 5;
 	bw /= 10;
 	bw += 1000;
 	cx24113_set_bandwidth(state, bw);
 
-	cx24113_set_frequency(state, c->frequency);
+	cx24113_set_frequency(state, p->frequency);
 	msleep(5);
 	return cx24113_get_status(fe, &bw);
 }
@@ -547,9 +547,11 @@ static const struct dvb_tuner_ops cx24113_tuner_ops = {
 	.release       = cx24113_release,
 
 	.init          = cx24113_init,
+	.sleep         = NULL,
 
 	.set_params    = cx24113_set_params,
 	.get_frequency = cx24113_get_frequency,
+	.get_bandwidth = NULL,
 	.get_status    = cx24113_get_status,
 };
 
@@ -561,7 +563,7 @@ struct dvb_frontend *cx24113_attach(struct dvb_frontend *fe,
 		kzalloc(sizeof(struct cx24113_state), GFP_KERNEL);
 	int rc;
 	if (state == NULL) {
-		cx_err("Unable to kzalloc\n");
+		err("Unable to kzalloc\n");
 		goto error;
 	}
 
@@ -569,7 +571,7 @@ struct dvb_frontend *cx24113_attach(struct dvb_frontend *fe,
 	state->config = config;
 	state->i2c = i2c;
 
-	cx_info("trying to detect myself\n");
+	info("trying to detect myself\n");
 
 	/* making a dummy read, because of some expected troubles
 	 * after power on */
@@ -577,24 +579,24 @@ struct dvb_frontend *cx24113_attach(struct dvb_frontend *fe,
 
 	rc = cx24113_readreg(state, 0x00);
 	if (rc < 0) {
-		cx_info("CX24113 not found.\n");
+		info("CX24113 not found.\n");
 		goto error;
 	}
 	state->rev = rc;
 
 	switch (rc) {
 	case 0x43:
-		cx_info("detected CX24113 variant\n");
+		info("detected CX24113 variant\n");
 		break;
 	case REV_CX24113:
-		cx_info("successfully detected\n");
+		info("sucessfully detected\n");
 		break;
 	default:
-		cx_err("unsupported device id: %x\n", state->rev);
+		err("unsupported device id: %x\n", state->rev);
 		goto error;
 	}
 	state->ver = cx24113_readreg(state, 0x01);
-	cx_info("version: %x\n", state->ver);
+	info("version: %x\n", state->ver);
 
 	/* create dvb_frontend */
 	memcpy(&fe->ops.tuner_ops, &cx24113_tuner_ops,

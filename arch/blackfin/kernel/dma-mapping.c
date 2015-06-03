@@ -7,26 +7,30 @@
  */
 
 #include <linux/types.h>
-#include <linux/gfp.h>
+#include <linux/mm.h>
 #include <linux/string.h>
+#include <linux/bootmem.h>
 #include <linux/spinlock.h>
+#include <linux/device.h>
 #include <linux/dma-mapping.h>
+#include <linux/io.h>
 #include <linux/scatterlist.h>
-#include <linux/export.h>
+#include <asm/cacheflush.h>
+#include <asm/bfin-global.h>
 
 static spinlock_t dma_page_lock;
-static unsigned long *dma_page;
+static unsigned int *dma_page;
 static unsigned int dma_pages;
 static unsigned long dma_base;
 static unsigned long dma_size;
 static unsigned int dma_initialized;
 
-static void dma_alloc_init(unsigned long start, unsigned long end)
+void dma_alloc_init(unsigned long start, unsigned long end)
 {
 	spin_lock_init(&dma_page_lock);
 	dma_initialized = 0;
 
-	dma_page = (unsigned long *)__get_free_page(GFP_KERNEL);
+	dma_page = (unsigned int *)__get_free_page(GFP_KERNEL);
 	memset(dma_page, 0, PAGE_SIZE);
 	dma_base = PAGE_ALIGN(start);
 	dma_size = PAGE_ALIGN(end) - PAGE_ALIGN(start);
@@ -54,11 +58,10 @@ static unsigned long __alloc_dma_pages(unsigned int pages)
 	spin_lock_irqsave(&dma_page_lock, flags);
 
 	for (i = 0; i < dma_pages;) {
-		if (test_bit(i++, dma_page) == 0) {
+		if (dma_page[i++] == 0) {
 			if (++count == pages) {
 				while (count--)
-					__set_bit(--i, dma_page);
-
+					dma_page[--i] = 1;
 				ret = dma_base + (i << PAGE_SHIFT);
 				break;
 			}
@@ -81,14 +84,14 @@ static void __free_dma_pages(unsigned long addr, unsigned int pages)
 	}
 
 	spin_lock_irqsave(&dma_page_lock, flags);
-	for (i = page; i < page + pages; i++)
-		__clear_bit(i, dma_page);
-
+	for (i = page; i < page + pages; i++) {
+		dma_page[i] = 0;
+	}
 	spin_unlock_irqrestore(&dma_page_lock, flags);
 }
 
 void *dma_alloc_coherent(struct device *dev, size_t size,
-			 dma_addr_t *dma_handle, gfp_t gfp)
+			 dma_addr_t * dma_handle, gfp_t gfp)
 {
 	void *ret;
 
@@ -112,14 +115,21 @@ dma_free_coherent(struct device *dev, size_t size, void *vaddr,
 EXPORT_SYMBOL(dma_free_coherent);
 
 /*
- * Streaming DMA mappings
+ * Dummy functions defined for some existing drivers
  */
-void __dma_sync(dma_addr_t addr, size_t size,
-		enum dma_data_direction dir)
+
+dma_addr_t
+dma_map_single(struct device *dev, void *ptr, size_t size,
+	       enum dma_data_direction direction)
 {
-	__dma_sync_inline(addr, size, dir);
+	BUG_ON(direction == DMA_NONE);
+
+	invalidate_dcache_range((unsigned long)ptr,
+			(unsigned long)ptr + size);
+
+	return (dma_addr_t) ptr;
 }
-EXPORT_SYMBOL(__dma_sync);
+EXPORT_SYMBOL(dma_map_single);
 
 int
 dma_map_sg(struct device *dev, struct scatterlist *sg, int nents,
@@ -127,23 +137,30 @@ dma_map_sg(struct device *dev, struct scatterlist *sg, int nents,
 {
 	int i;
 
+	BUG_ON(direction == DMA_NONE);
+
 	for (i = 0; i < nents; i++, sg++) {
 		sg->dma_address = (dma_addr_t) sg_virt(sg);
-		__dma_sync(sg_dma_address(sg), sg_dma_len(sg), direction);
+
+		invalidate_dcache_range(sg_dma_address(sg),
+					sg_dma_address(sg) +
+					sg_dma_len(sg));
 	}
 
 	return nents;
 }
 EXPORT_SYMBOL(dma_map_sg);
 
-void dma_sync_sg_for_device(struct device *dev, struct scatterlist *sg,
-			    int nelems, enum dma_data_direction direction)
+void dma_unmap_single(struct device *dev, dma_addr_t dma_addr, size_t size,
+		enum dma_data_direction direction)
 {
-	int i;
-
-	for (i = 0; i < nelems; i++, sg++) {
-		sg->dma_address = (dma_addr_t) sg_virt(sg);
-		__dma_sync(sg_dma_address(sg), sg_dma_len(sg), direction);
-	}
+	BUG_ON(direction == DMA_NONE);
 }
-EXPORT_SYMBOL(dma_sync_sg_for_device);
+EXPORT_SYMBOL(dma_unmap_single);
+
+void dma_unmap_sg(struct device *dev, struct scatterlist *sg,
+		int nhwentries, enum dma_data_direction direction)
+{
+	BUG_ON(direction == DMA_NONE);
+}
+EXPORT_SYMBOL(dma_unmap_sg);

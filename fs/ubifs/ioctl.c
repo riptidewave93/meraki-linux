@@ -160,7 +160,7 @@ long ubifs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		if (IS_RDONLY(inode))
 			return -EROFS;
 
-		if (!inode_owner_or_capable(inode))
+		if (!is_owner_or_cap(inode))
 			return -EACCES;
 
 		if (get_user(flags, (int __user *) arg))
@@ -173,12 +173,12 @@ long ubifs_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 		 * Make sure the file-system is read-write and make sure it
 		 * will not become read-only while we are changing the flags.
 		 */
-		err = mnt_want_write_file(file);
+		err = mnt_want_write(file->f_path.mnt);
 		if (err)
 			return err;
 		dbg_gen("set flags: %#x, i_flags %#x", flags, inode->i_flags);
 		err = setflags(inode, flags);
-		mnt_drop_write_file(file);
+		mnt_drop_write(file->f_path.mnt);
 		return err;
 	}
 

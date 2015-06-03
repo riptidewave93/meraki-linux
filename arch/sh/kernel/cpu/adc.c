@@ -18,19 +18,19 @@ int adc_single(unsigned int channel)
 
 	off = (channel & 0x03) << 2;
 
-	csr = __raw_readb(ADCSR);
+	csr = ctrl_inb(ADCSR);
 	csr = channel | ADCSR_ADST | ADCSR_CKS;
-	__raw_writeb(csr, ADCSR);
+	ctrl_outb(csr, ADCSR);
 
 	do {
-		csr = __raw_readb(ADCSR);
+		csr = ctrl_inb(ADCSR);
 	} while ((csr & ADCSR_ADF) == 0);
 
 	csr &= ~(ADCSR_ADF | ADCSR_ADST);
-	__raw_writeb(csr, ADCSR);
+	ctrl_outb(csr, ADCSR);
 
-	return (((__raw_readb(ADDRAH + off) << 8) |
-		__raw_readb(ADDRAL + off)) >> 6);
+	return (((ctrl_inb(ADDRAH + off) << 8) |
+		ctrl_inb(ADDRAL + off)) >> 6);
 }
 
 EXPORT_SYMBOL(adc_single);

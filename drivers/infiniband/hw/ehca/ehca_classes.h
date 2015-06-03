@@ -112,7 +112,7 @@ struct ehca_sport {
 
 struct ehca_shca {
 	struct ib_device ib_device;
-	struct platform_device *ofdev;
+	struct of_device *ofdev;
 	u8 num_ports;
 	int hw_level;
 	struct list_head shca_list;
@@ -375,12 +375,11 @@ extern rwlock_t ehca_qp_idr_lock;
 extern rwlock_t ehca_cq_idr_lock;
 extern struct idr ehca_qp_idr;
 extern struct idr ehca_cq_idr;
-extern spinlock_t shca_list_lock;
 
 extern int ehca_static_rate;
 extern int ehca_port_act_time;
-extern bool ehca_use_hp_mr;
-extern bool ehca_scaling_code;
+extern int ehca_use_hp_mr;
+extern int ehca_scaling_code;
 extern int ehca_lock_hcalls;
 extern int ehca_nr_ports;
 extern int ehca_max_cq;

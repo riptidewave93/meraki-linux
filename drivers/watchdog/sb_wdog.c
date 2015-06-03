@@ -1,7 +1,7 @@
 /*
  * Watchdog driver for SiByte SB1 SoCs
  *
- * Copyright (C) 2007 OnStor, Inc. * Andrew Sharp <andy.sharp@lsi.com>
+ * Copyright (C) 2007 OnStor, Inc. * Andrew Sharp <andy.sharp@onstor.com>
  *
  * This driver is intended to make the second of two hardware watchdogs
  * on the Sibyte 12XX and 11XX SoCs available to the user.  There are two
@@ -43,9 +43,6 @@
  *	version 1 or 2 as published by the Free Software Foundation.
  *
  */
-
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/io.h>
 #include <linux/uaccess.h>
@@ -70,8 +67,8 @@ static DEFINE_SPINLOCK(sbwd_lock);
 void sbwdog_set(char __iomem *wdog, unsigned long t)
 {
 	spin_lock(&sbwd_lock);
-	__raw_writeb(0, wdog);
-	__raw_writeq(t & 0x7fffffUL, wdog - 0x10);
+	__raw_writeb(0, wdog - 0x10);
+	__raw_writeq(t & 0x7fffffUL, wdog);
 	spin_unlock(&sbwd_lock);
 }
 
@@ -128,8 +125,9 @@ static int sbwdog_release(struct inode *inode, struct file *file)
 		__raw_writeb(0, user_dog);
 		module_put(THIS_MODULE);
 	} else {
-		pr_crit("%s: Unexpected close, not stopping watchdog!\n",
-			ident.identity);
+		printk(KERN_CRIT
+			"%s: Unexpected close, not stopping watchdog!\n",
+						ident.identity);
 		sbwdog_pet(user_dog);
 	}
 	clear_bit(0, &sbwdog_gate);
@@ -271,7 +269,7 @@ irqreturn_t sbwdog_interrupt(int irq, void *addr)
 	 * if it's the second watchdog timer, it's for those users
 	 */
 	if (wd_cfg_reg == user_dog)
-		pr_crit("%s in danger of initiating system reset "
+		printk(KERN_CRIT "%s in danger of initiating system reset "
 			"in %ld.%01ld seconds\n",
 			ident.identity,
 			wd_init / 1000000, (wd_init / 100000) % 10);
@@ -292,8 +290,9 @@ static int __init sbwdog_init(void)
 	 */
 	ret = register_reboot_notifier(&sbwdog_notifier);
 	if (ret) {
-		pr_err("%s: cannot register reboot notifier (err=%d)\n",
-		       ident.identity, ret);
+		printk(KERN_ERR
+			"%s: cannot register reboot notifier (err=%d)\n",
+						ident.identity, ret);
 		return ret;
 	}
 
@@ -301,39 +300,33 @@ static int __init sbwdog_init(void)
 	 * get the resources
 	 */
 
-	ret = request_irq(1, sbwdog_interrupt, IRQF_SHARED,
+	ret = request_irq(1, sbwdog_interrupt, IRQF_DISABLED | IRQF_SHARED,
 		ident.identity, (void *)user_dog);
 	if (ret) {
-		pr_err("%s: failed to request irq 1 - %d\n",
-		       ident.identity, ret);
-		goto out;
+		printk(KERN_ERR "%s: failed to request irq 1 - %d\n",
+						ident.identity, ret);
+		return ret;
 	}
 
 	ret = misc_register(&sbwdog_miscdev);
 	if (ret == 0) {
-		pr_info("%s: timeout is %ld.%ld secs\n",
-			ident.identity,
-			timeout / 1000000, (timeout / 100000) % 10);
-		return 0;
-	}
-	free_irq(1, (void *)user_dog);
-out:
-	unregister_reboot_notifier(&sbwdog_notifier);
-
+		printk(KERN_INFO "%s: timeout is %ld.%ld secs\n",
+				ident.identity,
+				timeout / 1000000, (timeout / 100000) % 10);
+	} else
+		free_irq(1, (void *)user_dog);
 	return ret;
 }
 
 static void __exit sbwdog_exit(void)
 {
 	misc_deregister(&sbwdog_miscdev);
-	free_irq(1, (void *)user_dog);
-	unregister_reboot_notifier(&sbwdog_notifier);
 }
 
 module_init(sbwdog_init);
 module_exit(sbwdog_exit);
 
-MODULE_AUTHOR("Andrew Sharp <andy.sharp@lsi.com>");
+MODULE_AUTHOR("Andrew Sharp <andy.sharp@onstor.com>");
 MODULE_DESCRIPTION("SiByte Watchdog");
 
 module_param(timeout, ulong, 0);
@@ -351,10 +344,11 @@ void platform_wd_setup(void)
 {
 	int ret;
 
-	ret = request_irq(1, sbwdog_interrupt, IRQF_SHARED,
+	ret = request_irq(1, sbwdog_interrupt, IRQF_DISABLED | IRQF_SHARED,
 		"Kernel Watchdog", IOADDR(A_SCD_WDOG_CFG_0));
 	if (ret) {
-		pr_crit("Watchdog IRQ zero(0) failed to be requested - %d\n", ret);
+		printk(KERN_CRIT
+		  "Watchdog IRQ zero(0) failed to be requested - %d\n", ret);
 	}
 }
 

@@ -37,9 +37,9 @@ struct zl10353_state {
 
 	struct zl10353_config config;
 
-	u32 bandwidth;
-	u32 ucblocks;
-	u32 frequency;
+	enum fe_bandwidth bandwidth;
+       u32 ucblocks;
+       u32 frequency;
 };
 
 static int debug;
@@ -64,7 +64,7 @@ static int zl10353_single_write(struct dvb_frontend *fe, u8 reg, u8 val)
 	return 0;
 }
 
-static int zl10353_write(struct dvb_frontend *fe, const u8 ibuf[], int ilen)
+static int zl10353_write(struct dvb_frontend *fe, u8 *ibuf, int ilen)
 {
 	int err, i;
 	for (i = 0; i < ilen - 1; i++)
@@ -122,16 +122,29 @@ static void zl10353_dump_regs(struct dvb_frontend *fe)
 }
 
 static void zl10353_calc_nominal_rate(struct dvb_frontend *fe,
-				      u32 bandwidth,
+				      enum fe_bandwidth bandwidth,
 				      u16 *nominal_rate)
 {
 	struct zl10353_state *state = fe->demodulator_priv;
 	u32 adc_clock = 450560; /* 45.056 MHz */
 	u64 value;
-	u8 bw = bandwidth / 1000000;
+	u8 bw;
 
 	if (state->config.adc_clock)
 		adc_clock = state->config.adc_clock;
+
+	switch (bandwidth) {
+	case BANDWIDTH_6_MHZ:
+		bw = 6;
+		break;
+	case BANDWIDTH_7_MHZ:
+		bw = 7;
+		break;
+	case BANDWIDTH_8_MHZ:
+	default:
+		bw = 8;
+		break;
+	}
 
 	value = (u64)10 * (1 << 23) / 7 * 125;
 	value = (bw * value) + adc_clock / 2;
@@ -179,15 +192,16 @@ static int zl10353_sleep(struct dvb_frontend *fe)
 	return 0;
 }
 
-static int zl10353_set_parameters(struct dvb_frontend *fe)
+static int zl10353_set_parameters(struct dvb_frontend *fe,
+				  struct dvb_frontend_parameters *param)
 {
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct zl10353_state *state = fe->demodulator_priv;
 	u16 nominal_rate, input_freq;
 	u8 pllbuf[6] = { 0x67 }, acq_ctl = 0;
 	u16 tps = 0;
+	struct dvb_ofdm_parameters *op = &param->u.ofdm;
 
-	state->frequency = c->frequency;
+       state->frequency = param->frequency;
 
 	zl10353_single_write(fe, RESET, 0x80);
 	udelay(200);
@@ -197,44 +211,42 @@ static int zl10353_set_parameters(struct dvb_frontend *fe)
 
 	zl10353_single_write(fe, AGC_TARGET, 0x28);
 
-	if (c->transmission_mode != TRANSMISSION_MODE_AUTO)
+	if (op->transmission_mode != TRANSMISSION_MODE_AUTO)
 		acq_ctl |= (1 << 0);
-	if (c->guard_interval != GUARD_INTERVAL_AUTO)
+	if (op->guard_interval != GUARD_INTERVAL_AUTO)
 		acq_ctl |= (1 << 1);
 	zl10353_single_write(fe, ACQ_CTL, acq_ctl);
 
-	switch (c->bandwidth_hz) {
-	case 6000000:
+	switch (op->bandwidth) {
+	case BANDWIDTH_6_MHZ:
 		/* These are extrapolated from the 7 and 8MHz values */
 		zl10353_single_write(fe, MCLK_RATIO, 0x97);
 		zl10353_single_write(fe, 0x64, 0x34);
 		zl10353_single_write(fe, 0xcc, 0xdd);
 		break;
-	case 7000000:
+	case BANDWIDTH_7_MHZ:
 		zl10353_single_write(fe, MCLK_RATIO, 0x86);
 		zl10353_single_write(fe, 0x64, 0x35);
 		zl10353_single_write(fe, 0xcc, 0x73);
 		break;
+	case BANDWIDTH_8_MHZ:
 	default:
-		c->bandwidth_hz = 8000000;
-		/* fall though */
-	case 8000000:
 		zl10353_single_write(fe, MCLK_RATIO, 0x75);
 		zl10353_single_write(fe, 0x64, 0x36);
 		zl10353_single_write(fe, 0xcc, 0x73);
 	}
 
-	zl10353_calc_nominal_rate(fe, c->bandwidth_hz, &nominal_rate);
+	zl10353_calc_nominal_rate(fe, op->bandwidth, &nominal_rate);
 	zl10353_single_write(fe, TRL_NOMINAL_RATE_1, msb(nominal_rate));
 	zl10353_single_write(fe, TRL_NOMINAL_RATE_0, lsb(nominal_rate));
-	state->bandwidth = c->bandwidth_hz;
+	state->bandwidth = op->bandwidth;
 
 	zl10353_calc_input_freq(fe, &input_freq);
 	zl10353_single_write(fe, INPUT_FREQ_1, msb(input_freq));
 	zl10353_single_write(fe, INPUT_FREQ_0, lsb(input_freq));
 
 	/* Hint at TPS settings */
-	switch (c->code_rate_HP) {
+	switch (op->code_rate_HP) {
 	case FEC_2_3:
 		tps |= (1 << 7);
 		break;
@@ -254,7 +266,7 @@ static int zl10353_set_parameters(struct dvb_frontend *fe)
 		return -EINVAL;
 	}
 
-	switch (c->code_rate_LP) {
+	switch (op->code_rate_LP) {
 	case FEC_2_3:
 		tps |= (1 << 4);
 		break;
@@ -271,14 +283,14 @@ static int zl10353_set_parameters(struct dvb_frontend *fe)
 	case FEC_AUTO:
 		break;
 	case FEC_NONE:
-		if (c->hierarchy == HIERARCHY_AUTO ||
-		    c->hierarchy == HIERARCHY_NONE)
+		if (op->hierarchy_information == HIERARCHY_AUTO ||
+		    op->hierarchy_information == HIERARCHY_NONE)
 			break;
 	default:
 		return -EINVAL;
 	}
 
-	switch (c->modulation) {
+	switch (op->constellation) {
 	case QPSK:
 		break;
 	case QAM_AUTO:
@@ -292,7 +304,7 @@ static int zl10353_set_parameters(struct dvb_frontend *fe)
 		return -EINVAL;
 	}
 
-	switch (c->transmission_mode) {
+	switch (op->transmission_mode) {
 	case TRANSMISSION_MODE_2K:
 	case TRANSMISSION_MODE_AUTO:
 		break;
@@ -303,7 +315,7 @@ static int zl10353_set_parameters(struct dvb_frontend *fe)
 		return -EINVAL;
 	}
 
-	switch (c->guard_interval) {
+	switch (op->guard_interval) {
 	case GUARD_INTERVAL_1_32:
 	case GUARD_INTERVAL_AUTO:
 		break;
@@ -320,7 +332,7 @@ static int zl10353_set_parameters(struct dvb_frontend *fe)
 		return -EINVAL;
 	}
 
-	switch (c->hierarchy) {
+	switch (op->hierarchy_information) {
 	case HIERARCHY_AUTO:
 	case HIERARCHY_NONE:
 		break;
@@ -350,12 +362,12 @@ static int zl10353_set_parameters(struct dvb_frontend *fe)
 	 */
 	if (state->config.no_tuner) {
 		if (fe->ops.tuner_ops.set_params) {
-			fe->ops.tuner_ops.set_params(fe);
+			fe->ops.tuner_ops.set_params(fe, param);
 			if (fe->ops.i2c_gate_ctrl)
 				fe->ops.i2c_gate_ctrl(fe, 0);
 		}
 	} else if (fe->ops.tuner_ops.calc_regs) {
-		fe->ops.tuner_ops.calc_regs(fe, pllbuf + 1, 5);
+		fe->ops.tuner_ops.calc_regs(fe, param, pllbuf + 1, 5);
 		pllbuf[1] <<= 1;
 		zl10353_write(fe, pllbuf, sizeof(pllbuf));
 	}
@@ -371,10 +383,11 @@ static int zl10353_set_parameters(struct dvb_frontend *fe)
 	return 0;
 }
 
-static int zl10353_get_parameters(struct dvb_frontend *fe)
+static int zl10353_get_parameters(struct dvb_frontend *fe,
+				  struct dvb_frontend_parameters *param)
 {
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct zl10353_state *state = fe->demodulator_priv;
+	struct dvb_ofdm_parameters *op = &param->u.ofdm;
 	int s6, s9;
 	u16 tps;
 	static const u8 tps_fec_to_api[8] = {
@@ -398,66 +411,66 @@ static int zl10353_get_parameters(struct dvb_frontend *fe)
 	tps = zl10353_read_register(state, TPS_RECEIVED_1) << 8 |
 	      zl10353_read_register(state, TPS_RECEIVED_0);
 
-	c->code_rate_HP = tps_fec_to_api[(tps >> 7) & 7];
-	c->code_rate_LP = tps_fec_to_api[(tps >> 4) & 7];
+	op->code_rate_HP = tps_fec_to_api[(tps >> 7) & 7];
+	op->code_rate_LP = tps_fec_to_api[(tps >> 4) & 7];
 
 	switch ((tps >> 13) & 3) {
 	case 0:
-		c->modulation = QPSK;
+		op->constellation = QPSK;
 		break;
 	case 1:
-		c->modulation = QAM_16;
+		op->constellation = QAM_16;
 		break;
 	case 2:
-		c->modulation = QAM_64;
+		op->constellation = QAM_64;
 		break;
 	default:
-		c->modulation = QAM_AUTO;
+		op->constellation = QAM_AUTO;
 		break;
 	}
 
-	c->transmission_mode = (tps & 0x01) ? TRANSMISSION_MODE_8K :
+	op->transmission_mode = (tps & 0x01) ? TRANSMISSION_MODE_8K :
 					       TRANSMISSION_MODE_2K;
 
 	switch ((tps >> 2) & 3) {
 	case 0:
-		c->guard_interval = GUARD_INTERVAL_1_32;
+		op->guard_interval = GUARD_INTERVAL_1_32;
 		break;
 	case 1:
-		c->guard_interval = GUARD_INTERVAL_1_16;
+		op->guard_interval = GUARD_INTERVAL_1_16;
 		break;
 	case 2:
-		c->guard_interval = GUARD_INTERVAL_1_8;
+		op->guard_interval = GUARD_INTERVAL_1_8;
 		break;
 	case 3:
-		c->guard_interval = GUARD_INTERVAL_1_4;
+		op->guard_interval = GUARD_INTERVAL_1_4;
 		break;
 	default:
-		c->guard_interval = GUARD_INTERVAL_AUTO;
+		op->guard_interval = GUARD_INTERVAL_AUTO;
 		break;
 	}
 
 	switch ((tps >> 10) & 7) {
 	case 0:
-		c->hierarchy = HIERARCHY_NONE;
+		op->hierarchy_information = HIERARCHY_NONE;
 		break;
 	case 1:
-		c->hierarchy = HIERARCHY_1;
+		op->hierarchy_information = HIERARCHY_1;
 		break;
 	case 2:
-		c->hierarchy = HIERARCHY_2;
+		op->hierarchy_information = HIERARCHY_2;
 		break;
 	case 3:
-		c->hierarchy = HIERARCHY_4;
+		op->hierarchy_information = HIERARCHY_4;
 		break;
 	default:
-		c->hierarchy = HIERARCHY_AUTO;
+		op->hierarchy_information = HIERARCHY_AUTO;
 		break;
 	}
 
-	c->frequency = state->frequency;
-	c->bandwidth_hz = state->bandwidth;
-	c->inversion = INVERSION_AUTO;
+       param->frequency = state->frequency;
+	op->bandwidth = state->bandwidth;
+	param->inversion = INVERSION_AUTO;
 
 	return 0;
 }
@@ -638,9 +651,10 @@ error:
 }
 
 static struct dvb_frontend_ops zl10353_ops = {
-	.delsys = { SYS_DVBT },
+
 	.info = {
 		.name			= "Zarlink ZL10353 DVB-T",
+		.type			= FE_OFDM,
 		.frequency_min		= 174000000,
 		.frequency_max		= 862000000,
 		.frequency_stepsize	= 166667,

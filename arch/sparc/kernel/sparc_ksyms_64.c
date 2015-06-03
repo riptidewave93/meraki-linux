@@ -5,17 +5,16 @@
  * Copyright (C) 1999 Jakub Jelinek (jj@ultra.linux.cz)
  */
 
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/init.h>
-#include <linux/bitops.h>
 
+#include <asm/system.h>
 #include <asm/cpudata.h>
 #include <asm/uaccess.h>
 #include <asm/spitfire.h>
 #include <asm/oplib.h>
 #include <asm/hypervisor.h>
-#include <asm/cacheflush.h>
 
 struct poll {
 	int fd;
@@ -39,15 +38,17 @@ EXPORT_SYMBOL(sun4v_niagara_setperf);
 EXPORT_SYMBOL(sun4v_niagara2_getperf);
 EXPORT_SYMBOL(sun4v_niagara2_setperf);
 
-/* from hweight.S */
-EXPORT_SYMBOL(__arch_hweight8);
-EXPORT_SYMBOL(__arch_hweight16);
-EXPORT_SYMBOL(__arch_hweight32);
-EXPORT_SYMBOL(__arch_hweight64);
-
-/* from ffs_ffz.S */
-EXPORT_SYMBOL(ffs);
-EXPORT_SYMBOL(__ffs);
+#ifdef CONFIG_PCI
+/* inline functions in asm/pci_64.h */
+EXPORT_SYMBOL(pci_alloc_consistent);
+EXPORT_SYMBOL(pci_free_consistent);
+EXPORT_SYMBOL(pci_map_single);
+EXPORT_SYMBOL(pci_unmap_single);
+EXPORT_SYMBOL(pci_map_sg);
+EXPORT_SYMBOL(pci_unmap_sg);
+EXPORT_SYMBOL(pci_dma_sync_single_for_cpu);
+EXPORT_SYMBOL(pci_dma_sync_sg_for_cpu);
+#endif
 
 /* Exporting a symbol from /init/main.c */
 EXPORT_SYMBOL(saved_command_line);

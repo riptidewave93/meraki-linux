@@ -9,7 +9,6 @@
 #include <linux/ioport.h>
 #include <linux/init.h>
 #include <linux/dmi.h>
-#include <linux/slab.h>
 
 #include <asm/acpi.h>
 #include <asm/segment.h>
@@ -22,7 +21,6 @@ unsigned int pci_probe = PCI_PROBE_BIOS | PCI_PROBE_CONF1 | PCI_PROBE_CONF2 |
 
 unsigned int pci_early_dump_regs;
 static int pci_bf_sort;
-static int smbios_type_b1_flag;
 int pci_routeirq;
 int noioapicquirk;
 #ifdef CONFIG_X86_REROUTE_FOR_BROKEN_BOOT_IRQS
@@ -33,8 +31,8 @@ int noioapicreroute = 1;
 int pcibios_last_bus = -1;
 unsigned long pirq_table_addr;
 struct pci_bus *pci_root_bus;
-const struct pci_raw_ops *__read_mostly raw_pci_ops;
-const struct pci_raw_ops *__read_mostly raw_pci_ext_ops;
+struct pci_raw_ops *raw_pci_ops;
+struct pci_raw_ops *raw_pci_ext_ops;
 
 int raw_pci_read(unsigned int domain, unsigned int bus, unsigned int devfn,
 						int reg, int len, u32 *val)
@@ -74,10 +72,16 @@ struct pci_ops pci_root_ops = {
 };
 
 /*
+ * legacy, numa, and acpi all want to call pcibios_scan_root
+ * from their initcalls. This flag prevents that.
+ */
+int pcibios_scanned;
+
+/*
  * This interrupt-safe spinlock protects all accesses to PCI
  * configuration space.
  */
-DEFINE_RAW_SPINLOCK(pci_config_lock);
+DEFINE_SPINLOCK(pci_config_lock);
 
 static int __devinit can_skip_ioresource_align(const struct dmi_system_id *d)
 {
@@ -126,23 +130,6 @@ void __init dmi_check_skip_isa_align(void)
 static void __devinit pcibios_fixup_device_resources(struct pci_dev *dev)
 {
 	struct resource *rom_r = &dev->resource[PCI_ROM_RESOURCE];
-	struct resource *bar_r;
-	int bar;
-
-	if (pci_probe & PCI_NOASSIGN_BARS) {
-		/*
-		* If the BIOS did not assign the BAR, zero out the
-		* resource so the kernel doesn't attmept to assign
-		* it later on in pci_assign_unassigned_resources
-		*/
-		for (bar = 0; bar <= PCI_STD_RESOURCE_END; bar++) {
-			bar_r = &dev->resource[bar];
-			if (bar_r->start == 0 && bar_r->end != 0) {
-				bar_r->flags = 0;
-				bar_r->end = 0;
-			}
-		}
-	}
 
 	if (pci_probe & PCI_NOASSIGN_ROMS) {
 		if (rom_r->parent)
@@ -164,6 +151,9 @@ void __devinit pcibios_fixup_bus(struct pci_bus *b)
 {
 	struct pci_dev *dev;
 
+	/* root bus? */
+	if (!b->parent)
+		x86_pci_root_bus_res_quirks(b);
 	pci_read_bridge_bases(b);
 	list_for_each_entry(dev, &b->devices, bus_list)
 		pcibios_fixup_device_resources(dev);
@@ -181,39 +171,6 @@ static int __devinit set_bf_sort(const struct dmi_system_id *d)
 		printk(KERN_INFO "PCI: %s detected, enabling pci=bfsort.\n", d->ident);
 	}
 	return 0;
-}
-
-static void __devinit read_dmi_type_b1(const struct dmi_header *dm,
-				       void *private_data)
-{
-	u8 *d = (u8 *)dm + 4;
-
-	if (dm->type != 0xB1)
-		return;
-	switch (((*(u32 *)d) >> 9) & 0x03) {
-	case 0x00:
-		printk(KERN_INFO "dmi type 0xB1 record - unknown flag\n");
-		break;
-	case 0x01: /* set pci=bfsort */
-		smbios_type_b1_flag = 1;
-		break;
-	case 0x02: /* do not set pci=bfsort */
-		smbios_type_b1_flag = 2;
-		break;
-	default:
-		break;
-	}
-}
-
-static int __devinit find_sort_method(const struct dmi_system_id *d)
-{
-	dmi_walk(read_dmi_type_b1, NULL);
-
-	if (smbios_type_b1_flag == 1) {
-		set_bf_sort(d);
-		return 0;
-	}
-	return -1;
 }
 
 /*
@@ -281,13 +238,6 @@ static const struct dmi_system_id __devinitconst pciprobe_dmi_table[] = {
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Dell"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "PowerEdge R900"),
-		},
-	},
-	{
-		.callback = find_sort_method,
-		.ident = "Dell System",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc"),
 		},
 	},
 	{
@@ -430,7 +380,6 @@ void __init dmi_check_pciprobe(void)
 
 struct pci_bus * __devinit pcibios_scan_root(int busnum)
 {
-	LIST_HEAD(resources);
 	struct pci_bus *bus = NULL;
 	struct pci_sysdata *sd;
 
@@ -454,43 +403,35 @@ struct pci_bus * __devinit pcibios_scan_root(int busnum)
 	sd->node = get_mp_bus_to_node(busnum);
 
 	printk(KERN_DEBUG "PCI: Probing PCI hardware (bus %02x)\n", busnum);
-	x86_pci_root_bus_resources(busnum, &resources);
-	bus = pci_scan_root_bus(NULL, busnum, &pci_root_ops, sd, &resources);
-	if (!bus) {
-		pci_free_resource_list(&resources);
+	bus = pci_scan_bus_parented(NULL, busnum, &pci_root_ops, sd);
+	if (!bus)
 		kfree(sd);
-	}
 
 	return bus;
 }
-void __init pcibios_set_cache_line_size(void)
-{
-	struct cpuinfo_x86 *c = &boot_cpu_data;
 
-	/*
-	 * Set PCI cacheline size to that of the CPU if the CPU has reported it.
-	 * (For older CPUs that don't support cpuid, we se it to 32 bytes
-	 * It's also good for 386/486s (which actually have 16)
-	 * as quite a few PCI devices do not support smaller values.
-	 */
-	if (c->x86_clflush_size > 0) {
-		pci_dfl_cache_line_size = c->x86_clflush_size >> 2;
-		printk(KERN_DEBUG "PCI: pci_cache_line_size set to %d bytes\n",
-			pci_dfl_cache_line_size << 2);
-	} else {
- 		pci_dfl_cache_line_size = 32 >> 2;
-		printk(KERN_DEBUG "PCI: Unknown cacheline size. Setting to 32 bytes\n");
-	}
-}
+extern u8 pci_cache_line_size;
 
 int __init pcibios_init(void)
 {
+	struct cpuinfo_x86 *c = &boot_cpu_data;
+
 	if (!raw_pci_ops) {
 		printk(KERN_WARNING "PCI: System does not support PCI\n");
 		return 0;
 	}
 
-	pcibios_set_cache_line_size();
+	/*
+	 * Assume PCI cacheline size of 32 bytes for all x86s except K7/K8
+	 * and P4. It's also good for 386/486s (which actually have 16)
+	 * as quite a few PCI devices do not support smaller values.
+	 */
+	pci_cache_line_size = 32 >> 2;
+	if (c->x86 >= 6 && c->x86_vendor == X86_VENDOR_AMD)
+		pci_cache_line_size = 64 >> 2;	/* K7 & K8 */
+	else if (c->x86 > 6 && c->x86_vendor == X86_VENDOR_INTEL)
+		pci_cache_line_size = 128 >> 2;	/* P4 */
+
 	pcibios_resource_survey();
 
 	if (pci_bf_sort >= pci_force_bf)
@@ -571,17 +512,11 @@ char * __devinit  pcibios_setup(char *str)
 	} else if (!strcmp(str, "norom")) {
 		pci_probe |= PCI_NOASSIGN_ROMS;
 		return NULL;
-	} else if (!strcmp(str, "nobar")) {
-		pci_probe |= PCI_NOASSIGN_BARS;
-		return NULL;
 	} else if (!strcmp(str, "assign-busses")) {
 		pci_probe |= PCI_ASSIGN_ALL_BUSSES;
 		return NULL;
 	} else if (!strcmp(str, "use_crs")) {
 		pci_probe |= PCI_USE__CRS;
-		return NULL;
-	} else if (!strcmp(str, "nocrs")) {
-		pci_probe |= PCI_ROOT_NO_CRS;
 		return NULL;
 	} else if (!strcmp(str, "earlydump")) {
 		pci_early_dump_regs = 1;
@@ -640,7 +575,6 @@ int pci_ext_cfg_avail(struct pci_dev *dev)
 
 struct pci_bus * __devinit pci_scan_bus_on_node(int busno, struct pci_ops *ops, int node)
 {
-	LIST_HEAD(resources);
 	struct pci_bus *bus = NULL;
 	struct pci_sysdata *sd;
 
@@ -655,12 +589,9 @@ struct pci_bus * __devinit pci_scan_bus_on_node(int busno, struct pci_ops *ops, 
 		return NULL;
 	}
 	sd->node = node;
-	x86_pci_root_bus_resources(busno, &resources);
-	bus = pci_scan_root_bus(NULL, busno, ops, sd, &resources);
-	if (!bus) {
-		pci_free_resource_list(&resources);
+	bus = pci_scan_bus(busno, ops, sd);
+	if (!bus)
 		kfree(sd);
-	}
 
 	return bus;
 }

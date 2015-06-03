@@ -3,7 +3,6 @@
 #
 
 obj-$(CONFIG_IP_SCTP) += sctp.o
-obj-$(CONFIG_NET_SCTPPROBE) += sctp_probe.o
 
 sctp-y := sm_statetable.o sm_statefuns.o sm_sideeffect.o \
 	  protocol.o endpointola.o associola.o \
@@ -11,8 +10,6 @@ sctp-y := sm_statetable.o sm_statefuns.o sm_sideeffect.o \
 	  inqueue.o outqueue.o ulpqueue.o command.o \
 	  tsnmap.o bind_addr.o socket.o primitive.o \
 	  output.o input.o debug.o ssnmap.o auth.o
-
-sctp_probe-y := probe.o
 
 sctp-$(CONFIG_SCTP_DBG_OBJCNT) += objcnt.o
 sctp-$(CONFIG_PROC_FS) += proc.o

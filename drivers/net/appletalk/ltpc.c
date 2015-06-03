@@ -215,6 +215,7 @@ static int dma;
 #include <linux/ioport.h>
 #include <linux/spinlock.h>
 #include <linux/in.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/init.h>
@@ -227,8 +228,8 @@ static int dma;
 #include <linux/timer.h>
 #include <linux/atalk.h>
 #include <linux/bitops.h>
-#include <linux/gfp.h>
 
+#include <asm/system.h>
 #include <asm/dma.h>
 #include <asm/io.h>
 
@@ -640,6 +641,7 @@ done:
 		inb_p(base+7);
 		inb_p(base+7);
 	}
+	return;
 }
 
 
@@ -651,9 +653,9 @@ static int do_write(struct net_device *dev, void *cbuf, int cbuflen,
 	int ret;
 
 	if(i) {
-		qels[i].cbuf = cbuf;
+		qels[i].cbuf = (unsigned char *) cbuf;
 		qels[i].cbuflen = cbuflen;
-		qels[i].dbuf = dbuf;
+		qels[i].dbuf = (unsigned char *) dbuf;
 		qels[i].dbuflen = dbuflen;
 		qels[i].QWrite = 1;
 		qels[i].mailbox = i;  /* this should be initted rather */
@@ -675,9 +677,9 @@ static int do_read(struct net_device *dev, void *cbuf, int cbuflen,
 	int ret;
 
 	if(i) {
-		qels[i].cbuf = cbuf;
+		qels[i].cbuf = (unsigned char *) cbuf;
 		qels[i].cbuflen = cbuflen;
-		qels[i].dbuf = dbuf;
+		qels[i].dbuf = (unsigned char *) dbuf;
 		qels[i].dbuflen = dbuflen;
 		qels[i].QWrite = 0;
 		qels[i].mailbox = i;  /* this should be initted rather */
@@ -726,7 +728,7 @@ static int sendup_buffer (struct net_device *dev)
 
 	if (ltc->command != LT_RCVLAP) {
 		printk("unknown command 0x%02x from ltpc card\n",ltc->command);
-		return -1;
+		return(-1);
 	}
 	dnode = ltc->dnode;
 	snode = ltc->snode;
@@ -1013,7 +1015,7 @@ static int __init ltpc_probe_dma(int base, int dma)
 static const struct net_device_ops ltpc_netdev = {
 	.ndo_start_xmit		= ltpc_xmit,
 	.ndo_do_ioctl		= ltpc_ioctl,
-	.ndo_set_rx_mode	= set_multicast_list,
+	.ndo_set_multicast_list = set_multicast_list,
 };
 
 struct net_device * __init ltpc_probe(void)
@@ -1123,6 +1125,7 @@ struct net_device * __init ltpc_probe(void)
 		printk(KERN_INFO "Apple/Farallon LocalTalk-PC card at %03x, DMA%d.  Using polled mode.\n",io,dma);
 
 	dev->netdev_ops = &ltpc_netdev;
+	dev->mc_list = NULL;
 	dev->base_addr = io;
 	dev->irq = irq;
 	dev->dma = dma;
@@ -1155,7 +1158,7 @@ struct net_device * __init ltpc_probe(void)
 	}
 
 	/* grab it and don't let go :-) */
-	if (irq && request_irq( irq, ltpc_interrupt, 0, "ltpc", dev) >= 0)
+	if (irq && request_irq( irq, &ltpc_interrupt, 0, "ltpc", dev) >= 0)
 	{
 		(void) inb_p(io+7);  /* enable interrupts from board */
 		(void) inb_p(io+7);  /* and reset irq line */

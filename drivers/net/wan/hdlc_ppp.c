@@ -223,7 +223,8 @@ static void ppp_tx_cp(struct net_device *dev, u16 pid, u8 code,
 	skb = dev_alloc_skb(sizeof(struct hdlc_header) +
 			    sizeof(struct cp_header) + magic_len + len);
 	if (!skb) {
-		netdev_warn(dev, "out of memory in ppp_tx_cp()\n");
+		printk(KERN_WARNING "%s: out of memory in ppp_tx_cp()\n",
+		       dev->name);
 		return;
 	}
 	skb_reserve(skb, sizeof(struct hdlc_header));
@@ -344,7 +345,7 @@ static void ppp_cp_event(struct net_device *dev, u16 pid, u16 event, u8 code,
 		ppp_tx_cp(dev, pid, CP_CODE_REJ, ++ppp->seq, len, data);
 
 	if (old_state != OPENED && proto->state == OPENED) {
-		netdev_info(dev, "%s up\n", proto_name(pid));
+		printk(KERN_INFO "%s: %s up\n", dev->name, proto_name(pid));
 		if (pid == PID_LCP) {
 			netif_dormant_off(dev);
 			ppp_cp_event(dev, PID_IPCP, START, 0, 0, 0, NULL);
@@ -355,7 +356,7 @@ static void ppp_cp_event(struct net_device *dev, u16 pid, u16 event, u8 code,
 		}
 	}
 	if (old_state == OPENED && proto->state != OPENED) {
-		netdev_info(dev, "%s down\n", proto_name(pid));
+		printk(KERN_INFO "%s: %s down\n", dev->name, proto_name(pid));
 		if (pid == PID_LCP) {
 			netif_dormant_on(dev);
 			ppp_cp_event(dev, PID_IPCP, STOP, 0, 0, 0, NULL);
@@ -515,37 +516,37 @@ static int ppp_rx(struct sk_buff *skb)
 	switch (cp->code) {
 	case CP_CONF_REQ:
 		ppp_cp_parse_cr(dev, pid, cp->id, len, skb->data);
-		break;
+		goto out;
 
 	case CP_CONF_ACK:
 		if (cp->id == proto->cr_id)
 			ppp_cp_event(dev, pid, RCA, 0, 0, 0, NULL);
-		break;
+		goto out;
 
 	case CP_CONF_REJ:
 	case CP_CONF_NAK:
 		if (cp->id == proto->cr_id)
 			ppp_cp_event(dev, pid, RCN, 0, 0, 0, NULL);
-		break;
+		goto out;
 
 	case CP_TERM_REQ:
 		ppp_cp_event(dev, pid, RTR, 0, cp->id, 0, NULL);
-		break;
+		goto out;
 
 	case CP_TERM_ACK:
 		ppp_cp_event(dev, pid, RTA, 0, 0, 0, NULL);
-		break;
+		goto out;
 
 	case CP_CODE_REJ:
 		ppp_cp_event(dev, pid, RXJ_BAD, 0, 0, 0, NULL);
-		break;
+		goto out;
 
 	default:
 		len += sizeof(struct cp_header);
 		if (len > dev->mtu)
 			len = dev->mtu;
 		ppp_cp_event(dev, pid, RUC, 0, 0, len, cp);
-		break;
+		goto out;
 	}
 	goto out;
 
@@ -584,7 +585,7 @@ static void ppp_timer(unsigned long arg)
 			break;
 		if (time_after(jiffies, ppp->last_pong +
 			       ppp->keepalive_timeout * HZ)) {
-			netdev_info(proto->dev, "Link down\n");
+			printk(KERN_INFO "%s: Link down\n", proto->dev->name);
 			ppp_cp_event(proto->dev, PID_LCP, STOP, 0, 0, 0, NULL);
 			ppp_cp_event(proto->dev, PID_LCP, START, 0, 0, 0, NULL);
 		} else {	/* send keep-alive packet */
@@ -627,15 +628,9 @@ static void ppp_stop(struct net_device *dev)
 	ppp_cp_event(dev, PID_LCP, STOP, 0, 0, 0, NULL);
 }
 
-static void ppp_close(struct net_device *dev)
-{
-	ppp_tx_flush();
-}
-
 static struct hdlc_proto proto = {
 	.start		= ppp_start,
 	.stop		= ppp_stop,
-	.close		= ppp_close,
 	.type_trans	= ppp_type_trans,
 	.ioctl		= ppp_ioctl,
 	.netif_rx	= ppp_rx,

@@ -18,52 +18,91 @@
 #include <linux/delay.h>
 #include <linux/pm.h>
 #include <linux/i2c.h>
-#include <linux/regmap.h>
-#include <linux/slab.h>
+#include <linux/platform_device.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/pcm_params.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 #include <sound/initval.h>
 
 #include "ak4535.h"
 
+#define AK4535_VERSION "0.3"
+
+struct snd_soc_codec_device soc_codec_dev_ak4535;
+
 /* codec private data */
 struct ak4535_priv {
-	struct regmap *regmap;
 	unsigned int sysclk;
 };
 
 /*
  * ak4535 register cache
  */
-static const struct reg_default ak4535_reg_defaults[] = {
-	{ 0, 0x00 },
-	{ 1, 0x80 },
-	{ 2, 0x00 },
-	{ 3, 0x03 },
-	{ 4, 0x02 },
-	{ 5, 0x00 },
-	{ 6, 0x11 },
-	{ 7, 0x01 },
-	{ 8, 0x00 },
-	{ 9, 0x40 },
-	{ 10, 0x36 },
-	{ 11, 0x10 },
-	{ 12, 0x00 },
-	{ 13, 0x00 },
-	{ 14, 0x57 },
+static const u8 ak4535_reg[AK4535_CACHEREGNUM] = {
+	0x00, 0x80, 0x00, 0x03,
+	0x02, 0x00, 0x11, 0x01,
+	0x00, 0x40, 0x36, 0x10,
+	0x00, 0x00, 0x57, 0x00,
 };
 
-static bool ak4535_volatile(struct device *dev, unsigned int reg)
+/*
+ * read ak4535 register cache
+ */
+static inline unsigned int ak4535_read_reg_cache(struct snd_soc_codec *codec,
+	unsigned int reg)
 {
-	switch (reg) {
-	case AK4535_STATUS:
-		return true;
-	default:
-		return false;
-	}
+	u16 *cache = codec->reg_cache;
+	if (reg >= AK4535_CACHEREGNUM)
+		return -1;
+	return cache[reg];
 }
+
+/*
+ * write ak4535 register cache
+ */
+static inline void ak4535_write_reg_cache(struct snd_soc_codec *codec,
+	u16 reg, unsigned int value)
+{
+	u16 *cache = codec->reg_cache;
+	if (reg >= AK4535_CACHEREGNUM)
+		return;
+	cache[reg] = value;
+}
+
+/*
+ * write to the AK4535 register space
+ */
+static int ak4535_write(struct snd_soc_codec *codec, unsigned int reg,
+	unsigned int value)
+{
+	u8 data[2];
+
+	/* data is
+	 *   D15..D8 AK4535 register offset
+	 *   D7...D0 register data
+	 */
+	data[0] = reg & 0xff;
+	data[1] = value & 0xff;
+
+	ak4535_write_reg_cache(codec, reg, value);
+	if (codec->hw_write(codec->control_data, data, 2) == 2)
+		return 0;
+	else
+		return -EIO;
+}
+
+static int ak4535_sync(struct snd_soc_codec *codec)
+{
+	u16 *cache = codec->reg_cache;
+	int i, r = 0;
+
+	for (i = 0; i < AK4535_CACHEREGNUM; i++)
+		r |= ak4535_write(codec, i, cache[i]);
+
+	return r;
+};
 
 static const char *ak4535_mono_gain[] = {"+6dB", "-17dB"};
 static const char *ak4535_mono_out[] = {"(L + R)/2", "Hi-Z"};
@@ -191,7 +230,7 @@ static const struct snd_soc_dapm_widget ak4535_dapm_widgets[] = {
 	SND_SOC_DAPM_INPUT("AIN"),
 };
 
-static const struct snd_soc_dapm_route ak4535_audio_map[] = {
+static const struct snd_soc_dapm_route audio_map[] = {
 	/*stereo mixer */
 	{"Stereo Mixer", "Playback Switch", "DAC"},
 	{"Stereo Mixer", "Mic Sidetone Switch", "Mic"},
@@ -248,11 +287,22 @@ static const struct snd_soc_dapm_route ak4535_audio_map[] = {
 	{"Input Mixer", "Aux Capture Switch", "Aux In"},
 };
 
+static int ak4535_add_widgets(struct snd_soc_codec *codec)
+{
+	snd_soc_dapm_new_controls(codec, ak4535_dapm_widgets,
+				  ARRAY_SIZE(ak4535_dapm_widgets));
+
+	snd_soc_dapm_add_routes(codec, audio_map, ARRAY_SIZE(audio_map));
+
+	snd_soc_dapm_new_widgets(codec);
+	return 0;
+}
+
 static int ak4535_set_dai_sysclk(struct snd_soc_dai *codec_dai,
 	int clk_id, unsigned int freq, int dir)
 {
 	struct snd_soc_codec *codec = codec_dai->codec;
-	struct ak4535_priv *ak4535 = snd_soc_codec_get_drvdata(codec);
+	struct ak4535_priv *ak4535 = codec->private_data;
 
 	ak4535->sysclk = freq;
 	return 0;
@@ -263,9 +313,10 @@ static int ak4535_hw_params(struct snd_pcm_substream *substream,
 			    struct snd_soc_dai *dai)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_codec *codec = rtd->codec;
-	struct ak4535_priv *ak4535 = snd_soc_codec_get_drvdata(codec);
-	u8 mode2 = snd_soc_read(codec, AK4535_MODE2) & ~(0x3 << 5);
+	struct snd_soc_device *socdev = rtd->socdev;
+	struct snd_soc_codec *codec = socdev->card->codec;
+	struct ak4535_priv *ak4535 = codec->private_data;
+	u8 mode2 = ak4535_read_reg_cache(codec, AK4535_MODE2) & ~(0x3 << 5);
 	int rate = params_rate(params), fs = 256;
 
 	if (rate)
@@ -284,7 +335,7 @@ static int ak4535_hw_params(struct snd_pcm_substream *substream,
 	}
 
 	/* set rate */
-	snd_soc_write(codec, AK4535_MODE2, mode2);
+	ak4535_write(codec, AK4535_MODE2, mode2);
 	return 0;
 }
 
@@ -309,40 +360,45 @@ static int ak4535_set_dai_fmt(struct snd_soc_dai *codec_dai,
 	/* use 32 fs for BCLK to save power */
 	mode1 |= 0x4;
 
-	snd_soc_write(codec, AK4535_MODE1, mode1);
+	ak4535_write(codec, AK4535_MODE1, mode1);
 	return 0;
 }
 
 static int ak4535_mute(struct snd_soc_dai *dai, int mute)
 {
 	struct snd_soc_codec *codec = dai->codec;
-	u16 mute_reg = snd_soc_read(codec, AK4535_DAC);
+	u16 mute_reg = ak4535_read_reg_cache(codec, AK4535_DAC) & 0xffdf;
 	if (!mute)
-		snd_soc_write(codec, AK4535_DAC, mute_reg & ~0x20);
+		ak4535_write(codec, AK4535_DAC, mute_reg);
 	else
-		snd_soc_write(codec, AK4535_DAC, mute_reg | 0x20);
+		ak4535_write(codec, AK4535_DAC, mute_reg | 0x20);
 	return 0;
 }
 
 static int ak4535_set_bias_level(struct snd_soc_codec *codec,
 	enum snd_soc_bias_level level)
 {
+	u16 i;
+
 	switch (level) {
 	case SND_SOC_BIAS_ON:
-		snd_soc_update_bits(codec, AK4535_DAC, 0x20, 0);
+		ak4535_mute(codec->dai, 0);
 		break;
 	case SND_SOC_BIAS_PREPARE:
-		snd_soc_update_bits(codec, AK4535_DAC, 0x20, 0x20);
+		ak4535_mute(codec->dai, 1);
 		break;
 	case SND_SOC_BIAS_STANDBY:
-		snd_soc_update_bits(codec, AK4535_PM1, 0x80, 0x80);
-		snd_soc_update_bits(codec, AK4535_PM2, 0x80, 0);
+		i = ak4535_read_reg_cache(codec, AK4535_PM1);
+		ak4535_write(codec, AK4535_PM1, i | 0x80);
+		i = ak4535_read_reg_cache(codec, AK4535_PM2);
+		ak4535_write(codec, AK4535_PM2, i & (~0x80));
 		break;
 	case SND_SOC_BIAS_OFF:
-		snd_soc_update_bits(codec, AK4535_PM1, 0x80, 0);
+		i = ak4535_read_reg_cache(codec, AK4535_PM1);
+		ak4535_write(codec, AK4535_PM1, i & (~0x80));
 		break;
 	}
-	codec->dapm.bias_level = level;
+	codec->bias_level = level;
 	return 0;
 }
 
@@ -350,15 +406,15 @@ static int ak4535_set_bias_level(struct snd_soc_codec *codec,
 		SNDRV_PCM_RATE_16000 | SNDRV_PCM_RATE_22050 |\
 		SNDRV_PCM_RATE_44100 | SNDRV_PCM_RATE_48000)
 
-static const struct snd_soc_dai_ops ak4535_dai_ops = {
+static struct snd_soc_dai_ops ak4535_dai_ops = {
 	.hw_params	= ak4535_hw_params,
 	.set_fmt	= ak4535_set_dai_fmt,
 	.digital_mute	= ak4535_mute,
 	.set_sysclk	= ak4535_set_dai_sysclk,
 };
 
-static struct snd_soc_dai_driver ak4535_dai = {
-	.name = "ak4535-hifi",
+struct snd_soc_dai ak4535_dai = {
+	.name = "AK4535",
 	.playback = {
 		.stream_name = "Playback",
 		.channels_min = 1,
@@ -373,104 +429,104 @@ static struct snd_soc_dai_driver ak4535_dai = {
 		.formats = SNDRV_PCM_FMTBIT_S16_LE,},
 	.ops = &ak4535_dai_ops,
 };
+EXPORT_SYMBOL_GPL(ak4535_dai);
 
-static int ak4535_suspend(struct snd_soc_codec *codec)
+static int ak4535_suspend(struct platform_device *pdev, pm_message_t state)
 {
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
+
 	ak4535_set_bias_level(codec, SND_SOC_BIAS_OFF);
 	return 0;
 }
 
-static int ak4535_resume(struct snd_soc_codec *codec)
+static int ak4535_resume(struct platform_device *pdev)
 {
-	snd_soc_cache_sync(codec);
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
+	ak4535_sync(codec);
 	ak4535_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
+	ak4535_set_bias_level(codec, codec->suspend_bias_level);
 	return 0;
 }
 
-static int ak4535_probe(struct snd_soc_codec *codec)
+/*
+ * initialise the AK4535 driver
+ * register the mixer and dsp interfaces with the kernel
+ */
+static int ak4535_init(struct snd_soc_device *socdev)
 {
-	struct ak4535_priv *ak4535 = snd_soc_codec_get_drvdata(codec);
-	int ret;
+	struct snd_soc_codec *codec = socdev->card->codec;
+	int ret = 0;
 
-	codec->control_data = ak4535->regmap;
-	ret = snd_soc_codec_set_cache_io(codec, 8, 8, SND_SOC_REGMAP);
+	codec->name = "AK4535";
+	codec->owner = THIS_MODULE;
+	codec->read = ak4535_read_reg_cache;
+	codec->write = ak4535_write;
+	codec->set_bias_level = ak4535_set_bias_level;
+	codec->dai = &ak4535_dai;
+	codec->num_dai = 1;
+	codec->reg_cache_size = ARRAY_SIZE(ak4535_reg);
+	codec->reg_cache = kmemdup(ak4535_reg, sizeof(ak4535_reg), GFP_KERNEL);
+
+	if (codec->reg_cache == NULL)
+		return -ENOMEM;
+
+	/* register pcms */
+	ret = snd_soc_new_pcms(socdev, SNDRV_DEFAULT_IDX1, SNDRV_DEFAULT_STR1);
 	if (ret < 0) {
-		dev_err(codec->dev, "Failed to set cache I/O: %d\n", ret);
-		return ret;
+		printk(KERN_ERR "ak4535: failed to create pcms\n");
+		goto pcm_err;
 	}
+
 	/* power on device */
 	ak4535_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
 
-	snd_soc_add_codec_controls(codec, ak4535_snd_controls,
+	snd_soc_add_controls(codec, ak4535_snd_controls,
 				ARRAY_SIZE(ak4535_snd_controls));
-	return 0;
-}
-
-/* power down chip */
-static int ak4535_remove(struct snd_soc_codec *codec)
-{
-	ak4535_set_bias_level(codec, SND_SOC_BIAS_OFF);
-	return 0;
-}
-
-static const struct regmap_config ak4535_regmap = {
-	.reg_bits = 8,
-	.val_bits = 8,
-
-	.max_register = AK4535_STATUS,
-	.volatile_reg = ak4535_volatile,
-
-	.cache_type = REGCACHE_RBTREE,
-	.reg_defaults = ak4535_reg_defaults,
-	.num_reg_defaults = ARRAY_SIZE(ak4535_reg_defaults),
-};
-
-static struct snd_soc_codec_driver soc_codec_dev_ak4535 = {
-	.probe =	ak4535_probe,
-	.remove =	ak4535_remove,
-	.suspend =	ak4535_suspend,
-	.resume =	ak4535_resume,
-	.set_bias_level = ak4535_set_bias_level,
-	.dapm_widgets = ak4535_dapm_widgets,
-	.num_dapm_widgets = ARRAY_SIZE(ak4535_dapm_widgets),
-	.dapm_routes = ak4535_audio_map,
-	.num_dapm_routes = ARRAY_SIZE(ak4535_audio_map),
-};
-
-static __devinit int ak4535_i2c_probe(struct i2c_client *i2c,
-				      const struct i2c_device_id *id)
-{
-	struct ak4535_priv *ak4535;
-	int ret;
-
-	ak4535 = devm_kzalloc(&i2c->dev, sizeof(struct ak4535_priv),
-			      GFP_KERNEL);
-	if (ak4535 == NULL)
-		return -ENOMEM;
-
-	ak4535->regmap = regmap_init_i2c(i2c, &ak4535_regmap);
-	if (IS_ERR(ak4535->regmap)) {
-		ret = PTR_ERR(ak4535->regmap);
-		dev_err(&i2c->dev, "Failed to init regmap: %d\n", ret);
-		return ret;
+	ak4535_add_widgets(codec);
+	ret = snd_soc_init_card(socdev);
+	if (ret < 0) {
+		printk(KERN_ERR "ak4535: failed to register card\n");
+		goto card_err;
 	}
 
-	i2c_set_clientdata(i2c, ak4535);
+	return ret;
 
-	ret = snd_soc_register_codec(&i2c->dev,
-			&soc_codec_dev_ak4535, &ak4535_dai, 1);
-	if (ret != 0)
-		regmap_exit(ak4535->regmap);
+card_err:
+	snd_soc_free_pcms(socdev);
+	snd_soc_dapm_free(socdev);
+pcm_err:
+	kfree(codec->reg_cache);
 
 	return ret;
 }
 
-static __devexit int ak4535_i2c_remove(struct i2c_client *client)
-{
-	struct ak4535_priv *ak4535 = i2c_get_clientdata(client);
+static struct snd_soc_device *ak4535_socdev;
 
-	snd_soc_unregister_codec(&client->dev);
-	regmap_exit(ak4535->regmap);
+#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
+
+static int ak4535_i2c_probe(struct i2c_client *i2c,
+			    const struct i2c_device_id *id)
+{
+	struct snd_soc_device *socdev = ak4535_socdev;
+	struct snd_soc_codec *codec = socdev->card->codec;
+	int ret;
+
+	i2c_set_clientdata(i2c, codec);
+	codec->control_data = i2c;
+
+	ret = ak4535_init(socdev);
+	if (ret < 0)
+		printk(KERN_ERR "failed to initialise AK4535\n");
+
+	return ret;
+}
+
+static int ak4535_i2c_remove(struct i2c_client *client)
+{
+	struct snd_soc_codec *codec = i2c_get_clientdata(client);
+	kfree(codec->reg_cache);
 	return 0;
 }
 
@@ -482,15 +538,140 @@ MODULE_DEVICE_TABLE(i2c, ak4535_i2c_id);
 
 static struct i2c_driver ak4535_i2c_driver = {
 	.driver = {
-		.name = "ak4535",
+		.name = "AK4535 I2C Codec",
 		.owner = THIS_MODULE,
 	},
 	.probe =    ak4535_i2c_probe,
-	.remove =   __devexit_p(ak4535_i2c_remove),
+	.remove =   ak4535_i2c_remove,
 	.id_table = ak4535_i2c_id,
 };
 
-module_i2c_driver(ak4535_i2c_driver);
+static int ak4535_add_i2c_device(struct platform_device *pdev,
+				 const struct ak4535_setup_data *setup)
+{
+	struct i2c_board_info info;
+	struct i2c_adapter *adapter;
+	struct i2c_client *client;
+	int ret;
+
+	ret = i2c_add_driver(&ak4535_i2c_driver);
+	if (ret != 0) {
+		dev_err(&pdev->dev, "can't add i2c driver\n");
+		return ret;
+	}
+
+	memset(&info, 0, sizeof(struct i2c_board_info));
+	info.addr = setup->i2c_address;
+	strlcpy(info.type, "ak4535", I2C_NAME_SIZE);
+
+	adapter = i2c_get_adapter(setup->i2c_bus);
+	if (!adapter) {
+		dev_err(&pdev->dev, "can't get i2c adapter %d\n",
+			setup->i2c_bus);
+		goto err_driver;
+	}
+
+	client = i2c_new_device(adapter, &info);
+	i2c_put_adapter(adapter);
+	if (!client) {
+		dev_err(&pdev->dev, "can't add i2c device at 0x%x\n",
+			(unsigned int)info.addr);
+		goto err_driver;
+	}
+
+	return 0;
+
+err_driver:
+	i2c_del_driver(&ak4535_i2c_driver);
+	return -ENODEV;
+}
+#endif
+
+static int ak4535_probe(struct platform_device *pdev)
+{
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct ak4535_setup_data *setup;
+	struct snd_soc_codec *codec;
+	struct ak4535_priv *ak4535;
+	int ret;
+
+	printk(KERN_INFO "AK4535 Audio Codec %s", AK4535_VERSION);
+
+	setup = socdev->codec_data;
+	codec = kzalloc(sizeof(struct snd_soc_codec), GFP_KERNEL);
+	if (codec == NULL)
+		return -ENOMEM;
+
+	ak4535 = kzalloc(sizeof(struct ak4535_priv), GFP_KERNEL);
+	if (ak4535 == NULL) {
+		kfree(codec);
+		return -ENOMEM;
+	}
+
+	codec->private_data = ak4535;
+	socdev->card->codec = codec;
+	mutex_init(&codec->mutex);
+	INIT_LIST_HEAD(&codec->dapm_widgets);
+	INIT_LIST_HEAD(&codec->dapm_paths);
+
+	ak4535_socdev = socdev;
+	ret = -ENODEV;
+
+#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
+	if (setup->i2c_address) {
+		codec->hw_write = (hw_write_t)i2c_master_send;
+		ret = ak4535_add_i2c_device(pdev, setup);
+	}
+#endif
+
+	if (ret != 0) {
+		kfree(codec->private_data);
+		kfree(codec);
+	}
+	return ret;
+}
+
+/* power down chip */
+static int ak4535_remove(struct platform_device *pdev)
+{
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
+
+	if (codec->control_data)
+		ak4535_set_bias_level(codec, SND_SOC_BIAS_OFF);
+
+	snd_soc_free_pcms(socdev);
+	snd_soc_dapm_free(socdev);
+#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
+	if (codec->control_data)
+		i2c_unregister_device(codec->control_data);
+	i2c_del_driver(&ak4535_i2c_driver);
+#endif
+	kfree(codec->private_data);
+	kfree(codec);
+
+	return 0;
+}
+
+struct snd_soc_codec_device soc_codec_dev_ak4535 = {
+	.probe = 	ak4535_probe,
+	.remove = 	ak4535_remove,
+	.suspend = 	ak4535_suspend,
+	.resume =	ak4535_resume,
+};
+EXPORT_SYMBOL_GPL(soc_codec_dev_ak4535);
+
+static int __init ak4535_modinit(void)
+{
+	return snd_soc_register_dai(&ak4535_dai);
+}
+module_init(ak4535_modinit);
+
+static void __exit ak4535_exit(void)
+{
+	snd_soc_unregister_dai(&ak4535_dai);
+}
+module_exit(ak4535_exit);
 
 MODULE_DESCRIPTION("Soc AK4535 driver");
 MODULE_AUTHOR("Richard Purdie");

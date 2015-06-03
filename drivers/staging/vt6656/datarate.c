@@ -65,14 +65,21 @@ const BYTE acbyIERate[MAX_RATE] =
 
 /*---------------------  Static Functions  --------------------------*/
 
-void s_vResetCounter(PKnownNodeDB psNodeDBTable);
+VOID s_vResetCounter (
+    IN PKnownNodeDB psNodeDBTable
+    );
 
-void s_vResetCounter(PKnownNodeDB psNodeDBTable)
+
+
+VOID
+s_vResetCounter (
+    IN PKnownNodeDB psNodeDBTable
+    )
 {
     BYTE            ii;
 
     // clear statistic counter for auto_rate
-    for (ii = 0; ii <= MAX_RATE; ii++) {
+    for(ii=0;ii<=MAX_RATE;ii++) {
         psNodeDBTable->uTxOk[ii] = 0;
         psNodeDBTable->uTxFail[ii] = 0;
     }
@@ -100,7 +107,7 @@ void s_vResetCounter(PKnownNodeDB psNodeDBTable)
 -*/
 BYTE
 DATARATEbyGetRateIdx (
-     BYTE byRate
+    IN BYTE byRate
     )
 {
     BYTE    ii;
@@ -154,7 +161,7 @@ DATARATEbyGetRateIdx (
 -*/
 WORD
 RATEwGetRateIdx(
-     BYTE byRate
+    IN BYTE byRate
     )
 {
     WORD    ii;
@@ -188,24 +195,25 @@ RATEwGetRateIdx(
  * Return Value: none
  *
 -*/
-void RATEvParseMaxRate(
-     void *pDeviceHandler,
-     PWLAN_IE_SUPP_RATES pItemRates,
-     PWLAN_IE_SUPP_RATES pItemExtRates,
-     BOOL bUpdateBasicRate,
-     PWORD pwMaxBasicRate,
-     PWORD pwMaxSuppRate,
-     PWORD pwSuppRate,
-     PBYTE pbyTopCCKRate,
-     PBYTE pbyTopOFDMRate
+VOID
+RATEvParseMaxRate (
+    IN PVOID pDeviceHandler,
+    IN PWLAN_IE_SUPP_RATES pItemRates,
+    IN PWLAN_IE_SUPP_RATES pItemExtRates,
+    IN BOOL bUpdateBasicRate,
+    OUT PWORD pwMaxBasicRate,
+    OUT PWORD pwMaxSuppRate,
+    OUT PWORD pwSuppRate,
+    OUT PBYTE pbyTopCCKRate,
+    OUT PBYTE pbyTopOFDMRate
     )
 {
 PSDevice  pDevice = (PSDevice) pDeviceHandler;
-unsigned int  ii;
+UINT  ii;
 BYTE  byHighSuppRate = 0;
 BYTE  byRate = 0;
 WORD  wOldBasicRate = pDevice->wBasicRate;
-unsigned int  uRateLen;
+UINT  uRateLen;
 
 
     if (pItemRates == NULL)
@@ -228,7 +236,7 @@ unsigned int  uRateLen;
         if (WLAN_MGMT_IS_BASICRATE(byRate) &&
             (bUpdateBasicRate == TRUE))  {
             // Add to basic rate set, update pDevice->byTopCCKBasicRate and pDevice->byTopOFDMBasicRate
-		CARDbAddBasicRate((void *)pDevice, RATEwGetRateIdx(byRate));
+            CARDbAddBasicRate((PVOID)pDevice, RATEwGetRateIdx(byRate));
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"ParseMaxRate AddBasicRate: %d\n", RATEwGetRateIdx(byRate));
         }
         byRate = (BYTE)(pItemRates->abyRates[ii]&0x7F);
@@ -241,7 +249,7 @@ unsigned int  uRateLen;
     if ((pItemExtRates != NULL) && (pItemExtRates->byElementID == WLAN_EID_EXTSUPP_RATES) &&
         (pDevice->byBBType != BB_TYPE_11B)) {
 
-	unsigned int uExtRateLen = pItemExtRates->len;
+        UINT  uExtRateLen = pItemExtRates->len;
 
         if (uExtRateLen > WLAN_RATES_MAXLEN)
             uExtRateLen = WLAN_RATES_MAXLEN;
@@ -251,7 +259,7 @@ unsigned int  uRateLen;
             // select highest basic rate
             if (WLAN_MGMT_IS_BASICRATE(pItemExtRates->abyRates[ii])) {
             	// Add to basic rate set, update pDevice->byTopCCKBasicRate and pDevice->byTopOFDMBasicRate
-		    CARDbAddBasicRate((void *)pDevice, RATEwGetRateIdx(byRate));
+                CARDbAddBasicRate((PVOID)pDevice, RATEwGetRateIdx(byRate));
                 DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"ParseMaxRate AddBasicRate: %d\n", RATEwGetRateIdx(byRate));
             }
             byRate = (BYTE)(pItemExtRates->abyRates[ii]&0x7F);
@@ -264,8 +272,7 @@ unsigned int  uRateLen;
         }
     } //if(pItemExtRates != NULL)
 
-    if ((pDevice->byPacketType == PK_TYPE_11GB)
-	&& CARDbIsOFDMinBasicRate((void *)pDevice)) {
+    if ((pDevice->byPacketType == PK_TYPE_11GB) && CARDbIsOFDMinBasicRate((PVOID)pDevice)) {
         pDevice->byPacketType = PK_TYPE_11GA;
     }
 
@@ -277,7 +284,7 @@ unsigned int  uRateLen;
     else
        *pwMaxBasicRate = pDevice->byTopOFDMBasicRate;
     if (wOldBasicRate != pDevice->wBasicRate)
-	CARDvSetRSPINF((void *)pDevice, pDevice->byBBType);
+        CARDvSetRSPINF((PVOID)pDevice, pDevice->byBBType);
 
      DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Exit ParseMaxRate\n");
 }
@@ -301,16 +308,17 @@ unsigned int  uRateLen;
 #define AUTORATE_TXCNT_THRESHOLD        20
 #define AUTORATE_INC_THRESHOLD          30
 
-void
-RATEvTxRateFallBack(
-     void *pDeviceHandler,
-     PKnownNodeDB psNodeDBTable
+VOID
+RATEvTxRateFallBack (
+    IN PVOID pDeviceHandler,
+    IN PKnownNodeDB psNodeDBTable
     )
 {
 PSDevice        pDevice = (PSDevice) pDeviceHandler;
 PSMgmtObject    pMgmt = &(pDevice->sMgmtObj);
+#if 1  //mike fixed old: use packet lose ratio algorithm to control rate
 WORD            wIdxDownRate = 0;
-unsigned int            ii;
+UINT            ii;
 BOOL            bAutoRate[MAX_RATE]    = {TRUE,TRUE,TRUE,TRUE,FALSE,FALSE,TRUE,TRUE,TRUE,TRUE,TRUE,TRUE};
 DWORD           dwThroughputTbl[MAX_RATE] = {10, 20, 55, 110, 60, 90, 120, 180, 240, 360, 480, 540};
 DWORD           dwThroughput = 0;
@@ -336,7 +344,7 @@ DWORD           dwTxDiff = 0;
         psNodeDBTable->uTimeCount = 0;
     }
 
-    for (ii = 0; ii < MAX_RATE; ii++) {
+    for(ii=0;ii<MAX_RATE;ii++) {
         if (psNodeDBTable->wSuppRate & (0x0001<<ii)) {
             if (bAutoRate[ii] == TRUE) {
                 wIdxUpRate = (WORD) ii;
@@ -346,7 +354,7 @@ DWORD           dwTxDiff = 0;
         }
     }
 
-    for (ii = 0; ii <= psNodeDBTable->wTxDataRate; ii++) {
+    for(ii=0;ii<=psNodeDBTable->wTxDataRate;ii++) {
         if ( (psNodeDBTable->uTxOk[ii] != 0) ||
              (psNodeDBTable->uTxFail[ii] != 0) ) {
             dwThroughputTbl[ii] *= psNodeDBTable->uTxOk[ii];
@@ -361,7 +369,7 @@ DWORD           dwTxDiff = 0;
     dwThroughput = dwThroughputTbl[psNodeDBTable->wTxDataRate];
 
     wIdxDownRate = psNodeDBTable->wTxDataRate;
-    for (ii = psNodeDBTable->wTxDataRate; ii > 0;) {
+    for(ii = psNodeDBTable->wTxDataRate; ii > 0;) {
         ii--;
         if ( (dwThroughputTbl[ii] > dwThroughput) &&
              (bAutoRate[ii]==TRUE) ) {
@@ -388,6 +396,66 @@ DWORD           dwTxDiff = 0;
     s_vResetCounter(psNodeDBTable);
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"Rate: %d, U:%d, D:%d\n", (int)psNodeDBTable->wTxDataRate, (int)wIdxUpRate, (int)wIdxDownRate);
     return;
+#else  //mike fixed new: use differ-signal strength to control rate
+WORD            wIdxUpRate = 0;
+BOOL            bAutoRate[MAX_RATE]    = {TRUE,TRUE,TRUE,TRUE,FALSE,FALSE,TRUE,TRUE,TRUE,TRUE,TRUE,TRUE};
+UINT            ii;
+long  ldBm;
+
+    if (pMgmt->eScanState != WMAC_NO_SCANNING) {
+        // Don't do Fallback when scanning Channel
+        return;
+    }
+
+    for(ii=0;ii<MAX_RATE;ii++) {
+        if (psNodeDBTable->wSuppRate & (0x0001<<ii)) {
+            if (bAutoRate[ii] == TRUE) {
+                wIdxUpRate = (WORD) ii;
+            }
+        } else {
+            bAutoRate[ii] = FALSE;
+        }
+    }
+
+         RFvRSSITodBm(pDevice, (BYTE)(pDevice->uCurrRSSI), &ldBm);
+
+	if (ldBm > -55) {
+		if ( psNodeDBTable->wSuppRate & (0x0001<<RATE_54M) )  //11a/g
+      		{
+	  		psNodeDBTable->wTxDataRate = RATE_54M;
+		}
+		else{ //11b
+	  		psNodeDBTable->wTxDataRate = RATE_11M;
+		}
+	}
+
+if (wIdxUpRate == RATE_54M ) {     //11a/g
+		if (ldBm > -56 )
+			psNodeDBTable->wTxDataRate = RATE_54M;
+		else if (ldBm > -61 )
+			psNodeDBTable->wTxDataRate = RATE_48M;
+		else if (ldBm > -66 )
+			psNodeDBTable->wTxDataRate = RATE_36M;
+		else if (ldBm > -72 )
+			psNodeDBTable->wTxDataRate = RATE_24M;
+		else if (ldBm > -80 )
+			psNodeDBTable->wTxDataRate = RATE_5M;
+		else {
+			psNodeDBTable->wTxDataRate = RATE_1M;
+			//increasingVGA = TRUE;
+		}
+	}
+	else {  //11b
+		if (ldBm > -65 )
+			psNodeDBTable->wTxDataRate = RATE_11M;
+		else if (ldBm > -75 )
+			psNodeDBTable->wTxDataRate = RATE_5M;
+		else
+			psNodeDBTable->wTxDataRate = RATE_1M;
+	}
+
+   return;
+#endif
 }
 
 /*+
@@ -405,12 +473,12 @@ DWORD           dwTxDiff = 0;
 -*/
 BYTE
 RATEuSetIE (
-     PWLAN_IE_SUPP_RATES pSrcRates,
-     PWLAN_IE_SUPP_RATES pDstRates,
-     unsigned int                uRateLen
+    IN PWLAN_IE_SUPP_RATES pSrcRates,
+    IN PWLAN_IE_SUPP_RATES pDstRates,
+    IN UINT                uRateLen
     )
 {
-    unsigned int ii, uu, uRateCnt = 0;
+    UINT ii, uu, uRateCnt = 0;
 
     if ((pSrcRates == NULL) || (pDstRates == NULL))
         return 0;

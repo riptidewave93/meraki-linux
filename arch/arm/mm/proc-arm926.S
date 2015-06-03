@@ -61,11 +61,15 @@ ENTRY(cpu_arm926_proc_init)
  * cpu_arm926_proc_fin()
  */
 ENTRY(cpu_arm926_proc_fin)
+	stmfd	sp!, {lr}
+	mov	ip, #PSR_F_BIT | PSR_I_BIT | SVC_MODE
+	msr	cpsr_c, ip
+	bl	arm926_flush_kern_cache_all
 	mrc	p15, 0, r0, c1, c0, 0		@ ctrl register
 	bic	r0, r0, #0x1000			@ ...i............
 	bic	r0, r0, #0x000e			@ ............wca.
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
-	mov	pc, lr
+	ldmfd	sp!, {pc}
 
 /*
  * cpu_arm926_reset(loc)
@@ -77,7 +81,6 @@ ENTRY(cpu_arm926_proc_fin)
  * loc: location to jump to for soft reset
  */
 	.align	5
-	.pushsection	.idmap.text, "ax"
 ENTRY(cpu_arm926_reset)
 	mov	ip, #0
 	mcr	p15, 0, ip, c7, c7, 0		@ invalidate I,D caches
@@ -90,8 +93,6 @@ ENTRY(cpu_arm926_reset)
 	bic	ip, ip, #0x1100			@ ...i...s........
 	mcr	p15, 0, ip, c1, c0, 0		@ ctrl register
 	mov	pc, r0
-ENDPROC(cpu_arm926_reset)
-	.popsection
 
 /*
  * cpu_arm926_do_idle()
@@ -112,17 +113,6 @@ ENTRY(cpu_arm926_do_idle)
 	mcr	p15, 0, r1, c1, c0, 0		@ Restore ICache enable
 	msr	cpsr_c, r3			@ Restore FIQ state
 	mov	pc, lr
-
-/*
- *	flush_icache_all()
- *
- *	Unconditionally clean and invalidate the entire icache.
- */
-ENTRY(arm926_flush_icache_all)
-	mov	r0, #0
-	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
-	mov	pc, lr
-ENDPROC(arm926_flush_icache_all)
 
 /*
  *	flush_user_cache_all()
@@ -224,16 +214,15 @@ ENTRY(arm926_coherent_user_range)
 	mov	pc, lr
 
 /*
- *	flush_kern_dcache_area(void *addr, size_t size)
+ *	flush_kern_dcache_page(void *page)
  *
  *	Ensure no D cache aliasing occurs, either with itself or
  *	the I cache
  *
- *	- addr	- kernel address
- *	- size	- region size
+ *	- addr	- page aligned address
  */
-ENTRY(arm926_flush_kern_dcache_area)
-	add	r1, r0, r1
+ENTRY(arm926_flush_kern_dcache_page)
+	add	r1, r0, #PAGE_SZ
 1:	mcr	p15, 0, r0, c7, c14, 1		@ clean+invalidate D entry
 	add	r0, r0, #CACHE_DLINESIZE
 	cmp	r0, r1
@@ -256,7 +245,7 @@ ENTRY(arm926_flush_kern_dcache_area)
  *
  * (same as v4wb)
  */
-arm926_dma_inv_range:
+ENTRY(arm926_dma_inv_range)
 #ifndef CONFIG_CPU_DCACHE_WRITETHROUGH
 	tst	r0, #CACHE_DLINESIZE - 1
 	mcrne	p15, 0, r0, c7, c10, 1		@ clean D entry
@@ -281,7 +270,7 @@ arm926_dma_inv_range:
  *
  * (same as v4wb)
  */
-arm926_dma_clean_range:
+ENTRY(arm926_dma_clean_range)
 #ifndef CONFIG_CPU_DCACHE_WRITETHROUGH
 	bic	r0, r0, #CACHE_DLINESIZE - 1
 1:	mcr	p15, 0, r0, c7, c10, 1		@ clean D entry
@@ -314,35 +303,16 @@ ENTRY(arm926_dma_flush_range)
 	mcr	p15, 0, r0, c7, c10, 4		@ drain WB
 	mov	pc, lr
 
-/*
- *	dma_map_area(start, size, dir)
- *	- start	- kernel virtual start address
- *	- size	- size of region
- *	- dir	- DMA direction
- */
-ENTRY(arm926_dma_map_area)
-	add	r1, r1, r0
-	cmp	r2, #DMA_TO_DEVICE
-	beq	arm926_dma_clean_range
-	bcs	arm926_dma_inv_range
-	b	arm926_dma_flush_range
-ENDPROC(arm926_dma_map_area)
-
-/*
- *	dma_unmap_area(start, size, dir)
- *	- start	- kernel virtual start address
- *	- size	- size of region
- *	- dir	- DMA direction
- */
-ENTRY(arm926_dma_unmap_area)
-	mov	pc, lr
-ENDPROC(arm926_dma_unmap_area)
-
-	.globl	arm926_flush_kern_cache_louis
-	.equ	arm926_flush_kern_cache_louis, arm926_flush_kern_cache_all
-
-	@ define struct cpu_cache_fns (see <asm/cacheflush.h> and proc-macros.S)
-	define_cache_functions arm926
+ENTRY(arm926_cache_fns)
+	.long	arm926_flush_kern_cache_all
+	.long	arm926_flush_user_cache_all
+	.long	arm926_flush_user_cache_range
+	.long	arm926_coherent_kern_range
+	.long	arm926_coherent_user_range
+	.long	arm926_flush_kern_dcache_page
+	.long	arm926_dma_inv_range
+	.long	arm926_dma_clean_range
+	.long	arm926_dma_flush_range
 
 ENTRY(cpu_arm926_dcache_clean_area)
 #ifndef CONFIG_CPU_DCACHE_WRITETHROUGH
@@ -398,33 +368,7 @@ ENTRY(cpu_arm926_set_pte_ext)
 #endif
 	mov	pc, lr
 
-/* Suspend/resume support: taken from arch/arm/plat-s3c24xx/sleep.S */
-.globl	cpu_arm926_suspend_size
-.equ	cpu_arm926_suspend_size, 4 * 3
-#ifdef CONFIG_ARM_CPU_SUSPEND
-ENTRY(cpu_arm926_do_suspend)
-	stmfd	sp!, {r4 - r6, lr}
-	mrc	p15, 0, r4, c13, c0, 0	@ PID
-	mrc	p15, 0, r5, c3, c0, 0	@ Domain ID
-	mrc	p15, 0, r6, c1, c0, 0	@ Control register
-	stmia	r0, {r4 - r6}
-	ldmfd	sp!, {r4 - r6, pc}
-ENDPROC(cpu_arm926_do_suspend)
-
-ENTRY(cpu_arm926_do_resume)
-	mov	ip, #0
-	mcr	p15, 0, ip, c8, c7, 0	@ invalidate I+D TLBs
-	mcr	p15, 0, ip, c7, c7, 0	@ invalidate I+D caches
-	ldmia	r0, {r4 - r6}
-	mcr	p15, 0, r4, c13, c0, 0	@ PID
-	mcr	p15, 0, r5, c3, c0, 0	@ Domain ID
-	mcr	p15, 0, r1, c2, c0, 0	@ TTB address
-	mov	r0, r6			@ control register
-	b	cpu_resume_mmu
-ENDPROC(cpu_arm926_do_resume)
-#endif
-
-	__CPUINIT
+	__INIT
 
 	.type	__arm926_setup, #function
 __arm926_setup:
@@ -464,14 +408,39 @@ arm926_crval:
 
 	__INITDATA
 
-	@ define struct processor (see <asm/proc-fns.h> and proc-macros.S)
-	define_processor_functions arm926, dabort=v5tj_early_abort, pabort=legacy_pabort, suspend=1
+/*
+ * Purpose : Function pointers used to access above functions - all calls
+ *	     come through these
+ */
+	.type	arm926_processor_functions, #object
+arm926_processor_functions:
+	.word	v5tj_early_abort
+	.word	legacy_pabort
+	.word	cpu_arm926_proc_init
+	.word	cpu_arm926_proc_fin
+	.word	cpu_arm926_reset
+	.word	cpu_arm926_do_idle
+	.word	cpu_arm926_dcache_clean_area
+	.word	cpu_arm926_switch_mm
+	.word	cpu_arm926_set_pte_ext
+	.size	arm926_processor_functions, . - arm926_processor_functions
 
 	.section ".rodata"
 
-	string	cpu_arch_name, "armv5tej"
-	string	cpu_elf_name, "v5"
-	string	cpu_arm926_name, "ARM926EJ-S"
+	.type	cpu_arch_name, #object
+cpu_arch_name:
+	.asciz	"armv5tej"
+	.size	cpu_arch_name, . - cpu_arch_name
+
+	.type	cpu_elf_name, #object
+cpu_elf_name:
+	.asciz	"v5"
+	.size	cpu_elf_name, . - cpu_elf_name
+
+	.type	cpu_arm926_name, #object
+cpu_arm926_name:
+	.asciz	"ARM926EJ-S"
+	.size	cpu_arm926_name, . - cpu_arm926_name
 
 	.align
 

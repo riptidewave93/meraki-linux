@@ -53,7 +53,7 @@
 /*
  * This is the size at which it becomes more efficient to
  * clean the whole cache, rather than using the individual
- * cache line maintenance instructions.
+ * cache line maintainence instructions.
  */
 #define CACHE_DLIMIT	32768
 
@@ -68,11 +68,15 @@ ENTRY(cpu_arm1026_proc_init)
  * cpu_arm1026_proc_fin()
  */
 ENTRY(cpu_arm1026_proc_fin)
+	stmfd	sp!, {lr}
+	mov	ip, #PSR_F_BIT | PSR_I_BIT | SVC_MODE
+	msr	cpsr_c, ip
+	bl	arm1026_flush_kern_cache_all
 	mrc	p15, 0, r0, c1, c0, 0		@ ctrl register
 	bic	r0, r0, #0x1000 		@ ...i............
 	bic	r0, r0, #0x000e 		@ ............wca.
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
-	mov	pc, lr
+	ldmfd	sp!, {pc}
 
 /*
  * cpu_arm1026_reset(loc)
@@ -84,7 +88,6 @@ ENTRY(cpu_arm1026_proc_fin)
  * loc: location to jump to for soft reset
  */
 	.align	5
-	.pushsection	.idmap.text, "ax"
 ENTRY(cpu_arm1026_reset)
 	mov	ip, #0
 	mcr	p15, 0, ip, c7, c7, 0		@ invalidate I,D caches
@@ -97,8 +100,6 @@ ENTRY(cpu_arm1026_reset)
 	bic	ip, ip, #0x1100 		@ ...i...s........
 	mcr	p15, 0, ip, c1, c0, 0		@ ctrl register
 	mov	pc, r0
-ENDPROC(cpu_arm1026_reset)
-	.popsection
 
 /*
  * cpu_arm1026_do_idle()
@@ -111,20 +112,6 @@ ENTRY(cpu_arm1026_do_idle)
 /* ================================= CACHE ================================ */
 
 	.align	5
-
-/*
- *	flush_icache_all()
- *
- *	Unconditionally clean and invalidate the entire icache.
- */
-ENTRY(arm1026_flush_icache_all)
-#ifndef CONFIG_CPU_ICACHE_DISABLE
-	mov	r0, #0
-	mcr	p15, 0, r0, c7, c5, 0		@ invalidate I cache
-#endif
-	mov	pc, lr
-ENDPROC(arm1026_flush_icache_all)
-
 /*
  *	flush_user_cache_all()
  *
@@ -221,18 +208,17 @@ ENTRY(arm1026_coherent_user_range)
 	mov	pc, lr
 
 /*
- *	flush_kern_dcache_area(void *addr, size_t size)
+ *	flush_kern_dcache_page(void *page)
  *
  *	Ensure no D cache aliasing occurs, either with itself or
  *	the I cache
  *
- *	- addr	- kernel address
- *	- size	- region size
+ *	- page	- page aligned address
  */
-ENTRY(arm1026_flush_kern_dcache_area)
+ENTRY(arm1026_flush_kern_dcache_page)
 	mov	ip, #0
 #ifndef CONFIG_CPU_DCACHE_DISABLE
-	add	r1, r0, r1
+	add	r1, r0, #PAGE_SZ
 1:	mcr	p15, 0, r0, c7, c14, 1		@ clean+invalidate D entry
 	add	r0, r0, #CACHE_DLINESIZE
 	cmp	r0, r1
@@ -254,7 +240,7 @@ ENTRY(arm1026_flush_kern_dcache_area)
  *
  * (same as v4wb)
  */
-arm1026_dma_inv_range:
+ENTRY(arm1026_dma_inv_range)
 	mov	ip, #0
 #ifndef CONFIG_CPU_DCACHE_DISABLE
 	tst	r0, #CACHE_DLINESIZE - 1
@@ -280,7 +266,7 @@ arm1026_dma_inv_range:
  *
  * (same as v4wb)
  */
-arm1026_dma_clean_range:
+ENTRY(arm1026_dma_clean_range)
 	mov	ip, #0
 #ifndef CONFIG_CPU_DCACHE_DISABLE
 	bic	r0, r0, #CACHE_DLINESIZE - 1
@@ -312,35 +298,16 @@ ENTRY(arm1026_dma_flush_range)
 	mcr	p15, 0, ip, c7, c10, 4		@ drain WB
 	mov	pc, lr
 
-/*
- *	dma_map_area(start, size, dir)
- *	- start	- kernel virtual start address
- *	- size	- size of region
- *	- dir	- DMA direction
- */
-ENTRY(arm1026_dma_map_area)
-	add	r1, r1, r0
-	cmp	r2, #DMA_TO_DEVICE
-	beq	arm1026_dma_clean_range
-	bcs	arm1026_dma_inv_range
-	b	arm1026_dma_flush_range
-ENDPROC(arm1026_dma_map_area)
-
-/*
- *	dma_unmap_area(start, size, dir)
- *	- start	- kernel virtual start address
- *	- size	- size of region
- *	- dir	- DMA direction
- */
-ENTRY(arm1026_dma_unmap_area)
-	mov	pc, lr
-ENDPROC(arm1026_dma_unmap_area)
-
-	.globl	arm1026_flush_kern_cache_louis
-	.equ	arm1026_flush_kern_cache_louis, arm1026_flush_kern_cache_all
-
-	@ define struct cpu_cache_fns (see <asm/cacheflush.h> and proc-macros.S)
-	define_cache_functions arm1026
+ENTRY(arm1026_cache_fns)
+	.long	arm1026_flush_kern_cache_all
+	.long	arm1026_flush_user_cache_all
+	.long	arm1026_flush_user_cache_range
+	.long	arm1026_coherent_kern_range
+	.long	arm1026_coherent_user_range
+	.long	arm1026_flush_kern_dcache_page
+	.long	arm1026_dma_inv_range
+	.long	arm1026_dma_clean_range
+	.long	arm1026_dma_flush_range
 
 	.align	5
 ENTRY(cpu_arm1026_dcache_clean_area)
@@ -396,7 +363,7 @@ ENTRY(cpu_arm1026_set_pte_ext)
 	mov	pc, lr
 
 
-	__CPUINIT
+	__INIT
 
 	.type	__arm1026_setup, #function
 __arm1026_setup:
@@ -433,15 +400,42 @@ arm1026_crval:
 	crval	clear=0x00007f3f, mmuset=0x00003935, ucset=0x00001934
 
 	__INITDATA
-	@ define struct processor (see <asm/proc-fns.h> and proc-macros.S)
-	define_processor_functions arm1026, dabort=v5t_early_abort, pabort=legacy_pabort
+
+/*
+ * Purpose : Function pointers used to access above functions - all calls
+ *	     come through these
+ */
+	.type	arm1026_processor_functions, #object
+arm1026_processor_functions:
+	.word	v5t_early_abort
+	.word	legacy_pabort
+	.word	cpu_arm1026_proc_init
+	.word	cpu_arm1026_proc_fin
+	.word	cpu_arm1026_reset
+	.word	cpu_arm1026_do_idle
+	.word	cpu_arm1026_dcache_clean_area
+	.word	cpu_arm1026_switch_mm
+	.word	cpu_arm1026_set_pte_ext
+	.size	arm1026_processor_functions, . - arm1026_processor_functions
 
 	.section .rodata
 
-	string	cpu_arch_name, "armv5tej"
-	string	cpu_elf_name, "v5"
+	.type	cpu_arch_name, #object
+cpu_arch_name:
+	.asciz	"armv5tej"
+	.size	cpu_arch_name, . - cpu_arch_name
+
+	.type	cpu_elf_name, #object
+cpu_elf_name:
+	.asciz	"v5"
+	.size	cpu_elf_name, . - cpu_elf_name
 	.align
-	string	cpu_arm1026_name, "ARM1026EJ-S"
+
+	.type	cpu_arm1026_name, #object
+cpu_arm1026_name:
+	.asciz	"ARM1026EJ-S"
+	.size	cpu_arm1026_name, . - cpu_arm1026_name
+
 	.align
 
 	.section ".proc.info.init", #alloc, #execinstr

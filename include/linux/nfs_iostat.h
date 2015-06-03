@@ -21,7 +21,7 @@
 #ifndef _LINUX_NFS_IOSTAT
 #define _LINUX_NFS_IOSTAT
 
-#define NFS_IOSTAT_VERS		"1.1"
+#define NFS_IOSTAT_VERS		"1.0"
 
 /*
  * NFS byte counters
@@ -113,8 +113,6 @@ enum nfs_stat_eventcounters {
 	NFSIOS_SHORTREAD,
 	NFSIOS_SHORTWRITE,
 	NFSIOS_DELAY,
-	NFSIOS_PNFS_READ,
-	NFSIOS_PNFS_WRITE,
 	__NFSIOS_COUNTSMAX,
 };
 

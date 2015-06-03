@@ -38,7 +38,7 @@
 
 #define nr_syscalls ((syscall_table_size)/4)
 
-	.section	.text..entry
+	.section	.text.entry
 	.balign		4
 
 .macro LEDS val
@@ -1358,7 +1358,7 @@ sys_call_table:
 	.long sys_ni_syscall	/* for vm86 */
 	.long sys_ni_syscall	/* Old sys_query_module */
 	.long sys_poll
-	.long sys_ni_syscall	/* Old nfsservctl */
+	.long sys_nfsservctl
 	.long sys_setresgid16	/* 170 */
 	.long sys_getresgid16
 	.long sys_prctl
@@ -1526,6 +1526,5 @@ sys_call_table:
 	.long sys_pwritev
 	.long sys_rt_tgsigqueueinfo	/* 335 */
 	.long sys_perf_event_open
-	.long sys_setns
 
 syscall_table_size = (. - sys_call_table)

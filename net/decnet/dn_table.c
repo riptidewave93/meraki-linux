@@ -15,7 +15,6 @@
 #include <linux/string.h>
 #include <linux/net.h>
 #include <linux/socket.h>
-#include <linux/slab.h>
 #include <linux/sockios.h>
 #include <linux/init.h>
 #include <linux/skbuff.h>
@@ -25,7 +24,7 @@
 #include <linux/netdevice.h>
 #include <linux/timer.h>
 #include <linux/spinlock.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/uaccess.h>
 #include <linux/route.h> /* RTF_xxx */
 #include <net/neighbour.h>
@@ -59,6 +58,7 @@ struct dn_hash
 };
 
 #define dz_key_0(key)		((key).datum = 0)
+#define dz_prefix(key,dz)	((key).datum)
 
 #define for_nexthops(fi) { int nhsel; const struct dn_fib_nh *nh;\
 	for(nhsel = 0, nh = (fi)->fib_nh; nhsel < (fi)->fib_nhs; nh++, nhsel++)
@@ -123,11 +123,11 @@ static inline void dn_rebuild_zone(struct dn_zone *dz,
 				   struct dn_fib_node **old_ht,
 				   int old_divisor)
 {
-	struct dn_fib_node *f, **fp, *next;
 	int i;
+	struct dn_fib_node *f, **fp, *next;
 
 	for(i = 0; i < old_divisor; i++) {
-		for(f = old_ht[i]; f; f = next) {
+		for(f = old_ht[i]; f; f = f->fn_next) {
 			next = f->fn_next;
 			for(fp = dn_chain_p(f->fn_key, dz);
 				*fp && dn_key_leq((*fp)->fn_key, f->fn_key);
@@ -147,18 +147,17 @@ static void dn_rehash_zone(struct dn_zone *dz)
 
 	old_divisor = dz->dz_divisor;
 
-	switch (old_divisor) {
-	case 16:
-		new_divisor = 256;
-		new_hashmask = 0xFF;
-		break;
-	default:
-		printk(KERN_DEBUG "DECnet: dn_rehash_zone: BUG! %d\n",
-		       old_divisor);
-	case 256:
-		new_divisor = 1024;
-		new_hashmask = 0x3FF;
-		break;
+	switch(old_divisor) {
+		case 16:
+			new_divisor = 256;
+			new_hashmask = 0xFF;
+			break;
+		default:
+			printk(KERN_DEBUG "DECnet: dn_rehash_zone: BUG! %d\n", old_divisor);
+		case 256:
+			new_divisor = 1024;
+			new_hashmask = 0x3FF;
+			break;
 	}
 
 	ht = kcalloc(new_divisor, sizeof(struct dn_fib_node*), GFP_KERNEL);
@@ -472,7 +471,7 @@ int dn_fib_dump(struct sk_buff *skb, struct netlink_callback *cb)
 	struct hlist_node *node;
 	int dumped = 0;
 
-	if (!net_eq(net, &init_net))
+	if (net != &init_net)
 		return 0;
 
 	if (NLMSG_PAYLOAD(cb->nlh, 0) >= sizeof(struct rtmsg) &&
@@ -582,9 +581,8 @@ static int dn_fib_table_insert(struct dn_fib_table *tb, struct rtmsg *r, struct 
 		DN_FIB_SCAN_KEY(f, fp, key) {
 			if (fi->fib_priority != DN_FIB_INFO(f)->fib_priority)
 				break;
-			if (f->fn_type == type &&
-			    f->fn_scope == r->rtm_scope &&
-			    DN_FIB_INFO(f) == fi)
+			if (f->fn_type == type && f->fn_scope == r->rtm_scope
+					&& DN_FIB_INFO(f) == fi)
 				goto out;
 		}
 
@@ -765,7 +763,7 @@ static int dn_fib_table_flush(struct dn_fib_table *tb)
 	return found;
 }
 
-static int dn_fib_table_lookup(struct dn_fib_table *tb, const struct flowidn *flp, struct dn_fib_res *res)
+static int dn_fib_table_lookup(struct dn_fib_table *tb, const struct flowi *flp, struct dn_fib_res *res)
 {
 	int err;
 	struct dn_zone *dz;
@@ -774,7 +772,7 @@ static int dn_fib_table_lookup(struct dn_fib_table *tb, const struct flowidn *fl
 	read_lock(&dn_fib_tables_lock);
 	for(dz = t->dh_zone_list; dz; dz = dz->dz_next) {
 		struct dn_fib_node *f;
-		dn_fib_key_t k = dz_key(flp->daddr, dz);
+		dn_fib_key_t k = dz_key(flp->fld_dst, dz);
 
 		for(f = dz_chain(k, dz); f; f = f->fn_next) {
 			if (!dn_key_eq(k, f->fn_key)) {
@@ -789,7 +787,7 @@ static int dn_fib_table_lookup(struct dn_fib_table *tb, const struct flowidn *fl
 			if (f->fn_state&DN_S_ZOMBIE)
 				continue;
 
-			if (f->fn_scope < flp->flowidn_scope)
+			if (f->fn_scope < flp->fld_scope)
 				continue;
 
 			err = dn_fib_semantic_match(f->fn_type, DN_FIB_INFO(f), flp, res);

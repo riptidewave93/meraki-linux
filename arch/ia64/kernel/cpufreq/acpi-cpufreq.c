@@ -10,7 +10,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/cpufreq.h>
@@ -22,6 +21,8 @@
 
 #include <linux/acpi.h>
 #include <acpi/processor.h>
+
+#define dprintk(msg...) cpufreq_debug_printk(CPUFREQ_DEBUG_DRIVER, "acpi-cpufreq", msg)
 
 MODULE_AUTHOR("Venkatesh Pallipadi");
 MODULE_DESCRIPTION("ACPI Processor P-States Driver");
@@ -45,12 +46,12 @@ processor_set_pstate (
 {
 	s64 retval;
 
-	pr_debug("processor_set_pstate\n");
+	dprintk("processor_set_pstate\n");
 
 	retval = ia64_pal_set_pstate((u64)value);
 
 	if (retval) {
-		pr_debug("Failed to set freq to 0x%x, with error 0x%lx\n",
+		dprintk("Failed to set freq to 0x%x, with error 0x%lx\n",
 		        value, retval);
 		return -ENODEV;
 	}
@@ -65,14 +66,14 @@ processor_get_pstate (
 	u64	pstate_index = 0;
 	s64 	retval;
 
-	pr_debug("processor_get_pstate\n");
+	dprintk("processor_get_pstate\n");
 
 	retval = ia64_pal_get_pstate(&pstate_index,
 	                             PAL_GET_PSTATE_TYPE_INSTANT);
 	*value = (u32) pstate_index;
 
 	if (retval)
-		pr_debug("Failed to get current freq with "
+		dprintk("Failed to get current freq with "
 			"error 0x%lx, idx 0x%x\n", retval, *value);
 
 	return (int)retval;
@@ -88,7 +89,7 @@ extract_clock (
 {
 	unsigned long i;
 
-	pr_debug("extract_clock\n");
+	dprintk("extract_clock\n");
 
 	for (i = 0; i < data->acpi_data.state_count; i++) {
 		if (value == data->acpi_data.states[i].status)
@@ -108,10 +109,10 @@ processor_get_freq (
 	cpumask_t		saved_mask;
 	unsigned long 		clock_freq;
 
-	pr_debug("processor_get_freq\n");
+	dprintk("processor_get_freq\n");
 
 	saved_mask = current->cpus_allowed;
-	set_cpus_allowed_ptr(current, cpumask_of(cpu));
+	set_cpus_allowed(current, cpumask_of_cpu(cpu));
 	if (smp_processor_id() != cpu)
 		goto migrate_end;
 
@@ -119,7 +120,7 @@ processor_get_freq (
 	ret = processor_get_pstate(&value);
 
 	if (ret) {
-		set_cpus_allowed_ptr(current, &saved_mask);
+		set_cpus_allowed(current, saved_mask);
 		printk(KERN_WARNING "get performance failed with error %d\n",
 		       ret);
 		ret = 0;
@@ -129,7 +130,7 @@ processor_get_freq (
 	ret = (clock_freq*1000);
 
 migrate_end:
-	set_cpus_allowed_ptr(current, &saved_mask);
+	set_cpus_allowed(current, saved_mask);
 	return ret;
 }
 
@@ -146,10 +147,10 @@ processor_set_freq (
 	cpumask_t		saved_mask;
 	int			retval;
 
-	pr_debug("processor_set_freq\n");
+	dprintk("processor_set_freq\n");
 
 	saved_mask = current->cpus_allowed;
-	set_cpus_allowed_ptr(current, cpumask_of(cpu));
+	set_cpus_allowed(current, cpumask_of_cpu(cpu));
 	if (smp_processor_id() != cpu) {
 		retval = -EAGAIN;
 		goto migrate_end;
@@ -157,16 +158,16 @@ processor_set_freq (
 
 	if (state == data->acpi_data.state) {
 		if (unlikely(data->resume)) {
-			pr_debug("Called after resume, resetting to P%d\n", state);
+			dprintk("Called after resume, resetting to P%d\n", state);
 			data->resume = 0;
 		} else {
-			pr_debug("Already at target state (P%d)\n", state);
+			dprintk("Already at target state (P%d)\n", state);
 			retval = 0;
 			goto migrate_end;
 		}
 	}
 
-	pr_debug("Transitioning from P%d to P%d\n",
+	dprintk("Transitioning from P%d to P%d\n",
 		data->acpi_data.state, state);
 
 	/* cpufreq frequency struct */
@@ -184,7 +185,7 @@ processor_set_freq (
 
 	value = (u32) data->acpi_data.states[state].control;
 
-	pr_debug("Transitioning to state: 0x%08x\n", value);
+	dprintk("Transitioning to state: 0x%08x\n", value);
 
 	ret = processor_set_pstate(value);
 	if (ret) {
@@ -206,7 +207,7 @@ processor_set_freq (
 	retval = 0;
 
 migrate_end:
-	set_cpus_allowed_ptr(current, &saved_mask);
+	set_cpus_allowed(current, saved_mask);
 	return (retval);
 }
 
@@ -217,7 +218,7 @@ acpi_cpufreq_get (
 {
 	struct cpufreq_acpi_io *data = acpi_io_data[cpu];
 
-	pr_debug("acpi_cpufreq_get\n");
+	dprintk("acpi_cpufreq_get\n");
 
 	return processor_get_freq(data, cpu);
 }
@@ -233,7 +234,7 @@ acpi_cpufreq_target (
 	unsigned int next_state = 0;
 	unsigned int result = 0;
 
-	pr_debug("acpi_cpufreq_setpolicy\n");
+	dprintk("acpi_cpufreq_setpolicy\n");
 
 	result = cpufreq_frequency_table_target(policy,
 			data->freq_table, target_freq, relation, &next_state);
@@ -253,7 +254,7 @@ acpi_cpufreq_verify (
 	unsigned int result = 0;
 	struct cpufreq_acpi_io *data = acpi_io_data[policy->cpu];
 
-	pr_debug("acpi_cpufreq_verify\n");
+	dprintk("acpi_cpufreq_verify\n");
 
 	result = cpufreq_frequency_table_verify(policy,
 			data->freq_table);
@@ -271,7 +272,7 @@ acpi_cpufreq_cpu_init (
 	struct cpufreq_acpi_io	*data;
 	unsigned int		result = 0;
 
-	pr_debug("acpi_cpufreq_cpu_init\n");
+	dprintk("acpi_cpufreq_cpu_init\n");
 
 	data = kzalloc(sizeof(struct cpufreq_acpi_io), GFP_KERNEL);
 	if (!data)
@@ -286,7 +287,7 @@ acpi_cpufreq_cpu_init (
 
 	/* capability check */
 	if (data->acpi_data.state_count <= 1) {
-		pr_debug("No P-States\n");
+		dprintk("No P-States\n");
 		result = -ENODEV;
 		goto err_unreg;
 	}
@@ -295,7 +296,7 @@ acpi_cpufreq_cpu_init (
 					ACPI_ADR_SPACE_FIXED_HARDWARE) ||
 	    (data->acpi_data.status_register.space_id !=
 					ACPI_ADR_SPACE_FIXED_HARDWARE)) {
-		pr_debug("Unsupported address space [%d, %d]\n",
+		dprintk("Unsupported address space [%d, %d]\n",
 			(u32) (data->acpi_data.control_register.space_id),
 			(u32) (data->acpi_data.status_register.space_id));
 		result = -ENODEV;
@@ -346,7 +347,7 @@ acpi_cpufreq_cpu_init (
 	       "activated.\n", cpu);
 
 	for (i = 0; i < data->acpi_data.state_count; i++)
-		pr_debug("     %cP%d: %d MHz, %d mW, %d uS, %d uS, 0x%x 0x%x\n",
+		dprintk("     %cP%d: %d MHz, %d mW, %d uS, %d uS, 0x%x 0x%x\n",
 			(i == data->acpi_data.state?'*':' '), i,
 			(u32) data->acpi_data.states[i].core_frequency,
 			(u32) data->acpi_data.states[i].power,
@@ -381,7 +382,7 @@ acpi_cpufreq_cpu_exit (
 {
 	struct cpufreq_acpi_io *data = acpi_io_data[policy->cpu];
 
-	pr_debug("acpi_cpufreq_cpu_exit\n");
+	dprintk("acpi_cpufreq_cpu_exit\n");
 
 	if (data) {
 		cpufreq_frequency_table_put_attr(policy->cpu);
@@ -416,7 +417,7 @@ static struct cpufreq_driver acpi_cpufreq_driver = {
 static int __init
 acpi_cpufreq_init (void)
 {
-	pr_debug("acpi_cpufreq_init\n");
+	dprintk("acpi_cpufreq_init\n");
 
  	return cpufreq_register_driver(&acpi_cpufreq_driver);
 }
@@ -425,7 +426,7 @@ acpi_cpufreq_init (void)
 static void __exit
 acpi_cpufreq_exit (void)
 {
-	pr_debug("acpi_cpufreq_exit\n");
+	dprintk("acpi_cpufreq_exit\n");
 
 	cpufreq_unregister_driver(&acpi_cpufreq_driver);
 	return;

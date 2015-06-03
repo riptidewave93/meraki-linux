@@ -10,10 +10,8 @@
 
 #include <linux/blkdev.h>
 #include <linux/delay.h>
-#include <linux/module.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
-#include <linux/slab.h>
 
 #include <asm/cell-regs.h>
 #include <asm/firmware.h>
@@ -125,15 +123,7 @@ static int ps3vram_notifier_wait(struct ps3_system_bus_device *dev,
 {
 	struct ps3vram_priv *priv = ps3_system_bus_get_drvdata(dev);
 	u32 *notify = ps3vram_get_notifier(priv->reports, NOTIFIER);
-	unsigned long timeout;
-
-	for (timeout = 20; timeout; timeout--) {
-		if (!notify[3])
-			return 0;
-		udelay(10);
-	}
-
-	timeout = jiffies + msecs_to_jiffies(timeout_ms);
+	unsigned long timeout = jiffies + msecs_to_jiffies(timeout_ms);
 
 	do {
 		if (!notify[3])
@@ -597,7 +587,7 @@ out:
 	return next;
 }
 
-static void ps3vram_make_request(struct request_queue *q, struct bio *bio)
+static int ps3vram_make_request(struct request_queue *q, struct bio *bio)
 {
 	struct ps3_system_bus_device *dev = q->queuedata;
 	struct ps3vram_priv *priv = ps3_system_bus_get_drvdata(dev);
@@ -611,11 +601,13 @@ static void ps3vram_make_request(struct request_queue *q, struct bio *bio)
 	spin_unlock_irq(&priv->lock);
 
 	if (busy)
-		return;
+		return 0;
 
 	do {
 		bio = ps3vram_do_bio(dev, bio);
 	} while (bio);
+
+	return 0;
 }
 
 static int __devinit ps3vram_probe(struct ps3_system_bus_device *dev)
@@ -751,9 +743,10 @@ static int __devinit ps3vram_probe(struct ps3_system_bus_device *dev)
 	priv->queue = queue;
 	queue->queuedata = dev;
 	blk_queue_make_request(queue, ps3vram_make_request);
-	blk_queue_max_segments(queue, BLK_MAX_SEGMENTS);
-	blk_queue_max_segment_size(queue, BLK_MAX_SEGMENT_SIZE);
-	blk_queue_max_hw_sectors(queue, BLK_SAFE_MAX_SECTORS);
+	blk_queue_max_phys_segments(queue, MAX_PHYS_SEGMENTS);
+	blk_queue_max_hw_segments(queue, MAX_HW_SEGMENTS);
+	blk_queue_max_segment_size(queue, MAX_SEGMENT_SIZE);
+	blk_queue_max_sectors(queue, SAFE_MAX_SECTORS);
 
 	gendisk = alloc_disk(1);
 	if (!gendisk) {

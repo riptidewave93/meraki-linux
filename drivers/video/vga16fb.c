@@ -15,6 +15,7 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/fb.h>
 #include <linux/ioport.h>
@@ -65,7 +66,7 @@ struct vga16fb_par {
 
 /* --------------------------------------------------------------------- */
 
-static struct fb_var_screeninfo vga16fb_defined __devinitdata = {
+static struct fb_var_screeninfo vga16fb_defined __initdata = {
 	.xres		= 640,
 	.yres		= 480,
 	.xres_virtual	= 640,
@@ -85,7 +86,7 @@ static struct fb_var_screeninfo vga16fb_defined __devinitdata = {
 };
 
 /* name should not depend on EGA/VGA */
-static struct fb_fix_screeninfo vga16fb_fix __devinitdata = {
+static struct fb_fix_screeninfo vga16fb_fix __initdata = {
 	.id		= "VGA16 VGA",
 	.smem_start	= VGA_FB_PHYS,
 	.smem_len	= VGA_FB_PHYS_LEN,
@@ -152,7 +153,7 @@ static inline int setop(int op)
 }
 
 /* Set the Enable Set/Reset Register and return its old value.  
-   The code here always uses value 0xf for this register. */
+   The code here always uses value 0xf for thsi register. */
 static inline int setsr(int sr)
 {
 	int oldsr;
@@ -207,7 +208,7 @@ static void vga16fb_pan_var(struct fb_info *info,
 	 * granularity if someone supports xoffset in bit resolution */
 	vga_io_r(VGA_IS1_RC);		/* reset flip-flop */
 	vga_io_w(VGA_ATT_IW, VGA_ATC_PEL);
-	if (info->var.bits_per_pixel == 8)
+	if (var->bits_per_pixel == 8)
 		vga_io_w(VGA_ATT_IW, (xoffset & 3) << 1);
 	else
 		vga_io_w(VGA_ATT_IW, xoffset & 7);
@@ -1263,21 +1264,10 @@ static void vga16fb_imageblit(struct fb_info *info, const struct fb_image *image
 		vga_imageblit_color(info, image);
 }
 
-static void vga16fb_destroy(struct fb_info *info)
-{
-	struct platform_device *dev = container_of(info->device, struct platform_device, dev);
-	iounmap(info->screen_base);
-	fb_dealloc_cmap(&info->cmap);
-	/* XXX unshare VGA regions */
-	platform_set_drvdata(dev, NULL);
-	framebuffer_release(info);
-}
-
 static struct fb_ops vga16fb_ops = {
 	.owner		= THIS_MODULE,
 	.fb_open        = vga16fb_open,
 	.fb_release     = vga16fb_release,
-	.fb_destroy	= vga16fb_destroy,
 	.fb_check_var	= vga16fb_check_var,
 	.fb_set_par	= vga16fb_set_par,
 	.fb_setcolreg 	= vga16fb_setcolreg,
@@ -1289,7 +1279,7 @@ static struct fb_ops vga16fb_ops = {
 };
 
 #ifndef MODULE
-static int __init vga16fb_setup(char *options)
+static int vga16fb_setup(char *options)
 {
 	char *this_opt;
 	
@@ -1303,7 +1293,7 @@ static int __init vga16fb_setup(char *options)
 }
 #endif
 
-static int __devinit vga16fb_probe(struct platform_device *dev)
+static int __init vga16fb_probe(struct platform_device *dev)
 {
 	struct fb_info *info;
 	struct vga16fb_par *par;
@@ -1316,11 +1306,6 @@ static int __devinit vga16fb_probe(struct platform_device *dev)
 	if (!info) {
 		ret = -ENOMEM;
 		goto err_fb_alloc;
-	}
-	info->apertures = alloc_apertures(1);
-	if (!info->apertures) {
-		ret = -ENOMEM;
-		goto err_ioremap;
 	}
 
 	/* XXX share VGA_FB_PHYS and I/O region with vgacon and others */
@@ -1351,7 +1336,7 @@ static int __devinit vga16fb_probe(struct platform_device *dev)
 	info->fix = vga16fb_fix;
 	/* supports rectangles with widths of multiples of 8 */
 	info->pixmap.blit_x = 1 << 7 | 1 << 15 | 1 << 23 | 1 << 31;
-	info->flags = FBINFO_FLAG_DEFAULT | FBINFO_MISC_FIRMWARE |
+	info->flags = FBINFO_FLAG_DEFAULT |
 		FBINFO_HWACCEL_YPAN;
 
 	i = (info->var.bits_per_pixel == 8) ? 256 : 16;
@@ -1369,9 +1354,6 @@ static int __devinit vga16fb_probe(struct platform_device *dev)
 	}
 
 	vga16fb_update_fix(info);
-
-	info->apertures->ranges[0].base = VGA_FB_PHYS;
-	info->apertures->ranges[0].size = VGA_FB_PHYS_LEN;
 
 	if (register_framebuffer(info) < 0) {
 		printk(KERN_ERR "vga16fb: unable to register framebuffer\n");
@@ -1395,19 +1377,24 @@ static int __devinit vga16fb_probe(struct platform_device *dev)
 	return ret;
 }
 
-static int __devexit vga16fb_remove(struct platform_device *dev)
+static int vga16fb_remove(struct platform_device *dev)
 {
 	struct fb_info *info = platform_get_drvdata(dev);
 
-	if (info)
+	if (info) {
 		unregister_framebuffer(info);
+		iounmap(info->screen_base);
+		fb_dealloc_cmap(&info->cmap);
+	/* XXX unshare VGA regions */
+		framebuffer_release(info);
+	}
 
 	return 0;
 }
 
 static struct platform_driver vga16fb_driver = {
 	.probe = vga16fb_probe,
-	.remove = __devexit_p(vga16fb_remove),
+	.remove = vga16fb_remove,
 	.driver = {
 		.name = "vga16fb",
 	},

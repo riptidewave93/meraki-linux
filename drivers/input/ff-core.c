@@ -23,13 +23,12 @@
 
 /* #define DEBUG */
 
-#define pr_fmt(fmt) KBUILD_BASENAME ": " fmt
+#define debug(format, arg...) pr_debug("ff-core: " format "\n", ## arg)
 
 #include <linux/input.h>
 #include <linux/module.h>
 #include <linux/mutex.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 
 /*
  * Check that the effect_id is a valid effect and whether the user
@@ -116,7 +115,7 @@ int input_ff_upload(struct input_dev *dev, struct ff_effect *effect,
 
 	if (effect->type < FF_EFFECT_MIN || effect->type > FF_EFFECT_MAX ||
 	    !test_bit(effect->type, dev->ffbit)) {
-		pr_debug("invalid or not supported effect type in upload\n");
+		debug("invalid or not supported effect type in upload");
 		return -EINVAL;
 	}
 
@@ -124,7 +123,7 @@ int input_ff_upload(struct input_dev *dev, struct ff_effect *effect,
 	    (effect->u.periodic.waveform < FF_WAVEFORM_MIN ||
 	     effect->u.periodic.waveform > FF_WAVEFORM_MAX ||
 	     !test_bit(effect->u.periodic.waveform, dev->ffbit))) {
-		pr_debug("invalid or not supported wave form in upload\n");
+		debug("invalid or not supported wave form in upload");
 		return -EINVAL;
 	}
 
@@ -246,7 +245,7 @@ static int flush_effects(struct input_dev *dev, struct file *file)
 	struct ff_device *ff = dev->ff;
 	int i;
 
-	pr_debug("flushing now\n");
+	debug("flushing now");
 
 	mutex_lock(&ff->mutex);
 
@@ -309,23 +308,19 @@ EXPORT_SYMBOL_GPL(input_ff_event);
  * Once ff device is created you need to setup its upload, erase,
  * playback and other handlers before registering input device
  */
-int input_ff_create(struct input_dev *dev, unsigned int max_effects)
+int input_ff_create(struct input_dev *dev, int max_effects)
 {
 	struct ff_device *ff;
-	size_t ff_dev_size;
 	int i;
 
 	if (!max_effects) {
-		pr_err("cannot allocate device without any effects\n");
+		printk(KERN_ERR
+		       "ff-core: cannot allocate device without any effects\n");
 		return -EINVAL;
 	}
 
-	ff_dev_size = sizeof(struct ff_device) +
-				max_effects * sizeof(struct file *);
-	if (ff_dev_size < max_effects) /* overflow */
-		return -EINVAL;
-
-	ff = kzalloc(ff_dev_size, GFP_KERNEL);
+	ff = kzalloc(sizeof(struct ff_device) +
+		     max_effects * sizeof(struct file *), GFP_KERNEL);
 	if (!ff)
 		return -ENOMEM;
 
@@ -358,7 +353,7 @@ int input_ff_create(struct input_dev *dev, unsigned int max_effects)
 EXPORT_SYMBOL_GPL(input_ff_create);
 
 /**
- * input_ff_destroy() - frees force feedback portion of input device
+ * input_ff_free() - frees force feedback portion of input device
  * @dev: input device supporting force feedback
  *
  * This function is only needed in error path as input core will
@@ -374,7 +369,6 @@ void input_ff_destroy(struct input_dev *dev)
 		if (ff->destroy)
 			ff->destroy(ff);
 		kfree(ff->private);
-		kfree(ff->effects);
 		kfree(ff);
 		dev->ff = NULL;
 	}

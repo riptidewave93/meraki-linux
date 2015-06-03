@@ -59,12 +59,15 @@ static unsigned char heartbeat_bit_pos[] = { 0, 1, 2, 3 };
 static struct heartbeat_data heartbeat_data = {
 	.bit_pos	= heartbeat_bit_pos,
 	.nr_bits	= ARRAY_SIZE(heartbeat_bit_pos),
+	.regsize	= 8,
 };
 
-static struct resource heartbeat_resource = {
-	.start	= PORT_PCDR,
-	.end	= PORT_PCDR,
-	.flags	= IORESOURCE_MEM | IORESOURCE_MEM_8BIT,
+static struct resource heartbeat_resources[] = {
+	[0] = {
+		.start	= PORT_PCDR,
+		.end	= PORT_PCDR,
+		.flags	= IORESOURCE_MEM,
+	},
 };
 
 static struct platform_device heartbeat_device = {
@@ -73,8 +76,8 @@ static struct platform_device heartbeat_device = {
 	.dev	= {
 		.platform_data	= &heartbeat_data,
 	},
-	.num_resources	= 1,
-	.resource	= &heartbeat_resource,
+	.num_resources	= ARRAY_SIZE(heartbeat_resources),
+	.resource	= heartbeat_resources,
 };
 
 static struct platform_device *polaris_devices[] __initdata = {
@@ -89,15 +92,15 @@ static int __init polaris_initialise(void)
 	printk(KERN_INFO "Configuring Polaris external bus\n");
 
 	/* Configure area 5 with 2 wait states */
-	wcr = __raw_readw(WCR2);
+	wcr = ctrl_inw(WCR2);
 	wcr &= (~AREA5_WAIT_CTRL);
 	wcr |= (WAIT_STATES_10 << 10);
-	__raw_writew(wcr, WCR2);
+	ctrl_outw(wcr, WCR2);
 
 	/* Configure area 5 for 32-bit access */
-	bcr_mask = __raw_readw(BCR2);
+	bcr_mask = ctrl_inw(BCR2);
 	bcr_mask |= 1 << 10;
-	__raw_writew(bcr_mask, BCR2);
+	ctrl_outw(bcr_mask, BCR2);
 
 	return platform_add_devices(polaris_devices,
 				    ARRAY_SIZE(polaris_devices));
@@ -128,13 +131,13 @@ static struct ipr_desc ipr_irq_desc = {
 static void __init init_polaris_irq(void)
 {
 	/* Disable all interrupts */
-	__raw_writew(0, BCR_ILCRA);
-	__raw_writew(0, BCR_ILCRB);
-	__raw_writew(0, BCR_ILCRC);
-	__raw_writew(0, BCR_ILCRD);
-	__raw_writew(0, BCR_ILCRE);
-	__raw_writew(0, BCR_ILCRF);
-	__raw_writew(0, BCR_ILCRG);
+	ctrl_outw(0, BCR_ILCRA);
+	ctrl_outw(0, BCR_ILCRB);
+	ctrl_outw(0, BCR_ILCRC);
+	ctrl_outw(0, BCR_ILCRD);
+	ctrl_outw(0, BCR_ILCRE);
+	ctrl_outw(0, BCR_ILCRF);
+	ctrl_outw(0, BCR_ILCRG);
 
 	register_ipr_controller(&ipr_irq_desc);
 }

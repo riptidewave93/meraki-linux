@@ -21,11 +21,13 @@
 #include <linux/stddef.h>
 #include <linux/unistd.h>
 #include <linux/ptrace.h>
+#include <linux/slab.h>
 #include <linux/user.h>
 #include <linux/interrupt.h>
 
 #include <asm/pgtable.h>
 #include <asm/uaccess.h>
+#include <asm/system.h>
 #include <asm/io.h>
 
 /* Eventually we may need a look-up table, but this works for now.

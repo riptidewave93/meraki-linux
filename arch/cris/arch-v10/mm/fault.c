@@ -80,7 +80,8 @@ handle_mmu_bus_fault(struct pt_regs *regs)
 	 * do_page_fault may have flushed the TLB so we have to restore
 	 * the MMU registers.
 	 */
-	local_irq_save(flags);
+	local_save_flags(flags);
+	local_irq_disable();
 	pmd = (pmd_t *)(pgd + pgd_index(address));
 	if (pmd_none(*pmd))
 		goto exit;

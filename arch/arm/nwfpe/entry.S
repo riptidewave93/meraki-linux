@@ -20,8 +20,6 @@
     Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
 */
 
-#include <asm/opcodes.h>
-
 /* This is the kernel's entry point into the floating point emulator.
 It is called from the kernel with code similar to this:
 
@@ -83,11 +81,11 @@ nwfpe_enter:
 	mov	r6, r0			@ save the opcode
 emulate:
 	ldr	r1, [sp, #S_PSR]	@ fetch the PSR
-	bl	arm_check_condition	@ check the condition
-	cmp	r0, #ARM_OPCODE_CONDTEST_PASS	@ condition passed?
+	bl	checkCondition		@ check the condition
+	cmp	r0, #0			@ r0 = 0 ==> condition failed
 
 	@ if condition code failed to match, next insn
-	bne	next			@ get the next instruction;
+	beq	next			@ get the next instruction;
 
 	mov	r0, r6			@ prepare for EmulateAll()
 	bl	EmulateAll		@ emulate the instruction
@@ -113,12 +111,12 @@ next:
 	@ to fault.  Emit the appropriate exception gunk to fix things up.
 	@ ??? For some reason, faults can happen at .Lx2 even with a
 	@ plain LDR instruction.  Weird, but it seems harmless.
-	.pushsection .fixup,"ax"
+	.section .fixup,"ax"
 	.align	2
 .Lfix:	mov	pc, r9			@ let the user eat segfaults
-	.popsection
+	.previous
 
-	.pushsection __ex_table,"a"
+	.section __ex_table,"a"
 	.align	3
 	.long	.Lx1, .Lfix
-	.popsection
+	.previous

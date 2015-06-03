@@ -22,7 +22,6 @@
 
 #include <linux/init.h>
 #include <linux/slab.h>
-#include <linux/module.h>
 #include <sound/core.h>
 #include <sound/control.h>
 #include <sound/tea6330t.h>

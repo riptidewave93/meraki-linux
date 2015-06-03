@@ -25,7 +25,6 @@
 #include <sound/core.h>
 
 #include "ctvmem.h"
-#include "cthardware.h"
 #include "ctresource.h"
 
 enum CTALSADEVS {		/* Types of alsa devices */
@@ -116,17 +115,12 @@ struct ct_atc {
 	int (*line_clfe_unmute)(struct ct_atc *atc, unsigned char state);
 	int (*line_rear_unmute)(struct ct_atc *atc, unsigned char state);
 	int (*line_in_unmute)(struct ct_atc *atc, unsigned char state);
-	int (*mic_unmute)(struct ct_atc *atc, unsigned char state);
 	int (*spdif_out_unmute)(struct ct_atc *atc, unsigned char state);
 	int (*spdif_in_unmute)(struct ct_atc *atc, unsigned char state);
 	int (*spdif_out_get_status)(struct ct_atc *atc, unsigned int *status);
 	int (*spdif_out_set_status)(struct ct_atc *atc, unsigned int status);
 	int (*spdif_out_passthru)(struct ct_atc *atc, unsigned char state);
-	struct capabilities (*capabilities)(struct ct_atc *atc);
-	int (*output_switch_get)(struct ct_atc *atc);
-	int (*output_switch_put)(struct ct_atc *atc, int position);
-	int (*mic_source_switch_get)(struct ct_atc *atc);
-	int (*mic_source_switch_put)(struct ct_atc *atc, int position);
+	int (*have_digit_io_switch)(struct ct_atc *atc);
 
 	/* Don't touch! Used for internal object. */
 	void *rsc_mgrs[NUM_RSCTYP]; /* chip resource managers */
@@ -154,7 +148,7 @@ struct ct_atc {
 
 int __devinit ct_atc_create(struct snd_card *card, struct pci_dev *pci,
 			    unsigned int rsr, unsigned int msr, int chip_type,
-			    unsigned int subsysid, struct ct_atc **ratc);
+			    struct ct_atc **ratc);
 int __devinit ct_atc_create_alsa_devs(struct ct_atc *atc);
 
 #endif /* CTATC_H */

@@ -15,7 +15,7 @@
  *
  *	WARNING: This driver has only been testen on Apple's
  *	1.25 MHz Dual G4 (March 03). It is tuned for a CPU
- *	temperature around 57 C.
+ *	temperatur around 57 C.
  *
  *   Copyright (C) 2003, 2004 Samuel Rydh (samuel@ibrium.se)
  *
@@ -34,6 +34,7 @@
 #include <linux/delay.h>
 #include <linux/sched.h>
 #include <linux/i2c.h>
+#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/kthread.h>
 #include <linux/of_platform.h>
@@ -41,17 +42,18 @@
 #include <asm/prom.h>
 #include <asm/machdep.h>
 #include <asm/io.h>
+#include <asm/system.h>
 #include <asm/sections.h>
 #include <asm/macio.h>
 
-#define LOG_TEMP		0			/* continuously log temperature */
+#define LOG_TEMP		0			/* continously log temperature */
 
 static struct {
 	volatile int		running;
 	struct task_struct	*poll_task;
 	
 	struct mutex	 	lock;
-	struct platform_device	*of_dev;
+	struct of_device	*of_dev;
 	
 	struct i2c_client	*thermostat;
 	struct i2c_client	*fan;
@@ -321,10 +323,10 @@ do_attach( struct i2c_adapter *adapter )
 
 		memset(&info, 0, sizeof(struct i2c_board_info));
 		strlcpy(info.type, "therm_ds1775", I2C_NAME_SIZE);
-		i2c_new_probed_device(adapter, &info, scan_ds1775, NULL);
+		i2c_new_probed_device(adapter, &info, scan_ds1775);
 
 		strlcpy(info.type, "therm_adm1030", I2C_NAME_SIZE);
-		i2c_new_probed_device(adapter, &info, scan_adm1030, NULL);
+		i2c_new_probed_device(adapter, &info, scan_adm1030);
 
 		if( x.thermostat && x.fan ) {
 			x.running = 1;
@@ -442,30 +444,28 @@ static struct i2c_driver g4fan_driver = {
 /*	initialization / cleanup					*/
 /************************************************************************/
 
-static int therm_of_probe(struct platform_device *dev)
+static int
+therm_of_probe( struct of_device *dev, const struct of_device_id *match )
 {
 	return i2c_add_driver( &g4fan_driver );
 }
 
 static int
-therm_of_remove( struct platform_device *dev )
+therm_of_remove( struct of_device *dev )
 {
 	i2c_del_driver( &g4fan_driver );
 	return 0;
 }
 
-static const struct of_device_id therm_of_match[] = {{
+static struct of_device_id therm_of_match[] = {{
 	.name		= "fan",
 	.compatible	= "adm1030"
     }, {}
 };
 
-static struct platform_driver therm_of_driver = {
-	.driver = {
-		.name = "temperature",
-		.owner = THIS_MODULE,
-		.of_match_table = therm_of_match,
-	},
+static struct of_platform_driver therm_of_driver = {
+	.name		= "temperature",
+	.match_table	= therm_of_match,
 	.probe		= therm_of_probe,
 	.remove		= therm_of_remove,
 };
@@ -490,7 +490,7 @@ g4fan_init( void )
 	info = of_get_property(np, "thermal-info", NULL);
 	of_node_put(np);
 
-	if( !info || !of_machine_is_compatible("PowerMac3,6") )
+	if( !info || !machine_is_compatible("PowerMac3,6") )
 		return -ENODEV;
 
 	if( info->id != 3 ) {
@@ -507,14 +507,14 @@ g4fan_init( void )
 		return -ENODEV;
 	}
 
-	platform_driver_register( &therm_of_driver );
+	of_register_platform_driver( &therm_of_driver );
 	return 0;
 }
 
 static void __exit
 g4fan_exit( void )
 {
-	platform_driver_unregister( &therm_of_driver );
+	of_unregister_platform_driver( &therm_of_driver );
 
 	if( x.of_dev )
 		of_device_unregister( x.of_dev );

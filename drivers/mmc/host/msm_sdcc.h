@@ -138,13 +138,8 @@
 #define MCI_IRQENABLE	\
 	(MCI_CMDCRCFAILMASK|MCI_DATACRCFAILMASK|MCI_CMDTIMEOUTMASK|	\
 	MCI_DATATIMEOUTMASK|MCI_TXUNDERRUNMASK|MCI_RXOVERRUNMASK|	\
-	MCI_CMDRESPENDMASK|MCI_CMDSENTMASK|MCI_DATAENDMASK|MCI_PROGDONEMASK)
+	MCI_CMDRESPENDMASK|MCI_CMDSENTMASK|MCI_DATAENDMASK)
 
-#define MCI_IRQ_PIO \
-	(MCI_RXDATAAVLBLMASK | MCI_TXDATAAVLBLMASK | MCI_RXFIFOEMPTYMASK | \
-	 MCI_TXFIFOEMPTYMASK | MCI_RXFIFOFULLMASK | MCI_TXFIFOFULLMASK | \
-	 MCI_RXFIFOHALFFULLMASK | MCI_TXFIFOHALFEMPTYMASK | \
-	 MCI_RXACTIVEMASK | MCI_TXACTIVEMASK)
 /*
  * The size of the FIFO in bytes.
  */
@@ -176,9 +171,6 @@ struct msmsdcc_dma_data {
 	int				channel;
 	struct msmsdcc_host		*host;
 	int				busy; /* Set if DM is busy */
-	int				active;
-	unsigned int			result;
-	struct msm_dmov_errdata		err;
 };
 
 struct msmsdcc_pio_data {
@@ -195,6 +187,7 @@ struct msmsdcc_curr_req {
 	unsigned int		xfer_remain;	/* Bytes remaining to send */
 	unsigned int		data_xfered;	/* Bytes acked by BLKEND irq */
 	int			got_dataend;
+	int			got_datablkend;
 	int			user_pages;
 };
 
@@ -207,6 +200,7 @@ struct msmsdcc_stats {
 
 struct msmsdcc_host {
 	struct resource		*cmd_irqres;
+	struct resource		*pio_irqres;
 	struct resource		*memres;
 	struct resource		*dmares;
 	void __iomem		*base;
@@ -219,7 +213,7 @@ struct msmsdcc_host {
 	struct clk		*clk;		/* main MMC bus clock */
 	struct clk		*pclk;		/* SDCC peripheral bus clock */
 	unsigned int		clks_on;	/* set if clocks are enabled */
-	struct timer_list	busclk_timer;
+	struct timer_list	command_timer;
 
 	unsigned int		eject;		/* eject state */
 
@@ -230,7 +224,7 @@ struct msmsdcc_host {
 
 	u32			pwr;
 	u32			saved_irq0mask;	/* MMCIMASK0 reg value */
-	struct msm_mmc_platform_data *plat;
+	struct mmc_platform_data *plat;
 
 	struct timer_list	timer;
 	unsigned int		oldstat;
@@ -239,18 +233,6 @@ struct msmsdcc_host {
 	struct msmsdcc_pio_data	pio;
 	int			cmdpoll;
 	struct msmsdcc_stats	stats;
-
-	struct tasklet_struct	dma_tlet;
-	/* Command parameters */
-	unsigned int		cmd_timeout;
-	unsigned int		cmd_pio_irqmask;
-	unsigned int		cmd_datactrl;
-	struct mmc_command	*cmd_cmd;
-	u32			cmd_c;
-	bool			gpio_config_status;
-
-	bool prog_scan;
-	bool prog_enable;
 };
 
 #endif

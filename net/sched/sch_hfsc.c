@@ -81,7 +81,8 @@
  *   that are expensive on 32-bit architectures.
  */
 
-struct internal_sc {
+struct internal_sc
+{
 	u64	sm1;	/* scaled slope of the 1st segment */
 	u64	ism1;	/* scaled inverse-slope of the 1st segment */
 	u64	dx;	/* the x-projection of the 1st segment */
@@ -91,7 +92,8 @@ struct internal_sc {
 };
 
 /* runtime service curve */
-struct runtime_sc {
+struct runtime_sc
+{
 	u64	x;	/* current starting position on x-axis */
 	u64	y;	/* current starting position on y-axis */
 	u64	sm1;	/* scaled slope of the 1st segment */
@@ -102,13 +104,15 @@ struct runtime_sc {
 	u64	ism2;	/* scaled inverse-slope of the 2nd segment */
 };
 
-enum hfsc_class_flags {
+enum hfsc_class_flags
+{
 	HFSC_RSC = 0x1,
 	HFSC_FSC = 0x2,
 	HFSC_USC = 0x4
 };
 
-struct hfsc_class {
+struct hfsc_class
+{
 	struct Qdisc_class_common cl_common;
 	unsigned int	refcnt;		/* usage count */
 
@@ -136,8 +140,8 @@ struct hfsc_class {
 	u64	cl_cumul;		/* cumulative work in bytes done by
 					   real-time criteria */
 
-	u64	cl_d;			/* deadline*/
-	u64	cl_e;			/* eligible time */
+	u64 	cl_d;			/* deadline*/
+	u64 	cl_e;			/* eligible time */
 	u64	cl_vt;			/* virtual time */
 	u64	cl_f;			/* time when this class will fit for
 					   link-sharing, max(myf, cfmin) */
@@ -172,7 +176,8 @@ struct hfsc_class {
 	unsigned long	cl_nactive;	/* number of active children */
 };
 
-struct hfsc_sched {
+struct hfsc_sched
+{
 	u16	defcls;				/* default class id */
 	struct hfsc_class root;			/* root class */
 	struct Qdisc_class_hash clhash;		/* class hash */
@@ -612,6 +617,7 @@ rtsc_min(struct runtime_sc *rtsc, struct internal_sc *isc, u64 x, u64 y)
 	rtsc->y = y;
 	rtsc->dx = dx;
 	rtsc->dy = dy;
+	return;
 }
 
 static void
@@ -688,7 +694,7 @@ init_vf(struct hfsc_class *cl, unsigned int len)
 		if (go_active) {
 			n = rb_last(&cl->cl_parent->vt_tree);
 			if (n != NULL) {
-				max_cl = rb_entry(n, struct hfsc_class, vt_node);
+				max_cl = rb_entry(n, struct hfsc_class,vt_node);
 				/*
 				 * set vt to the average of the min and max
 				 * classes.  if the parent's period didn't
@@ -756,8 +762,8 @@ init_vf(struct hfsc_class *cl, unsigned int len)
 		if (f != cl->cl_f) {
 			cl->cl_f = f;
 			cftree_update(cl);
+			update_cfmin(cl->cl_parent);
 		}
-		update_cfmin(cl->cl_parent);
 	}
 }
 
@@ -1083,7 +1089,7 @@ hfsc_change_class(struct Qdisc *sch, u32 classid, u32 parentid,
 	cl->refcnt    = 1;
 	cl->sched     = q;
 	cl->cl_parent = parent;
-	cl->qdisc = qdisc_create_dflt(sch->dev_queue,
+	cl->qdisc = qdisc_create_dflt(qdisc_dev(sch), sch->dev_queue,
 				      &pfifo_qdisc_ops, classid);
 	if (cl->qdisc == NULL)
 		cl->qdisc = &noop_qdisc;
@@ -1149,7 +1155,7 @@ static struct hfsc_class *
 hfsc_classify(struct sk_buff *skb, struct Qdisc *sch, int *qerr)
 {
 	struct hfsc_sched *q = qdisc_priv(sch);
-	struct hfsc_class *head, *cl;
+	struct hfsc_class *cl;
 	struct tcf_result res;
 	struct tcf_proto *tcf;
 	int result;
@@ -1160,7 +1166,6 @@ hfsc_classify(struct sk_buff *skb, struct Qdisc *sch, int *qerr)
 			return cl;
 
 	*qerr = NET_XMIT_SUCCESS | __NET_XMIT_BYPASS;
-	head = &q->root;
 	tcf = q->root.filter_list;
 	while (tcf && (result = tc_classify(skb, tcf, &res)) >= 0) {
 #ifdef CONFIG_NET_CLS_ACT
@@ -1172,13 +1177,9 @@ hfsc_classify(struct sk_buff *skb, struct Qdisc *sch, int *qerr)
 			return NULL;
 		}
 #endif
-		cl = (struct hfsc_class *)res.class;
-		if (!cl) {
-			cl = hfsc_find_class(res.classid, sch);
-			if (!cl)
+		if ((cl = (struct hfsc_class *)res.class) == NULL) {
+			if ((cl = hfsc_find_class(res.classid, sch)) == NULL)
 				break; /* filter selected invalid classid */
-			if (cl->level >= head->level)
-				break; /* filter may only point downwards */
 		}
 
 		if (cl->level == 0)
@@ -1186,7 +1187,6 @@ hfsc_classify(struct sk_buff *skb, struct Qdisc *sch, int *qerr)
 
 		/* apply inner filter chain */
 		tcf = cl->filter_list;
-		head = cl;
 	}
 
 	/* classification failed, try default class */
@@ -1206,7 +1206,8 @@ hfsc_graft_class(struct Qdisc *sch, unsigned long arg, struct Qdisc *new,
 	if (cl->level > 0)
 		return -EINVAL;
 	if (new == NULL) {
-		new = qdisc_create_dflt(sch->dev_queue, &pfifo_qdisc_ops,
+		new = qdisc_create_dflt(qdisc_dev(sch), sch->dev_queue,
+					&pfifo_qdisc_ops,
 					cl->cl_common.classid);
 		if (new == NULL)
 			new = &noop_qdisc;
@@ -1313,7 +1314,7 @@ hfsc_dump_sc(struct sk_buff *skb, int attr, struct internal_sc *sc)
 	return -1;
 }
 
-static int
+static inline int
 hfsc_dump_curves(struct sk_buff *skb, struct hfsc_class *cl)
 {
 	if ((cl->cl_flags & HFSC_RSC) &&
@@ -1368,14 +1369,13 @@ hfsc_dump_class_stats(struct Qdisc *sch, unsigned long arg,
 	struct tc_hfsc_stats xstats;
 
 	cl->qstats.qlen = cl->qdisc->q.qlen;
-	cl->qstats.backlog = cl->qdisc->qstats.backlog;
 	xstats.level   = cl->level;
 	xstats.period  = cl->cl_vtperiod;
 	xstats.work    = cl->cl_total;
 	xstats.rtwork  = cl->cl_cumul;
 
 	if (gnet_stats_copy_basic(d, &cl->bstats) < 0 ||
-	    gnet_stats_copy_rate_est(d, &cl->bstats, &cl->rate_est) < 0 ||
+	    gnet_stats_copy_rate_est(d, &cl->rate_est) < 0 ||
 	    gnet_stats_copy_queue(d, &cl->qstats) < 0)
 		return -1;
 
@@ -1418,8 +1418,7 @@ hfsc_schedule_watchdog(struct Qdisc *sch)
 	struct hfsc_class *cl;
 	u64 next_time = 0;
 
-	cl = eltree_get_minel(q);
-	if (cl)
+	if ((cl = eltree_get_minel(q)) != NULL)
 		next_time = cl->cl_e;
 	if (q->root.cl_cfmin != 0) {
 		if (next_time == 0 || next_time > q->root.cl_cfmin)
@@ -1450,7 +1449,8 @@ hfsc_init_qdisc(struct Qdisc *sch, struct nlattr *opt)
 	q->root.cl_common.classid = sch->handle;
 	q->root.refcnt  = 1;
 	q->root.sched   = q;
-	q->root.qdisc = qdisc_create_dflt(sch->dev_queue, &pfifo_qdisc_ops,
+	q->root.qdisc = qdisc_create_dflt(qdisc_dev(sch), sch->dev_queue,
+					  &pfifo_qdisc_ops,
 					  sch->handle);
 	if (q->root.qdisc == NULL)
 		q->root.qdisc = &noop_qdisc;
@@ -1562,15 +1562,6 @@ hfsc_dump_qdisc(struct Qdisc *sch, struct sk_buff *skb)
 	struct hfsc_sched *q = qdisc_priv(sch);
 	unsigned char *b = skb_tail_pointer(skb);
 	struct tc_hfsc_qopt qopt;
-	struct hfsc_class *cl;
-	struct hlist_node *n;
-	unsigned int i;
-
-	sch->qstats.backlog = 0;
-	for (i = 0; i < q->clhash.hashsize; i++) {
-		hlist_for_each_entry(cl, n, &q->clhash.hash[i], cl_common.hnode)
-			sch->qstats.backlog += cl->qdisc->qstats.backlog;
-	}
 
 	qopt.defcls = q->defcls;
 	NLA_PUT(skb, TCA_OPTIONS, sizeof(qopt), &qopt);
@@ -1607,7 +1598,10 @@ hfsc_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 	if (cl->qdisc->q.qlen == 1)
 		set_active(cl, qdisc_pkt_len(skb));
 
-	bstats_update(&cl->bstats, skb);
+	cl->bstats.packets++;
+	cl->bstats.bytes += qdisc_pkt_len(skb);
+	sch->bstats.packets++;
+	sch->bstats.bytes += qdisc_pkt_len(skb);
 	sch->q.qlen++;
 
 	return NET_XMIT_SUCCESS;
@@ -1633,8 +1627,7 @@ hfsc_dequeue(struct Qdisc *sch)
 	 * find the class with the minimum deadline among
 	 * the eligible classes.
 	 */
-	cl = eltree_get_mindl(q, cur_time);
-	if (cl) {
+	if ((cl = eltree_get_mindl(q, cur_time)) != NULL) {
 		realtime = 1;
 	} else {
 		/*
@@ -1673,8 +1666,7 @@ hfsc_dequeue(struct Qdisc *sch)
 		set_passive(cl);
 	}
 
-	qdisc_unthrottled(sch);
-	qdisc_bstats_update(sch, skb);
+	sch->flags &= ~TCQ_F_THROTTLED;
 	sch->q.qlen--;
 
 	return skb;

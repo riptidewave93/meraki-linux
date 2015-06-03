@@ -1,14 +1,14 @@
-/*
+/* 
  * Cryptographic API.
  *
  * Deflate algorithm (RFC 1951), implemented here primarily for use
  * by IPCOMP (RFC 3173 & RFC 2394).
  *
  * Copyright (c) 2003 James Morris <jmorris@intercode.com.au>
- *
+ * 
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the Free
- * Software Foundation; either version 2 of the License, or (at your option)
+ * Software Foundation; either version 2 of the License, or (at your option) 
  * any later version.
  *
  * FIXME: deflate transforms will require up to a total of about 436k of kernel
@@ -32,6 +32,7 @@
 #include <linux/interrupt.h>
 #include <linux/mm.h>
 #include <linux/net.h>
+#include <linux/slab.h>
 
 #define DEFLATE_DEF_LEVEL		Z_DEFAULT_COMPRESSION
 #define DEFLATE_DEF_WINBITS		11
@@ -47,12 +48,12 @@ static int deflate_comp_init(struct deflate_ctx *ctx)
 	int ret = 0;
 	struct z_stream_s *stream = &ctx->comp_stream;
 
-	stream->workspace = vzalloc(zlib_deflate_workspacesize(
-				-DEFLATE_DEF_WINBITS, DEFLATE_DEF_MEMLEVEL));
-	if (!stream->workspace) {
+	stream->workspace = vmalloc(zlib_deflate_workspacesize());
+	if (!stream->workspace ) {
 		ret = -ENOMEM;
 		goto out;
 	}
+	memset(stream->workspace, 0, zlib_deflate_workspacesize());
 	ret = zlib_deflateInit2(stream, DEFLATE_DEF_LEVEL, Z_DEFLATED,
 	                        -DEFLATE_DEF_WINBITS, DEFLATE_DEF_MEMLEVEL,
 	                        Z_DEFAULT_STRATEGY);
@@ -60,7 +61,7 @@ static int deflate_comp_init(struct deflate_ctx *ctx)
 		ret = -EINVAL;
 		goto out_free;
 	}
-out:
+out:	
 	return ret;
 out_free:
 	vfree(stream->workspace);
@@ -72,8 +73,8 @@ static int deflate_decomp_init(struct deflate_ctx *ctx)
 	int ret = 0;
 	struct z_stream_s *stream = &ctx->decomp_stream;
 
-	stream->workspace = vzalloc(zlib_inflate_workspacesize());
-	if (!stream->workspace) {
+	stream->workspace = kzalloc(zlib_inflate_workspacesize(), GFP_KERNEL);
+	if (!stream->workspace ) {
 		ret = -ENOMEM;
 		goto out;
 	}
@@ -85,7 +86,7 @@ static int deflate_decomp_init(struct deflate_ctx *ctx)
 out:
 	return ret;
 out_free:
-	vfree(stream->workspace);
+	kfree(stream->workspace);
 	goto out;
 }
 
@@ -98,14 +99,14 @@ static void deflate_comp_exit(struct deflate_ctx *ctx)
 static void deflate_decomp_exit(struct deflate_ctx *ctx)
 {
 	zlib_inflateEnd(&ctx->decomp_stream);
-	vfree(ctx->decomp_stream.workspace);
+	kfree(ctx->decomp_stream.workspace);
 }
 
 static int deflate_init(struct crypto_tfm *tfm)
 {
 	struct deflate_ctx *ctx = crypto_tfm_ctx(tfm);
 	int ret;
-
+	
 	ret = deflate_comp_init(ctx);
 	if (ret)
 		goto out;
@@ -152,11 +153,11 @@ static int deflate_compress(struct crypto_tfm *tfm, const u8 *src,
 out:
 	return ret;
 }
-
+ 
 static int deflate_decompress(struct crypto_tfm *tfm, const u8 *src,
 			      unsigned int slen, u8 *dst, unsigned int *dlen)
 {
-
+	
 	int ret = 0;
 	struct deflate_ctx *dctx = crypto_tfm_ctx(tfm);
 	struct z_stream_s *stream = &dctx->decomp_stream;
@@ -181,7 +182,7 @@ static int deflate_decompress(struct crypto_tfm *tfm, const u8 *src,
 	if (ret == Z_OK && !stream->avail_in && stream->avail_out) {
 		u8 zerostuff = 0;
 		stream->next_in = &zerostuff;
-		stream->avail_in = 1;
+		stream->avail_in = 1; 
 		ret = zlib_inflate(stream, Z_FINISH);
 	}
 	if (ret != Z_STREAM_END) {

@@ -42,4 +42,6 @@
 
 #define PXA_SSP_PLL_OUT  0
 
+extern struct snd_soc_dai pxa_ssp_dai[4];
+
 #endif

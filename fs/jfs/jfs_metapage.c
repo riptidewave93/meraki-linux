@@ -21,7 +21,6 @@
 #include <linux/mm.h>
 #include <linux/module.h>
 #include <linux/bio.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/buffer_head.h>
 #include <linux/mempool.h>
@@ -583,6 +582,7 @@ static void metapage_invalidatepage(struct page *page, unsigned long offset)
 const struct address_space_operations jfs_metapage_aops = {
 	.readpage	= metapage_readpage,
 	.writepage	= metapage_writepage,
+	.sync_page	= block_sync_page,
 	.releasepage	= metapage_releasepage,
 	.invalidatepage	= metapage_invalidatepage,
 	.set_page_dirty	= __set_page_dirty_nobuffers,

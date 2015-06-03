@@ -31,10 +31,6 @@
 #include <linux/sched.h>
 #include <asm/elf.h>
 
-struct __read_mostly va_alignment va_align = {
-	.flags = -1,
-};
-
 static unsigned int stack_maxrandom_size(void)
 {
 	unsigned int max = 0;
@@ -46,6 +42,7 @@ static unsigned int stack_maxrandom_size(void)
 	return max;
 }
 
+
 /*
  * Top of mmap area (just below the process stack).
  *
@@ -54,12 +51,27 @@ static unsigned int stack_maxrandom_size(void)
 #define MIN_GAP (128*1024*1024UL + stack_maxrandom_size())
 #define MAX_GAP (TASK_SIZE/6*5)
 
+/*
+ * True on X86_32 or when emulating IA32 on X86_64
+ */
+static int mmap_is_ia32(void)
+{
+#ifdef CONFIG_X86_32
+	return 1;
+#endif
+#ifdef CONFIG_IA32_EMULATION
+	if (test_thread_flag(TIF_IA32))
+		return 1;
+#endif
+	return 0;
+}
+
 static int mmap_is_legacy(void)
 {
 	if (current->personality & ADDR_COMPAT_LAYOUT)
 		return 1;
 
-	if (rlimit(RLIMIT_STACK) == RLIM_INFINITY)
+	if (current->signal->rlim[RLIMIT_STACK].rlim_cur == RLIM_INFINITY)
 		return 1;
 
 	return sysctl_legacy_va_layout;
@@ -84,7 +96,7 @@ static unsigned long mmap_rnd(void)
 
 static unsigned long mmap_base(void)
 {
-	unsigned long gap = rlimit(RLIMIT_STACK);
+	unsigned long gap = current->signal->rlim[RLIMIT_STACK].rlim_cur;
 
 	if (gap < MIN_GAP)
 		gap = MIN_GAP;
@@ -112,14 +124,12 @@ static unsigned long mmap_legacy_base(void)
  */
 void arch_pick_mmap_layout(struct mm_struct *mm)
 {
-	mm->mmap_legacy_base = mmap_legacy_base();
-	mm->mmap_base = mmap_base();
-
 	if (mmap_is_legacy()) {
-		mm->mmap_base = mm->mmap_legacy_base;
+		mm->mmap_base = mmap_legacy_base();
 		mm->get_unmapped_area = arch_get_unmapped_area;
 		mm->unmap_area = arch_unmap_area;
 	} else {
+		mm->mmap_base = mmap_base();
 		mm->get_unmapped_area = arch_get_unmapped_area_topdown;
 		mm->unmap_area = arch_unmap_area_topdown;
 	}

@@ -7,7 +7,7 @@
  * it under the terms of the GNU General Public License version 2 as
  * published by the Free Software Foundation.
  */
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/string.h>
 #include <linux/cryptohash.h>
@@ -18,6 +18,7 @@
 #include <linux/io.h>
 
 #include <asm/checksum.h>
+#include <asm/system.h>
 #include <asm/ftrace.h>
 
 /*
@@ -47,6 +48,29 @@ extern void __aeabi_uidivmod(void);
 extern void __aeabi_ulcmp(void);
 
 extern void fpundefinstr(void);
+extern void fp_enter(void);
+
+/*
+ * This has a special calling convention; it doesn't
+ * modify any of the usual registers, except for LR.
+ */
+#define EXPORT_CRC_ALIAS(sym) __CRC_SYMBOL(sym, "")
+
+#define EXPORT_SYMBOL_ALIAS(sym,orig)		\
+ EXPORT_CRC_ALIAS(sym)				\
+ static const struct kernel_symbol __ksymtab_##sym	\
+  __used __attribute__((section("__ksymtab"))) =	\
+    { (unsigned long)&orig, #sym };
+
+/*
+ * floating point math emulator support.
+ * These symbols will never change their calling convention...
+ */
+EXPORT_SYMBOL_ALIAS(kern_fp_enter,fp_enter);
+EXPORT_SYMBOL_ALIAS(fp_printk,printk);
+EXPORT_SYMBOL_ALIAS(fp_send_sig,send_sig);
+
+EXPORT_SYMBOL(__backtrace);
 
 	/* platform dependent support */
 EXPORT_SYMBOL(__udelay);
@@ -108,6 +132,9 @@ EXPORT_SYMBOL(__put_user_4);
 EXPORT_SYMBOL(__put_user_8);
 #endif
 
+	/* crypto hash */
+EXPORT_SYMBOL(sha_transform);
+
 	/* gcc lib functions */
 EXPORT_SYMBOL(__ashldi3);
 EXPORT_SYMBOL(__ashrdi3);
@@ -133,18 +160,24 @@ EXPORT_SYMBOL(__aeabi_ulcmp);
 #endif
 
 	/* bitops */
-EXPORT_SYMBOL(_set_bit);
-EXPORT_SYMBOL(_test_and_set_bit);
-EXPORT_SYMBOL(_clear_bit);
-EXPORT_SYMBOL(_test_and_clear_bit);
-EXPORT_SYMBOL(_change_bit);
-EXPORT_SYMBOL(_test_and_change_bit);
+EXPORT_SYMBOL(_set_bit_le);
+EXPORT_SYMBOL(_test_and_set_bit_le);
+EXPORT_SYMBOL(_clear_bit_le);
+EXPORT_SYMBOL(_test_and_clear_bit_le);
+EXPORT_SYMBOL(_change_bit_le);
+EXPORT_SYMBOL(_test_and_change_bit_le);
 EXPORT_SYMBOL(_find_first_zero_bit_le);
 EXPORT_SYMBOL(_find_next_zero_bit_le);
 EXPORT_SYMBOL(_find_first_bit_le);
 EXPORT_SYMBOL(_find_next_bit_le);
 
 #ifdef __ARMEB__
+EXPORT_SYMBOL(_set_bit_be);
+EXPORT_SYMBOL(_test_and_set_bit_be);
+EXPORT_SYMBOL(_clear_bit_be);
+EXPORT_SYMBOL(_test_and_clear_bit_be);
+EXPORT_SYMBOL(_change_bit_be);
+EXPORT_SYMBOL(_test_and_change_bit_be);
 EXPORT_SYMBOL(_find_first_zero_bit_be);
 EXPORT_SYMBOL(_find_next_zero_bit_be);
 EXPORT_SYMBOL(_find_first_bit_be);
@@ -152,12 +185,6 @@ EXPORT_SYMBOL(_find_next_bit_be);
 #endif
 
 #ifdef CONFIG_FUNCTION_TRACER
-#ifdef CONFIG_OLD_MCOUNT
 EXPORT_SYMBOL(mcount);
-#endif
 EXPORT_SYMBOL(__gnu_mcount_nc);
-#endif
-
-#ifdef CONFIG_ARM_PATCH_PHYS_VIRT
-EXPORT_SYMBOL(__pv_phys_offset);
 #endif

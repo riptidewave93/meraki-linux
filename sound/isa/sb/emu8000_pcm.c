@@ -20,7 +20,6 @@
 
 #include "emu8000_local.h"
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <sound/initval.h>
 #include <sound/pcm.h>
 
@@ -433,8 +432,7 @@ static int emu8k_transfer_block(struct snd_emu8000 *emu, int offset, unsigned sh
 	while (count > 0) {
 		unsigned short sval;
 		CHECK_SCHEDULER();
-		if (get_user(sval, buf))
-			return -EFAULT;
+		get_user(sval, buf);
 		EMU8000_SMLD_WRITE(emu, sval);
 		buf++;
 		count--;
@@ -526,14 +524,12 @@ static int emu8k_pcm_copy(struct snd_pcm_substream *subs,
 	while (count-- > 0) {
 		unsigned short sval;
 		CHECK_SCHEDULER();
-		if (get_user(sval, buf))
-			return -EFAULT;
+		get_user(sval, buf);
 		EMU8000_SMLD_WRITE(emu, sval);
 		buf++;
 		if (rec->voices > 1) {
 			CHECK_SCHEDULER();
-			if (get_user(sval, buf))
-				return -EFAULT;
+			get_user(sval, buf);
 			EMU8000_SMRD_WRITE(emu, sval);
 			buf++;
 		}

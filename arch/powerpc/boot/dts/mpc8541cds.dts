@@ -71,14 +71,14 @@
 		};
 
 		memory-controller@2000 {
-			compatible = "fsl,mpc8541-memory-controller";
+			compatible = "fsl,8541-memory-controller";
 			reg = <0x2000 0x1000>;
 			interrupt-parent = <&mpic>;
 			interrupts = <18 2>;
 		};
 
 		L2: l2-cache-controller@20000 {
-			compatible = "fsl,mpc8541-l2-cache-controller";
+			compatible = "fsl,8541-l2-cache-controller";
 			reg = <0x20000 0x1000>;
 			cache-line-size = <32>;	// 32 bytes
 			cache-size = <0x40000>;	// L2, 256K
@@ -209,7 +209,7 @@
 		serial0: serial@4500 {
 			cell-index = <0>;
 			device_type = "serial";
-			compatible = "fsl,ns16550", "ns16550";
+			compatible = "ns16550";
 			reg = <0x4500 0x100>; 	// reg base, size
 			clock-frequency = <0>; 	// should we fill in in uboot?
 			interrupts = <42 2>;
@@ -219,7 +219,7 @@
 		serial1: serial@4600 {
 			cell-index = <1>;
 			device_type = "serial";
-			compatible = "fsl,ns16550", "ns16550";
+			compatible = "ns16550";
 			reg = <0x4600 0x100>;	// reg base, size
 			clock-frequency = <0>; 	// should we fill in in uboot?
 			interrupts = <42 2>;

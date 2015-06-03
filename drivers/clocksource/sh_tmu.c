@@ -30,9 +30,6 @@
 #include <linux/clocksource.h>
 #include <linux/clockchips.h>
 #include <linux/sh_timer.h>
-#include <linux/slab.h>
-#include <linux/module.h>
-#include <linux/pm_domain.h>
 
 struct sh_tmu_priv {
 	void __iomem *mapbase;
@@ -109,12 +106,13 @@ static void sh_tmu_start_stop_ch(struct sh_tmu_priv *p, int start)
 
 static int sh_tmu_enable(struct sh_tmu_priv *p)
 {
+	struct sh_timer_config *cfg = p->pdev->dev.platform_data;
 	int ret;
 
 	/* enable clock */
 	ret = clk_enable(p->clk);
 	if (ret) {
-		dev_err(&p->pdev->dev, "cannot enable clock\n");
+		pr_err("sh_tmu: cannot enable clock \"%s\"\n", cfg->clk);
 		return ret;
 	}
 
@@ -201,12 +199,8 @@ static cycle_t sh_tmu_clocksource_read(struct clocksource *cs)
 static int sh_tmu_clocksource_enable(struct clocksource *cs)
 {
 	struct sh_tmu_priv *p = cs_to_sh_tmu(cs);
-	int ret;
 
-	ret = sh_tmu_enable(p);
-	if (!ret)
-		__clocksource_updatefreq_hz(cs, p->rate);
-	return ret;
+	return sh_tmu_enable(p);
 }
 
 static void sh_tmu_clocksource_disable(struct clocksource *cs)
@@ -227,10 +221,17 @@ static int sh_tmu_register_clocksource(struct sh_tmu_priv *p,
 	cs->mask = CLOCKSOURCE_MASK(32);
 	cs->flags = CLOCK_SOURCE_IS_CONTINUOUS;
 
-	dev_info(&p->pdev->dev, "used as clock source\n");
+	/* clk_get_rate() needs an enabled clock */
+	clk_enable(p->clk);
+	/* channel will be configured at parent clock / 4 */
+	p->rate = clk_get_rate(p->clk) / 4;
+	clk_disable(p->clk);
+	/* TODO: calculate good shift from rate and counter bit width */
+	cs->shift = 10;
+	cs->mult = clocksource_hz2mult(p->rate, cs->shift);
 
-	/* Register with dummy 1 Hz value, gets updated in ->enable() */
-	clocksource_register_hz(cs, 1);
+	pr_info("sh_tmu: %s used as clock source\n", cs->name);
+	clocksource_register(cs);
 	return 0;
 }
 
@@ -277,11 +278,13 @@ static void sh_tmu_clock_event_mode(enum clock_event_mode mode,
 
 	switch (mode) {
 	case CLOCK_EVT_MODE_PERIODIC:
-		dev_info(&p->pdev->dev, "used for periodic clock events\n");
+		pr_info("sh_tmu: %s used for periodic clock events\n",
+			ced->name);
 		sh_tmu_clock_event_start(p, 1);
 		break;
 	case CLOCK_EVT_MODE_ONESHOT:
-		dev_info(&p->pdev->dev, "used for oneshot clock events\n");
+		pr_info("sh_tmu: %s used for oneshot clock events\n",
+			ced->name);
 		sh_tmu_clock_event_start(p, 0);
 		break;
 	case CLOCK_EVT_MODE_UNUSED:
@@ -322,13 +325,13 @@ static void sh_tmu_register_clockevent(struct sh_tmu_priv *p,
 	ced->set_next_event = sh_tmu_clock_event_next;
 	ced->set_mode = sh_tmu_clock_event_mode;
 
-	dev_info(&p->pdev->dev, "used for clock events\n");
+	pr_info("sh_tmu: %s used for clock events\n", ced->name);
 	clockevents_register_device(ced);
 
 	ret = setup_irq(p->irqaction.irq, &p->irqaction);
 	if (ret) {
-		dev_err(&p->pdev->dev, "failed to request irq %d\n",
-			p->irqaction.irq);
+		pr_err("sh_tmu: failed to request irq %d\n",
+		       p->irqaction.irq);
 		return;
 	}
 }
@@ -377,27 +380,26 @@ static int sh_tmu_setup(struct sh_tmu_priv *p, struct platform_device *pdev)
 	/* map memory, let mapbase point to our channel */
 	p->mapbase = ioremap_nocache(res->start, resource_size(res));
 	if (p->mapbase == NULL) {
-		dev_err(&p->pdev->dev, "failed to remap I/O memory\n");
+		pr_err("sh_tmu: failed to remap I/O memory\n");
 		goto err0;
 	}
 
 	/* setup data for setup_irq() (too early for request_irq()) */
-	p->irqaction.name = dev_name(&p->pdev->dev);
+	p->irqaction.name = cfg->name;
 	p->irqaction.handler = sh_tmu_interrupt;
 	p->irqaction.dev_id = p;
 	p->irqaction.irq = irq;
-	p->irqaction.flags = IRQF_DISABLED | IRQF_TIMER | \
-			     IRQF_IRQPOLL  | IRQF_NOBALANCING;
+	p->irqaction.flags = IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL;
 
 	/* get hold of clock */
-	p->clk = clk_get(&p->pdev->dev, "tmu_fck");
+	p->clk = clk_get(&p->pdev->dev, cfg->clk);
 	if (IS_ERR(p->clk)) {
-		dev_err(&p->pdev->dev, "cannot get clock\n");
+		pr_err("sh_tmu: cannot get clock \"%s\"\n", cfg->clk);
 		ret = PTR_ERR(p->clk);
 		goto err1;
 	}
 
-	return sh_tmu_register(p, (char *)dev_name(&p->pdev->dev),
+	return sh_tmu_register(p, cfg->name,
 			       cfg->clockevent_rating,
 			       cfg->clocksource_rating);
  err1:
@@ -409,13 +411,11 @@ static int sh_tmu_setup(struct sh_tmu_priv *p, struct platform_device *pdev)
 static int __devinit sh_tmu_probe(struct platform_device *pdev)
 {
 	struct sh_tmu_priv *p = platform_get_drvdata(pdev);
+	struct sh_timer_config *cfg = pdev->dev.platform_data;
 	int ret;
 
-	if (!is_early_platform_device(pdev))
-		pm_genpd_dev_always_on(&pdev->dev, true);
-
 	if (p) {
-		dev_info(&pdev->dev, "kept as earlytimer\n");
+		pr_info("sh_tmu: %s kept as earlytimer\n", cfg->name);
 		return 0;
 	}
 

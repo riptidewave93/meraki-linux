@@ -12,7 +12,6 @@
 #include <linux/platform_device.h>
 #include <linux/err.h>
 #include <linux/init.h>
-#include <linux/module.h>
 #include <linux/mc146818rtc.h>
 
 #include <asm/prom.h>

@@ -6,7 +6,7 @@
  */
 
 #include <linux/init.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/platform_device.h>
 #include <sound/core.h>
 #include <sound/initval.h>
@@ -25,8 +25,7 @@ MODULE_ALIAS("platform:pcspkr");
 
 static int index = SNDRV_DEFAULT_IDX1;	/* Index 0-MAX */
 static char *id = SNDRV_DEFAULT_STR1;	/* ID for this card */
-static bool enable = SNDRV_DEFAULT_ENABLE1;	/* Enable this card */
-static bool nopcm;	/* Disable PCM capability of the driver */
+static int enable = SNDRV_DEFAULT_ENABLE1;	/* Enable this card */
 
 module_param(index, int, 0444);
 MODULE_PARM_DESC(index, "Index value for pcsp soundcard.");
@@ -34,8 +33,6 @@ module_param(id, charp, 0444);
 MODULE_PARM_DESC(id, "ID string for pcsp soundcard.");
 module_param(enable, bool, 0444);
 MODULE_PARM_DESC(enable, "Enable PC-Speaker sound.");
-module_param(nopcm, bool, 0444);
-MODULE_PARM_DESC(nopcm, "Disable PC-Speaker PCM sound. Only beeps remain.");
 
 struct snd_pcsp pcsp_chip;
 
@@ -46,16 +43,13 @@ static int __devinit snd_pcsp_create(struct snd_card *card)
 	int err;
 	int div, min_div, order;
 
-	if (!nopcm) {
-		hrtimer_get_res(CLOCK_MONOTONIC, &tp);
-		if (tp.tv_sec || tp.tv_nsec > PCSP_MAX_PERIOD_NS) {
-			printk(KERN_ERR "PCSP: Timer resolution is not sufficient "
-				"(%linS)\n", tp.tv_nsec);
-			printk(KERN_ERR "PCSP: Make sure you have HPET and ACPI "
-				"enabled.\n");
-			printk(KERN_ERR "PCSP: Turned into nopcm mode.\n");
-			nopcm = 1;
-		}
+	hrtimer_get_res(CLOCK_MONOTONIC, &tp);
+	if (tp.tv_sec || tp.tv_nsec > PCSP_MAX_PERIOD_NS) {
+		printk(KERN_ERR "PCSP: Timer resolution is not sufficient "
+		       "(%linS)\n", tp.tv_nsec);
+		printk(KERN_ERR "PCSP: Make sure you have HPET and ACPI "
+		       "enabled.\n");
+		return -EIO;
 	}
 
 	if (loops_per_jiffy >= PCSP_MIN_LPJ && tp.tv_nsec <= PCSP_MIN_PERIOD_NS)
@@ -113,14 +107,12 @@ static int __devinit snd_card_pcsp_probe(int devnum, struct device *dev)
 		snd_card_free(card);
 		return err;
 	}
-	if (!nopcm) {
-		err = snd_pcsp_new_pcm(&pcsp_chip);
-		if (err < 0) {
-			snd_card_free(card);
-			return err;
-		}
+	err = snd_pcsp_new_pcm(&pcsp_chip);
+	if (err < 0) {
+		snd_card_free(card);
+		return err;
 	}
-	err = snd_pcsp_new_mixer(&pcsp_chip, nopcm);
+	err = snd_pcsp_new_mixer(&pcsp_chip);
 	if (err < 0) {
 		snd_card_free(card);
 		return err;
@@ -187,8 +179,8 @@ static int __devinit pcsp_probe(struct platform_device *dev)
 static int __devexit pcsp_remove(struct platform_device *dev)
 {
 	struct snd_pcsp *chip = platform_get_drvdata(dev);
-	pcspkr_input_remove(chip->input_dev);
 	alsa_card_pcsp_exit(chip);
+	pcspkr_input_remove(chip->input_dev);
 	platform_set_drvdata(dev, NULL);
 	return 0;
 }

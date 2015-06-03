@@ -15,7 +15,6 @@
 #include <linux/ioport.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
-#include <linux/slab.h>
 #include <asm/prom.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
@@ -48,7 +47,7 @@ struct map_info uflash_map_templ = {
 	.bankwidth =	UFLASH_BUSWIDTH,
 };
 
-int uflash_devinit(struct platform_device *op, struct device_node *dp)
+int uflash_devinit(struct of_device *op, struct device_node *dp)
 {
 	struct uflash_dev *up;
 
@@ -108,9 +107,9 @@ int uflash_devinit(struct platform_device *op, struct device_node *dp)
 	return 0;
 }
 
-static int __devinit uflash_probe(struct platform_device *op)
+static int __devinit uflash_probe(struct of_device *op, const struct of_device_id *match)
 {
-	struct device_node *dp = op->dev.of_node;
+	struct device_node *dp = op->node;
 
 	/* Flashprom must have the "user" property in order to
 	 * be used by this driver.
@@ -121,7 +120,7 @@ static int __devinit uflash_probe(struct platform_device *op)
 	return uflash_devinit(op, dp);
 }
 
-static int __devexit uflash_remove(struct platform_device *op)
+static int __devexit uflash_remove(struct of_device *op)
 {
 	struct uflash_dev *up = dev_get_drvdata(&op->dev);
 
@@ -148,14 +147,22 @@ static const struct of_device_id uflash_match[] = {
 
 MODULE_DEVICE_TABLE(of, uflash_match);
 
-static struct platform_driver uflash_driver = {
-	.driver = {
-		.name = DRIVER_NAME,
-		.owner = THIS_MODULE,
-		.of_match_table = uflash_match,
-	},
+static struct of_platform_driver uflash_driver = {
+	.name		= DRIVER_NAME,
+	.match_table	= uflash_match,
 	.probe		= uflash_probe,
 	.remove		= __devexit_p(uflash_remove),
 };
 
-module_platform_driver(uflash_driver);
+static int __init uflash_init(void)
+{
+	return of_register_driver(&uflash_driver, &of_bus_type);
+}
+
+static void __exit uflash_exit(void)
+{
+	of_unregister_driver(&uflash_driver);
+}
+
+module_init(uflash_init);
+module_exit(uflash_exit);

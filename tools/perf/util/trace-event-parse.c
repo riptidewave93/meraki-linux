@@ -21,12 +21,14 @@
  *  The parts for function graph printing was taken and modified from the
  *  Linux Kernel that were written by Frederic Weisbecker.
  */
-
+#define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <ctype.h>
 #include <errno.h>
 
+#undef _GNU_SOURCE
 #include "../perf.h"
 #include "util.h"
 #include "trace-event.h"
@@ -35,12 +37,8 @@ int header_page_ts_offset;
 int header_page_ts_size;
 int header_page_size_offset;
 int header_page_size_size;
-int header_page_overwrite_offset;
-int header_page_overwrite_size;
 int header_page_data_offset;
 int header_page_data_size;
-
-bool latency_format;
 
 static char *input_buf;
 static unsigned long long input_buf_ptr;
@@ -48,11 +46,6 @@ static unsigned long long input_buf_siz;
 
 static int cpus;
 static int long_size;
-static int is_flag_field;
-static int is_symbolic_field;
-
-static struct format_field *
-find_any_field(struct event *event, const char *name);
 
 static void init_input_buf(char *buf, unsigned long long size)
 {
@@ -151,7 +144,7 @@ void parse_proc_kallsyms(char *file, unsigned int size __unused)
 	char *next = NULL;
 	char *addr_str;
 	char ch;
-	int ret __used;
+	int ret;
 	int i;
 
 	line = strtok_r(file, "\n", &next);
@@ -177,7 +170,7 @@ void parse_proc_kallsyms(char *file, unsigned int size __unused)
 		func_count++;
 	}
 
-	func_list = malloc_or_die(sizeof(*func_list) * (func_count + 1));
+	func_list = malloc_or_die(sizeof(*func_list) * func_count + 1);
 
 	i = 0;
 	while (list) {
@@ -291,19 +284,18 @@ void parse_ftrace_printk(char *file, unsigned int size __unused)
 	char *line;
 	char *next = NULL;
 	char *addr_str;
+	int ret;
 	int i;
 
 	line = strtok_r(file, "\n", &next);
 	while (line) {
-		addr_str = strsep(&line, ":");
-		if (!line) {
-			warning("error parsing print strings");
-			break;
-		}
 		item = malloc_or_die(sizeof(*item));
+		ret = sscanf(line, "%as : %as",
+			     (float *)(void *)&addr_str, /* workaround gcc warning */
+			     (float *)(void *)&item->printk);
 		item->addr = strtoull(addr_str, NULL, 16);
-		/* fmt still has a space, skip it */
-		item->printk = strdup(line+1);
+		free(addr_str);
+
 		item->next = list;
 		list = item;
 		line = strtok_r(NULL, "\n", &next);
@@ -530,10 +522,7 @@ static enum event_type __read_token(char **tok)
 			last_ch = ch;
 			ch = __read_char();
 			buf[i++] = ch;
-			/* the '\' '\' will cancel itself */
-			if (ch == '\\' && last_ch == '\\')
-				last_ch = 0;
-		} while (ch != quote_ch || last_ch == '\\');
+		} while (ch != quote_ch && last_ch != '\\');
 		/* remove the last quote */
 		i--;
 		goto out;
@@ -621,37 +610,28 @@ static enum event_type read_token_item(char **tok)
 static int test_type(enum event_type type, enum event_type expect)
 {
 	if (type != expect) {
-		warning("Error: expected type %d but read %d",
+		die("Error: expected type %d but read %d",
 		    expect, type);
 		return -1;
 	}
 	return 0;
 }
 
-static int __test_type_token(enum event_type type, char *token,
-			     enum event_type expect, const char *expect_tok,
-			     bool warn)
+static int test_type_token(enum event_type type, char *token,
+		    enum event_type expect, const char *expect_tok)
 {
 	if (type != expect) {
-		if (warn)
-			warning("Error: expected type %d but read %d",
-				expect, type);
+		die("Error: expected type %d but read %d",
+		    expect, type);
 		return -1;
 	}
 
 	if (strcmp(token, expect_tok) != 0) {
-		if (warn)
-			warning("Error: expected '%s' but read '%s'",
-				expect_tok, token);
+		die("Error: expected '%s' but read '%s'",
+		    expect_tok, token);
 		return -1;
 	}
 	return 0;
-}
-
-static int test_type_token(enum event_type type, char *token,
-			   enum event_type expect, const char *expect_tok)
-{
-	return __test_type_token(type, token, expect, expect_tok, true);
 }
 
 static int __read_expect_type(enum event_type expect, char **tok, int newline_ok)
@@ -670,8 +650,7 @@ static int read_expect_type(enum event_type expect, char **tok)
 	return __read_expect_type(expect, tok, 1);
 }
 
-static int __read_expected(enum event_type expect, const char *str,
-			   int newline_ok, bool warn)
+static int __read_expected(enum event_type expect, const char *str, int newline_ok)
 {
 	enum event_type type;
 	char *token;
@@ -682,31 +661,31 @@ static int __read_expected(enum event_type expect, const char *str,
 	else
 		type = read_token_item(&token);
 
-	ret = __test_type_token(type, token, expect, str, warn);
+	ret = test_type_token(type, token, expect, str);
 
 	free_token(token);
 
-	return ret;
+	return 0;
 }
 
 static int read_expected(enum event_type expect, const char *str)
 {
-	return __read_expected(expect, str, 1, true);
+	return __read_expected(expect, str, 1);
 }
 
 static int read_expected_item(enum event_type expect, const char *str)
 {
-	return __read_expected(expect, str, 0, true);
+	return __read_expected(expect, str, 0);
 }
 
 static char *event_read_name(void)
 {
 	char *token;
 
-	if (read_expected(EVENT_ITEM, "name") < 0)
+	if (read_expected(EVENT_ITEM, (char *)"name") < 0)
 		return NULL;
 
-	if (read_expected(EVENT_OP, ":") < 0)
+	if (read_expected(EVENT_OP, (char *)":") < 0)
 		return NULL;
 
 	if (read_expect_type(EVENT_ITEM, &token) < 0)
@@ -722,40 +701,24 @@ static char *event_read_name(void)
 static int event_read_id(void)
 {
 	char *token;
-	int id = -1;
+	int id;
 
-	if (read_expected_item(EVENT_ITEM, "ID") < 0)
+	if (read_expected_item(EVENT_ITEM, (char *)"ID") < 0)
 		return -1;
 
-	if (read_expected(EVENT_OP, ":") < 0)
+	if (read_expected(EVENT_OP, (char *)":") < 0)
 		return -1;
 
 	if (read_expect_type(EVENT_ITEM, &token) < 0)
-		goto free;
+		goto fail;
 
 	id = strtoul(token, NULL, 0);
-
- free:
 	free_token(token);
 	return id;
-}
 
-static int field_is_string(struct format_field *field)
-{
-	if ((field->flags & FIELD_IS_ARRAY) &&
-	    (!strstr(field->type, "char") || !strstr(field->type, "u8") ||
-	     !strstr(field->type, "s8")))
-		return 1;
-
-	return 0;
-}
-
-static int field_is_dynamic(struct format_field *field)
-{
-	if (!strncmp(field->type, "__data_loc", 10))
-		return 1;
-
-	return 0;
+ fail:
+	free_token(token);
+	return -1;
 }
 
 static int event_read_fields(struct event *event, struct format_field **fields)
@@ -775,7 +738,7 @@ static int event_read_fields(struct event *event, struct format_field **fields)
 
 		count++;
 
-		if (test_type_token(type, token, EVENT_ITEM, "field"))
+		if (test_type_token(type, token, EVENT_ITEM, (char *)"field"))
 			goto fail;
 		free_token(token);
 
@@ -790,7 +753,7 @@ static int event_read_fields(struct event *event, struct format_field **fields)
 			type = read_token(&token);
 		}
 
-		if (test_type_token(type, token, EVENT_OP, ":") < 0)
+		if (test_type_token(type, token, EVENT_OP, (char *)":") < 0)
 			return -1;
 
 		if (read_expect_type(EVENT_ITEM, &token) < 0)
@@ -902,20 +865,14 @@ static int event_read_fields(struct event *event, struct format_field **fields)
 			free(brackets);
 		}
 
-		if (field_is_string(field)) {
-			field->flags |= FIELD_IS_STRING;
-			if (field_is_dynamic(field))
-				field->flags |= FIELD_IS_DYNAMIC;
-		}
-
-		if (test_type_token(type, token,  EVENT_OP, ";"))
+		if (test_type_token(type, token,  EVENT_OP, (char *)";"))
 			goto fail;
 		free_token(token);
 
-		if (read_expected(EVENT_ITEM, "offset") < 0)
+		if (read_expected(EVENT_ITEM, (char *)"offset") < 0)
 			goto fail_expect;
 
-		if (read_expected(EVENT_OP, ":") < 0)
+		if (read_expected(EVENT_OP, (char *)":") < 0)
 			goto fail_expect;
 
 		if (read_expect_type(EVENT_ITEM, &token))
@@ -923,13 +880,13 @@ static int event_read_fields(struct event *event, struct format_field **fields)
 		field->offset = strtoul(token, NULL, 0);
 		free_token(token);
 
-		if (read_expected(EVENT_OP, ";") < 0)
+		if (read_expected(EVENT_OP, (char *)";") < 0)
 			goto fail_expect;
 
-		if (read_expected(EVENT_ITEM, "size") < 0)
+		if (read_expected(EVENT_ITEM, (char *)"size") < 0)
 			goto fail_expect;
 
-		if (read_expected(EVENT_OP, ":") < 0)
+		if (read_expected(EVENT_OP, (char *)":") < 0)
 			goto fail_expect;
 
 		if (read_expect_type(EVENT_ITEM, &token))
@@ -937,34 +894,11 @@ static int event_read_fields(struct event *event, struct format_field **fields)
 		field->size = strtoul(token, NULL, 0);
 		free_token(token);
 
-		if (read_expected(EVENT_OP, ";") < 0)
+		if (read_expected(EVENT_OP, (char *)";") < 0)
 			goto fail_expect;
 
-		type = read_token(&token);
-		if (type != EVENT_NEWLINE) {
-			/* newer versions of the kernel have a "signed" type */
-			if (test_type_token(type, token, EVENT_ITEM, "signed"))
-				goto fail;
-
-			free_token(token);
-
-			if (read_expected(EVENT_OP, ":") < 0)
-				goto fail_expect;
-
-			if (read_expect_type(EVENT_ITEM, &token))
-				goto fail;
-
-			if (strtoul(token, NULL, 0))
-				field->flags |= FIELD_IS_SIGNED;
-
-			free_token(token);
-			if (read_expected(EVENT_OP, ";") < 0)
-				goto fail_expect;
-
-			if (read_expect_type(EVENT_NEWLINE, &token))
-				goto fail;
-		}
-
+		if (read_expect_type(EVENT_NEWLINE, &token) < 0)
+			goto fail;
 		free_token(token);
 
 		*fields = field;
@@ -987,10 +921,10 @@ static int event_read_format(struct event *event)
 	char *token;
 	int ret;
 
-	if (read_expected_item(EVENT_ITEM, "format") < 0)
+	if (read_expected_item(EVENT_ITEM, (char *)"format") < 0)
 		return -1;
 
-	if (read_expected(EVENT_OP, ":") < 0)
+	if (read_expected(EVENT_OP, (char *)":") < 0)
 		return -1;
 
 	if (read_expect_type(EVENT_NEWLINE, &token))
@@ -1050,7 +984,7 @@ process_cond(struct event *event, struct print_arg *top, char **tok)
 
 	*tok = NULL;
 	type = process_arg(event, left, &token);
-	if (test_type_token(type, token, EVENT_OP, ":"))
+	if (test_type_token(type, token, EVENT_OP, (char *)":"))
 		goto out_free;
 
 	arg->op.op = token;
@@ -1066,35 +1000,6 @@ out_free:
 	free_token(*tok);
 	free(right);
 	free(left);
-	free_arg(arg);
-	return EVENT_ERROR;
-}
-
-static enum event_type
-process_array(struct event *event, struct print_arg *top, char **tok)
-{
-	struct print_arg *arg;
-	enum event_type type;
-	char *token = NULL;
-
-	arg = malloc_or_die(sizeof(*arg));
-	memset(arg, 0, sizeof(*arg));
-
-	*tok = NULL;
-	type = process_arg(event, arg, &token);
-	if (test_type_token(type, token, EVENT_OP, "]"))
-		goto out_free;
-
-	top->op.right = arg;
-
-	free_token(token);
-	type = read_token_item(&token);
-	*tok = token;
-
-	return type;
-
-out_free:
-	free_token(*tok);
 	free_arg(arg);
 	return EVENT_ERROR;
 }
@@ -1223,8 +1128,6 @@ process_op(struct event *event, struct print_arg *arg, char **tok)
 		   strcmp(token, "*") == 0 ||
 		   strcmp(token, "^") == 0 ||
 		   strcmp(token, "/") == 0 ||
-		   strcmp(token, "<") == 0 ||
-		   strcmp(token, ">") == 0 ||
 		   strcmp(token, "==") == 0 ||
 		   strcmp(token, "!=") == 0) {
 
@@ -1241,45 +1144,16 @@ process_op(struct event *event, struct print_arg *arg, char **tok)
 
 		right = malloc_or_die(sizeof(*right));
 
-		type = read_token_item(&token);
-		*tok = token;
-
-		/* could just be a type pointer */
-		if ((strcmp(arg->op.op, "*") == 0) &&
-		    type == EVENT_DELIM && (strcmp(token, ")") == 0)) {
-			if (left->type != PRINT_ATOM)
-				die("bad pointer type");
-			left->atom.atom = realloc(left->atom.atom,
-					    sizeof(left->atom.atom) + 3);
-			strcat(left->atom.atom, " *");
-			*arg = *left;
-			free(arg);
-
-			return type;
-		}
-
-		type = process_arg_token(event, right, tok, type);
+		type = process_arg(event, right, tok);
 
 		arg->op.right = right;
 
-	} else if (strcmp(token, "[") == 0) {
-
-		left = malloc_or_die(sizeof(*left));
-		*left = *arg;
-
-		arg->type = PRINT_OP;
-		arg->op.op = token;
-		arg->op.left = left;
-
-		arg->op.prio = 0;
-		type = process_array(event, arg, tok);
-
 	} else {
-		warning("unknown op '%s'", token);
-		event->flags |= EVENT_FL_FAILED;
+		die("unknown op '%s'", token);
 		/* the arg is now the left side */
 		return EVENT_NONE;
 	}
+
 
 	if (type == EVENT_OP) {
 		int prio;
@@ -1304,7 +1178,7 @@ process_entry(struct event *event __unused, struct print_arg *arg,
 	char *field;
 	char *token;
 
-	if (read_expected(EVENT_OP, "->") < 0)
+	if (read_expected(EVENT_OP, (char *)"->") < 0)
 		return EVENT_ERROR;
 
 	if (read_expect_type(EVENT_ITEM, &token) < 0)
@@ -1313,16 +1187,6 @@ process_entry(struct event *event __unused, struct print_arg *arg,
 
 	arg->type = PRINT_FIELD;
 	arg->field.name = field;
-
-	if (is_flag_field) {
-		arg->field.field = find_any_field(event, arg->field.name);
-		arg->field.field->flags |= FIELD_IS_FLAG;
-		is_flag_field = 0;
-	} else if (is_symbolic_field) {
-		arg->field.field = find_any_field(event, arg->field.name);
-		arg->field.field->flags |= FIELD_IS_SYMBOLIC;
-		is_symbolic_field = 0;
-	}
 
 	type = read_token(&token);
 	*tok = token;
@@ -1421,11 +1285,6 @@ static long long arg_num_eval(struct print_arg *arg)
 				die("unknown op '%s'", arg->op.op);
 			}
 			break;
-		case '+':
-			left = arg_num_eval(arg->op.left);
-			right = arg_num_eval(arg->op.right);
-			val = left + right;
-			break;
 		default:
 			die("unknown op '%s'", arg->op.op);
 		}
@@ -1479,32 +1338,25 @@ process_fields(struct event *event, struct print_flag_sym **list, char **tok)
 	do {
 		free_token(token);
 		type = read_token_item(&token);
-		if (test_type_token(type, token, EVENT_OP, "{"))
+		if (test_type_token(type, token, EVENT_OP, (char *)"{"))
 			break;
 
 		arg = malloc_or_die(sizeof(*arg));
 
 		free_token(token);
 		type = process_arg(event, arg, &token);
-
-		if (type == EVENT_OP)
-			type = process_op(event, arg, &token);
-
-		if (type == EVENT_ERROR)
-			goto out_free;
-
-		if (test_type_token(type, token, EVENT_DELIM, ","))
+		if (test_type_token(type, token, EVENT_DELIM, (char *)","))
 			goto out_free;
 
 		field = malloc_or_die(sizeof(*field));
-		memset(field, 0, sizeof(*field));
+		memset(field, 0, sizeof(field));
 
 		value = arg_eval(arg);
 		field->value = strdup(value);
 
 		free_token(token);
 		type = process_arg(event, arg, &token);
-		if (test_type_token(type, token, EVENT_OP, "}"))
+		if (test_type_token(type, token, EVENT_OP, (char *)"}"))
 			goto out_free;
 
 		value = arg_eval(arg);
@@ -1539,15 +1391,13 @@ process_flags(struct event *event, struct print_arg *arg, char **tok)
 	memset(arg, 0, sizeof(*arg));
 	arg->type = PRINT_FLAGS;
 
-	if (read_expected_item(EVENT_DELIM, "(") < 0)
+	if (read_expected_item(EVENT_DELIM, (char *)"(") < 0)
 		return EVENT_ERROR;
 
 	field = malloc_or_die(sizeof(*field));
 
 	type = process_arg(event, field, &token);
-	while (type == EVENT_OP)
-		type = process_op(event, field, &token);
-	if (test_type_token(type, token, EVENT_DELIM, ","))
+	if (test_type_token(type, token, EVENT_DELIM, (char *)","))
 		goto out_free;
 
 	arg->flags.field = field;
@@ -1558,11 +1408,11 @@ process_flags(struct event *event, struct print_arg *arg, char **tok)
 		type = read_token_item(&token);
 	}
 
-	if (test_type_token(type, token, EVENT_DELIM, ","))
+	if (test_type_token(type, token, EVENT_DELIM, (char *)","))
 		goto out_free;
 
 	type = process_fields(event, &arg->flags.flags, &token);
-	if (test_type_token(type, token, EVENT_DELIM, ")"))
+	if (test_type_token(type, token, EVENT_DELIM, (char *)")"))
 		goto out_free;
 
 	free_token(token);
@@ -1584,19 +1434,19 @@ process_symbols(struct event *event, struct print_arg *arg, char **tok)
 	memset(arg, 0, sizeof(*arg));
 	arg->type = PRINT_SYMBOL;
 
-	if (read_expected_item(EVENT_DELIM, "(") < 0)
+	if (read_expected_item(EVENT_DELIM, (char *)"(") < 0)
 		return EVENT_ERROR;
 
 	field = malloc_or_die(sizeof(*field));
 
 	type = process_arg(event, field, &token);
-	if (test_type_token(type, token, EVENT_DELIM, ","))
+	if (test_type_token(type, token, EVENT_DELIM, (char *)","))
 		goto out_free;
 
 	arg->symbol.field = field;
 
 	type = process_fields(event, &arg->symbol.symbols, &token);
-	if (test_type_token(type, token, EVENT_DELIM, ")"))
+	if (test_type_token(type, token, EVENT_DELIM, (char *)")"))
 		goto out_free;
 
 	free_token(token);
@@ -1613,6 +1463,7 @@ process_paren(struct event *event, struct print_arg *arg, char **tok)
 {
 	struct print_arg *item_arg;
 	enum event_type type;
+	int ptr_cast = 0;
 	char *token;
 
 	type = process_arg(event, arg, &token);
@@ -1620,13 +1471,28 @@ process_paren(struct event *event, struct print_arg *arg, char **tok)
 	if (type == EVENT_ERROR)
 		return EVENT_ERROR;
 
-	if (type == EVENT_OP)
-		type = process_op(event, arg, &token);
+	if (type == EVENT_OP) {
+		/* handle the ptr casts */
+		if (!strcmp(token, "*")) {
+			/*
+			 * FIXME: should we zapp whitespaces before ')' ?
+			 * (may require a peek_token_item())
+			 */
+			if (__peek_char() == ')') {
+				ptr_cast = 1;
+				free_token(token);
+				type = read_token_item(&token);
+			}
+		}
+		if (!ptr_cast) {
+			type = process_op(event, arg, &token);
 
-	if (type == EVENT_ERROR)
-		return EVENT_ERROR;
+			if (type == EVENT_ERROR)
+				return EVENT_ERROR;
+		}
+	}
 
-	if (test_type_token(type, token, EVENT_DELIM, ")")) {
+	if (test_type_token(type, token, EVENT_DELIM, (char *)")")) {
 		free_token(token);
 		return EVENT_ERROR;
 	}
@@ -1650,6 +1516,13 @@ process_paren(struct event *event, struct print_arg *arg, char **tok)
 		item_arg = malloc_or_die(sizeof(*item_arg));
 
 		arg->type = PRINT_TYPE;
+		if (ptr_cast) {
+			char *old = arg->atom.atom;
+
+			arg->atom.atom = malloc_or_die(strlen(old + 3));
+			sprintf(arg->atom.atom, "%s *", old);
+			free(old);
+		}
 		arg->typecast.type = arg->atom.atom;
 		arg->typecast.item = item_arg;
 		type = process_arg_token(event, item_arg, &token, type);
@@ -1667,7 +1540,7 @@ process_str(struct event *event __unused, struct print_arg *arg, char **tok)
 	enum event_type type;
 	char *token;
 
-	if (read_expected(EVENT_DELIM, "(") < 0)
+	if (read_expected(EVENT_DELIM, (char *)"(") < 0)
 		return EVENT_ERROR;
 
 	if (read_expect_type(EVENT_ITEM, &token) < 0)
@@ -1677,7 +1550,7 @@ process_str(struct event *event __unused, struct print_arg *arg, char **tok)
 	arg->string.string = token;
 	arg->string.offset = -1;
 
-	if (read_expected(EVENT_DELIM, ")") < 0)
+	if (read_expected(EVENT_DELIM, (char *)")") < 0)
 		return EVENT_ERROR;
 
 	type = read_token(&token);
@@ -1705,11 +1578,9 @@ process_arg_token(struct event *event, struct print_arg *arg,
 			type = process_entry(event, arg, &token);
 		} else if (strcmp(token, "__print_flags") == 0) {
 			free_token(token);
-			is_flag_field = 1;
 			type = process_flags(event, arg, &token);
 		} else if (strcmp(token, "__print_symbolic") == 0) {
 			free_token(token);
-			is_symbolic_field = 1;
 			type = process_symbols(event, arg, &token);
 		} else if (strcmp(token, "__get_str") == 0) {
 			free_token(token);
@@ -1766,18 +1637,12 @@ process_arg_token(struct event *event, struct print_arg *arg,
 
 static int event_read_print_args(struct event *event, struct print_arg **list)
 {
-	enum event_type type = EVENT_ERROR;
+	enum event_type type;
 	struct print_arg *arg;
 	char *token;
 	int args = 0;
 
 	do {
-		if (type == EVENT_NEWLINE) {
-			free_token(token);
-			type = read_token_item(&token);
-			continue;
-		}
-
 		arg = malloc_or_die(sizeof(*arg));
 		memset(arg, 0, sizeof(*arg));
 
@@ -1818,19 +1683,18 @@ static int event_read_print(struct event *event)
 	char *token;
 	int ret;
 
-	if (read_expected_item(EVENT_ITEM, "print") < 0)
+	if (read_expected_item(EVENT_ITEM, (char *)"print") < 0)
 		return -1;
 
-	if (read_expected(EVENT_ITEM, "fmt") < 0)
+	if (read_expected(EVENT_ITEM, (char *)"fmt") < 0)
 		return -1;
 
-	if (read_expected(EVENT_OP, ":") < 0)
+	if (read_expected(EVENT_OP, (char *)":") < 0)
 		return -1;
 
 	if (read_expect_type(EVENT_DQUOTE, &token) < 0)
 		goto fail;
 
- concat:
 	event->print_fmt.format = token;
 	event->print_fmt.args = NULL;
 
@@ -1840,22 +1704,7 @@ static int event_read_print(struct event *event)
 	if (type == EVENT_NONE)
 		return 0;
 
-	/* Handle concatination of print lines */
-	if (type == EVENT_DQUOTE) {
-		char *cat;
-
-		cat = malloc_or_die(strlen(event->print_fmt.format) +
-				    strlen(token) + 1);
-		strcpy(cat, event->print_fmt.format);
-		strcat(cat, token);
-		free_token(token);
-		free_token(event->print_fmt.format);
-		event->print_fmt.format = NULL;
-		token = cat;
-		goto concat;
-	}
-
-	if (test_type_token(type, token, EVENT_DELIM, ","))
+	if (test_type_token(type, token, EVENT_DELIM, (char *)","))
 		goto fail;
 
 	free_token(token);
@@ -1864,7 +1713,7 @@ static int event_read_print(struct event *event)
 	if (ret < 0)
 		return -1;
 
-	return ret;
+	return 0;
 
  fail:
 	free_token(token);
@@ -1910,7 +1759,7 @@ find_any_field(struct event *event, const char *name)
 	return find_field(event, name);
 }
 
-unsigned long long read_size(void *ptr, int size)
+static unsigned long long read_size(void *ptr, int size)
 {
 	switch (size) {
 	case 1:
@@ -1947,15 +1796,6 @@ void *raw_field_ptr(struct event *event, const char *name, void *data)
 	if (!field)
 		return NULL;
 
-	if (field->flags & FIELD_IS_DYNAMIC) {
-		int offset;
-
-		offset = *(int *)(data + field->offset);
-		offset &= 0xffff;
-
-		return data + offset;
-	}
-
 	return data + field->offset;
 }
 
@@ -1982,67 +1822,37 @@ static int get_common_info(const char *type, int *offset, int *size)
 	return 0;
 }
 
-static int __parse_common(void *data, int *size, int *offset,
-			  const char *name)
-{
-	int ret;
-
-	if (!*size) {
-		ret = get_common_info(name, offset, size);
-		if (ret < 0)
-			return ret;
-	}
-	return read_size(data + *offset, *size);
-}
-
 int trace_parse_common_type(void *data)
 {
 	static int type_offset;
 	static int type_size;
+	int ret;
 
-	return __parse_common(data, &type_size, &type_offset,
-			      "common_type");
+	if (!type_size) {
+		ret = get_common_info("common_type",
+				      &type_offset,
+				      &type_size);
+		if (ret < 0)
+			return ret;
+	}
+	return read_size(data + type_offset, type_size);
 }
 
-int trace_parse_common_pid(void *data)
+static int parse_common_pid(void *data)
 {
 	static int pid_offset;
 	static int pid_size;
-
-	return __parse_common(data, &pid_size, &pid_offset,
-			      "common_pid");
-}
-
-int parse_common_pc(void *data)
-{
-	static int pc_offset;
-	static int pc_size;
-
-	return __parse_common(data, &pc_size, &pc_offset,
-			      "common_preempt_count");
-}
-
-int parse_common_flags(void *data)
-{
-	static int flags_offset;
-	static int flags_size;
-
-	return __parse_common(data, &flags_size, &flags_offset,
-			      "common_flags");
-}
-
-int parse_common_lock_depth(void *data)
-{
-	static int ld_offset;
-	static int ld_size;
 	int ret;
 
-	ret = __parse_common(data, &ld_size, &ld_offset,
-			     "common_lock_depth");
-	if (ret < 0)
-		return -1;
+	if (!pid_size) {
+		ret = get_common_info("common_pid",
+				      &pid_offset,
+				      &pid_size);
+		if (ret < 0)
+			return ret;
+	}
 
-	return ret;
+	return read_size(data + pid_offset, pid_size);
 }
 
 struct event *trace_find_event(int id)
@@ -2056,20 +1866,11 @@ struct event *trace_find_event(int id)
 	return event;
 }
 
-struct event *trace_find_next_event(struct event *event)
-{
-	if (!event)
-		return event_list;
-
-	return event->next;
-}
-
 static unsigned long long eval_num_arg(void *data, int size,
 				   struct event *event, struct print_arg *arg)
 {
 	unsigned long long val = 0;
 	unsigned long long left, right;
-	struct print_arg *larg;
 
 	switch (arg->type) {
 	case PRINT_NULL:
@@ -2096,26 +1897,6 @@ static unsigned long long eval_num_arg(void *data, int size,
 		return 0;
 		break;
 	case PRINT_OP:
-		if (strcmp(arg->op.op, "[") == 0) {
-			/*
-			 * Arrays are special, since we don't want
-			 * to read the arg as is.
-			 */
-			if (arg->op.left->type != PRINT_FIELD)
-				goto default_op; /* oops, all bets off */
-			larg = arg->op.left;
-			if (!larg->field.field) {
-				larg->field.field =
-					find_any_field(event, larg->field.name);
-				if (!larg->field.field)
-					die("field %s not found", larg->field.name);
-			}
-			right = eval_num_arg(data, size, event, arg->op.right);
-			val = read_size(data + larg->field.field->offset +
-					right * long_size, long_size);
-			break;
-		}
- default_op:
 		left = eval_num_arg(data, size, event, arg->op.left);
 		right = eval_num_arg(data, size, event, arg->op.right);
 		switch (arg->op.op[0]) {
@@ -2166,12 +1947,6 @@ static unsigned long long eval_num_arg(void *data, int size,
 				die("unknown op '%s'", arg->op.op);
 			val = left == right;
 			break;
-		case '-':
-			val = left - right;
-			break;
-		case '+':
-			val = left + right;
-			break;
 		default:
 			die("unknown op '%s'", arg->op.op);
 		}
@@ -2203,7 +1978,7 @@ static const struct flag flags[] = {
 	{ "HRTIMER_RESTART", 1 },
 };
 
-unsigned long long eval_flag(const char *flag)
+static unsigned long long eval_flag(const char *flag)
 {
 	int i;
 
@@ -2370,9 +2145,8 @@ static struct print_arg *make_bprint_args(char *fmt, void *data, int size, struc
 			case 'u':
 			case 'x':
 			case 'i':
-				/* the pointers are always 4 bytes aligned */
-				bptr = (void *)(((unsigned long)bptr + 3) &
-						~3);
+				bptr = (void *)(((unsigned long)bptr + (long_size - 1)) &
+						~(long_size - 1));
 				switch (ls) {
 				case 0:
 				case 1:
@@ -2496,27 +2270,7 @@ static void pretty_print(void *data, int size, struct event *event)
 
 	for (; *ptr; ptr++) {
 		ls = 0;
-		if (*ptr == '\\') {
-			ptr++;
-			switch (*ptr) {
-			case 'n':
-				printf("\n");
-				break;
-			case 't':
-				printf("\t");
-				break;
-			case 'r':
-				printf("\r");
-				break;
-			case '\\':
-				printf("\\");
-				break;
-			default:
-				printf("%c", *ptr);
-				break;
-			}
-
-		} else if (*ptr == '%') {
+		if (*ptr == '%') {
 			saveptr = ptr;
 			show_func = 0;
  cont_process:
@@ -2623,42 +2377,62 @@ static inline int log10_cpu(int nb)
 	return 1;
 }
 
-static void print_lat_fmt(void *data, int size __unused)
+/* taken from Linux, written by Frederic Weisbecker */
+static void print_graph_cpu(int cpu)
 {
-	unsigned int lat_flags;
-	unsigned int pc;
-	int lock_depth;
-	int hardirq;
-	int softirq;
+	int i;
+	int log10_this = log10_cpu(cpu);
+	int log10_all = log10_cpu(cpus);
 
-	lat_flags = parse_common_flags(data);
-	pc = parse_common_pc(data);
-	lock_depth = parse_common_lock_depth(data);
 
-	hardirq = lat_flags & TRACE_FLAG_HARDIRQ;
-	softirq = lat_flags & TRACE_FLAG_SOFTIRQ;
+	/*
+	 * Start with a space character - to make it stand out
+	 * to the right a bit when trace output is pasted into
+	 * email:
+	 */
+	printf(" ");
 
-	printf("%c%c%c",
-	       (lat_flags & TRACE_FLAG_IRQS_OFF) ? 'd' :
-	       (lat_flags & TRACE_FLAG_IRQS_NOSUPPORT) ?
-	       'X' : '.',
-	       (lat_flags & TRACE_FLAG_NEED_RESCHED) ?
-	       'N' : '.',
-	       (hardirq && softirq) ? 'H' :
-	       hardirq ? 'h' : softirq ? 's' : '.');
+	/*
+	 * Tricky - we space the CPU field according to the max
+	 * number of online CPUs. On a 2-cpu system it would take
+	 * a maximum of 1 digit - on a 128 cpu system it would
+	 * take up to 3 digits:
+	 */
+	for (i = 0; i < log10_all - log10_this; i++)
+		printf(" ");
 
-	if (pc)
-		printf("%x", pc);
-	else
-		printf(".");
-
-	if (lock_depth < 0)
-		printf(". ");
-	else
-		printf("%d ", lock_depth);
+	printf("%d) ", cpu);
 }
 
+#define TRACE_GRAPH_PROCINFO_LENGTH	14
 #define TRACE_GRAPH_INDENT	2
+
+static void print_graph_proc(int pid, const char *comm)
+{
+	/* sign + log10(MAX_INT) + '\0' */
+	char pid_str[11];
+	int spaces = 0;
+	int len;
+	int i;
+
+	sprintf(pid_str, "%d", pid);
+
+	/* 1 stands for the "-" character */
+	len = strlen(comm) + strlen(pid_str) + 1;
+
+	if (len < TRACE_GRAPH_PROCINFO_LENGTH)
+		spaces = TRACE_GRAPH_PROCINFO_LENGTH - len;
+
+	/* First spaces to align center */
+	for (i = 0; i < spaces / 2; i++)
+		printf(" ");
+
+	printf("%s-%s", comm, pid_str);
+
+	/* Last spaces to align center */
+	for (i = 0; i < spaces - (spaces / 2); i++)
+		printf(" ");
+}
 
 static struct record *
 get_return_for_leaf(int cpu, int cur_pid, unsigned long long cur_func,
@@ -2678,7 +2452,7 @@ get_return_for_leaf(int cpu, int cur_pid, unsigned long long cur_func,
 	if (!(event->flags & EVENT_FL_ISFUNCRET))
 		return NULL;
 
-	pid = trace_parse_common_pid(next->data);
+	pid = parse_common_pid(next->data);
 	field = find_field(event, "func");
 	if (!field)
 		die("function return does not have field func");
@@ -2831,17 +2605,20 @@ static void print_graph_nested(struct event *event, void *data)
 
 static void
 pretty_print_func_ent(void *data, int size, struct event *event,
-		      int cpu, int pid)
+		      int cpu, int pid, const char *comm,
+		      unsigned long secs, unsigned long usecs)
 {
 	struct format_field *field;
 	struct record *rec;
 	void *copy_data;
 	unsigned long val;
 
-	if (latency_format) {
-		print_lat_fmt(data, size);
-		printf(" | ");
-	}
+	printf("%5lu.%06lu |  ", secs, usecs);
+
+	print_graph_cpu(cpu);
+	print_graph_proc(pid, comm);
+
+	printf(" | ");
 
 	field = find_field(event, "func");
 	if (!field)
@@ -2870,17 +2647,21 @@ out_free:
 }
 
 static void
-pretty_print_func_ret(void *data, int size __unused, struct event *event)
+pretty_print_func_ret(void *data, int size __unused, struct event *event,
+		      int cpu, int pid, const char *comm,
+		      unsigned long secs, unsigned long usecs)
 {
 	unsigned long long rettime, calltime;
 	unsigned long long duration, depth;
 	struct format_field *field;
 	int i;
 
-	if (latency_format) {
-		print_lat_fmt(data, size);
-		printf(" | ");
-	}
+	printf("%5lu.%06lu |  ", secs, usecs);
+
+	print_graph_cpu(cpu);
+	print_graph_proc(pid, comm);
+
+	printf(" | ");
 
 	field = find_field(event, "rettime");
 	if (!field)
@@ -2914,44 +2695,51 @@ pretty_print_func_ret(void *data, int size __unused, struct event *event)
 
 static void
 pretty_print_func_graph(void *data, int size, struct event *event,
-			int cpu, int pid)
+			int cpu, int pid, const char *comm,
+			unsigned long secs, unsigned long usecs)
 {
 	if (event->flags & EVENT_FL_ISFUNCENT)
-		pretty_print_func_ent(data, size, event, cpu, pid);
+		pretty_print_func_ent(data, size, event,
+				      cpu, pid, comm, secs, usecs);
 	else if (event->flags & EVENT_FL_ISFUNCRET)
-		pretty_print_func_ret(data, size, event);
+		pretty_print_func_ret(data, size, event,
+				      cpu, pid, comm, secs, usecs);
 	printf("\n");
 }
 
-void print_trace_event(int cpu, void *data, int size)
+void print_event(int cpu, void *data, int size, unsigned long long nsecs,
+		  char *comm)
 {
 	struct event *event;
+	unsigned long secs;
+	unsigned long usecs;
 	int type;
 	int pid;
+
+	secs = nsecs / NSECS_PER_SEC;
+	nsecs -= secs * NSECS_PER_SEC;
+	usecs = nsecs / NSECS_PER_USEC;
 
 	type = trace_parse_common_type(data);
 
 	event = trace_find_event(type);
 	if (!event) {
-		warning("ug! no event found for type %d", type);
+		printf("ug! no event found for type %d\n", type);
 		return;
 	}
 
-	pid = trace_parse_common_pid(data);
+	pid = parse_common_pid(data);
 
 	if (event->flags & (EVENT_FL_ISFUNCENT | EVENT_FL_ISFUNCRET))
-		return pretty_print_func_graph(data, size, event, cpu, pid);
+		return pretty_print_func_graph(data, size, event, cpu,
+					       pid, comm, secs, usecs);
 
-	if (latency_format)
-		print_lat_fmt(data, size);
-
-	if (event->flags & EVENT_FL_FAILED) {
-		printf("EVENT '%s' FAILED TO PARSE\n",
-		       event->name);
-		return;
-	}
+	printf("%16s-%-5d [%03d] %5lu.%09Lu: %s: ",
+	       comm, pid,  cpu,
+	       secs, nsecs, event->name);
 
 	pretty_print(data, size, event);
+	printf("\n");
 }
 
 static void print_fields(struct print_flag_sym *field)
@@ -3019,6 +2807,63 @@ static void print_args(struct print_arg *args)
 	}
 }
 
+static void parse_header_field(char *type,
+			       int *offset, int *size)
+{
+	char *token;
+
+	if (read_expected(EVENT_ITEM, (char *)"field") < 0)
+		return;
+	if (read_expected(EVENT_OP, (char *)":") < 0)
+		return;
+	/* type */
+	if (read_expect_type(EVENT_ITEM, &token) < 0)
+		return;
+	free_token(token);
+
+	if (read_expected(EVENT_ITEM, type) < 0)
+		return;
+	if (read_expected(EVENT_OP, (char *)";") < 0)
+		return;
+	if (read_expected(EVENT_ITEM, (char *)"offset") < 0)
+		return;
+	if (read_expected(EVENT_OP, (char *)":") < 0)
+		return;
+	if (read_expect_type(EVENT_ITEM, &token) < 0)
+		return;
+	*offset = atoi(token);
+	free_token(token);
+	if (read_expected(EVENT_OP, (char *)";") < 0)
+		return;
+	if (read_expected(EVENT_ITEM, (char *)"size") < 0)
+		return;
+	if (read_expected(EVENT_OP, (char *)":") < 0)
+		return;
+	if (read_expect_type(EVENT_ITEM, &token) < 0)
+		return;
+	*size = atoi(token);
+	free_token(token);
+	if (read_expected(EVENT_OP, (char *)";") < 0)
+		return;
+	if (read_expect_type(EVENT_NEWLINE, &token) < 0)
+		return;
+	free_token(token);
+}
+
+int parse_header_page(char *buf, unsigned long size)
+{
+	init_input_buf(buf, size);
+
+	parse_header_field((char *)"timestamp", &header_page_ts_offset,
+			   &header_page_ts_size);
+	parse_header_field((char *)"commit", &header_page_size_offset,
+			   &header_page_size_size);
+	parse_header_field((char *)"data", &header_page_data_offset,
+			   &header_page_data_size);
+
+	return 0;
+}
+
 int parse_ftrace_file(char *buf, unsigned long size)
 {
 	struct format_field *field;
@@ -3064,9 +2909,6 @@ int parse_ftrace_file(char *buf, unsigned long size)
 	if (ret < 0)
 		die("failed to read ftrace event print fmt");
 
-	/* New ftrace handles args */
-	if (ret > 0)
-		return 0;
 	/*
 	 * The arguments for ftrace files are parsed by the fields.
 	 * Set up the fields as their arguments.
@@ -3084,7 +2926,7 @@ int parse_ftrace_file(char *buf, unsigned long size)
 	return 0;
 }
 
-int parse_event_file(char *buf, unsigned long size, char *sys)
+int parse_event_file(char *buf, unsigned long size, char *system__unused __unused)
 {
 	struct event *event;
 	int ret;
@@ -3104,18 +2946,12 @@ int parse_event_file(char *buf, unsigned long size, char *sys)
 		die("failed to read event id");
 
 	ret = event_read_format(event);
-	if (ret < 0) {
-		warning("failed to read event format for %s", event->name);
-		goto event_failed;
-	}
+	if (ret < 0)
+		die("failed to read event format");
 
 	ret = event_read_print(event);
-	if (ret < 0) {
-		warning("failed to read event print fmt for %s", event->name);
-		goto event_failed;
-	}
-
-	event->system = strdup(sys);
+	if (ret < 0)
+		die("failed to read event print fmt");
 
 #define PRINT_ARGS 0
 	if (PRINT_ARGS && event->print_fmt.args)
@@ -3123,31 +2959,10 @@ int parse_event_file(char *buf, unsigned long size, char *sys)
 
 	add_event(event);
 	return 0;
-
- event_failed:
-	event->flags |= EVENT_FL_FAILED;
-	/* still add it even if it failed */
-	add_event(event);
-	return -1;
 }
 
 void parse_set_info(int nr_cpus, int long_sz)
 {
 	cpus = nr_cpus;
 	long_size = long_sz;
-}
-
-int common_pc(struct scripting_context *context)
-{
-	return parse_common_pc(context->event_data);
-}
-
-int common_flags(struct scripting_context *context)
-{
-	return parse_common_flags(context->event_data);
-}
-
-int common_lock_depth(struct scripting_context *context)
-{
-	return parse_common_lock_depth(context->event_data);
 }

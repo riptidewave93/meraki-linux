@@ -18,6 +18,7 @@
 #include <linux/smp.h>
 #include <linux/errno.h>
 #include <asm/ptrace.h>
+#include <asm/system.h>
 #include <asm/pmc.h>
 #include <asm/cputable.h>
 #include <asm/oprofile_impl.h>
@@ -194,8 +195,11 @@ int __init oprofile_arch_init(struct oprofile_operations *ops)
 	if (!cur_cpu_spec->oprofile_cpu_type)
 		return -ENODEV;
 
+	if (firmware_has_feature(FW_FEATURE_ISERIES))
+		return -ENODEV;
+
 	switch (cur_cpu_spec->oprofile_type) {
-#ifdef CONFIG_PPC_BOOK3S_64
+#ifdef CONFIG_PPC64
 #ifdef CONFIG_OPROFILE_CELL
 		case PPC_OPROFILE_CELL:
 			if (firmware_has_feature(FW_FEATURE_LPAR))

@@ -15,8 +15,7 @@
 
     You should have received a copy of the GNU General Public License
     along with this program; if not, write to the Free Software
-    Foundation, Inc., 51 Franklin Street, Fifth Floor, Boston,
-    MA 02110-1301 USA.							     */
+    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.                */
 /* ------------------------------------------------------------------------- */
 
 /* With some changes from Kyösti Mälkki <kmalkki@cc.hut.fi> and even
@@ -37,8 +36,6 @@ struct i2c_algo_bit_data {
 	void (*setscl) (void *data, int state);
 	int  (*getsda) (void *data);
 	int  (*getscl) (void *data);
-	int  (*pre_xfer)  (struct i2c_adapter *);
-	void (*post_xfer) (struct i2c_adapter *);
 
 	/* local settings */
 	int udelay;		/* half clock cycle time in us,
@@ -50,6 +47,5 @@ struct i2c_algo_bit_data {
 
 int i2c_bit_add_bus(struct i2c_adapter *);
 int i2c_bit_add_numbered_bus(struct i2c_adapter *);
-extern const struct i2c_algorithm i2c_bit_algo;
 
 #endif /* _LINUX_I2C_ALGO_BIT_H */

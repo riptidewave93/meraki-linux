@@ -29,12 +29,10 @@
 #include <linux/rfkill.h>
 #include <linux/sched.h>
 #include <linux/spinlock.h>
-#include <linux/device.h>
 #include <linux/miscdevice.h>
 #include <linux/wait.h>
 #include <linux/poll.h>
 #include <linux/fs.h>
-#include <linux/slab.h>
 
 #include "rfkill.h"
 
@@ -150,6 +148,20 @@ static void rfkill_led_trigger_activate(struct led_classdev *led)
 	rfkill_led_trigger_event(rfkill);
 }
 
+const char *rfkill_get_led_trigger_name(struct rfkill *rfkill)
+{
+	return rfkill->led_trigger.name;
+}
+EXPORT_SYMBOL(rfkill_get_led_trigger_name);
+
+void rfkill_set_led_trigger_name(struct rfkill *rfkill, const char *name)
+{
+	BUG_ON(!rfkill);
+
+	rfkill->ledtrigname = name;
+}
+EXPORT_SYMBOL(rfkill_set_led_trigger_name);
+
 static int rfkill_led_trigger_register(struct rfkill *rfkill)
 {
 	rfkill->led_trigger.name = rfkill->ledtrigname
@@ -236,7 +248,7 @@ static bool __rfkill_set_hw_state(struct rfkill *rfkill,
 	else
 		rfkill->state &= ~RFKILL_BLOCK_HW;
 	*change = prev != blocked;
-	any = !!(rfkill->state & RFKILL_BLOCK_ANY);
+	any = rfkill->state & RFKILL_BLOCK_ANY;
 	spin_unlock_irqrestore(&rfkill->lock, flags);
 
 	rfkill_led_trigger_event(rfkill);
@@ -567,8 +579,6 @@ static ssize_t rfkill_name_show(struct device *dev,
 
 static const char *rfkill_get_type_str(enum rfkill_type type)
 {
-	BUILD_BUG_ON(NUM_RFKILL_TYPES != RFKILL_TYPE_FM + 1);
-
 	switch (type) {
 	case RFKILL_TYPE_WLAN:
 		return "wlan";
@@ -582,11 +592,11 @@ static const char *rfkill_get_type_str(enum rfkill_type type)
 		return "wwan";
 	case RFKILL_TYPE_GPS:
 		return "gps";
-	case RFKILL_TYPE_FM:
-		return "fm";
 	default:
 		BUG();
 	}
+
+	BUILD_BUG_ON(NUM_RFKILL_TYPES != RFKILL_TYPE_GPS + 1);
 }
 
 static ssize_t rfkill_type_show(struct device *dev,
@@ -616,49 +626,6 @@ static ssize_t rfkill_persistent_show(struct device *dev,
 	return sprintf(buf, "%d\n", rfkill->persistent);
 }
 
-static ssize_t rfkill_hard_show(struct device *dev,
-				 struct device_attribute *attr,
-				 char *buf)
-{
-	struct rfkill *rfkill = to_rfkill(dev);
-
-	return sprintf(buf, "%d\n", (rfkill->state & RFKILL_BLOCK_HW) ? 1 : 0 );
-}
-
-static ssize_t rfkill_soft_show(struct device *dev,
-				 struct device_attribute *attr,
-				 char *buf)
-{
-	struct rfkill *rfkill = to_rfkill(dev);
-
-	return sprintf(buf, "%d\n", (rfkill->state & RFKILL_BLOCK_SW) ? 1 : 0 );
-}
-
-static ssize_t rfkill_soft_store(struct device *dev,
-				  struct device_attribute *attr,
-				  const char *buf, size_t count)
-{
-	struct rfkill *rfkill = to_rfkill(dev);
-	unsigned long state;
-	int err;
-
-	if (!capable(CAP_NET_ADMIN))
-		return -EPERM;
-
-	err = kstrtoul(buf, 0, &state);
-	if (err)
-		return err;
-
-	if (state > 1 )
-		return -EINVAL;
-
-	mutex_lock(&rfkill_global_mutex);
-	rfkill_set_block(rfkill, state);
-	mutex_unlock(&rfkill_global_mutex);
-
-	return err ?: count;
-}
-
 static u8 user_state_from_blocked(unsigned long state)
 {
 	if (state & RFKILL_BLOCK_HW)
@@ -674,8 +641,14 @@ static ssize_t rfkill_state_show(struct device *dev,
 				 char *buf)
 {
 	struct rfkill *rfkill = to_rfkill(dev);
+	unsigned long flags;
+	u32 state;
 
-	return sprintf(buf, "%d\n", user_state_from_blocked(rfkill->state));
+	spin_lock_irqsave(&rfkill->lock, flags);
+	state = rfkill->state;
+	spin_unlock_irqrestore(&rfkill->lock, flags);
+
+	return sprintf(buf, "%d\n", user_state_from_blocked(state));
 }
 
 static ssize_t rfkill_state_store(struct device *dev,
@@ -689,7 +662,7 @@ static ssize_t rfkill_state_store(struct device *dev,
 	if (!capable(CAP_NET_ADMIN))
 		return -EPERM;
 
-	err = kstrtoul(buf, 0, &state);
+	err = strict_strtoul(buf, 0, &state);
 	if (err)
 		return err;
 
@@ -725,8 +698,6 @@ static struct device_attribute rfkill_dev_attrs[] = {
 	__ATTR(persistent, S_IRUGO, rfkill_persistent_show, NULL),
 	__ATTR(state, S_IRUGO|S_IWUSR, rfkill_state_show, rfkill_state_store),
 	__ATTR(claim, S_IRUGO|S_IWUSR, rfkill_claim_show, rfkill_claim_store),
-	__ATTR(soft, S_IRUGO|S_IWUSR, rfkill_soft_show, rfkill_soft_store),
-	__ATTR(hard, S_IRUGO, rfkill_hard_show, NULL),
 	__ATTR_NULL
 };
 
@@ -1025,6 +996,7 @@ static int rfkill_fop_open(struct inode *inode, struct file *file)
 	 * start getting events from elsewhere but hold mtx to get
 	 * startup events added first
 	 */
+	list_add(&data->list, &rfkill_fds);
 
 	list_for_each_entry(rfkill, &rfkill_list, node) {
 		ev = kzalloc(sizeof(*ev), GFP_KERNEL);
@@ -1033,7 +1005,6 @@ static int rfkill_fop_open(struct inode *inode, struct file *file)
 		rfkill_fill_event(&ev->ev, rfkill, RFKILL_OP_ADD);
 		list_add_tail(&ev->list, &data->events);
 	}
-	list_add(&data->list, &rfkill_fds);
 	mutex_unlock(&data->mtx);
 	mutex_unlock(&rfkill_global_mutex);
 
@@ -1228,7 +1199,6 @@ static const struct file_operations rfkill_fops = {
 	.unlocked_ioctl	= rfkill_fop_ioctl,
 	.compat_ioctl	= rfkill_fop_ioctl,
 #endif
-	.llseek		= no_llseek,
 };
 
 static struct miscdevice rfkill_miscdev = {

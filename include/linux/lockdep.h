@@ -12,10 +12,6 @@
 struct task_struct;
 struct lockdep_map;
 
-/* for sysctl */
-extern int prove_locking;
-extern int lock_stat;
-
 #ifdef CONFIG_LOCKDEP
 
 #include <linux/linkage.h>
@@ -32,17 +28,6 @@ extern int lock_stat;
 #define MAX_LOCKDEP_SUBCLASSES		8UL
 
 /*
- * NR_LOCKDEP_CACHING_CLASSES ... Number of classes
- * cached in the instance of lockdep_map
- *
- * Currently main class (subclass == 0) and signle depth subclass
- * are cached in lockdep_map. This optimization is mainly targeting
- * on rq->lock. double_rq_lock() acquires this highly competitive with
- * single depth.
- */
-#define NR_LOCKDEP_CACHING_CLASSES	2
-
-/*
  * Lock-classes are keyed via unique addresses, by embedding the
  * lockclass-key into the kernel (or module) .data section. (For
  * static locks we use the lock address itself as the key.)
@@ -54,8 +39,6 @@ struct lockdep_subclass_key {
 struct lock_class_key {
 	struct lockdep_subclass_key	subkeys[MAX_LOCKDEP_SUBCLASSES];
 };
-
-extern struct lock_class_key __lockdep_no_validate__;
 
 #define LOCKSTAT_POINTS		4
 
@@ -149,7 +132,7 @@ void clear_lock_stats(struct lock_class *class);
  */
 struct lockdep_map {
 	struct lock_class_key		*key;
-	struct lock_class		*class_cache[NR_LOCKDEP_CACHING_CLASSES];
+	struct lock_class		*class_cache;
 	const char			*name;
 #ifdef CONFIG_LOCK_STAT
 	int				cpu;
@@ -283,9 +266,6 @@ extern void lockdep_init_map(struct lockdep_map *lock, const char *name,
 #define lockdep_set_subclass(lock, sub)	\
 		lockdep_init_map(&(lock)->dep_map, #lock, \
 				 (lock)->dep_map.key, sub)
-
-#define lockdep_set_novalidate_class(lock) \
-	lockdep_set_class(lock, &__lockdep_no_validate__)
 /*
  * Compare locking classes
  */
@@ -343,8 +323,6 @@ extern void lockdep_trace_alloc(gfp_t mask);
 
 #define lockdep_assert_held(l)	WARN_ON(debug_locks && !lockdep_is_held(l))
 
-#define lockdep_recursing(tsk)	((tsk)->lockdep_recursion)
-
 #else /* !LOCKDEP */
 
 static inline void lockdep_off(void)
@@ -372,9 +350,6 @@ static inline void lockdep_on(void)
 #define lockdep_set_class_and_subclass(lock, key, sub) \
 		do { (void)(key); } while (0)
 #define lockdep_set_subclass(lock, sub)		do { } while (0)
-
-#define lockdep_set_novalidate_class(lock) do { } while (0)
-
 /*
  * We don't define lockdep_match_class() and lockdep_match_key() for !LOCKDEP
  * case since the result is not well defined and the caller should rather
@@ -393,8 +368,6 @@ struct lock_class_key { };
 #define lockdep_depth(tsk)	(0)
 
 #define lockdep_assert_held(l)			do { } while (0)
-
-#define lockdep_recursing(tsk)			(0)
 
 #endif /* !LOCKDEP */
 
@@ -439,9 +412,25 @@ do {								\
 
 #endif /* CONFIG_LOCKDEP */
 
+#ifdef CONFIG_GENERIC_HARDIRQS
+extern void early_init_irq_lock_class(void);
+#else
+static inline void early_init_irq_lock_class(void)
+{
+}
+#endif
+
 #ifdef CONFIG_TRACE_IRQFLAGS
+extern void early_boot_irqs_off(void);
+extern void early_boot_irqs_on(void);
 extern void print_irqtrace_events(struct task_struct *curr);
 #else
+static inline void early_boot_irqs_off(void)
+{
+}
+static inline void early_boot_irqs_on(void)
+{
+}
 static inline void print_irqtrace_events(struct task_struct *curr)
 {
 }
@@ -491,15 +480,12 @@ static inline void print_irqtrace_events(struct task_struct *curr)
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 # ifdef CONFIG_PROVE_LOCKING
 #  define mutex_acquire(l, s, t, i)		lock_acquire(l, s, t, 0, 2, NULL, i)
-#  define mutex_acquire_nest(l, s, t, n, i)	lock_acquire(l, s, t, 0, 2, n, i)
 # else
 #  define mutex_acquire(l, s, t, i)		lock_acquire(l, s, t, 0, 1, NULL, i)
-#  define mutex_acquire_nest(l, s, t, n, i)	lock_acquire(l, s, t, 0, 1, n, i)
 # endif
 # define mutex_release(l, n, i)			lock_release(l, n, i)
 #else
 # define mutex_acquire(l, s, t, i)		do { } while (0)
-# define mutex_acquire_nest(l, s, t, n, i)	do { } while (0)
 # define mutex_release(l, n, i)			do { } while (0)
 #endif
 
@@ -521,15 +507,12 @@ static inline void print_irqtrace_events(struct task_struct *curr)
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 # ifdef CONFIG_PROVE_LOCKING
 #  define lock_map_acquire(l)		lock_acquire(l, 0, 0, 0, 2, NULL, _THIS_IP_)
-#  define lock_map_acquire_read(l)	lock_acquire(l, 0, 0, 2, 2, NULL, _THIS_IP_)
 # else
 #  define lock_map_acquire(l)		lock_acquire(l, 0, 0, 0, 1, NULL, _THIS_IP_)
-#  define lock_map_acquire_read(l)	lock_acquire(l, 0, 0, 2, 1, NULL, _THIS_IP_)
 # endif
 # define lock_map_release(l)			lock_release(l, 1, _THIS_IP_)
 #else
 # define lock_map_acquire(l)			do { } while (0)
-# define lock_map_acquire_read(l)		do { } while (0)
 # define lock_map_release(l)			do { } while (0)
 #endif
 
@@ -549,10 +532,6 @@ do {									\
 #else
 # define might_lock(lock) do { } while (0)
 # define might_lock_read(lock) do { } while (0)
-#endif
-
-#ifdef CONFIG_PROVE_RCU
-void lockdep_rcu_suspicious(const char *file, const int line, const char *s);
 #endif
 
 #endif /* __LINUX_LOCKDEP_H */

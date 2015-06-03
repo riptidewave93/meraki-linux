@@ -25,7 +25,7 @@
 #include "via_drm.h"
 #include "via_drv.h"
 
-static int via_do_init_map(struct drm_device *dev, drm_via_init_t *init)
+static int via_do_init_map(struct drm_device * dev, drm_via_init_t * init)
 {
 	drm_via_private_t *dev_priv = dev->dev_private;
 
@@ -68,7 +68,7 @@ static int via_do_init_map(struct drm_device *dev, drm_via_init_t *init)
 	return 0;
 }
 
-int via_do_cleanup_map(struct drm_device *dev)
+int via_do_cleanup_map(struct drm_device * dev)
 {
 	via_dma_cleanup(dev);
 
@@ -100,15 +100,19 @@ int via_driver_load(struct drm_device *dev, unsigned long chipset)
 	if (dev_priv == NULL)
 		return -ENOMEM;
 
-	idr_init(&dev_priv->object_idr);
 	dev->dev_private = (void *)dev_priv;
 
 	dev_priv->chipset = chipset;
 
-	pci_set_master(dev->pdev);
+	ret = drm_sman_init(&dev_priv->sman, 2, 12, 8);
+	if (ret) {
+		kfree(dev_priv);
+		return ret;
+	}
 
 	ret = drm_vblank_init(dev, 1);
 	if (ret) {
+		drm_sman_takedown(&dev_priv->sman);
 		kfree(dev_priv);
 		return ret;
 	}
@@ -120,8 +124,7 @@ int via_driver_unload(struct drm_device *dev)
 {
 	drm_via_private_t *dev_priv = dev->dev_private;
 
-	idr_remove_all(&dev_priv->object_idr);
-	idr_destroy(&dev_priv->object_idr);
+	drm_sman_takedown(&dev_priv->sman);
 
 	kfree(dev_priv);
 

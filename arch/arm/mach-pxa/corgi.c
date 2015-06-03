@@ -24,15 +24,12 @@
 #include <linux/gpio.h>
 #include <linux/backlight.h>
 #include <linux/i2c.h>
-#include <linux/i2c/pxa-i2c.h>
 #include <linux/io.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/ads7846.h>
 #include <linux/spi/corgi_lcd.h>
-#include <linux/spi/pxa2xx_spi.h>
 #include <linux/mtd/sharpsl.h>
 #include <linux/input/matrix_keypad.h>
-#include <linux/module.h>
 #include <video/w100fb.h>
 
 #include <asm/setup.h>
@@ -40,23 +37,27 @@
 #include <asm/mach-types.h>
 #include <mach/hardware.h>
 #include <asm/irq.h>
+#include <asm/system.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 #include <asm/mach/irq.h>
 
 #include <mach/pxa25x.h>
+#include <plat/i2c.h>
 #include <mach/irda.h>
 #include <mach/mmc.h>
 #include <mach/udc.h>
+#include <mach/pxa2xx_spi.h>
 #include <mach/corgi.h>
-#include <mach/sharpsl_pm.h>
+#include <mach/sharpsl.h>
 
 #include <asm/mach/sharpsl_param.h>
 #include <asm/hardware/scoop.h>
 
 #include "generic.h"
 #include "devices.h"
+#include "sharpsl.h"
 
 static unsigned long corgi_pin_config[] __initdata = {
 	/* Static Memory I/O */
@@ -105,18 +106,18 @@ static unsigned long corgi_pin_config[] __initdata = {
 	GPIO8_MMC_CS0,
 
 	/* GPIO Matrix Keypad */
-	GPIO66_GPIO | MFP_LPM_DRIVE_HIGH,	/* column 0 */
-	GPIO67_GPIO | MFP_LPM_DRIVE_HIGH,	/* column 1 */
-	GPIO68_GPIO | MFP_LPM_DRIVE_HIGH,	/* column 2 */
-	GPIO69_GPIO | MFP_LPM_DRIVE_HIGH,	/* column 3 */
-	GPIO70_GPIO | MFP_LPM_DRIVE_HIGH,	/* column 4 */
-	GPIO71_GPIO | MFP_LPM_DRIVE_HIGH,	/* column 5 */
-	GPIO72_GPIO | MFP_LPM_DRIVE_HIGH,	/* column 6 */
-	GPIO73_GPIO | MFP_LPM_DRIVE_HIGH,	/* column 7 */
-	GPIO74_GPIO | MFP_LPM_DRIVE_HIGH,	/* column 8 */
-	GPIO75_GPIO | MFP_LPM_DRIVE_HIGH,	/* column 9 */
-	GPIO76_GPIO | MFP_LPM_DRIVE_HIGH,	/* column 10 */
-	GPIO77_GPIO | MFP_LPM_DRIVE_HIGH,	/* column 11 */
+	GPIO66_GPIO,	/* column 0 */
+	GPIO67_GPIO,	/* column 1 */
+	GPIO68_GPIO,	/* column 2 */
+	GPIO69_GPIO,	/* column 3 */
+	GPIO70_GPIO,	/* column 4 */
+	GPIO71_GPIO,	/* column 5 */
+	GPIO72_GPIO,	/* column 6 */
+	GPIO73_GPIO,	/* column 7 */
+	GPIO74_GPIO,	/* column 8 */
+	GPIO75_GPIO,	/* column 9 */
+	GPIO76_GPIO,	/* column 10 */
+	GPIO77_GPIO,	/* column 11 */
 	GPIO58_GPIO,	/* row 0 */
 	GPIO59_GPIO,	/* row 1 */
 	GPIO60_GPIO,	/* row 2 */
@@ -127,20 +128,13 @@ static unsigned long corgi_pin_config[] __initdata = {
 	GPIO65_GPIO,	/* row 7 */
 
 	/* GPIO */
-	GPIO9_GPIO,				/* CORGI_GPIO_nSD_DETECT */
-	GPIO7_GPIO,				/* CORGI_GPIO_nSD_WP */
-	GPIO11_GPIO | WAKEUP_ON_EDGE_BOTH,	/* CORGI_GPIO_MAIN_BAT_{LOW,COVER} */
-	GPIO13_GPIO | MFP_LPM_KEEP_OUTPUT,	/* CORGI_GPIO_LED_ORANGE */
-	GPIO21_GPIO,				/* CORGI_GPIO_ADC_TEMP */
-	GPIO22_GPIO,				/* CORGI_GPIO_IR_ON */
-	GPIO33_GPIO,				/* CORGI_GPIO_SD_PWR */
-	GPIO38_GPIO | MFP_LPM_KEEP_OUTPUT,	/* CORGI_GPIO_CHRG_ON */
-	GPIO43_GPIO | MFP_LPM_KEEP_OUTPUT,	/* CORGI_GPIO_CHRG_UKN */
-	GPIO44_GPIO,				/* CORGI_GPIO_HSYNC */
+	GPIO9_GPIO,	/* CORGI_GPIO_nSD_DETECT */
+	GPIO7_GPIO,	/* CORGI_GPIO_nSD_WP */
+	GPIO33_GPIO,	/* CORGI_GPIO_SD_PWR */
+	GPIO22_GPIO,	/* CORGI_GPIO_IR_ON */
+	GPIO44_GPIO,	/* CORGI_GPIO_HSYNC */
 
-	GPIO0_GPIO | WAKEUP_ON_EDGE_BOTH,	/* CORGI_GPIO_KEY_INT */
-	GPIO1_GPIO | WAKEUP_ON_EDGE_RISE,	/* CORGI_GPIO_AC_IN */
-	GPIO3_GPIO | WAKEUP_ON_EDGE_BOTH,	/* CORGI_GPIO_WAKEUP */
+	GPIO1_GPIO | WAKEUP_ON_EDGE_RISE,
 };
 
 /*
@@ -183,6 +177,8 @@ static struct scoop_pcmcia_config corgi_pcmcia_config = {
 	.devs         = &corgi_pcmcia_scoop[0],
 	.num_devs     = 1,
 };
+
+EXPORT_SYMBOL(corgiscoop_device);
 
 static struct w100_mem_info corgi_fb_mem = {
 	.ext_cntl          = 0x00040003,
@@ -435,23 +431,14 @@ static struct platform_device corgiled_device = {
 };
 
 /*
- * Corgi Audio
- */
-static struct platform_device corgi_audio_device = {
-	.name	= "corgi-audio",
-	.id	= -1,
-};
-
-/*
  * MMC/SD Device
  *
  * The card detect interrupt isn't debounced so we delay it by 250ms
  * to give the card a chance to fully insert/eject.
  */
 static struct pxamci_platform_data corgi_mci_platform_data = {
-	.detect_delay_ms	= 250,
 	.ocr_mask		= MMC_VDD_32_33|MMC_VDD_33_34,
-	.gpio_card_detect	= CORGI_GPIO_nSD_DETECT,
+	.gpio_card_detect	= -1,
 	.gpio_card_ro		= CORGI_GPIO_nSD_WP,
 	.gpio_power		= CORGI_GPIO_SD_PWR,
 };
@@ -538,7 +525,7 @@ static struct spi_board_info corgi_spi_devices[] = {
 		.chip_select	= 0,
 		.platform_data	= &corgi_ads7846_info,
 		.controller_data= &corgi_ads7846_chip,
-		.irq		= PXA_GPIO_TO_IRQ(CORGI_GPIO_TP_INT),
+		.irq		= gpio_to_irq(CORGI_GPIO_TP_INT),
 	}, {
 		.modalias	= "corgi-lcd",
 		.max_speed_hz	= 50000,
@@ -648,7 +635,6 @@ static struct platform_device *devices[] __initdata = {
 	&corgifb_device,
 	&corgikbd_device,
 	&corgiled_device,
-	&corgi_audio_device,
 	&sharpsl_nand_device,
 	&sharpsl_rom_device,
 };
@@ -663,7 +649,7 @@ static void corgi_poweroff(void)
 		/* Green LED off tells the bootloader to halt */
 		gpio_set_value(CORGI_GPIO_LED_GREEN, 0);
 
-	pxa_restart('h', NULL);
+	arm_machine_restart('h', NULL);
 }
 
 static void corgi_restart(char mode, const char *cmd)
@@ -672,34 +658,23 @@ static void corgi_restart(char mode, const char *cmd)
 		/* Green LED on tells the bootloader to reboot */
 		gpio_set_value(CORGI_GPIO_LED_GREEN, 1);
 
-	pxa_restart('h', cmd);
+	arm_machine_restart('h', cmd);
 }
 
 static void __init corgi_init(void)
 {
 	pm_power_off = corgi_poweroff;
+	arm_pm_restart = corgi_restart;
 
 	/* Stop 3.6MHz and drive HIGH to PCMCIA and CS */
 	PCFR |= PCFR_OPDE;
 
 	pxa2xx_mfp_config(ARRAY_AND_SIZE(corgi_pin_config));
 
-	/* allow wakeup from various GPIOs */
-	gpio_set_wake(CORGI_GPIO_KEY_INT, 1);
-	gpio_set_wake(CORGI_GPIO_WAKEUP, 1);
-	gpio_set_wake(CORGI_GPIO_AC_IN, 1);
-	gpio_set_wake(CORGI_GPIO_CHRG_FULL, 1);
-
-	if (!machine_is_corgi())
-		gpio_set_wake(CORGI_GPIO_MAIN_BAT_LOW, 1);
-
-	pxa_set_ffuart_info(NULL);
-	pxa_set_btuart_info(NULL);
-	pxa_set_stuart_info(NULL);
-
 	corgi_init_spi();
 
  	pxa_set_udc_info(&udc_info);
+	corgi_mci_platform_data.detect_delay = msecs_to_jiffies(250);
 	pxa_set_mci_info(&corgi_mci_platform_data);
 	pxa_set_ficp_info(&corgi_ficp_platform_data);
 	pxa_set_i2c_info(NULL);
@@ -713,12 +688,13 @@ static void __init corgi_init(void)
 	platform_add_devices(devices, ARRAY_SIZE(devices));
 }
 
-static void __init fixup_corgi(struct tag *tags, char **cmdline,
-			       struct meminfo *mi)
+static void __init fixup_corgi(struct machine_desc *desc,
+		struct tag *tags, char **cmdline, struct meminfo *mi)
 {
 	sharpsl_save_param();
 	mi->nr_banks=1;
 	mi->bank[0].start = 0xa0000000;
+	mi->bank[0].node = 0;
 	if (machine_is_corgi())
 		mi->bank[0].size = (32*1024*1024);
 	else
@@ -727,40 +703,37 @@ static void __init fixup_corgi(struct tag *tags, char **cmdline,
 
 #ifdef CONFIG_MACH_CORGI
 MACHINE_START(CORGI, "SHARP Corgi")
+	.phys_io	= 0x40000000,
+	.io_pg_offst	= (io_p2v(0x40000000) >> 18) & 0xfffc,
 	.fixup		= fixup_corgi,
-	.map_io		= pxa25x_map_io,
-	.nr_irqs	= PXA_NR_IRQS,
+	.map_io		= pxa_map_io,
 	.init_irq	= pxa25x_init_irq,
-	.handle_irq	= pxa25x_handle_irq,
 	.init_machine	= corgi_init,
 	.timer		= &pxa_timer,
-	.restart	= corgi_restart,
 MACHINE_END
 #endif
 
 #ifdef CONFIG_MACH_SHEPHERD
 MACHINE_START(SHEPHERD, "SHARP Shepherd")
+	.phys_io	= 0x40000000,
+	.io_pg_offst	= (io_p2v(0x40000000) >> 18) & 0xfffc,
 	.fixup		= fixup_corgi,
-	.map_io		= pxa25x_map_io,
-	.nr_irqs	= PXA_NR_IRQS,
+	.map_io		= pxa_map_io,
 	.init_irq	= pxa25x_init_irq,
-	.handle_irq	= pxa25x_handle_irq,
 	.init_machine	= corgi_init,
 	.timer		= &pxa_timer,
-	.restart	= corgi_restart,
 MACHINE_END
 #endif
 
 #ifdef CONFIG_MACH_HUSKY
 MACHINE_START(HUSKY, "SHARP Husky")
+	.phys_io	= 0x40000000,
+	.io_pg_offst	= (io_p2v(0x40000000) >> 18) & 0xfffc,
 	.fixup		= fixup_corgi,
-	.map_io		= pxa25x_map_io,
-	.nr_irqs	= PXA_NR_IRQS,
+	.map_io		= pxa_map_io,
 	.init_irq	= pxa25x_init_irq,
-	.handle_irq	= pxa25x_handle_irq,
 	.init_machine	= corgi_init,
 	.timer		= &pxa_timer,
-	.restart	= corgi_restart,
 MACHINE_END
 #endif
 

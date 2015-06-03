@@ -12,15 +12,12 @@
  * Infra-red driver (SIR/FIR) for the PXA2xx embedded microprocessor
  *
  */
-#include <linux/dma-mapping.h>
-#include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
 #include <linux/platform_device.h>
 #include <linux/clk.h>
 #include <linux/gpio.h>
-#include <linux/slab.h>
 
 #include <net/irda/irda.h>
 #include <net/irda/irmod.h>
@@ -42,7 +39,7 @@
 
 #define ICCR0_AME	(1 << 7)	/* Address match enable */
 #define ICCR0_TIE	(1 << 6)	/* Transmit FIFO interrupt enable */
-#define ICCR0_RIE	(1 << 5)	/* Receive FIFO interrupt enable */
+#define ICCR0_RIE	(1 << 5)	/* Recieve FIFO interrupt enable */
 #define ICCR0_RXE	(1 << 4)	/* Receive enable */
 #define ICCR0_TXE	(1 << 3)	/* Transmit enable */
 #define ICCR0_TUS	(1 << 2)	/* Transmit FIFO underrun select */
@@ -128,20 +125,20 @@ struct pxa_irda {
 static inline void pxa_irda_disable_clk(struct pxa_irda *si)
 {
 	if (si->cur_clk)
-		clk_disable_unprepare(si->cur_clk);
+		clk_disable(si->cur_clk);
 	si->cur_clk = NULL;
 }
 
 static inline void pxa_irda_enable_firclk(struct pxa_irda *si)
 {
 	si->cur_clk = si->fir_clk;
-	clk_prepare_enable(si->fir_clk);
+	clk_enable(si->fir_clk);
 }
 
 static inline void pxa_irda_enable_sirclk(struct pxa_irda *si)
 {
 	si->cur_clk = si->sir_clk;
-	clk_prepare_enable(si->sir_clk);
+	clk_enable(si->sir_clk);
 }
 
 
@@ -485,7 +482,7 @@ static irqreturn_t pxa_irda_fir_irq(int irq, void *dev_id)
 	}
 
 	if (icsr0 & ICSR0_EIF) {
-		/* An error in FIFO occurred, or there is a end of frame */
+		/* An error in FIFO occured, or there is a end of frame */
 		pxa_irda_fir_irq_eif(si, dev, icsr0);
 	}
 
@@ -558,6 +555,7 @@ static int pxa_irda_hard_xmit(struct sk_buff *skb, struct net_device *dev)
 	}
 
 	dev_kfree_skb(skb);
+	dev->trans_start = jiffies;
 	return NETDEV_TX_OK;
 }
 
@@ -966,7 +964,18 @@ static struct platform_driver pxa_ir_driver = {
 	.resume		= pxa_irda_resume,
 };
 
-module_platform_driver(pxa_ir_driver);
+static int __init pxa_irda_init(void)
+{
+	return platform_driver_register(&pxa_ir_driver);
+}
+
+static void __exit pxa_irda_exit(void)
+{
+	platform_driver_unregister(&pxa_ir_driver);
+}
+
+module_init(pxa_irda_init);
+module_exit(pxa_irda_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_ALIAS("platform:pxa2xx-ir");

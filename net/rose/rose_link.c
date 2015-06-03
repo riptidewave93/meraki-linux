@@ -16,12 +16,12 @@
 #include <linux/string.h>
 #include <linux/sockios.h>
 #include <linux/net.h>
-#include <linux/slab.h>
 #include <net/ax25.h>
 #include <linux/inet.h>
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
 #include <net/sock.h>
+#include <asm/system.h>
 #include <linux/fcntl.h>
 #include <linux/mm.h>
 #include <linux/interrupt.h>
@@ -113,7 +113,7 @@ static int rose_send_frame(struct sk_buff *skb, struct rose_neigh *neigh)
 	if (ax25s)
 		ax25_cb_put(ax25s);
 
-	return neigh->ax25 != NULL;
+	return (neigh->ax25 != NULL);
 }
 
 /*
@@ -136,7 +136,7 @@ static int rose_link_up(struct rose_neigh *neigh)
 	if (ax25s)
 		ax25_cb_put(ax25s);
 
-	return neigh->ax25 != NULL;
+	return (neigh->ax25 != NULL);
 }
 
 /*
@@ -264,6 +264,13 @@ void rose_transmit_clear_request(struct rose_neigh *neigh, unsigned int lci, uns
 void rose_transmit_link(struct sk_buff *skb, struct rose_neigh *neigh)
 {
 	unsigned char *dptr;
+
+#if 0
+	if (call_fw_firewall(PF_ROSE, skb->dev, skb->data, NULL, &skb) != FW_ACCEPT) {
+		kfree_skb(skb);
+		return;
+	}
+#endif
 
 	if (neigh->loopback) {
 		rose_loopback_queue(skb, neigh);

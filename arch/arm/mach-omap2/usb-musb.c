@@ -28,16 +28,89 @@
 
 #include <mach/hardware.h>
 #include <mach/irqs.h>
-#include <mach/am35xx.h>
-#include <plat/usb.h>
-#include <plat/omap_device.h>
-#include "mux.h"
+#include <mach/mux.h>
+#include <mach/usb.h>
+
+#ifdef CONFIG_USB_MUSB_SOC
+
+static struct resource musb_resources[] = {
+	[0] = { /* start and end set dynamically */
+		.flags	= IORESOURCE_MEM,
+	},
+	[1] = {	/* general IRQ */
+		.start	= INT_243X_HS_USB_MC,
+		.flags	= IORESOURCE_IRQ,
+	},
+	[2] = {	/* DMA IRQ */
+		.start	= INT_243X_HS_USB_DMA,
+		.flags	= IORESOURCE_IRQ,
+	},
+};
+
+static int clk_on;
+
+static int musb_set_clock(struct clk *clk, int state)
+{
+	if (state) {
+		if (clk_on > 0)
+			return -ENODEV;
+
+		clk_enable(clk);
+		clk_on = 1;
+	} else {
+		if (clk_on == 0)
+			return -ENODEV;
+
+		clk_disable(clk);
+		clk_on = 0;
+	}
+
+	return 0;
+}
+
+static struct musb_hdrc_eps_bits musb_eps[] = {
+	{	"ep1_tx", 10,	},
+	{	"ep1_rx", 10,	},
+	{	"ep2_tx", 9,	},
+	{	"ep2_rx", 9,	},
+	{	"ep3_tx", 3,	},
+	{	"ep3_rx", 3,	},
+	{	"ep4_tx", 3,	},
+	{	"ep4_rx", 3,	},
+	{	"ep5_tx", 3,	},
+	{	"ep5_rx", 3,	},
+	{	"ep6_tx", 3,	},
+	{	"ep6_rx", 3,	},
+	{	"ep7_tx", 3,	},
+	{	"ep7_rx", 3,	},
+	{	"ep8_tx", 2,	},
+	{	"ep8_rx", 2,	},
+	{	"ep9_tx", 2,	},
+	{	"ep9_rx", 2,	},
+	{	"ep10_tx", 2,	},
+	{	"ep10_rx", 2,	},
+	{	"ep11_tx", 2,	},
+	{	"ep11_rx", 2,	},
+	{	"ep12_tx", 2,	},
+	{	"ep12_rx", 2,	},
+	{	"ep13_tx", 2,	},
+	{	"ep13_rx", 2,	},
+	{	"ep14_tx", 2,	},
+	{	"ep14_rx", 2,	},
+	{	"ep15_tx", 2,	},
+	{	"ep15_rx", 2,	},
+};
 
 static struct musb_hdrc_config musb_config = {
 	.multipoint	= 1,
 	.dyn_fifo	= 1,
+	.soft_con	= 1,
+	.dma		= 1,
 	.num_eps	= 16,
+	.dma_channels	= 7,
+	.dma_req_chan	= (1 << 0) | (1 << 1) | (1 << 2) | (1 << 3),
 	.ram_bits	= 12,
+	.eps_bits	= musb_eps,
 };
 
 static struct musb_hdrc_platform_data musb_plat = {
@@ -49,6 +122,7 @@ static struct musb_hdrc_platform_data musb_plat = {
 	.mode		= MUSB_PERIPHERAL,
 #endif
 	/* .clock is set dynamically */
+	.set_clock	= musb_set_clock,
 	.config		= &musb_config,
 
 	/* REVISIT charge pump on TWL4030 can supply up to
@@ -60,66 +134,40 @@ static struct musb_hdrc_platform_data musb_plat = {
 
 static u64 musb_dmamask = DMA_BIT_MASK(32);
 
-static struct omap_musb_board_data musb_default_board_data = {
-	.interface_type		= MUSB_INTERFACE_ULPI,
-	.mode			= MUSB_OTG,
-	.power			= 100,
+static struct platform_device musb_device = {
+	.name		= "musb_hdrc",
+	.id		= -1,
+	.dev = {
+		.dma_mask		= &musb_dmamask,
+		.coherent_dma_mask	= DMA_BIT_MASK(32),
+		.platform_data		= &musb_plat,
+	},
+	.num_resources	= ARRAY_SIZE(musb_resources),
+	.resource	= musb_resources,
 };
 
-void __init usb_musb_init(struct omap_musb_board_data *musb_board_data)
+void __init usb_musb_init(void)
 {
-	struct omap_hwmod		*oh;
-	struct platform_device		*pdev;
-	struct device			*dev;
-	int				bus_id = -1;
-	const char			*oh_name, *name;
-	struct omap_musb_board_data	*board_data;
-
-	if (musb_board_data)
-		board_data = musb_board_data;
+	if (cpu_is_omap243x())
+		musb_resources[0].start = OMAP243X_HS_BASE;
 	else
-		board_data = &musb_default_board_data;
+		musb_resources[0].start = OMAP34XX_HSUSB_OTG_BASE;
+	musb_resources[0].end = musb_resources[0].start + SZ_8K - 1;
 
 	/*
 	 * REVISIT: This line can be removed once all the platforms using
 	 * musb_core.c have been converted to use use clkdev.
 	 */
 	musb_plat.clock = "ick";
-	musb_plat.board_data = board_data;
-	musb_plat.power = board_data->power >> 1;
-	musb_plat.mode = board_data->mode;
-	musb_plat.extvbus = board_data->extvbus;
 
-	if (cpu_is_omap3517() || cpu_is_omap3505()) {
-		oh_name = "am35x_otg_hs";
-		name = "musb-am35x";
-	} else if (cpu_is_ti81xx()) {
-		oh_name = "usb_otg_hs";
-		name = "musb-ti81xx";
-	} else {
-		oh_name = "usb_otg_hs";
-		name = "musb-omap2430";
-	}
-
-        oh = omap_hwmod_lookup(oh_name);
-        if (WARN(!oh, "%s: could not find omap_hwmod for %s\n",
-                 __func__, oh_name))
-                return;
-
-	pdev = omap_device_build(name, bus_id, oh, &musb_plat,
-			       sizeof(musb_plat), NULL, 0, false);
-	if (IS_ERR(pdev)) {
-		pr_err("Could not build omap_device for %s %s\n",
-						name, oh_name);
+	if (platform_device_register(&musb_device) < 0) {
+		printk(KERN_ERR "Unable to register HS-USB (MUSB) device\n");
 		return;
 	}
-
-	dev = &pdev->dev;
-	get_device(dev);
-	dev->dma_mask = &musb_dmamask;
-	dev->coherent_dma_mask = musb_dmamask;
-	put_device(dev);
-
-	if (cpu_is_omap44xx())
-		omap4430_phy_init(dev);
 }
+
+#else
+void __init usb_musb_init(void)
+{
+}
+#endif /* CONFIG_USB_MUSB_SOC */

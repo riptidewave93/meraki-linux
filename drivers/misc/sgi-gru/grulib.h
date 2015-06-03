@@ -63,9 +63,18 @@
 #define THREAD_POINTER(p, th)		(p + GRU_GSEG_PAGESIZE * (th))
 #define GSEG_START(cb)			((void *)((unsigned long)(cb) & ~(GRU_GSEG_PAGESIZE - 1)))
 
+/*
+ * Statictics kept on a per-GTS basis.
+ */
+struct gts_statistics {
+	unsigned long	fmm_tlbdropin;
+	unsigned long	upm_tlbdropin;
+	unsigned long	context_stolen;
+};
+
 struct gru_get_gseg_statistics_req {
-	unsigned long			gseg;
-	struct gru_gseg_statistics	stats;
+	unsigned long		gseg;
+	struct gts_statistics	stats;
 };
 
 /*
@@ -77,7 +86,6 @@ struct gru_create_context_req {
 	unsigned int		control_blocks;
 	unsigned int		maximum_thread_count;
 	unsigned int		options;
-	unsigned char		tlb_preload_count;
 };
 
 /*
@@ -90,12 +98,11 @@ struct gru_unload_context_req {
 /*
  * Structure used to set context options
  */
-enum {sco_gseg_owner, sco_cch_req_slice, sco_blade_chiplet};
+enum {sco_gseg_owner, sco_cch_req_slice};
 struct gru_set_context_option_req {
 	unsigned long	gseg;
 	int		op;
-	int		val0;
-	long		val1;
+	unsigned long	val1;
 };
 
 /*
@@ -117,8 +124,6 @@ struct gru_dump_chiplet_state_req {
 	int		ctxnum;
 	char		data_opt;
 	char		lock_cch;
-	char		flush_cbrs;
-	char		fill[10];
 	pid_t		pid;
 	void		*buf;
 	size_t		buflen;

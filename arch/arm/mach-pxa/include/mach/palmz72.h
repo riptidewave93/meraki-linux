@@ -44,17 +44,12 @@
 #define GPIO_NR_PALMZ72_BT_POWER		17
 #define GPIO_NR_PALMZ72_BT_RESET		83
 
-/* Camera */
-#define GPIO_NR_PALMZ72_CAM_PWDN		56
-#define GPIO_NR_PALMZ72_CAM_RESET		57
-#define GPIO_NR_PALMZ72_CAM_POWER		91
-
 /** Initial values **/
 
 /* Battery */
 #define PALMZ72_BAT_MAX_VOLTAGE		4000	/* 4.00v current voltage */
 #define PALMZ72_BAT_MIN_VOLTAGE		3550	/* 3.55v critical voltage */
-#define PALMZ72_BAT_MAX_CURRENT		0	/* unknown */
+#define PALMZ72_BAT_MAX_CURRENT		0	/* unknokn */
 #define PALMZ72_BAT_MIN_CURRENT		0	/* unknown */
 #define PALMZ72_BAT_MAX_CHARGE		1	/* unknown */
 #define PALMZ72_BAT_MIN_CHARGE		1	/* unknown */

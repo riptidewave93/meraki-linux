@@ -218,8 +218,7 @@ static void tcp_vegas_cong_avoid(struct sock *sk, u32 ack, u32 in_flight)
 			 * This is:
 			 *     (actual rate in segments) * baseRTT
 			 */
-			target_cwnd = (u64)tp->snd_cwnd * vegas->baseRTT;
-			do_div(target_cwnd, rtt);
+			target_cwnd = tp->snd_cwnd * vegas->baseRTT / rtt;
 
 			/* Calculate the difference between the window we had,
 			 * and the window we would like to have. This quantity
@@ -305,7 +304,7 @@ void tcp_vegas_get_info(struct sock *sk, u32 ext, struct sk_buff *skb)
 }
 EXPORT_SYMBOL_GPL(tcp_vegas_get_info);
 
-static struct tcp_congestion_ops tcp_vegas __read_mostly = {
+static struct tcp_congestion_ops tcp_vegas = {
 	.flags		= TCP_CONG_RTT_STAMP,
 	.init		= tcp_vegas_init,
 	.ssthresh	= tcp_reno_ssthresh,

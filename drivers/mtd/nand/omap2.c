@@ -11,22 +11,34 @@
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
 #include <linux/delay.h>
-#include <linux/module.h>
-#include <linux/interrupt.h>
 #include <linux/jiffies.h>
 #include <linux/sched.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/nand.h>
 #include <linux/mtd/partitions.h>
 #include <linux/io.h>
-#include <linux/slab.h>
 
-#include <plat/dma.h>
-#include <plat/gpmc.h>
-#include <plat/nand.h>
+#include <mach/dma.h>
+#include <mach/gpmc.h>
+#include <mach/nand.h>
+
+#define GPMC_IRQ_STATUS		0x18
+#define GPMC_ECC_CONFIG		0x1F4
+#define GPMC_ECC_CONTROL	0x1F8
+#define GPMC_ECC_SIZE_CONFIG	0x1FC
+#define GPMC_ECC1_RESULT	0x200
 
 #define	DRIVER_NAME	"omap2-nand"
-#define	OMAP_NAND_TIMEOUT_MS	5000
+
+/* size (4 KiB) for IO mapping */
+#define	NAND_IO_SIZE	SZ_4K
+
+#define	NAND_WP_OFF	0
+#define NAND_WP_BIT	0x00000010
+#define WR_RD_PIN_MONITORING	0x00600000
+
+#define	GPMC_BUF_FULL	0x00000001
+#define	GPMC_BUF_EMPTY	0x00000000
 
 #define NAND_Ecc_P1e		(1 << 0)
 #define NAND_Ecc_P2e		(1 << 1)
@@ -95,39 +107,65 @@
 #define P4e_s(a)	(TF(a & NAND_Ecc_P4e)		<< 0)
 #define P4o_s(a)	(TF(a & NAND_Ecc_P4o)		<< 1)
 
-/* oob info generated runtime depending on ecc algorithm and layout selected */
-static struct nand_ecclayout omap_oobinfo;
-/* Define some generic bad / good block scan pattern which are used
- * while scanning a device for factory marked good / bad blocks
- */
-static uint8_t scan_ff_pattern[] = { 0xff };
-static struct nand_bbt_descr bb_descrip_flashbased = {
-	.options = NAND_BBT_SCANEMPTY | NAND_BBT_SCANALLPAGES,
-	.offs = 0,
-	.len = 1,
-	.pattern = scan_ff_pattern,
-};
+static const char *part_probes[] = { "cmdlinepart", NULL };
 
+#ifdef CONFIG_MTD_NAND_OMAP_PREFETCH
+static int use_prefetch = 1;
+
+/* "modprobe ... use_prefetch=0" etc */
+module_param(use_prefetch, bool, 0);
+MODULE_PARM_DESC(use_prefetch, "enable/disable use of PREFETCH");
+
+#ifdef CONFIG_MTD_NAND_OMAP_PREFETCH_DMA
+static int use_dma = 1;
+
+/* "modprobe ... use_dma=0" etc */
+module_param(use_dma, bool, 0);
+MODULE_PARM_DESC(use_dma, "enable/disable use of DMA");
+#else
+static const int use_dma;
+#endif
+#else
+const int use_prefetch;
+static const int use_dma;
+#endif
 
 struct omap_nand_info {
 	struct nand_hw_control		controller;
 	struct omap_nand_platform_data	*pdata;
 	struct mtd_info			mtd;
+	struct mtd_partition		*parts;
 	struct nand_chip		nand;
 	struct platform_device		*pdev;
 
 	int				gpmc_cs;
 	unsigned long			phys_base;
+	void __iomem			*gpmc_cs_baseaddr;
+	void __iomem			*gpmc_baseaddr;
+	void __iomem			*nand_pref_fifo_add;
 	struct completion		comp;
 	int				dma_ch;
-	int				gpmc_irq;
-	enum {
-		OMAP_NAND_IO_READ = 0,	/* read */
-		OMAP_NAND_IO_WRITE,	/* write */
-	} iomode;
-	u_char				*buf;
-	int					buf_len;
 };
+
+/**
+ * omap_nand_wp - This function enable or disable the Write Protect feature
+ * @mtd: MTD device structure
+ * @mode: WP ON/OFF
+ */
+static void omap_nand_wp(struct mtd_info *mtd, int mode)
+{
+	struct omap_nand_info *info = container_of(mtd,
+						struct omap_nand_info, mtd);
+
+	unsigned long config = __raw_readl(info->gpmc_baseaddr + GPMC_CONFIG);
+
+	if (mode)
+		config &= ~(NAND_WP_BIT);	/* WP is ON */
+	else
+		config |= (NAND_WP_BIT);	/* WP is OFF */
+
+	__raw_writel(config, (info->gpmc_baseaddr + GPMC_CONFIG));
+}
 
 /**
  * omap_hwcontrol - hardware specific access to control-lines
@@ -144,17 +182,31 @@ static void omap_hwcontrol(struct mtd_info *mtd, int cmd, unsigned int ctrl)
 {
 	struct omap_nand_info *info = container_of(mtd,
 					struct omap_nand_info, mtd);
+	switch (ctrl) {
+	case NAND_CTRL_CHANGE | NAND_CTRL_CLE:
+		info->nand.IO_ADDR_W = info->gpmc_cs_baseaddr +
+						GPMC_CS_NAND_COMMAND;
+		info->nand.IO_ADDR_R = info->gpmc_cs_baseaddr +
+						GPMC_CS_NAND_DATA;
+		break;
 
-	if (cmd != NAND_CMD_NONE) {
-		if (ctrl & NAND_CLE)
-			gpmc_nand_write(info->gpmc_cs, GPMC_NAND_COMMAND, cmd);
+	case NAND_CTRL_CHANGE | NAND_CTRL_ALE:
+		info->nand.IO_ADDR_W = info->gpmc_cs_baseaddr +
+						GPMC_CS_NAND_ADDRESS;
+		info->nand.IO_ADDR_R = info->gpmc_cs_baseaddr +
+						GPMC_CS_NAND_DATA;
+		break;
 
-		else if (ctrl & NAND_ALE)
-			gpmc_nand_write(info->gpmc_cs, GPMC_NAND_ADDRESS, cmd);
-
-		else /* NAND_NCE */
-			gpmc_nand_write(info->gpmc_cs, GPMC_NAND_DATA, cmd);
+	case NAND_CTRL_CHANGE | NAND_NCE:
+		info->nand.IO_ADDR_W = info->gpmc_cs_baseaddr +
+						GPMC_CS_NAND_DATA;
+		info->nand.IO_ADDR_R = info->gpmc_cs_baseaddr +
+						GPMC_CS_NAND_DATA;
+		break;
 	}
+
+	if (cmd != NAND_CMD_NONE)
+		__raw_writeb(cmd, info->nand.IO_ADDR_W);
 }
 
 /**
@@ -181,14 +233,11 @@ static void omap_write_buf8(struct mtd_info *mtd, const u_char *buf, int len)
 	struct omap_nand_info *info = container_of(mtd,
 						struct omap_nand_info, mtd);
 	u_char *p = (u_char *)buf;
-	u32	status = 0;
 
 	while (len--) {
 		iowrite8(*p++, info->nand.IO_ADDR_W);
-		/* wait until buffer is available for write */
-		do {
-			status = gpmc_read_status(GPMC_STATUS_BUFFER);
-		} while (!status);
+		while (GPMC_BUF_EMPTY == (readl(info->gpmc_baseaddr +
+						GPMC_STATUS) & GPMC_BUF_FULL));
 	}
 }
 
@@ -216,16 +265,16 @@ static void omap_write_buf16(struct mtd_info *mtd, const u_char * buf, int len)
 	struct omap_nand_info *info = container_of(mtd,
 						struct omap_nand_info, mtd);
 	u16 *p = (u16 *) buf;
-	u32	status = 0;
+
 	/* FIXME try bursts of writesw() or DMA ... */
 	len >>= 1;
 
 	while (len--) {
 		iowrite16(*p++, info->nand.IO_ADDR_W);
-		/* wait until buffer is available for write */
-		do {
-			status = gpmc_read_status(GPMC_STATUS_BUFFER);
-		} while (!status);
+
+		while (GPMC_BUF_EMPTY == (readl(info->gpmc_baseaddr +
+						GPMC_STATUS) & GPMC_BUF_FULL))
+			;
 	}
 }
 
@@ -239,7 +288,7 @@ static void omap_read_buf_pref(struct mtd_info *mtd, u_char *buf, int len)
 {
 	struct omap_nand_info *info = container_of(mtd,
 						struct omap_nand_info, mtd);
-	uint32_t r_count = 0;
+	uint32_t pfpw_status = 0, r_count = 0;
 	int ret = 0;
 	u32 *p = (u32 *)buf;
 
@@ -254,8 +303,7 @@ static void omap_read_buf_pref(struct mtd_info *mtd, u_char *buf, int len)
 	}
 
 	/* configure and start prefetch transfer */
-	ret = gpmc_prefetch_enable(info->gpmc_cs,
-			PREFETCH_FIFOTHRESHOLD_MAX, 0x0, len, 0x0);
+	ret = gpmc_prefetch_enable(info->gpmc_cs, 0x0, len, 0x0);
 	if (ret) {
 		/* PFPW engine is busy, use cpu copy method */
 		if (info->nand.options & NAND_BUSWIDTH_16)
@@ -264,14 +312,15 @@ static void omap_read_buf_pref(struct mtd_info *mtd, u_char *buf, int len)
 			omap_read_buf8(mtd, (u_char *)p, len);
 	} else {
 		do {
-			r_count = gpmc_read_status(GPMC_PREFETCH_FIFO_CNT);
-			r_count = r_count >> 2;
-			ioread32_rep(info->nand.IO_ADDR_R, p, r_count);
+			pfpw_status = gpmc_prefetch_status();
+			r_count = ((pfpw_status >> 24) & 0x7F) >> 2;
+			ioread32_rep(info->nand_pref_fifo_add, p, r_count);
 			p += r_count;
 			len -= r_count << 2;
 		} while (len);
+
 		/* disable and stop the PFPW engine */
-		gpmc_prefetch_reset(info->gpmc_cs);
+		gpmc_prefetch_reset();
 	}
 }
 
@@ -286,21 +335,19 @@ static void omap_write_buf_pref(struct mtd_info *mtd,
 {
 	struct omap_nand_info *info = container_of(mtd,
 						struct omap_nand_info, mtd);
-	uint32_t w_count = 0;
+	uint32_t pfpw_status = 0, w_count = 0;
 	int i = 0, ret = 0;
-	u16 *p = (u16 *)buf;
-	unsigned long tim, limit;
+	u16 *p = (u16 *) buf;
 
 	/* take care of subpage writes */
 	if (len % 2 != 0) {
-		writeb(*buf, info->nand.IO_ADDR_W);
+		writeb(*buf, info->nand.IO_ADDR_R);
 		p = (u16 *)(buf + 1);
 		len--;
 	}
 
 	/*  configure and start prefetch transfer */
-	ret = gpmc_prefetch_enable(info->gpmc_cs,
-			PREFETCH_FIFOTHRESHOLD_MAX, 0x0, len, 0x1);
+	ret = gpmc_prefetch_enable(info->gpmc_cs, 0x0, len, 0x1);
 	if (ret) {
 		/* PFPW engine is busy, use cpu copy method */
 		if (info->nand.options & NAND_BUSWIDTH_16)
@@ -308,24 +355,20 @@ static void omap_write_buf_pref(struct mtd_info *mtd,
 		else
 			omap_write_buf8(mtd, (u_char *)p, len);
 	} else {
-		while (len) {
-			w_count = gpmc_read_status(GPMC_PREFETCH_FIFO_CNT);
-			w_count = w_count >> 1;
+		pfpw_status = gpmc_prefetch_status();
+		while (pfpw_status & 0x3FFF) {
+			w_count = ((pfpw_status >> 24) & 0x7F) >> 1;
 			for (i = 0; (i < w_count) && len; i++, len -= 2)
-				iowrite16(*p++, info->nand.IO_ADDR_W);
+				iowrite16(*p++, info->nand_pref_fifo_add);
+			pfpw_status = gpmc_prefetch_status();
 		}
-		/* wait for data to flushed-out before reset the prefetch */
-		tim = 0;
-		limit = (loops_per_jiffy *
-					msecs_to_jiffies(OMAP_NAND_TIMEOUT_MS));
-		while (gpmc_read_status(GPMC_PREFETCH_COUNT) && (tim++ < limit))
-			cpu_relax();
 
 		/* disable and stop the PFPW engine */
-		gpmc_prefetch_reset(info->gpmc_cs);
+		gpmc_prefetch_reset();
 	}
 }
 
+#ifdef CONFIG_MTD_NAND_OMAP_PREFETCH_DMA
 /*
  * omap_nand_dma_cb: callback on the completion of dma transfer
  * @lch: logical channel
@@ -349,15 +392,14 @@ static inline int omap_nand_dma_transfer(struct mtd_info *mtd, void *addr,
 {
 	struct omap_nand_info *info = container_of(mtd,
 					struct omap_nand_info, mtd);
+	uint32_t prefetch_status = 0;
 	enum dma_data_direction dir = is_write ? DMA_TO_DEVICE :
 							DMA_FROM_DEVICE;
 	dma_addr_t dma_addr;
 	int ret;
-	unsigned long tim, limit;
 
-	/* The fifo depth is 64 bytes max.
-	 * But configure the FIFO-threahold to 32 to get a sync at each frame
-	 * and frame length is 32 bytes.
+	/* The fifo depth is 64 bytes. We have a sync at each frame and frame
+	 * length is 64 bytes.
 	 */
 	int buf_len = len >> 6;
 
@@ -398,10 +440,9 @@ static inline int omap_nand_dma_transfer(struct mtd_info *mtd, void *addr,
 					OMAP24XX_DMA_GPMC, OMAP_DMA_SRC_SYNC);
 	}
 	/*  configure and start prefetch transfer */
-	ret = gpmc_prefetch_enable(info->gpmc_cs,
-			PREFETCH_FIFOTHRESHOLD_MAX, 0x1, len, is_write);
+	ret = gpmc_prefetch_enable(info->gpmc_cs, 0x1, len, is_write);
 	if (ret)
-		/* PFPW engine is busy, use cpu copy method */
+		/* PFPW engine is busy, use cpu copy methode */
 		goto out_copy;
 
 	init_completion(&info->comp);
@@ -410,13 +451,11 @@ static inline int omap_nand_dma_transfer(struct mtd_info *mtd, void *addr,
 
 	/* setup and start DMA using dma_addr */
 	wait_for_completion(&info->comp);
-	tim = 0;
-	limit = (loops_per_jiffy * msecs_to_jiffies(OMAP_NAND_TIMEOUT_MS));
-	while (gpmc_read_status(GPMC_PREFETCH_COUNT) && (tim++ < limit))
-		cpu_relax();
 
+	while (0x3fff & (prefetch_status = gpmc_prefetch_status()))
+		;
 	/* disable and stop the PFPW engine */
-	gpmc_prefetch_reset(info->gpmc_cs);
+	gpmc_prefetch_reset();
 
 	dma_unmap_single(&info->pdev->dev, dma_addr, len, dir);
 	return 0;
@@ -430,6 +469,14 @@ out_copy:
 			: omap_write_buf8(mtd, (u_char *) addr, len);
 	return 0;
 }
+#else
+static void omap_nand_dma_cb(int lch, u16 ch_status, void *data) {}
+static inline int omap_nand_dma_transfer(struct mtd_info *mtd, void *addr,
+					unsigned int len, int is_write)
+{
+	return 0;
+}
+#endif
 
 /**
  * omap_read_buf_dma_pref - read data from NAND controller into buffer
@@ -462,157 +509,6 @@ static void omap_write_buf_dma_pref(struct mtd_info *mtd,
 		omap_nand_dma_transfer(mtd, (u_char *) buf, len, 0x1);
 }
 
-/*
- * omap_nand_irq - GMPC irq handler
- * @this_irq: gpmc irq number
- * @dev: omap_nand_info structure pointer is passed here
- */
-static irqreturn_t omap_nand_irq(int this_irq, void *dev)
-{
-	struct omap_nand_info *info = (struct omap_nand_info *) dev;
-	u32 bytes;
-	u32 irq_stat;
-
-	irq_stat = gpmc_read_status(GPMC_GET_IRQ_STATUS);
-	bytes = gpmc_read_status(GPMC_PREFETCH_FIFO_CNT);
-	bytes = bytes  & 0xFFFC; /* io in multiple of 4 bytes */
-	if (info->iomode == OMAP_NAND_IO_WRITE) { /* checks for write io */
-		if (irq_stat & 0x2)
-			goto done;
-
-		if (info->buf_len && (info->buf_len < bytes))
-			bytes = info->buf_len;
-		else if (!info->buf_len)
-			bytes = 0;
-		iowrite32_rep(info->nand.IO_ADDR_W,
-						(u32 *)info->buf, bytes >> 2);
-		info->buf = info->buf + bytes;
-		info->buf_len -= bytes;
-
-	} else {
-		ioread32_rep(info->nand.IO_ADDR_R,
-						(u32 *)info->buf, bytes >> 2);
-		info->buf = info->buf + bytes;
-
-		if (irq_stat & 0x2)
-			goto done;
-	}
-	gpmc_cs_configure(info->gpmc_cs, GPMC_SET_IRQ_STATUS, irq_stat);
-
-	return IRQ_HANDLED;
-
-done:
-	complete(&info->comp);
-	/* disable irq */
-	gpmc_cs_configure(info->gpmc_cs, GPMC_ENABLE_IRQ, 0);
-
-	/* clear status */
-	gpmc_cs_configure(info->gpmc_cs, GPMC_SET_IRQ_STATUS, irq_stat);
-
-	return IRQ_HANDLED;
-}
-
-/*
- * omap_read_buf_irq_pref - read data from NAND controller into buffer
- * @mtd: MTD device structure
- * @buf: buffer to store date
- * @len: number of bytes to read
- */
-static void omap_read_buf_irq_pref(struct mtd_info *mtd, u_char *buf, int len)
-{
-	struct omap_nand_info *info = container_of(mtd,
-						struct omap_nand_info, mtd);
-	int ret = 0;
-
-	if (len <= mtd->oobsize) {
-		omap_read_buf_pref(mtd, buf, len);
-		return;
-	}
-
-	info->iomode = OMAP_NAND_IO_READ;
-	info->buf = buf;
-	init_completion(&info->comp);
-
-	/*  configure and start prefetch transfer */
-	ret = gpmc_prefetch_enable(info->gpmc_cs,
-			PREFETCH_FIFOTHRESHOLD_MAX/2, 0x0, len, 0x0);
-	if (ret)
-		/* PFPW engine is busy, use cpu copy method */
-		goto out_copy;
-
-	info->buf_len = len;
-	/* enable irq */
-	gpmc_cs_configure(info->gpmc_cs, GPMC_ENABLE_IRQ,
-		(GPMC_IRQ_FIFOEVENTENABLE | GPMC_IRQ_COUNT_EVENT));
-
-	/* waiting for read to complete */
-	wait_for_completion(&info->comp);
-
-	/* disable and stop the PFPW engine */
-	gpmc_prefetch_reset(info->gpmc_cs);
-	return;
-
-out_copy:
-	if (info->nand.options & NAND_BUSWIDTH_16)
-		omap_read_buf16(mtd, buf, len);
-	else
-		omap_read_buf8(mtd, buf, len);
-}
-
-/*
- * omap_write_buf_irq_pref - write buffer to NAND controller
- * @mtd: MTD device structure
- * @buf: data buffer
- * @len: number of bytes to write
- */
-static void omap_write_buf_irq_pref(struct mtd_info *mtd,
-					const u_char *buf, int len)
-{
-	struct omap_nand_info *info = container_of(mtd,
-						struct omap_nand_info, mtd);
-	int ret = 0;
-	unsigned long tim, limit;
-
-	if (len <= mtd->oobsize) {
-		omap_write_buf_pref(mtd, buf, len);
-		return;
-	}
-
-	info->iomode = OMAP_NAND_IO_WRITE;
-	info->buf = (u_char *) buf;
-	init_completion(&info->comp);
-
-	/* configure and start prefetch transfer : size=24 */
-	ret = gpmc_prefetch_enable(info->gpmc_cs,
-			(PREFETCH_FIFOTHRESHOLD_MAX * 3) / 8, 0x0, len, 0x1);
-	if (ret)
-		/* PFPW engine is busy, use cpu copy method */
-		goto out_copy;
-
-	info->buf_len = len;
-	/* enable irq */
-	gpmc_cs_configure(info->gpmc_cs, GPMC_ENABLE_IRQ,
-			(GPMC_IRQ_FIFOEVENTENABLE | GPMC_IRQ_COUNT_EVENT));
-
-	/* waiting for write to complete */
-	wait_for_completion(&info->comp);
-	/* wait for data to flushed-out before reset the prefetch */
-	tim = 0;
-	limit = (loops_per_jiffy *  msecs_to_jiffies(OMAP_NAND_TIMEOUT_MS));
-	while (gpmc_read_status(GPMC_PREFETCH_COUNT) && (tim++ < limit))
-		cpu_relax();
-
-	/* disable and stop the PFPW engine */
-	gpmc_prefetch_reset(info->gpmc_cs);
-	return;
-
-out_copy:
-	if (info->nand.options & NAND_BUSWIDTH_16)
-		omap_write_buf16(mtd, buf, len);
-	else
-		omap_write_buf8(mtd, buf, len);
-}
-
 /**
  * omap_verify_buf - Verify chip data against buffer
  * @mtd: MTD device structure
@@ -632,6 +528,31 @@ static int omap_verify_buf(struct mtd_info *mtd, const u_char * buf, int len)
 	}
 
 	return 0;
+}
+
+#ifdef CONFIG_MTD_NAND_OMAP_HWECC
+/**
+ * omap_hwecc_init - Initialize the HW ECC for NAND flash in GPMC controller
+ * @mtd: MTD device structure
+ */
+static void omap_hwecc_init(struct mtd_info *mtd)
+{
+	struct omap_nand_info *info = container_of(mtd, struct omap_nand_info,
+							mtd);
+	struct nand_chip *chip = mtd->priv;
+	unsigned long val = 0x0;
+
+	/* Read from ECC Control Register */
+	val = __raw_readl(info->gpmc_baseaddr + GPMC_ECC_CONTROL);
+	/* Clear all ECC | Enable Reg1 */
+	val = ((0x00000001<<8) | 0x00000001);
+	__raw_writel(val, info->gpmc_baseaddr + GPMC_ECC_CONTROL);
+
+	/* Read from ECC Size Config Register */
+	val = __raw_readl(info->gpmc_baseaddr + GPMC_ECC_SIZE_CONFIG);
+	/* ECCSIZE1=512 | Select eccResultsize[0-3] */
+	val = ((((chip->ecc.size >> 1) - 1) << 22) | (0x0000000F));
+	__raw_writel(val, info->gpmc_baseaddr + GPMC_ECC_SIZE_CONFIG);
 }
 
 /**
@@ -742,12 +663,12 @@ static int omap_compare_ecc(u8 *ecc_data1,	/* read from NAND memory */
 
 	case 1:
 		/* Uncorrectable error */
-		pr_debug("ECC UNCORRECTED_ERROR 1\n");
+		DEBUG(MTD_DEBUG_LEVEL0, "ECC UNCORRECTED_ERROR 1\n");
 		return -1;
 
 	case 11:
 		/* UN-Correctable error */
-		pr_debug("ECC UNCORRECTED_ERROR B\n");
+		DEBUG(MTD_DEBUG_LEVEL0, "ECC UNCORRECTED_ERROR B\n");
 		return -1;
 
 	case 12:
@@ -764,8 +685,8 @@ static int omap_compare_ecc(u8 *ecc_data1,	/* read from NAND memory */
 
 		find_bit = (ecc_bit[5] << 2) + (ecc_bit[3] << 1) + ecc_bit[1];
 
-		pr_debug("Correcting single bit ECC error at offset: "
-				"%d, bit: %d\n", find_byte, find_bit);
+		DEBUG(MTD_DEBUG_LEVEL0, "Correcting single bit ECC error at "
+				"offset: %d, bit: %d\n", find_byte, find_bit);
 
 		page_data[find_byte] ^= (1 << find_bit);
 
@@ -777,7 +698,7 @@ static int omap_compare_ecc(u8 *ecc_data1,	/* read from NAND memory */
 			    ecc_data2[2] == 0)
 				return 0;
 		}
-		pr_debug("UNCORRECTED_ERROR default\n");
+		DEBUG(MTD_DEBUG_LEVEL0, "UNCORRECTED_ERROR default\n");
 		return -1;
 	}
 }
@@ -843,7 +764,19 @@ static int omap_calculate_ecc(struct mtd_info *mtd, const u_char *dat,
 {
 	struct omap_nand_info *info = container_of(mtd, struct omap_nand_info,
 							mtd);
-	return gpmc_calculate_ecc(info->gpmc_cs, dat, ecc_code);
+	unsigned long val = 0x0;
+	unsigned long reg;
+
+	/* Start Reading from HW ECC1_Result = 0x200 */
+	reg = (unsigned long)(info->gpmc_baseaddr + GPMC_ECC1_RESULT);
+	val = __raw_readl(reg);
+	*ecc_code++ = val;          /* P128e, ..., P1e */
+	*ecc_code++ = val >> 16;    /* P128o, ..., P1o */
+	/* P2048o, P1024o, P512o, P256o, P2048e, P1024e, P512e, P256e */
+	*ecc_code++ = ((val >> 8) & 0x0f) | ((val >> 20) & 0xf0);
+	reg += 4;
+
+	return 0;
 }
 
 /**
@@ -857,9 +790,33 @@ static void omap_enable_hwecc(struct mtd_info *mtd, int mode)
 							mtd);
 	struct nand_chip *chip = mtd->priv;
 	unsigned int dev_width = (chip->options & NAND_BUSWIDTH_16) ? 1 : 0;
+	unsigned long val = __raw_readl(info->gpmc_baseaddr + GPMC_ECC_CONFIG);
 
-	gpmc_enable_hwecc(info->gpmc_cs, mode, dev_width, info->nand.ecc.size);
+	switch (mode) {
+	case NAND_ECC_READ:
+		__raw_writel(0x101, info->gpmc_baseaddr + GPMC_ECC_CONTROL);
+		/* (ECC 16 or 8 bit col) | ( CS  )  | ECC Enable */
+		val = (dev_width << 7) | (info->gpmc_cs << 1) | (0x1);
+		break;
+	case NAND_ECC_READSYN:
+		 __raw_writel(0x100, info->gpmc_baseaddr + GPMC_ECC_CONTROL);
+		/* (ECC 16 or 8 bit col) | ( CS  )  | ECC Enable */
+		val = (dev_width << 7) | (info->gpmc_cs << 1) | (0x1);
+		break;
+	case NAND_ECC_WRITE:
+		__raw_writel(0x101, info->gpmc_baseaddr + GPMC_ECC_CONTROL);
+		/* (ECC 16 or 8 bit col) | ( CS  )  | ECC Enable */
+		val = (dev_width << 7) | (info->gpmc_cs << 1) | (0x1);
+		break;
+	default:
+		DEBUG(MTD_DEBUG_LEVEL0, "Error: Unrecognized Mode[%d]!\n",
+					mode);
+		break;
+	}
+
+	__raw_writel(val, info->gpmc_baseaddr + GPMC_ECC_CONFIG);
 }
+#endif
 
 /**
  * omap_wait - wait until the command is done
@@ -886,10 +843,14 @@ static int omap_wait(struct mtd_info *mtd, struct nand_chip *chip)
 	else
 		timeo += (HZ * 20) / 1000;
 
-	gpmc_nand_write(info->gpmc_cs,
-			GPMC_NAND_COMMAND, (NAND_CMD_STATUS & 0xFF));
+	this->IO_ADDR_W = (void *) info->gpmc_cs_baseaddr +
+						GPMC_CS_NAND_COMMAND;
+	this->IO_ADDR_R = (void *) info->gpmc_cs_baseaddr + GPMC_CS_NAND_DATA;
+
+	__raw_writeb(NAND_CMD_STATUS & 0xFF, this->IO_ADDR_W);
+
 	while (time_before(jiffies, timeo)) {
-		status = gpmc_nand_read(info->gpmc_cs, GPMC_NAND_DATA);
+		status = __raw_readb(this->IO_ADDR_R);
 		if (status & NAND_STATUS_READY)
 			break;
 		cond_resched();
@@ -903,22 +864,22 @@ static int omap_wait(struct mtd_info *mtd, struct nand_chip *chip)
  */
 static int omap_dev_ready(struct mtd_info *mtd)
 {
-	unsigned int val = 0;
 	struct omap_nand_info *info = container_of(mtd, struct omap_nand_info,
 							mtd);
+	unsigned int val = __raw_readl(info->gpmc_baseaddr + GPMC_IRQ_STATUS);
 
-	val = gpmc_read_status(GPMC_GET_IRQ_STATUS);
 	if ((val & 0x100) == 0x100) {
 		/* Clear IRQ Interrupt */
 		val |= 0x100;
 		val &= ~(0x0);
-		gpmc_cs_configure(info->gpmc_cs, GPMC_SET_IRQ_STATUS, val);
+		__raw_writel(val, info->gpmc_baseaddr + GPMC_IRQ_STATUS);
 	} else {
 		unsigned int cnt = 0;
 		while (cnt++ < 0x1FF) {
 			if  ((val & 0x100) == 0x100)
 				return 0;
-			val = gpmc_read_status(GPMC_GET_IRQ_STATUS);
+			val = __raw_readl(info->gpmc_baseaddr +
+							GPMC_IRQ_STATUS);
 		}
 	}
 
@@ -930,7 +891,8 @@ static int __devinit omap_nand_probe(struct platform_device *pdev)
 	struct omap_nand_info		*info;
 	struct omap_nand_platform_data	*pdata;
 	int				err;
-	int				i, offset;
+	unsigned long 			val;
+
 
 	pdata = pdev->dev.platform_data;
 	if (pdata == NULL) {
@@ -950,22 +912,38 @@ static int __devinit omap_nand_probe(struct platform_device *pdev)
 	info->pdev = pdev;
 
 	info->gpmc_cs		= pdata->cs;
-	info->phys_base		= pdata->phys_base;
+	info->gpmc_baseaddr	= pdata->gpmc_baseaddr;
+	info->gpmc_cs_baseaddr	= pdata->gpmc_cs_baseaddr;
 
 	info->mtd.priv		= &info->nand;
 	info->mtd.name		= dev_name(&pdev->dev);
 	info->mtd.owner		= THIS_MODULE;
 
-	info->nand.options	= pdata->devsize;
-	info->nand.options	|= NAND_SKIP_BBTSCAN;
+	err = gpmc_cs_request(info->gpmc_cs, NAND_IO_SIZE, &info->phys_base);
+	if (err < 0) {
+		dev_err(&pdev->dev, "Cannot request GPMC CS\n");
+		goto out_free_info;
+	}
+
+	/* Enable RD PIN Monitoring Reg */
+	if (pdata->dev_ready) {
+		val  = gpmc_cs_read_reg(info->gpmc_cs, GPMC_CS_CONFIG1);
+		val |= WR_RD_PIN_MONITORING;
+		gpmc_cs_write_reg(info->gpmc_cs, GPMC_CS_CONFIG1, val);
+	}
+
+	val  = gpmc_cs_read_reg(info->gpmc_cs, GPMC_CS_CONFIG7);
+	val &= ~(0xf << 8);
+	val |=  (0xc & 0xf) << 8;
+	gpmc_cs_write_reg(info->gpmc_cs, GPMC_CS_CONFIG7, val);
 
 	/* NAND write protect off */
-	gpmc_cs_configure(info->gpmc_cs, GPMC_CONFIG_WP, 0);
+	omap_nand_wp(&info->mtd, NAND_WP_OFF);
 
 	if (!request_mem_region(info->phys_base, NAND_IO_SIZE,
 				pdev->dev.driver->name)) {
 		err = -EBUSY;
-		goto out_free_info;
+		goto out_free_cs;
 	}
 
 	info->nand.IO_ADDR_R = ioremap(info->phys_base, NAND_IO_SIZE);
@@ -994,13 +972,35 @@ static int __devinit omap_nand_probe(struct platform_device *pdev)
 		info->nand.chip_delay = 50;
 	}
 
-	switch (pdata->xfer_type) {
-	case NAND_OMAP_PREFETCH_POLLED:
+	info->nand.options  |= NAND_SKIP_BBTSCAN;
+	if ((gpmc_cs_read_reg(info->gpmc_cs, GPMC_CS_CONFIG1) & 0x3000)
+								== 0x1000)
+		info->nand.options  |= NAND_BUSWIDTH_16;
+
+	if (use_prefetch) {
+		/* copy the virtual address of nand base for fifo access */
+		info->nand_pref_fifo_add = info->nand.IO_ADDR_R;
+
 		info->nand.read_buf   = omap_read_buf_pref;
 		info->nand.write_buf  = omap_write_buf_pref;
-		break;
+		if (use_dma) {
+			err = omap_request_dma(OMAP24XX_DMA_GPMC, "NAND",
+				omap_nand_dma_cb, &info->comp, &info->dma_ch);
+			if (err < 0) {
+				info->dma_ch = -1;
+				printk(KERN_WARNING "DMA request failed."
+					" Non-dma data transfer mode\n");
+			} else {
+				omap_set_dma_dest_burst_mode(info->dma_ch,
+						OMAP_DMA_DATA_BURST_16);
+				omap_set_dma_src_burst_mode(info->dma_ch,
+						OMAP_DMA_DATA_BURST_16);
 
-	case NAND_OMAP_POLLED:
+				info->nand.read_buf   = omap_read_buf_dma_pref;
+				info->nand.write_buf  = omap_write_buf_dma_pref;
+			}
+		}
+	} else {
 		if (info->nand.options & NAND_BUSWIDTH_16) {
 			info->nand.read_buf   = omap_read_buf16;
 			info->nand.write_buf  = omap_write_buf16;
@@ -1008,62 +1008,22 @@ static int __devinit omap_nand_probe(struct platform_device *pdev)
 			info->nand.read_buf   = omap_read_buf8;
 			info->nand.write_buf  = omap_write_buf8;
 		}
-		break;
-
-	case NAND_OMAP_PREFETCH_DMA:
-		err = omap_request_dma(OMAP24XX_DMA_GPMC, "NAND",
-				omap_nand_dma_cb, &info->comp, &info->dma_ch);
-		if (err < 0) {
-			info->dma_ch = -1;
-			dev_err(&pdev->dev, "DMA request failed!\n");
-			goto out_release_mem_region;
-		} else {
-			omap_set_dma_dest_burst_mode(info->dma_ch,
-					OMAP_DMA_DATA_BURST_16);
-			omap_set_dma_src_burst_mode(info->dma_ch,
-					OMAP_DMA_DATA_BURST_16);
-
-			info->nand.read_buf   = omap_read_buf_dma_pref;
-			info->nand.write_buf  = omap_write_buf_dma_pref;
-		}
-		break;
-
-	case NAND_OMAP_PREFETCH_IRQ:
-		err = request_irq(pdata->gpmc_irq,
-				omap_nand_irq, IRQF_SHARED, "gpmc-nand", info);
-		if (err) {
-			dev_err(&pdev->dev, "requesting irq(%d) error:%d",
-							pdata->gpmc_irq, err);
-			goto out_release_mem_region;
-		} else {
-			info->gpmc_irq	     = pdata->gpmc_irq;
-			info->nand.read_buf  = omap_read_buf_irq_pref;
-			info->nand.write_buf = omap_write_buf_irq_pref;
-		}
-		break;
-
-	default:
-		dev_err(&pdev->dev,
-			"xfer_type(%d) not supported!\n", pdata->xfer_type);
-		err = -EINVAL;
-		goto out_release_mem_region;
 	}
-
 	info->nand.verify_buf = omap_verify_buf;
 
-	/* selsect the ecc type */
-	if (pdata->ecc_opt == OMAP_ECC_HAMMING_CODE_DEFAULT)
-		info->nand.ecc.mode = NAND_ECC_SOFT;
-	else if ((pdata->ecc_opt == OMAP_ECC_HAMMING_CODE_HW) ||
-		(pdata->ecc_opt == OMAP_ECC_HAMMING_CODE_HW_ROMCODE)) {
-		info->nand.ecc.bytes            = 3;
-		info->nand.ecc.size             = 512;
-		info->nand.ecc.strength         = 1;
-		info->nand.ecc.calculate        = omap_calculate_ecc;
-		info->nand.ecc.hwctl            = omap_enable_hwecc;
-		info->nand.ecc.correct          = omap_correct_data;
-		info->nand.ecc.mode             = NAND_ECC_HW;
-	}
+#ifdef CONFIG_MTD_NAND_OMAP_HWECC
+	info->nand.ecc.bytes		= 3;
+	info->nand.ecc.size		= 512;
+	info->nand.ecc.calculate	= omap_calculate_ecc;
+	info->nand.ecc.hwctl		= omap_enable_hwecc;
+	info->nand.ecc.correct		= omap_correct_data;
+	info->nand.ecc.mode		= NAND_ECC_HW;
+
+	/* init HW ECC */
+	omap_hwecc_init(&info->mtd);
+#else
+	info->nand.ecc.mode = NAND_ECC_SOFT;
+#endif
 
 	/* DIP switches on some boards change between 8 and 16 bit
 	 * bus widths for flash.  Try the other width if the first try fails.
@@ -1076,34 +1036,19 @@ static int __devinit omap_nand_probe(struct platform_device *pdev)
 		}
 	}
 
-	/* rom code layout */
-	if (pdata->ecc_opt == OMAP_ECC_HAMMING_CODE_HW_ROMCODE) {
-
-		if (info->nand.options & NAND_BUSWIDTH_16)
-			offset = 2;
-		else {
-			offset = 1;
-			info->nand.badblock_pattern = &bb_descrip_flashbased;
-		}
-		omap_oobinfo.eccbytes = 3 * (info->mtd.oobsize/16);
-		for (i = 0; i < omap_oobinfo.eccbytes; i++)
-			omap_oobinfo.eccpos[i] = i+offset;
-
-		omap_oobinfo.oobfree->offset = offset + omap_oobinfo.eccbytes;
-		omap_oobinfo.oobfree->length = info->mtd.oobsize -
-					(offset + omap_oobinfo.eccbytes);
-
-		info->nand.ecc.layout = &omap_oobinfo;
-	}
-
 	/* second phase scan */
 	if (nand_scan_tail(&info->mtd)) {
 		err = -ENXIO;
 		goto out_release_mem_region;
 	}
 
-	mtd_device_parse_register(&info->mtd, NULL, NULL, pdata->parts,
-				  pdata->nr_parts);
+	err = parse_mtd_partitions(&info->mtd, part_probes, &info->parts, 0);
+	if (err > 0)
+		mtd_device_register(&info->mtd, info->parts, err);
+	else if (pdata->parts)
+		mtd_device_register(&info->mtd, pdata->parts, pdata->nr_parts);
+	else
+		mtd_device_register(&info->mtd, NULL, 0);
 
 	platform_set_drvdata(pdev, &info->mtd);
 
@@ -1111,6 +1056,8 @@ static int __devinit omap_nand_probe(struct platform_device *pdev)
 
 out_release_mem_region:
 	release_mem_region(info->phys_base, NAND_IO_SIZE);
+out_free_cs:
+	gpmc_cs_free(info->gpmc_cs);
 out_free_info:
 	kfree(info);
 
@@ -1124,17 +1071,13 @@ static int omap_nand_remove(struct platform_device *pdev)
 							mtd);
 
 	platform_set_drvdata(pdev, NULL);
-	if (info->dma_ch != -1)
+	if (use_dma)
 		omap_free_dma(info->dma_ch);
-
-	if (info->gpmc_irq)
-		free_irq(info->gpmc_irq, info);
 
 	/* Release NAND device, its internal structures and partitions */
 	nand_release(&info->mtd);
-	iounmap(info->nand.IO_ADDR_R);
-	release_mem_region(info->phys_base, NAND_IO_SIZE);
-	kfree(info);
+	iounmap(info->nand_pref_fifo_add);
+	kfree(&info->mtd);
 	return 0;
 }
 
@@ -1147,7 +1090,28 @@ static struct platform_driver omap_nand_driver = {
 	},
 };
 
-module_platform_driver(omap_nand_driver);
+static int __init omap_nand_init(void)
+{
+	printk(KERN_INFO "%s driver initializing\n", DRIVER_NAME);
+
+	/* This check is required if driver is being
+	 * loaded run time as a module
+	 */
+	if ((1 == use_dma) && (0 == use_prefetch)) {
+		printk(KERN_INFO"Wrong parameters: 'use_dma' can not be 1 "
+				"without use_prefetch'. Prefetch will not be"
+				" used in either mode (mpu or dma)\n");
+	}
+	return platform_driver_register(&omap_nand_driver);
+}
+
+static void __exit omap_nand_exit(void)
+{
+	platform_driver_unregister(&omap_nand_driver);
+}
+
+module_init(omap_nand_init);
+module_exit(omap_nand_exit);
 
 MODULE_ALIAS("platform:" DRIVER_NAME);
 MODULE_LICENSE("GPL");

@@ -1,14 +1,10 @@
-/*
- * This file contains functions used in USB interface module.
- */
-
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
+/**
+  * This file contains functions used in USB interface module.
+  */
 #include <linux/delay.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <linux/firmware.h>
 #include <linux/netdevice.h>
-#include <linux/slab.h>
 #include <linux/usb.h>
 
 #ifdef CONFIG_OLPC
@@ -29,25 +25,13 @@
 
 #define MESSAGE_HEADER_LEN	4
 
-static char *lbs_fw_name = NULL;
+static char *lbs_fw_name = "usb8388.bin";
 module_param_named(fw_name, lbs_fw_name, charp, 0644);
-
-MODULE_FIRMWARE("libertas/usb8388_v9.bin");
-MODULE_FIRMWARE("libertas/usb8388_v5.bin");
-MODULE_FIRMWARE("libertas/usb8388.bin");
-MODULE_FIRMWARE("libertas/usb8682.bin");
-MODULE_FIRMWARE("usb8388.bin");
-
-enum {
-	MODEL_UNKNOWN = 0x0,
-	MODEL_8388 = 0x1,
-	MODEL_8682 = 0x2
-};
 
 static struct usb_device_id if_usb_table[] = {
 	/* Enter the device signature inside */
-	{ USB_DEVICE(0x1286, 0x2001), .driver_info = MODEL_8388 },
-	{ USB_DEVICE(0x05a3, 0x8388), .driver_info = MODEL_8388 },
+	{ USB_DEVICE(0x1286, 0x2001) },
+	{ USB_DEVICE(0x05a3, 0x8388) },
 	{}	/* Terminating entry */
 };
 
@@ -69,7 +53,7 @@ static int if_usb_reset_device(struct if_usb_card *cardp);
 
 /* sysfs hooks */
 
-/*
+/**
  *  Set function to write firmware to device's persistent memory
  */
 static ssize_t if_usb_firmware_set(struct device *dev,
@@ -79,8 +63,6 @@ static ssize_t if_usb_firmware_set(struct device *dev,
 	struct if_usb_card *cardp = priv->card;
 	int ret;
 
-	BUG_ON(buf == NULL);
-
 	ret = if_usb_prog_firmware(cardp, buf, BOOT_CMD_UPDATE_FW);
 	if (ret == 0)
 		return count;
@@ -88,7 +70,7 @@ static ssize_t if_usb_firmware_set(struct device *dev,
 	return ret;
 }
 
-/*
+/**
  * lbs_flash_fw attribute to be exported per ethX interface through sysfs
  * (/sys/class/net/ethX/lbs_flash_fw).  Use this like so to write firmware to
  * the device's persistent memory:
@@ -97,14 +79,7 @@ static ssize_t if_usb_firmware_set(struct device *dev,
 static DEVICE_ATTR(lbs_flash_fw, 0200, NULL, if_usb_firmware_set);
 
 /**
- * if_usb_boot2_set - write firmware to device's persistent memory
- *
- * @dev: target device
- * @attr: device attributes
- * @buf: firmware buffer to write
- * @count: number of bytes to write
- *
- * returns: number of bytes written or negative error code
+ *  Set function to write firmware to device's persistent memory
  */
 static ssize_t if_usb_boot2_set(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
@@ -113,8 +88,6 @@ static ssize_t if_usb_boot2_set(struct device *dev,
 	struct if_usb_card *cardp = priv->card;
 	int ret;
 
-	BUG_ON(buf == NULL);
-
 	ret = if_usb_prog_firmware(cardp, buf, BOOT_CMD_UPDATE_BOOT2);
 	if (ret == 0)
 		return count;
@@ -122,7 +95,7 @@ static ssize_t if_usb_boot2_set(struct device *dev,
 	return ret;
 }
 
-/*
+/**
  * lbs_flash_boot2 attribute to be exported per ethX interface through sysfs
  * (/sys/class/net/ethX/lbs_flash_boot2).  Use this like so to write firmware
  * to the device's persistent memory:
@@ -131,10 +104,9 @@ static ssize_t if_usb_boot2_set(struct device *dev,
 static DEVICE_ATTR(lbs_flash_boot2, 0200, NULL, if_usb_boot2_set);
 
 /**
- * if_usb_write_bulk_callback - callback function to handle the status
- * of the URB
- * @urb:	pointer to &urb structure
- * returns:	N/A
+ *  @brief  call back function to handle the status of the URB
+ *  @param urb 		pointer to urb structure
+ *  @return 	   	N/A
  */
 static void if_usb_write_bulk_callback(struct urb *urb)
 {
@@ -156,14 +128,16 @@ static void if_usb_write_bulk_callback(struct urb *urb)
 			lbs_host_to_card_done(priv);
 	} else {
 		/* print the failure status number for debug */
-		pr_info("URB in failure status: %d\n", urb->status);
+		lbs_pr_info("URB in failure status: %d\n", urb->status);
 	}
+
+	return;
 }
 
 /**
- * if_usb_free - free tx/rx urb, skb and rx buffer
- * @cardp:	pointer to &if_usb_card
- * returns:	N/A
+ *  @brief  free tx/rx urb, skb and rx buffer
+ *  @param cardp	pointer if_usb_card
+ *  @return 	   	N/A
  */
 static void if_usb_free(struct if_usb_card *cardp)
 {
@@ -206,7 +180,7 @@ static void if_usb_setup_firmware(struct lbs_private *priv)
 	wake_method.hdr.size = cpu_to_le16(sizeof(wake_method));
 	wake_method.action = cpu_to_le16(CMD_ACT_GET);
 	if (lbs_cmd_with_response(priv, CMD_802_11_FW_WAKE_METHOD, &wake_method)) {
-		netdev_info(priv->dev, "Firmware does not seem to support PS mode\n");
+		lbs_pr_info("Firmware does not seem to support PS mode\n");
 		priv->fwcapinfo &= ~FW_CAPINFO_PS;
 	} else {
 		if (le16_to_cpu(wake_method.method) == CMD_WAKE_METHOD_COMMAND_INT) {
@@ -215,8 +189,7 @@ static void if_usb_setup_firmware(struct lbs_private *priv)
 			/* The versions which boot up this way don't seem to
 			   work even if we set it to the command interrupt */
 			priv->fwcapinfo &= ~FW_CAPINFO_PS;
-			netdev_info(priv->dev,
-				    "Firmware doesn't wake via command interrupt; disabling PS mode\n");
+			lbs_pr_info("Firmware doesn't wake via command interrupt; disabling PS mode\n");
 		}
 	}
 }
@@ -228,7 +201,7 @@ static void if_usb_fw_timeo(unsigned long priv)
 	if (cardp->fwdnldover) {
 		lbs_deb_usb("Download complete, no event. Assuming success\n");
 	} else {
-		pr_err("Download timed out\n");
+		lbs_pr_err("Download timed out\n");
 		cardp->surprise_removed = 1;
 	}
 	wake_up(&cardp->fw_wq);
@@ -243,10 +216,10 @@ static void if_usb_reset_olpc_card(struct lbs_private *priv)
 #endif
 
 /**
- * if_usb_probe - sets the configuration values
- * @intf:	&usb_interface pointer
- * @id:	pointer to usb_device_id
- * returns:	0 on success, error code on failure
+ *  @brief sets the configuration values
+ *  @param ifnum	interface number
+ *  @param id		pointer to usb_device_id
+ *  @return 	   	0 on success, error code on failure
  */
 static int if_usb_probe(struct usb_interface *intf,
 			const struct usb_device_id *id)
@@ -261,14 +234,15 @@ static int if_usb_probe(struct usb_interface *intf,
 	udev = interface_to_usbdev(intf);
 
 	cardp = kzalloc(sizeof(struct if_usb_card), GFP_KERNEL);
-	if (!cardp)
+	if (!cardp) {
+		lbs_pr_err("Out of memory allocating private data.\n");
 		goto error;
+	}
 
 	setup_timer(&cardp->fw_timeout, if_usb_fw_timeo, (unsigned long)cardp);
 	init_waitqueue_head(&cardp->fw_wq);
 
 	cardp->udev = udev;
-	cardp->model = (uint32_t) id->driver_info;
 	iface_desc = intf->cur_altsetting;
 
 	lbs_deb_usbd(&udev->dev, "bcdUSB = 0x%X bDeviceClass = 0x%X"
@@ -314,24 +288,18 @@ static int if_usb_probe(struct usb_interface *intf,
 	}
 
 	/* Upload firmware */
-	kparam_block_sysfs_write(fw_name);
 	if (__if_usb_prog_firmware(cardp, lbs_fw_name, BOOT_CMD_FW_BY_USB)) {
-		kparam_unblock_sysfs_write(fw_name);
 		lbs_deb_usbd(&udev->dev, "FW upload failed\n");
 		goto err_prog_firmware;
 	}
-	kparam_unblock_sysfs_write(fw_name);
 
-	if (!(priv = lbs_add_card(cardp, &intf->dev)))
+	if (!(priv = lbs_add_card(cardp, &udev->dev)))
 		goto err_prog_firmware;
 
 	cardp->priv = priv;
 	cardp->priv->fw_ready = 1;
 
 	priv->hw_host_to_card = if_usb_host_to_card;
-	priv->enter_deep_sleep = NULL;
-	priv->exit_deep_sleep = NULL;
-	priv->reset_deep_sleep_wakeup = NULL;
 #ifdef CONFIG_OLPC
 	if (machine_is_olpc())
 		priv->reset_card = if_usb_reset_olpc_card;
@@ -350,19 +318,10 @@ static int if_usb_probe(struct usb_interface *intf,
 	usb_set_intfdata(intf, cardp);
 
 	if (device_create_file(&priv->dev->dev, &dev_attr_lbs_flash_fw))
-		netdev_err(priv->dev,
-			   "cannot register lbs_flash_fw attribute\n");
+		lbs_pr_err("cannot register lbs_flash_fw attribute\n");
 
 	if (device_create_file(&priv->dev->dev, &dev_attr_lbs_flash_boot2))
-		netdev_err(priv->dev,
-			   "cannot register lbs_flash_boot2 attribute\n");
-
-	/*
-	 * EHS_REMOVE_WAKEUP is not supported on all versions of the firmware.
-	 */
-	priv->wol_criteria = EHS_REMOVE_WAKEUP;
-	if (lbs_host_sleep_cfg(priv, priv->wol_criteria, NULL))
-		priv->ehs_remove_supported = false;
+		lbs_pr_err("cannot register lbs_flash_boot2 attribute\n");
 
 	return 0;
 
@@ -378,9 +337,9 @@ error:
 }
 
 /**
- * if_usb_disconnect - free resource and cleanup
- * @intf:	USB interface structure
- * returns:	N/A
+ *  @brief free resource and cleanup
+ *  @param intf		USB interface structure
+ *  @return 	   	N/A
  */
 static void if_usb_disconnect(struct usb_interface *intf)
 {
@@ -410,9 +369,9 @@ static void if_usb_disconnect(struct usb_interface *intf)
 }
 
 /**
- * if_usb_send_fw_pkt - download FW
- * @cardp:	pointer to &struct if_usb_card
- * returns:	0
+ *  @brief  This function download FW
+ *  @param priv		pointer to struct lbs_private
+ *  @return 	   	0
  */
 static int if_usb_send_fw_pkt(struct if_usb_card *cardp)
 {
@@ -470,7 +429,7 @@ static int if_usb_send_fw_pkt(struct if_usb_card *cardp)
 
 static int if_usb_reset_device(struct if_usb_card *cardp)
 {
-	struct cmd_header *cmd = cardp->ep_out_buf + 4;
+	struct cmd_ds_command *cmd = cardp->ep_out_buf + 4;
 	int ret;
 
 	lbs_deb_enter(LBS_DEB_USB);
@@ -478,7 +437,7 @@ static int if_usb_reset_device(struct if_usb_card *cardp)
 	*(__le32 *)cardp->ep_out_buf = cpu_to_le32(CMD_TYPE_REQUEST);
 
 	cmd->command = cpu_to_le16(CMD_802_11_RESET);
-	cmd->size = cpu_to_le16(sizeof(cmd));
+	cmd->size = cpu_to_le16(sizeof(struct cmd_header));
 	cmd->result = cpu_to_le16(0);
 	cmd->seqnum = cpu_to_le16(0x5a5a);
 	usb_tx_block(cardp, cardp->ep_out_buf, 4 + sizeof(struct cmd_header));
@@ -498,20 +457,19 @@ static int if_usb_reset_device(struct if_usb_card *cardp)
 }
 
 /**
- *  usb_tx_block - transfer the data to the device
- *  @cardp: 	pointer to &struct if_usb_card
- *  @payload:	pointer to payload data
- *  @nb:	data length
- *  returns:	0 for success or negative error code
+ *  @brief This function transfer the data to the device.
+ *  @param priv 	pointer to struct lbs_private
+ *  @param payload	pointer to payload data
+ *  @param nb		data length
+ *  @return 	   	0 or -1
  */
 static int usb_tx_block(struct if_usb_card *cardp, uint8_t *payload, uint16_t nb)
 {
-	int ret;
+	int ret = -1;
 
 	/* check if device is removed */
 	if (cardp->surprise_removed) {
 		lbs_deb_usbd(&cardp->udev->dev, "Device removed\n");
-		ret = -ENODEV;
 		goto tx_ret;
 	}
 
@@ -524,6 +482,7 @@ static int usb_tx_block(struct if_usb_card *cardp, uint8_t *payload, uint16_t nb
 
 	if ((ret = usb_submit_urb(cardp->tx_urb, GFP_ATOMIC))) {
 		lbs_deb_usbd(&cardp->udev->dev, "usb_submit_urb failed: %d\n", ret);
+		ret = -1;
 	} else {
 		lbs_deb_usb2(&cardp->udev->dev, "usb_submit_urb success\n");
 		ret = 0;
@@ -540,7 +499,7 @@ static int __if_usb_submit_rx_urb(struct if_usb_card *cardp,
 	int ret = -1;
 
 	if (!(skb = dev_alloc_skb(MRVDRV_ETH_RX_PACKET_BUFFER_SIZE))) {
-		pr_err("No free skb\n");
+		lbs_pr_err("No free skb\n");
 		goto rx_ret;
 	}
 
@@ -599,7 +558,7 @@ static void if_usb_receive_fwload(struct urb *urb)
 
 		if (tmp[0] == cpu_to_le32(CMD_TYPE_INDICATION) &&
 		    tmp[1] == cpu_to_le32(MACREG_INT_CODE_FIRMWARE_READY)) {
-			pr_info("Firmware ready event received\n");
+			lbs_pr_info("Firmware ready event received\n");
 			wake_up(&cardp->fw_wq);
 		} else {
 			lbs_deb_usb("Waiting for confirmation; got %x %x\n",
@@ -626,20 +585,20 @@ static void if_usb_receive_fwload(struct urb *urb)
 			    bootcmdresp.magic == cpu_to_le32(CMD_TYPE_DATA) ||
 			    bootcmdresp.magic == cpu_to_le32(CMD_TYPE_INDICATION)) {
 				if (!cardp->bootcmdresp)
-					pr_info("Firmware already seems alive; resetting\n");
+					lbs_pr_info("Firmware already seems alive; resetting\n");
 				cardp->bootcmdresp = -1;
 			} else {
-				pr_info("boot cmd response wrong magic number (0x%x)\n",
+				lbs_pr_info("boot cmd response wrong magic number (0x%x)\n",
 					    le32_to_cpu(bootcmdresp.magic));
 			}
 		} else if ((bootcmdresp.cmd != BOOT_CMD_FW_BY_USB) &&
 			   (bootcmdresp.cmd != BOOT_CMD_UPDATE_FW) &&
 			   (bootcmdresp.cmd != BOOT_CMD_UPDATE_BOOT2)) {
-			pr_info("boot cmd response cmd_tag error (%d)\n",
-				bootcmdresp.cmd);
+			lbs_pr_info("boot cmd response cmd_tag error (%d)\n",
+				    bootcmdresp.cmd);
 		} else if (bootcmdresp.result != BOOT_CMD_RESP_OK) {
-			pr_info("boot cmd response result error (%d)\n",
-				bootcmdresp.result);
+			lbs_pr_info("boot cmd response result error (%d)\n",
+				    bootcmdresp.result);
 		} else {
 			cardp->bootcmdresp = 1;
 			lbs_deb_usbd(&cardp->udev->dev,
@@ -650,13 +609,15 @@ static void if_usb_receive_fwload(struct urb *urb)
 		return;
 	}
 
-	syncfwheader = kmemdup(skb->data + IPFIELD_ALIGN_OFFSET,
-			       sizeof(struct fwsyncheader), GFP_ATOMIC);
+	syncfwheader = kmalloc(sizeof(struct fwsyncheader), GFP_ATOMIC);
 	if (!syncfwheader) {
 		lbs_deb_usbd(&cardp->udev->dev, "Failure to allocate syncfwheader\n");
 		kfree_skb(skb);
 		return;
 	}
+
+	memcpy(syncfwheader, skb->data + IPFIELD_ALIGN_OFFSET,
+	       sizeof(struct fwsyncheader));
 
 	if (!syncfwheader->cmd) {
 		lbs_deb_usb2(&cardp->udev->dev, "FW received Blk with correct CRC\n");
@@ -684,6 +645,8 @@ static void if_usb_receive_fwload(struct urb *urb)
 	if_usb_submit_rx_urb_fwload(cardp);
 
 	kfree(syncfwheader);
+
+	return;
 }
 
 #define MRVDRV_MIN_PKT_LEN	30
@@ -739,11 +702,11 @@ static inline void process_cmdrequest(int recvlength, uint8_t *recvbuff,
 }
 
 /**
- *  if_usb_receive - read the packet into the upload buffer,
- *  wake up the main thread and initialise the Rx callack
+ *  @brief This function reads of the packet into the upload buff,
+ *  wake up the main thread and initialise the Rx callack.
  *
- *  @urb:	pointer to &struct urb
- *  returns:	N/A
+ *  @param urb		pointer to struct urb
+ *  @return 	   	N/A
  */
 static void if_usb_receive(struct urb *urb)
 {
@@ -814,12 +777,12 @@ rx_exit:
 }
 
 /**
- *  if_usb_host_to_card - downloads data to FW
- *  @priv:	pointer to &struct lbs_private structure
- *  @type:	type of data
- *  @payload:	pointer to data buffer
- *  @nb:	number of bytes
- *  returns:	0 for success or negative error code
+ *  @brief This function downloads data to FW
+ *  @param priv		pointer to struct lbs_private structure
+ *  @param type		type of data
+ *  @param buf		pointer to data buffer
+ *  @param len		number of bytes
+ *  @return 	   	0 or -1
  */
 static int if_usb_host_to_card(struct lbs_private *priv, uint8_t type,
 			       uint8_t *payload, uint16_t nb)
@@ -843,11 +806,10 @@ static int if_usb_host_to_card(struct lbs_private *priv, uint8_t type,
 }
 
 /**
- *  if_usb_issue_boot_command - issues Boot command to the Boot2 code
- *  @cardp:	pointer to &if_usb_card
- *  @ivalue:	1:Boot from FW by USB-Download
- *		2:Boot from FW in EEPROM
- *  returns:	0 for success or negative error code
+ *  @brief This function issues Boot command to the Boot2 code
+ *  @param ivalue   1:Boot from FW by USB-Download
+ *                  2:Boot from FW in EEPROM
+ *  @return 	   	0
  */
 static int if_usb_issue_boot_command(struct if_usb_card *cardp, int ivalue)
 {
@@ -866,11 +828,11 @@ static int if_usb_issue_boot_command(struct if_usb_card *cardp, int ivalue)
 
 
 /**
- *  check_fwfile_format - check the validity of Boot2/FW image
+ *  @brief This function checks the validity of Boot2/FW image.
  *
- *  @data:	pointer to image
- *  @totlen:	image length
- *  returns:     0 (good) or 1 (failure)
+ *  @param data              pointer to image
+ *         len               image length
+ *  @return     0 or -1
  */
 static int check_fwfile_format(const uint8_t *data, uint32_t totlen)
 {
@@ -905,7 +867,7 @@ static int check_fwfile_format(const uint8_t *data, uint32_t totlen)
 	} while (!exit);
 
 	if (ret)
-		pr_err("firmware file format check FAIL\n");
+		lbs_pr_err("firmware file format check FAIL\n");
 	else
 		lbs_deb_fw("firmware file format check PASS\n");
 
@@ -914,13 +876,13 @@ static int check_fwfile_format(const uint8_t *data, uint32_t totlen)
 
 
 /**
-*  if_usb_prog_firmware - programs the firmware subject to cmd
+*  @brief This function programs the firmware subject to cmd
 *
-*  @cardp:	the if_usb_card descriptor
-*  @fwname:	firmware or boot2 image file name
-*  @cmd:	either BOOT_CMD_FW_BY_USB, BOOT_CMD_UPDATE_FW,
-*		or BOOT_CMD_UPDATE_BOOT2.
-*  returns:	0 or error code
+*  @param cardp             the if_usb_card descriptor
+*         fwname            firmware or boot2 image file name
+*         cmd               either BOOT_CMD_FW_BY_USB, BOOT_CMD_UPDATE_FW,
+*                           or BOOT_CMD_UPDATE_BOOT2.
+*  @return     0 or error code
 */
 static int if_usb_prog_firmware(struct if_usb_card *cardp,
 				const char *fwname, int cmd)
@@ -954,62 +916,9 @@ static int if_usb_prog_firmware(struct if_usb_card *cardp,
 	priv->dnld_sent = DNLD_RES_RECEIVED;
 	spin_unlock_irqrestore(&priv->driver_lock, flags);
 
-	wake_up(&priv->waitq);
+	wake_up_interruptible(&priv->waitq);
 
 	return ret;
-}
-
-/* table of firmware file names */
-static const struct {
-	u32 model;
-	const char *fwname;
-} fw_table[] = {
-	{ MODEL_8388, "libertas/usb8388_v9.bin" },
-	{ MODEL_8388, "libertas/usb8388_v5.bin" },
-	{ MODEL_8388, "libertas/usb8388.bin" },
-	{ MODEL_8388, "usb8388.bin" },
-	{ MODEL_8682, "libertas/usb8682.bin" }
-};
-
-#ifdef CONFIG_OLPC
-
-static int try_olpc_fw(struct if_usb_card *cardp)
-{
-	int retval = -ENOENT;
-
-	/* try the OLPC firmware first; fall back to fw_table list */
-	if (machine_is_olpc() && cardp->model == MODEL_8388)
-		retval = request_firmware(&cardp->fw,
-				"libertas/usb8388_olpc.bin", &cardp->udev->dev);
-	return retval;
-}
-
-#else
-static int try_olpc_fw(struct if_usb_card *cardp) { return -ENOENT; }
-#endif /* !CONFIG_OLPC */
-
-static int get_fw(struct if_usb_card *cardp, const char *fwname)
-{
-	int i;
-
-	/* Try user-specified firmware first */
-	if (fwname)
-		return request_firmware(&cardp->fw, fwname, &cardp->udev->dev);
-
-	/* Handle OLPC firmware */
-	if (try_olpc_fw(cardp) == 0)
-		return 0;
-
-	/* Otherwise search for firmware to use */
-	for (i = 0; i < ARRAY_SIZE(fw_table); i++) {
-		if (fw_table[i].model != cardp->model)
-			continue;
-		if (request_firmware(&cardp->fw, fw_table[i].fwname,
-					&cardp->udev->dev) == 0)
-			return 0;
-	}
-
-	return -ENOENT;
 }
 
 static int __if_usb_prog_firmware(struct if_usb_card *cardp,
@@ -1021,9 +930,10 @@ static int __if_usb_prog_firmware(struct if_usb_card *cardp,
 
 	lbs_deb_enter(LBS_DEB_USB);
 
-	ret = get_fw(cardp, fwname);
-	if (ret) {
-		pr_err("failed to find firmware (%d)\n", ret);
+	ret = request_firmware(&cardp->fw, fwname, &cardp->udev->dev);
+	if (ret < 0) {
+		lbs_pr_err("request_firmware() failed with %#x\n", ret);
+		lbs_pr_err("firmware %s not found\n", fwname);
 		goto done;
 	}
 
@@ -1098,13 +1008,13 @@ restart:
 	usb_kill_urb(cardp->rx_urb);
 
 	if (!cardp->fwdnldover) {
-		pr_info("failed to load fw, resetting device!\n");
+		lbs_pr_info("failed to load fw, resetting device!\n");
 		if (--reset_count >= 0) {
 			if_usb_reset_device(cardp);
 			goto restart;
 		}
 
-		pr_info("FW download failure, time = %d ms\n", i * 100);
+		lbs_pr_info("FW download failure, time = %d ms\n", i * 100);
 		ret = -EIO;
 		goto release_fw;
 	}
@@ -1130,15 +1040,6 @@ static int if_usb_suspend(struct usb_interface *intf, pm_message_t message)
 
 	if (priv->psstate != PS_STATE_FULL_POWER)
 		return -1;
-
-#ifdef CONFIG_OLPC
-	if (machine_is_olpc()) {
-		if (priv->wol_criteria == EHS_REMOVE_WAKEUP)
-			olpc_ec_wakeup_clear(EC_SCI_SRC_WLAN);
-		else
-			olpc_ec_wakeup_set(EC_SCI_SRC_WLAN);
-	}
-#endif
 
 	ret = lbs_suspend(priv);
 	if (ret)
@@ -1182,7 +1083,29 @@ static struct usb_driver if_usb_driver = {
 	.reset_resume = if_usb_resume,
 };
 
-module_usb_driver(if_usb_driver);
+static int __init if_usb_init_module(void)
+{
+	int ret = 0;
+
+	lbs_deb_enter(LBS_DEB_MAIN);
+
+	ret = usb_register(&if_usb_driver);
+
+	lbs_deb_leave_args(LBS_DEB_MAIN, "ret %d", ret);
+	return ret;
+}
+
+static void __exit if_usb_exit_module(void)
+{
+	lbs_deb_enter(LBS_DEB_MAIN);
+
+	usb_deregister(&if_usb_driver);
+
+	lbs_deb_leave(LBS_DEB_MAIN);
+}
+
+module_init(if_usb_init_module);
+module_exit(if_usb_exit_module);
 
 MODULE_DESCRIPTION("8388 USB WLAN Driver");
 MODULE_AUTHOR("Marvell International Ltd. and Red Hat, Inc.");

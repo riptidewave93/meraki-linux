@@ -34,6 +34,7 @@
 #include <asm/macintosh.h>
 #include <asm/macints.h>
 #include <asm/mac_via.h>
+#include <asm/system.h>
 
 static volatile unsigned char *via;
 
@@ -158,7 +159,7 @@ int macii_init(void)
 	err = macii_init_via();
 	if (err) goto out;
 
-	err = request_irq(IRQ_MAC_ADB, macii_interrupt, 0, "ADB",
+	err = request_irq(IRQ_MAC_ADB, macii_interrupt, IRQ_FLG_LOCK, "ADB",
 			  macii_interrupt);
 	if (err) goto out;
 

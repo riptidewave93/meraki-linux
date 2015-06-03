@@ -6,10 +6,8 @@
  * DEBUG_LIST.
  */
 
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/list.h>
-#include <linux/bug.h>
-#include <linux/kernel.h>
 
 /*
  * Insert a new entry between two known consecutive entries.
@@ -37,31 +35,6 @@ void __list_add(struct list_head *new,
 }
 EXPORT_SYMBOL(__list_add);
 
-void __list_del_entry(struct list_head *entry)
-{
-	struct list_head *prev, *next;
-
-	prev = entry->prev;
-	next = entry->next;
-
-	if (WARN(next == LIST_POISON1,
-		"list_del corruption, %p->next is LIST_POISON1 (%p)\n",
-		entry, LIST_POISON1) ||
-	    WARN(prev == LIST_POISON2,
-		"list_del corruption, %p->prev is LIST_POISON2 (%p)\n",
-		entry, LIST_POISON2) ||
-	    WARN(prev->next != entry,
-		"list_del corruption. prev->next should be %p, "
-		"but was %p\n", entry, prev->next) ||
-	    WARN(next->prev != entry,
-		"list_del corruption. next->prev should be %p, "
-		"but was %p\n", entry, next->prev))
-		return;
-
-	__list_del(prev, next);
-}
-EXPORT_SYMBOL(__list_del_entry);
-
 /**
  * list_del - deletes entry from list.
  * @entry: the element to delete from the list.
@@ -70,7 +43,13 @@ EXPORT_SYMBOL(__list_del_entry);
  */
 void list_del(struct list_head *entry)
 {
-	__list_del_entry(entry);
+	WARN(entry->prev->next != entry,
+		"list_del corruption. prev->next should be %p, "
+		"but was %p\n", entry, entry->prev->next);
+	WARN(entry->next->prev != entry,
+		"list_del corruption. next->prev should be %p, "
+		"but was %p\n", entry, entry->next->prev);
+	__list_del(entry->prev, entry->next);
 	entry->next = LIST_POISON1;
 	entry->prev = LIST_POISON2;
 }

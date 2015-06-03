@@ -19,26 +19,39 @@
 
 #define UBD_SHIFT 4
 
-#include <linux/module.h>
-#include <linux/init.h>
-#include <linux/blkdev.h>
-#include <linux/ata.h>
-#include <linux/hdreg.h>
-#include <linux/cdrom.h>
-#include <linux/proc_fs.h>
-#include <linux/seq_file.h>
-#include <linux/ctype.h>
-#include <linux/slab.h>
-#include <linux/vmalloc.h>
-#include <linux/platform_device.h>
-#include <linux/scatterlist.h>
-#include <asm/tlbflush.h>
+#include "linux/kernel.h"
+#include "linux/module.h"
+#include "linux/blkdev.h"
+#include "linux/ata.h"
+#include "linux/hdreg.h"
+#include "linux/init.h"
+#include "linux/cdrom.h"
+#include "linux/proc_fs.h"
+#include "linux/ctype.h"
+#include "linux/capability.h"
+#include "linux/mm.h"
+#include "linux/vmalloc.h"
+#include "linux/blkpg.h"
+#include "linux/genhd.h"
+#include "linux/spinlock.h"
+#include "linux/platform_device.h"
+#include "linux/scatterlist.h"
+#include "asm/segment.h"
+#include "asm/uaccess.h"
+#include "asm/irq.h"
+#include "asm/types.h"
+#include "asm/tlbflush.h"
+#include "mem_user.h"
 #include "kern_util.h"
+#include "kern.h"
 #include "mconsole_kern.h"
 #include "init.h"
+#include "irq_user.h"
 #include "irq_kern.h"
-#include "ubd.h"
+#include "ubd_user.h"
 #include "os.h"
+#include "mem.h"
+#include "mem_kern.h"
 #include "cow.h"
 
 enum ubd_req { UBD_READ, UBD_WRITE };
@@ -84,7 +97,6 @@ static inline void ubd_set_bit(__u64 bit, unsigned char *data)
 #define DRIVER_NAME "uml-blkdev"
 
 static DEFINE_MUTEX(ubd_lock);
-static DEFINE_MUTEX(ubd_mutex); /* replaces BKL, might not be needed */
 
 static int ubd_open(struct block_device *bdev, fmode_t mode);
 static int ubd_release(struct gendisk *disk, fmode_t mode);
@@ -169,7 +181,7 @@ struct ubd {
 	.no_cow =               0, \
 	.shared =		0, \
 	.cow =			DEFAULT_COW, \
-	.lock =			__SPIN_LOCK_UNLOCKED(ubd_devs.lock), \
+	.lock =			SPIN_LOCK_UNLOCKED,	\
 	.request =		NULL, \
 	.start_sg =		0, \
 	.end_sg =		0, \
@@ -190,24 +202,22 @@ static void make_proc_ide(void)
 	proc_ide = proc_mkdir("ide0", proc_ide_root);
 }
 
-static int fake_ide_media_proc_show(struct seq_file *m, void *v)
+static int proc_ide_read_media(char *page, char **start, off_t off, int count,
+			       int *eof, void *data)
 {
-	seq_puts(m, "disk\n");
-	return 0;
-}
+	int len;
 
-static int fake_ide_media_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, fake_ide_media_proc_show, NULL);
+	strcpy(page, "disk\n");
+	len = strlen("disk\n");
+	len -= off;
+	if (len < count){
+		*eof = 1;
+		if (len <= 0) return 0;
+	}
+	else len = count;
+	*start = page + off;
+	return len;
 }
-
-static const struct file_operations fake_ide_media_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= fake_ide_media_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
 
 static void make_ide_entries(const char *dev_name)
 {
@@ -219,8 +229,11 @@ static void make_ide_entries(const char *dev_name)
 	dir = proc_mkdir(dev_name, proc_ide);
 	if(!dir) return;
 
-	ent = proc_create("media", S_IRUGO, dir, &fake_ide_media_proc_fops);
+	ent = create_proc_entry("media", S_IFREG|S_IRUGO, dir);
 	if(!ent) return;
+	ent->data = NULL;
+	ent->read_proc = proc_ide_read_media;
+	ent->write_proc = NULL;
 	snprintf(name, sizeof(name), "ide0/%s", dev_name);
 	proc_symlink(dev_name, proc_ide_root, name);
 }
@@ -765,7 +778,7 @@ static int ubd_open_dev(struct ubd *ubd_dev)
 	ubd_dev->fd = fd;
 
 	if(ubd_dev->cow.file != NULL){
-		blk_queue_max_hw_sectors(ubd_dev->queue, 8 * sizeof(long));
+		blk_queue_max_sectors(ubd_dev->queue, 8 * sizeof(long));
 
 		err = -ENOMEM;
 		ubd_dev->cow.bitmap = vmalloc(ubd_dev->cow.bitmap_len);
@@ -867,7 +880,7 @@ static int ubd_add(int n, char **error_out)
 	}
 	ubd_dev->queue->queuedata = ubd_dev;
 
-	blk_queue_max_segments(ubd_dev->queue, MAX_SG);
+	blk_queue_max_hw_segments(ubd_dev->queue, MAX_SG);
 	err = ubd_disk_register(UBD_MAJOR, ubd_dev->size, n, &ubd_gendisk[n]);
 	if(err){
 		*error_out = "Failed to register device";
@@ -1101,7 +1114,7 @@ static int __init ubd_driver_init(void){
 		return 0;
 	}
 	err = um_request_irq(UBD_IRQ, thread_fd, IRQ_READ, ubd_intr,
-			     0, "ubd", ubd_devs);
+			     IRQF_DISABLED, "ubd", ubd_devs);
 	if(err != 0)
 		printk(KERN_ERR "um_request_irq failed - errno = %d\n", -err);
 	return 0;
@@ -1115,7 +1128,6 @@ static int ubd_open(struct block_device *bdev, fmode_t mode)
 	struct ubd *ubd_dev = disk->private_data;
 	int err = 0;
 
-	mutex_lock(&ubd_mutex);
 	if(ubd_dev->count == 0){
 		err = ubd_open_dev(ubd_dev);
 		if(err){
@@ -1133,8 +1145,7 @@ static int ubd_open(struct block_device *bdev, fmode_t mode)
 	        if(--ubd_dev->count == 0) ubd_close_dev(ubd_dev);
 	        err = -EROFS;
 	}*/
-out:
-	mutex_unlock(&ubd_mutex);
+ out:
 	return err;
 }
 
@@ -1142,10 +1153,8 @@ static int ubd_release(struct gendisk *disk, fmode_t mode)
 {
 	struct ubd *ubd_dev = disk->private_data;
 
-	mutex_lock(&ubd_mutex);
 	if(--ubd_dev->count == 0)
 		ubd_close_dev(ubd_dev);
-	mutex_unlock(&ubd_mutex);
 	return 0;
 }
 

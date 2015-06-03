@@ -44,7 +44,7 @@ ENTRY(_ret_from_fork)
 	sti r4;
 #endif /* CONFIG_IPIPE */
 	SP += -12;
-	pseudo_long_call _schedule_tail, p5;
+	call _schedule_tail;
 	SP += 12;
 	r0 = [sp + PT_IPEND];
 	cc = bittst(r0,1);
@@ -79,7 +79,7 @@ ENTRY(_sys_vfork)
 	r0 += 24;
 	[--sp] = rets;
 	SP += -12;
-	pseudo_long_call _bfin_vfork, p2;
+	call _bfin_vfork;
 	SP += 12;
 	rets = [sp++];
 	rts;
@@ -90,7 +90,7 @@ ENTRY(_sys_clone)
 	r0 += 24;
 	[--sp] = rets;
 	SP += -12;
-	pseudo_long_call _bfin_clone, p2;
+	call _bfin_clone;
 	SP += 12;
 	rets = [sp++];
 	rts;
@@ -101,7 +101,7 @@ ENTRY(_sys_rt_sigreturn)
 	r0 += 24;
 	[--sp] = rets;
 	SP += -12;
-	pseudo_long_call _do_rt_sigreturn, p2;
+	call _do_rt_sigreturn;
 	SP += 12;
 	rets = [sp++];
 	rts;

@@ -29,6 +29,7 @@
 #include <linux/interrupt.h>
 #include <linux/mm.h>
 #include <linux/net.h>
+#include <linux/slab.h>
 
 #include <crypto/internal/compress.h>
 
@@ -59,7 +60,7 @@ static void zlib_decomp_exit(struct zlib_ctx *ctx)
 
 	if (stream->workspace) {
 		zlib_inflateEnd(stream);
-		vfree(stream->workspace);
+		kfree(stream->workspace);
 		stream->workspace = NULL;
 	}
 }
@@ -84,7 +85,6 @@ static int zlib_compress_setup(struct crypto_pcomp *tfm, void *params,
 	struct zlib_ctx *ctx = crypto_tfm_ctx(crypto_pcomp_tfm(tfm));
 	struct z_stream_s *stream = &ctx->comp_stream;
 	struct nlattr *tb[ZLIB_COMP_MAX + 1];
-	int window_bits, mem_level;
 	size_t workspacesize;
 	int ret;
 
@@ -94,18 +94,12 @@ static int zlib_compress_setup(struct crypto_pcomp *tfm, void *params,
 
 	zlib_comp_exit(ctx);
 
-	window_bits = tb[ZLIB_COMP_WINDOWBITS]
-					? nla_get_u32(tb[ZLIB_COMP_WINDOWBITS])
-					: MAX_WBITS;
-	mem_level = tb[ZLIB_COMP_MEMLEVEL]
-					? nla_get_u32(tb[ZLIB_COMP_MEMLEVEL])
-					: DEF_MEM_LEVEL;
-
-	workspacesize = zlib_deflate_workspacesize(window_bits, mem_level);
-	stream->workspace = vzalloc(workspacesize);
+	workspacesize = zlib_deflate_workspacesize();
+	stream->workspace = vmalloc(workspacesize);
 	if (!stream->workspace)
 		return -ENOMEM;
 
+	memset(stream->workspace, 0, workspacesize);
 	ret = zlib_deflateInit2(stream,
 				tb[ZLIB_COMP_LEVEL]
 					? nla_get_u32(tb[ZLIB_COMP_LEVEL])
@@ -113,8 +107,12 @@ static int zlib_compress_setup(struct crypto_pcomp *tfm, void *params,
 				tb[ZLIB_COMP_METHOD]
 					? nla_get_u32(tb[ZLIB_COMP_METHOD])
 					: Z_DEFLATED,
-				window_bits,
-				mem_level,
+				tb[ZLIB_COMP_WINDOWBITS]
+					? nla_get_u32(tb[ZLIB_COMP_WINDOWBITS])
+					: MAX_WBITS,
+				tb[ZLIB_COMP_MEMLEVEL]
+					? nla_get_u32(tb[ZLIB_COMP_MEMLEVEL])
+					: DEF_MEM_LEVEL,
 				tb[ZLIB_COMP_STRATEGY]
 					? nla_get_u32(tb[ZLIB_COMP_STRATEGY])
 					: Z_DEFAULT_STRATEGY);
@@ -227,13 +225,13 @@ static int zlib_decompress_setup(struct crypto_pcomp *tfm, void *params,
 				 ? nla_get_u32(tb[ZLIB_DECOMP_WINDOWBITS])
 				 : DEF_WBITS;
 
-	stream->workspace = vzalloc(zlib_inflate_workspacesize());
+	stream->workspace = kzalloc(zlib_inflate_workspacesize(), GFP_KERNEL);
 	if (!stream->workspace)
 		return -ENOMEM;
 
 	ret = zlib_inflateInit2(stream, ctx->decomp_windowBits);
 	if (ret != Z_OK) {
-		vfree(stream->workspace);
+		kfree(stream->workspace);
 		stream->workspace = NULL;
 		return -EINVAL;
 	}

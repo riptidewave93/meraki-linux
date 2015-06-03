@@ -55,8 +55,8 @@ struct thread_info {
 
 #define PREEMPT_ACTIVE		0x10000000
 
-#define THREAD_SIZE		(PAGE_SIZE << 1)
-#define THREAD_SIZE_ORDER	1
+#define THREAD_SIZE (PAGE_SIZE << 1)
+
 /*
  * macros/functions for gaining access to the thread information structure
  */
@@ -92,6 +92,24 @@ static inline struct thread_info *current_thread_info(void)
 	return ti;
 }
 
+#define __HAVE_ARCH_THREAD_INFO_ALLOCATOR
+
+/* thread information allocation */
+#ifdef CONFIG_DEBUG_STACK_USAGE
+#define alloc_thread_info(tsk)					\
+	({							\
+		struct thread_info *ret;			\
+	 							\
+	 	ret = kzalloc(THREAD_SIZE, GFP_KERNEL);		\
+								\
+	 	ret;						\
+	 })
+#else
+#define alloc_thread_info(tsk) kmalloc(THREAD_SIZE, GFP_KERNEL)
+#endif
+
+#define free_thread_info(info) kfree(info)
+
 #define TI_FLAG_FAULT_CODE_SHIFT	28
 
 static inline void set_thread_fault_code(unsigned int val)
@@ -124,7 +142,8 @@ static inline unsigned int get_thread_fault_code(void)
 #define TIF_RESTORE_SIGMASK	8	/* restore signal mask in do_signal() */
 #define TIF_USEDFPU		16	/* FPU was used by this task this quantum (SMP) */
 #define TIF_POLLING_NRFLAG	17	/* true if poll_idle() is polling TIF_NEED_RESCHED */
-#define TIF_MEMDIE		18	/* is terminating due to OOM killer */
+#define TIF_MEMDIE		18	/* OOM killer killed process */
+#define TIF_FREEZE		19	/* is freezing for suspend */
 
 #define _TIF_SYSCALL_TRACE	(1<<TIF_SYSCALL_TRACE)
 #define _TIF_SIGPENDING		(1<<TIF_SIGPENDING)
@@ -135,6 +154,7 @@ static inline unsigned int get_thread_fault_code(void)
 #define _TIF_RESTORE_SIGMASK	(1<<TIF_RESTORE_SIGMASK)
 #define _TIF_USEDFPU		(1<<TIF_USEDFPU)
 #define _TIF_POLLING_NRFLAG	(1<<TIF_POLLING_NRFLAG)
+#define _TIF_FREEZE		(1<<TIF_FREEZE)
 
 #define _TIF_WORK_MASK		0x0000FFFE	/* work to do on interrupt/exception return */
 #define _TIF_ALLWORK_MASK	0x0000FFFF	/* work to do on any return to u-space */

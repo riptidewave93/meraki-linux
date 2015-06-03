@@ -9,11 +9,10 @@
  * Copyright (C) 1999, 2000, 01 Silicon Graphics, Inc.
  */
 #include <linux/interrupt.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <asm/checksum.h>
 #include <asm/pgtable.h>
 #include <asm/uaccess.h>
-#include <asm/ftrace.h>
 
 extern void *__bzero(void *__s, size_t __count);
 extern long __strncpy_from_user_nocheck_asm(char *__to,
@@ -64,7 +63,3 @@ EXPORT_SYMBOL(csum_partial_copy_nocheck);
 EXPORT_SYMBOL(__csum_partial_copy_user);
 
 EXPORT_SYMBOL(invalid_pte_table);
-#ifdef CONFIG_FUNCTION_TRACER
-/* _mcount is defined in arch/mips/kernel/mcount.S */
-EXPORT_SYMBOL(_mcount);
-#endif

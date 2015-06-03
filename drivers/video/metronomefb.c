@@ -10,7 +10,7 @@
  * Layout is based on skeletonfb.c by James Simmons and Geert Uytterhoeven.
  *
  * This work was made possible by help and equipment support from E-Ink
- * Corporation. http://www.eink.com/
+ * Corporation. http://support.eink.com/community
  *
  * This driver is written to be used with the Metronome display controller.
  * It is intended to be architecture independent. A board specific driver
@@ -23,6 +23,7 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -628,9 +629,11 @@ static int __devinit metronomefb_probe(struct platform_device *dev)
 	/* we need to add a spare page because our csum caching scheme walks
 	 * to the end of the page */
 	videomemorysize = PAGE_SIZE + (fw * fh);
-	videomemory = vzalloc(videomemorysize);
+	videomemory = vmalloc(videomemorysize);
 	if (!videomemory)
 		goto err_fb_rel;
+
+	memset(videomemory, 0, videomemorysize);
 
 	info->screen_base = (char __force __iomem *)videomemory;
 	info->fbops = &metronomefb_ops;
@@ -697,7 +700,7 @@ static int __devinit metronomefb_probe(struct platform_device *dev)
 	if (retval < 0)
 		goto err_free_irq;
 
-	info->flags = FBINFO_FLAG_DEFAULT | FBINFO_VIRTFB;
+	info->flags = FBINFO_FLAG_DEFAULT;
 
 	info->fbdefio = &metronomefb_defio;
 	fb_deferred_io_init(info);
@@ -763,7 +766,7 @@ static int __devexit metronomefb_remove(struct platform_device *dev)
 
 static struct platform_driver metronomefb_driver = {
 	.probe	= metronomefb_probe,
-	.remove = __devexit_p(metronomefb_remove),
+	.remove = metronomefb_remove,
 	.driver	= {
 		.owner	= THIS_MODULE,
 		.name	= "metronomefb",

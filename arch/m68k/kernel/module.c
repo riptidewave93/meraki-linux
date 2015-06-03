@@ -19,6 +19,29 @@
 
 #ifdef CONFIG_MODULES
 
+void *module_alloc(unsigned long size)
+{
+	if (size == 0)
+		return NULL;
+	return vmalloc(size);
+}
+
+
+/* Free memory returned from module_alloc */
+void module_free(struct module *mod, void *module_region)
+{
+	vfree(module_region);
+}
+
+/* We don't need anything special. */
+int module_frob_arch_sections(Elf_Ehdr *hdr,
+			      Elf_Shdr *sechdrs,
+			      char *secstrings,
+			      struct module *mod)
+{
+	return 0;
+}
+
 int apply_relocate(Elf32_Shdr *sechdrs,
 		   const char *strtab,
 		   unsigned int symindex,
@@ -104,7 +127,12 @@ int module_finalize(const Elf_Ehdr *hdr,
 		    struct module *mod)
 {
 	module_fixup(mod, mod->arch.fixup_start, mod->arch.fixup_end);
+
 	return 0;
+}
+
+void module_arch_cleanup(struct module *mod)
+{
 }
 
 #endif /* CONFIG_MODULES */
@@ -112,7 +140,6 @@ int module_finalize(const Elf_Ehdr *hdr,
 void module_fixup(struct module *mod, struct m68k_fixup_info *start,
 		  struct m68k_fixup_info *end)
 {
-#ifdef CONFIG_MMU
 	struct m68k_fixup_info *fixup;
 
 	for (fixup = start; fixup < end; fixup++) {
@@ -125,5 +152,4 @@ void module_fixup(struct module *mod, struct m68k_fixup_info *start,
 			break;
 		}
 	}
-#endif
 }

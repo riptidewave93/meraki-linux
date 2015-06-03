@@ -16,7 +16,6 @@
 #include <linux/dvb/dmx.h>
 #include <linux/dvb/frontend.h>
 #include <linux/list.h>
-#include <linux/mod_devicetable.h>
 #include <linux/mutex.h>
 #include <linux/spinlock_types.h>
 #include <linux/types.h>
@@ -70,7 +69,15 @@ enum model_type {
 
 struct device;
 struct input_dev;
-struct fdtv_ir_context;
+struct firedtv;
+
+struct firedtv_backend {
+	int (*lock)(struct firedtv *fdtv, u64 addr, void *data, __be32 arg);
+	int (*read)(struct firedtv *fdtv, u64 addr, void *data, size_t len);
+	int (*write)(struct firedtv *fdtv, u64 addr, void *data, size_t len);
+	int (*start_iso)(struct firedtv *fdtv);
+	void (*stop_iso)(struct firedtv *fdtv);
+};
 
 struct firedtv {
 	struct device *device;
@@ -96,24 +103,34 @@ struct firedtv {
 	enum model_type		type;
 	char			subunit;
 	char			isochannel;
-	struct fdtv_ir_context	*ir_context;
-
 	fe_sec_voltage_t	voltage;
 	fe_sec_tone_mode_t	tone;
+
+	const struct firedtv_backend *backend;
+	void			*backend_data;
 
 	struct mutex		demux_mutex;
 	unsigned long		channel_active;
 	u16			channel_pid[16];
 
-	int			avc_data_length;
-	u8			avc_data[512];
+	size_t			response_length;
+	u8			response[512];
 };
+
+/* firedtv-1394.c */
+#ifdef CONFIG_DVB_FIREDTV_IEEE1394
+int fdtv_1394_init(struct ieee1394_device_id id_table[]);
+void fdtv_1394_exit(void);
+#else
+static inline int fdtv_1394_init(struct ieee1394_device_id it[]) { return 0; }
+static inline void fdtv_1394_exit(void) {}
+#endif
 
 /* firedtv-avc.c */
 int avc_recv(struct firedtv *fdtv, void *data, size_t length);
 int avc_tuner_status(struct firedtv *fdtv, struct firedtv_tuner_status *stat);
-struct dtv_frontend_properties;
-int avc_tuner_dsd(struct firedtv *fdtv, struct dtv_frontend_properties *params);
+struct dvb_frontend_parameters;
+int avc_tuner_dsd(struct firedtv *fdtv, struct dvb_frontend_parameters *params);
 int avc_tuner_set_pids(struct firedtv *fdtv, unsigned char pidc, u16 pid[]);
 int avc_tuner_get_ts(struct firedtv *fdtv);
 int avc_identify_subunit(struct firedtv *fdtv);
@@ -140,18 +157,15 @@ void fdtv_ca_release(struct firedtv *fdtv);
 /* firedtv-dvb.c */
 int fdtv_start_feed(struct dvb_demux_feed *dvbdmxfeed);
 int fdtv_stop_feed(struct dvb_demux_feed *dvbdmxfeed);
-int fdtv_dvb_register(struct firedtv *fdtv, const char *name);
+int fdtv_dvb_register(struct firedtv *fdtv);
 void fdtv_dvb_unregister(struct firedtv *fdtv);
+struct firedtv *fdtv_alloc(struct device *dev,
+			   const struct firedtv_backend *backend,
+			   const char *name, size_t name_len);
+extern const char *fdtv_model_names[];
 
 /* firedtv-fe.c */
-void fdtv_frontend_init(struct firedtv *fdtv, const char *name);
-
-/* firedtv-fw.c */
-int fdtv_lock(struct firedtv *fdtv, u64 addr, void *data);
-int fdtv_read(struct firedtv *fdtv, u64 addr, void *data);
-int fdtv_write(struct firedtv *fdtv, u64 addr, void *data, size_t len);
-int fdtv_start_iso(struct firedtv *fdtv);
-void fdtv_stop_iso(struct firedtv *fdtv);
+void fdtv_frontend_init(struct firedtv *fdtv);
 
 /* firedtv-rc.c */
 #ifdef CONFIG_DVB_FIREDTV_INPUT

@@ -26,6 +26,7 @@
 #include <linux/bitops.h>
 #include <linux/pci.h>
 #include <linux/ioport.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/serial.h>
 #include <linux/tty.h>
@@ -36,6 +37,7 @@
 #include <asm/irq.h>
 #include <asm/pgtable.h>
 #include <asm/page.h>
+#include <asm/system.h>
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
 
@@ -144,12 +146,10 @@ static struct pci_ops enp2611_pci_ops = {
 static struct pci_bus * __init enp2611_pci_scan_bus(int nr,
 						struct pci_sys_data *sys)
 {
-	return pci_scan_root_bus(NULL, sys->busnr, &enp2611_pci_ops, sys,
-				 &sys->resources);
+	return pci_scan_bus(sys->busnr, &enp2611_pci_ops, sys);
 }
 
-static int __init enp2611_pci_map_irq(const struct pci_dev *dev, u8 slot,
-	u8 pin)
+static int __init enp2611_pci_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	int irq;
 
@@ -254,12 +254,13 @@ static void __init enp2611_init_machine(void)
 
 MACHINE_START(ENP2611, "Radisys ENP-2611 PCI network processor board")
 	/* Maintainer: Lennert Buytenhek <buytenh@wantstofly.org> */
-	.atag_offset	= 0x100,
+	.phys_io	= IXP2000_UART_PHYS_BASE,
+	.io_pg_offst	= ((IXP2000_UART_VIRT_BASE) >> 18) & 0xfffc,
+	.boot_params	= 0x00000100,
 	.map_io		= enp2611_map_io,
 	.init_irq	= ixp2000_init_irq,
 	.timer		= &enp2611_timer,
 	.init_machine	= enp2611_init_machine,
-	.restart	= ixp2000_restart,
 MACHINE_END
 
 

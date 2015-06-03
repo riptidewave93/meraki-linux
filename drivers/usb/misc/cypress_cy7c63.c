@@ -32,7 +32,6 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/usb.h>
 
 #define DRIVER_AUTHOR		"Oliver Bock (bock@tfh-berlin.de)"
@@ -57,7 +56,7 @@
 
 
 /* table of devices that work with this driver */
-static const struct usb_device_id cypress_table[] = {
+static struct usb_device_id cypress_table [] = {
 	{ USB_DEVICE(CYPRESS_VENDOR_ID, CYPRESS_PRODUCT_ID) },
 	{ }
 };
@@ -271,7 +270,27 @@ static struct usb_driver cypress_driver = {
 	.id_table = cypress_table,
 };
 
-module_usb_driver(cypress_driver);
+static int __init cypress_init(void)
+{
+	int result;
+
+	/* register this driver with the USB subsystem */
+	result = usb_register(&cypress_driver);
+	if (result)
+		printk(KERN_ERR KBUILD_MODNAME ": usb_register failed! "
+		       "Error number: %d\n", result);
+
+	return result;
+}
+
+static void __exit cypress_exit(void)
+{
+	/* deregister this driver with the USB subsystem */
+	usb_deregister(&cypress_driver);
+}
+
+module_init(cypress_init);
+module_exit(cypress_exit);
 
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);

@@ -9,7 +9,6 @@
 #include <linux/mm.h>
 #include <linux/kexec.h>
 #include <linux/string.h>
-#include <linux/gfp.h>
 #include <linux/reboot.h>
 #include <linux/numa.h>
 #include <linux/ftrace.h>
@@ -19,7 +18,6 @@
 #include <asm/pgtable.h>
 #include <asm/tlbflush.h>
 #include <asm/mmu_context.h>
-#include <asm/debugreg.h>
 
 static int init_one_level2_page(struct kimage *image, pgd_t *pgd,
 				unsigned long addr)
@@ -36,7 +34,7 @@ static int init_one_level2_page(struct kimage *image, pgd_t *pgd,
 		if (!page)
 			goto out;
 		pud = (pud_t *)page_address(page);
-		clear_page(pud);
+		memset(pud, 0, PAGE_SIZE);
 		set_pgd(pgd, __pgd(__pa(pud) | _KERNPG_TABLE));
 	}
 	pud = pud_offset(pgd, addr);
@@ -45,7 +43,7 @@ static int init_one_level2_page(struct kimage *image, pgd_t *pgd,
 		if (!page)
 			goto out;
 		pmd = (pmd_t *)page_address(page);
-		clear_page(pmd);
+		memset(pmd, 0, PAGE_SIZE);
 		set_pud(pud, __pud(__pa(pmd) | _KERNPG_TABLE));
 	}
 	pmd = pmd_offset(pud, addr);
@@ -284,7 +282,6 @@ void machine_kexec(struct kimage *image)
 
 	/* Interrupts aren't acceptable while we reboot */
 	local_irq_disable();
-	hw_breakpoint_disable();
 
 	if (image->preserve_context) {
 #ifdef CONFIG_X86_IO_APIC

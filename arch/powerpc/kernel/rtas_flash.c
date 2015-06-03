@@ -6,7 +6,7 @@
  *      as published by the Free Software Foundation; either version
  *      2 of the License, or (at your option) any later version.
  *
- * /proc/powerpc/rtas/firmware_flash interface
+ * /proc/ppc64/rtas/firmware_flash interface
  *
  * This file implements a firmware_flash interface to pump a firmware
  * image into the kernel.  At reboot time rtas_restart() will see the
@@ -15,9 +15,7 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/proc_fs.h>
-#include <linux/reboot.h>
 #include <asm/delay.h>
 #include <asm/uaccess.h>
 #include <asm/rtas.h>
@@ -111,7 +109,7 @@ static struct kmem_cache *flash_block_cache = NULL;
  * For convenience as we build the list we use virtual addrs,
  * we do not fill in the version number, and the length field
  * is treated as the number of entries currently in the block
- * (i.e. not a byte count).  This is all fixed when calling 
+ * (i.e. not a byte count).  This is all fixed when calling
  * the flash routine.
  */
 
@@ -257,16 +255,31 @@ static ssize_t rtas_flash_read(struct file *file, char __user *buf,
 	struct proc_dir_entry *dp = PDE(file->f_path.dentry->d_inode);
 	struct rtas_update_flash_t *uf;
 	char msg[RTAS_MSG_MAXLEN];
+	int msglen;
 
-	uf = dp->data;
+	uf = (struct rtas_update_flash_t *) dp->data;
 
 	if (!strcmp(dp->name, FIRMWARE_FLASH_NAME)) {
 		get_flash_status_msg(uf->status, msg);
 	} else {	   /* FIRMWARE_UPDATE_NAME */
 		sprintf(msg, "%d\n", uf->status);
 	}
+	msglen = strlen(msg);
+	if (msglen > count)
+		msglen = count;
 
-	return simple_read_from_buffer(buf, count, ppos, msg, strlen(msg));
+	if (ppos && *ppos != 0)
+		return 0;	/* be cheap */
+
+	if (!access_ok(VERIFY_WRITE, buf, msglen))
+		return -EINVAL;
+
+	if (copy_to_user(buf, msg, msglen))
+		return -EFAULT;
+
+	if (ppos)
+		*ppos = msglen;
+	return msglen;
 }
 
 /* constructor for flash_block_cache */
@@ -380,13 +393,26 @@ static ssize_t manage_flash_read(struct file *file, char __user *buf,
 	char msg[RTAS_MSG_MAXLEN];
 	int msglen;
 
-	args_buf = dp->data;
+	args_buf = (struct rtas_manage_flash_t *) dp->data;
 	if (args_buf == NULL)
 		return 0;
 
 	msglen = sprintf(msg, "%d\n", args_buf->status);
+	if (msglen > count)
+		msglen = count;
 
-	return simple_read_from_buffer(buf, count, ppos, msg, msglen);
+	if (ppos && *ppos != 0)
+		return 0;	/* be cheap */
+
+	if (!access_ok(VERIFY_WRITE, buf, msglen))
+		return -EINVAL;
+
+	if (copy_to_user(buf, msg, msglen))
+		return -EFAULT;
+
+	if (ppos)
+		*ppos = msglen;
+	return msglen;
 }
 
 static ssize_t manage_flash_write(struct file *file, const char __user *buf,
@@ -468,11 +494,24 @@ static ssize_t validate_flash_read(struct file *file, char __user *buf,
 	char msg[RTAS_MSG_MAXLEN];
 	int msglen;
 
-	args_buf = dp->data;
+	args_buf = (struct rtas_validate_flash_t *) dp->data;
 
+	if (ppos && *ppos != 0)
+		return 0;	/* be cheap */
+	
 	msglen = get_validate_flash_msg(args_buf, msg);
+	if (msglen > count)
+		msglen = count;
 
-	return simple_read_from_buffer(buf, count, ppos, msg, msglen);
+	if (!access_ok(VERIFY_WRITE, buf, msglen))
+		return -EINVAL;
+
+	if (copy_to_user(buf, msg, msglen))
+		return -EFAULT;
+
+	if (ppos)
+		*ppos = msglen;
+	return msglen;
 }
 
 static ssize_t validate_flash_write(struct file *file, const char __user *buf,
@@ -566,12 +605,6 @@ static void rtas_flash_firmware(int reboot_type)
 		printk(KERN_ALERT "FLASH: firmware will not be flashed\n");
 		return;
 	}
-
-	/*
-	 * Just before starting the firmware flash, cancel the event scan work
-	 * to avoid any soft lockup issues.
-	 */
-	rtas_cancel_event_scan();
 
 	/*
 	 * NOTE: the "first" block must be under 4GB, so we create
@@ -682,7 +715,6 @@ static const struct file_operations rtas_flash_operations = {
 	.write		= rtas_flash_write,
 	.open		= rtas_excl_open,
 	.release	= rtas_flash_release,
-	.llseek		= default_llseek,
 };
 
 static const struct file_operations manage_flash_operations = {
@@ -691,7 +723,6 @@ static const struct file_operations manage_flash_operations = {
 	.write		= manage_flash_write,
 	.open		= rtas_excl_open,
 	.release	= rtas_excl_release,
-	.llseek		= default_llseek,
 };
 
 static const struct file_operations validate_flash_operations = {
@@ -700,7 +731,6 @@ static const struct file_operations validate_flash_operations = {
 	.write		= validate_flash_write,
 	.open		= rtas_excl_open,
 	.release	= validate_flash_release,
-	.llseek		= default_llseek,
 };
 
 static int __init rtas_flash_init(void)
@@ -713,7 +743,7 @@ static int __init rtas_flash_init(void)
 		return 1;
 	}
 
-	firmware_flash_pde = create_flash_pde("powerpc/rtas/"
+	firmware_flash_pde = create_flash_pde("ppc64/rtas/"
 					      FIRMWARE_FLASH_NAME,
 					      &rtas_flash_operations);
 	if (firmware_flash_pde == NULL) {
@@ -727,7 +757,7 @@ static int __init rtas_flash_init(void)
 	if (rc != 0)
 		goto cleanup;
 
-	firmware_update_pde = create_flash_pde("powerpc/rtas/"
+	firmware_update_pde = create_flash_pde("ppc64/rtas/"
 					       FIRMWARE_UPDATE_NAME,
 					       &rtas_flash_operations);
 	if (firmware_update_pde == NULL) {
@@ -741,7 +771,7 @@ static int __init rtas_flash_init(void)
 	if (rc != 0)
 		goto cleanup;
 
-	validate_pde = create_flash_pde("powerpc/rtas/" VALIDATE_FLASH_NAME,
+	validate_pde = create_flash_pde("ppc64/rtas/" VALIDATE_FLASH_NAME,
 			      		&validate_flash_operations);
 	if (validate_pde == NULL) {
 		rc = -ENOMEM;
@@ -754,7 +784,7 @@ static int __init rtas_flash_init(void)
 	if (rc != 0)
 		goto cleanup;
 
-	manage_pde = create_flash_pde("powerpc/rtas/" MANAGE_FLASH_NAME,
+	manage_pde = create_flash_pde("ppc64/rtas/" MANAGE_FLASH_NAME,
 				      &manage_flash_operations);
 	if (manage_pde == NULL) {
 		rc = -ENOMEM;

@@ -29,7 +29,6 @@
 #include <linux/mii.h>
 #include <linux/usb.h>
 #include <linux/usb/usbnet.h>
-#include <linux/slab.h>
 
 #include <asm/unaligned.h>
 
@@ -64,13 +63,13 @@ struct nc_header {		// packed:
 	// all else is optional, and must start with:
 	// __le16	vendorId;	// from usb-if
 	// __le16	productId;
-} __packed;
+} __attribute__((__packed__));
 
 #define	PAD_BYTE	((unsigned char)0xAC)
 
 struct nc_trailer {
 	__le16	packet_id;
-} __packed;
+} __attribute__((__packed__));
 
 // packets may use FLAG_FRAMING_NC and optional pad
 #define FRAMED_SIZE(mtu) (sizeof (struct nc_header) \
@@ -204,23 +203,25 @@ static void nc_dump_registers(struct usbnet *dev)
 
 static inline void nc_dump_usbctl(struct usbnet *dev, u16 usbctl)
 {
-	netif_dbg(dev, link, dev->net,
-		  "net1080 %s-%s usbctl 0x%x:%s%s%s%s%s; this%s%s; other%s%s; r/o 0x%x\n",
-		  dev->udev->bus->bus_name, dev->udev->devpath,
-		  usbctl,
-		  (usbctl & USBCTL_ENABLE_LANG) ? " lang" : "",
-		  (usbctl & USBCTL_ENABLE_MFGR) ? " mfgr" : "",
-		  (usbctl & USBCTL_ENABLE_PROD) ? " prod" : "",
-		  (usbctl & USBCTL_ENABLE_SERIAL) ? " serial" : "",
-		  (usbctl & USBCTL_ENABLE_DEFAULTS) ? " defaults" : "",
+	if (!netif_msg_link(dev))
+		return;
+	devdbg(dev, "net1080 %s-%s usbctl 0x%x:%s%s%s%s%s;"
+			" this%s%s;"
+			" other%s%s; r/o 0x%x",
+		dev->udev->bus->bus_name, dev->udev->devpath,
+		usbctl,
+		(usbctl & USBCTL_ENABLE_LANG) ? " lang" : "",
+		(usbctl & USBCTL_ENABLE_MFGR) ? " mfgr" : "",
+		(usbctl & USBCTL_ENABLE_PROD) ? " prod" : "",
+		(usbctl & USBCTL_ENABLE_SERIAL) ? " serial" : "",
+		(usbctl & USBCTL_ENABLE_DEFAULTS) ? " defaults" : "",
 
-		  (usbctl & USBCTL_FLUSH_THIS) ? " FLUSH" : "",
-		  (usbctl & USBCTL_DISCONN_THIS) ? " DIS" : "",
-
-		  (usbctl & USBCTL_FLUSH_OTHER) ? " FLUSH" : "",
-		  (usbctl & USBCTL_DISCONN_OTHER) ? " DIS" : "",
-
-		  usbctl & ~USBCTL_WRITABLE_MASK);
+		(usbctl & USBCTL_FLUSH_OTHER) ? " FLUSH" : "",
+		(usbctl & USBCTL_DISCONN_OTHER) ? " DIS" : "",
+		(usbctl & USBCTL_FLUSH_THIS) ? " FLUSH" : "",
+		(usbctl & USBCTL_DISCONN_THIS) ? " DIS" : "",
+		usbctl & ~USBCTL_WRITABLE_MASK
+		);
 }
 
 /*-------------------------------------------------------------------------*/
@@ -247,26 +248,30 @@ static inline void nc_dump_usbctl(struct usbnet *dev, u16 usbctl)
 
 static inline void nc_dump_status(struct usbnet *dev, u16 status)
 {
-	netif_dbg(dev, link, dev->net,
-		  "net1080 %s-%s status 0x%x: this (%c) PKT=%d%s%s%s; other PKT=%d%s%s%s; unspec 0x%x\n",
-		  dev->udev->bus->bus_name, dev->udev->devpath,
-		  status,
+	if (!netif_msg_link(dev))
+		return;
+	devdbg(dev, "net1080 %s-%s status 0x%x:"
+			" this (%c) PKT=%d%s%s%s;"
+			" other PKT=%d%s%s%s; unspec 0x%x",
+		dev->udev->bus->bus_name, dev->udev->devpath,
+		status,
 
-		  // XXX the packet counts don't seem right
-		  // (1 at reset, not 0); maybe UNSPEC too
+		// XXX the packet counts don't seem right
+		// (1 at reset, not 0); maybe UNSPEC too
 
-		  (status & STATUS_PORT_A) ? 'A' : 'B',
-		  STATUS_PACKETS_THIS(status),
-		  (status & STATUS_CONN_THIS) ? " CON" : "",
-		  (status & STATUS_SUSPEND_THIS) ? " SUS" : "",
-		  (status & STATUS_MAILBOX_THIS) ? " MBOX" : "",
+		(status & STATUS_PORT_A) ? 'A' : 'B',
+		STATUS_PACKETS_THIS(status),
+		(status & STATUS_CONN_THIS) ? " CON" : "",
+		(status & STATUS_SUSPEND_THIS) ? " SUS" : "",
+		(status & STATUS_MAILBOX_THIS) ? " MBOX" : "",
 
-		  STATUS_PACKETS_OTHER(status),
-		  (status & STATUS_CONN_OTHER) ? " CON" : "",
-		  (status & STATUS_SUSPEND_OTHER) ? " SUS" : "",
-		  (status & STATUS_MAILBOX_OTHER) ? " MBOX" : "",
+		STATUS_PACKETS_OTHER(status),
+		(status & STATUS_CONN_OTHER) ? " CON" : "",
+		(status & STATUS_SUSPEND_OTHER) ? " SUS" : "",
+		(status & STATUS_MAILBOX_OTHER) ? " MBOX" : "",
 
-		  status & STATUS_UNSPEC_MASK);
+		status & STATUS_UNSPEC_MASK
+		);
 }
 
 /*-------------------------------------------------------------------------*/
@@ -281,9 +286,10 @@ static inline void nc_dump_status(struct usbnet *dev, u16 status)
 
 static inline void nc_dump_ttl(struct usbnet *dev, u16 ttl)
 {
-	netif_dbg(dev, link, dev->net, "net1080 %s-%s ttl 0x%x this = %d, other = %d\n",
-		  dev->udev->bus->bus_name, dev->udev->devpath,
-		  ttl, TTL_THIS(ttl), TTL_OTHER(ttl));
+	if (netif_msg_link(dev))
+		devdbg(dev, "net1080 %s-%s ttl 0x%x this = %d, other = %d",
+			dev->udev->bus->bus_name, dev->udev->devpath,
+			ttl, TTL_THIS(ttl), TTL_OTHER(ttl));
 }
 
 /*-------------------------------------------------------------------------*/
@@ -328,9 +334,11 @@ static int net1080_reset(struct usbnet *dev)
 			MK_TTL(NC_READ_TTL_MS, TTL_OTHER(ttl)) );
 	dbg("%s: assigned TTL, %d ms", dev->net->name, NC_READ_TTL_MS);
 
-	netif_info(dev, link, dev->net, "port %c, peer %sconnected\n",
-		   (status & STATUS_PORT_A) ? 'A' : 'B',
-		   (status & STATUS_CONN_OTHER) ? "" : "dis");
+	if (netif_msg_link(dev))
+		devinfo(dev, "port %c, peer %sconnected",
+			(status & STATUS_PORT_A) ? 'A' : 'B',
+			(status & STATUS_CONN_OTHER) ? "" : "dis"
+			);
 	retval = 0;
 
 done:
@@ -407,8 +415,8 @@ static void nc_ensure_sync(struct usbnet *dev)
 			return;
 		}
 
-		netif_dbg(dev, rx_err, dev->net,
-			  "flush net1080; too many framing errors\n");
+		if (netif_msg_rx_err(dev))
+			devdbg(dev, "flush net1080; too many framing errors");
 		dev->frame_errors = 0;
 	}
 }
@@ -418,10 +426,6 @@ static int net1080_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 	struct nc_header	*header;
 	struct nc_trailer	*trailer;
 	u16			hdr_len, packet_len;
-
-	/* This check is no longer done by usbnet */
-	if (skb->len < dev->net->hard_header_len)
-		return 0;
 
 	if (!(skb->len & 0x01)) {
 #ifdef DEBUG
@@ -482,8 +486,8 @@ static int net1080_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 		return 0;
 	}
 #if 0
-	netdev_dbg(dev->net, "frame <rx h %d p %d id %d\n", header->hdr_len,
-		   header->packet_len, header->packet_id);
+	devdbg(dev, "frame <rx h %d p %d id %d", header->hdr_len,
+		header->packet_len, header->packet_id);
 #endif
 	dev->frame_errors = 0;
 	return 1;
@@ -543,9 +547,9 @@ encapsulate:
 	trailer = (struct nc_trailer *) skb_put(skb, sizeof *trailer);
 	put_unaligned(header->packet_id, &trailer->packet_id);
 #if 0
-	netdev_dbg(dev->net, "frame >tx h %d p %d id %d\n",
-		   header->hdr_len, header->packet_len,
-		   header->packet_id);
+	devdbg(dev, "frame >tx h %d p %d id %d",
+		header->hdr_len, header->packet_len,
+		header->packet_id);
 #endif
 	return skb;
 }
@@ -564,7 +568,7 @@ static int net1080_bind(struct usbnet *dev, struct usb_interface *intf)
 
 static const struct driver_info	net1080_info = {
 	.description =	"NetChip TurboCONNECT",
-	.flags =	FLAG_POINTTOPOINT | FLAG_FRAMING_NC,
+	.flags =	FLAG_FRAMING_NC,
 	.bind =		net1080_bind,
 	.reset =	net1080_reset,
 	.check_connect = net1080_check_connect,
@@ -593,7 +597,17 @@ static struct usb_driver net1080_driver = {
 	.resume =	usbnet_resume,
 };
 
-module_usb_driver(net1080_driver);
+static int __init net1080_init(void)
+{
+ 	return usb_register(&net1080_driver);
+}
+module_init(net1080_init);
+
+static void __exit net1080_exit(void)
+{
+ 	usb_deregister(&net1080_driver);
+}
+module_exit(net1080_exit);
 
 MODULE_AUTHOR("David Brownell");
 MODULE_DESCRIPTION("NetChip 1080 based USB Host-to-Host Links");

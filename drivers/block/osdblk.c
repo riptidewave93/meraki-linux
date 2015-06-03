@@ -63,7 +63,6 @@
 #include <linux/device.h>
 #include <linux/module.h>
 #include <linux/fs.h>
-#include <linux/slab.h>
 #include <scsi/osd_initiator.h>
 #include <scsi/osd_attributes.h>
 #include <scsi/osd_sec.h>
@@ -310,7 +309,7 @@ static void osdblk_rq_fn(struct request_queue *q)
 			break;
 
 		/* filter out block requests we don't understand */
-		if (rq->cmd_type != REQ_TYPE_FS) {
+		if (!blk_fs_request(rq) && !blk_barrier_rq(rq)) {
 			blk_end_request_all(rq, 0);
 			continue;
 		}
@@ -322,7 +321,7 @@ static void osdblk_rq_fn(struct request_queue *q)
 		 * driver-specific, etc.
 		 */
 
-		do_flush = rq->cmd_flags & REQ_FLUSH;
+		do_flush = (rq->special == (void *) 0xdeadbeefUL);
 		do_write = (rq_data_dir(rq) == WRITE);
 
 		if (!do_flush) { /* osd_flush does not use a bio */
@@ -377,6 +376,14 @@ static void osdblk_rq_fn(struct request_queue *q)
 		 */
 		rq->special = NULL;
 	}
+}
+
+static void osdblk_prepare_flush(struct request_queue *q, struct request *rq)
+{
+	/* add driver-specific marker, to indicate that this request
+	 * is a flush command
+	 */
+	rq->special = (void *) 0xdeadbeefUL;
 }
 
 static void osdblk_free_disk(struct osdblk_device *osdev)
@@ -438,7 +445,7 @@ static int osdblk_init_disk(struct osdblk_device *osdev)
 	blk_queue_stack_limits(q, osd_request_queue(osdev->osd));
 
 	blk_queue_prep_rq(q, blk_queue_start_tag);
-	blk_queue_flush(q, REQ_FLUSH);
+	blk_queue_ordered(q, QUEUE_ORDERED_DRAIN_FLUSH, osdblk_prepare_flush);
 
 	disk->queue = q;
 
@@ -469,9 +476,7 @@ static void class_osdblk_release(struct class *cls)
 	kfree(cls);
 }
 
-static ssize_t class_osdblk_list(struct class *c,
-				struct class_attribute *attr,
-				char *data)
+static ssize_t class_osdblk_list(struct class *c, char *data)
 {
 	int n = 0;
 	struct list_head *tmp;
@@ -495,9 +500,7 @@ static ssize_t class_osdblk_list(struct class *c,
 	return n;
 }
 
-static ssize_t class_osdblk_add(struct class *c,
-				struct class_attribute *attr,
-				const char *buf, size_t count)
+static ssize_t class_osdblk_add(struct class *c, const char *buf, size_t count)
 {
 	struct osdblk_device *osdev;
 	ssize_t rc;
@@ -589,9 +592,7 @@ err_out_mod:
 	return rc;
 }
 
-static ssize_t class_osdblk_remove(struct class *c,
-					struct class_attribute *attr,
-					const char *buf,
+static ssize_t class_osdblk_remove(struct class *c, const char *buf,
 					size_t count)
 {
 	struct osdblk_device *osdev = NULL;

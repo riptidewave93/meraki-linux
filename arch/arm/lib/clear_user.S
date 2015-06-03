@@ -45,10 +45,9 @@ USER(		strnebt	r2, [r0])
 		mov	r0, #0
 		ldmfd	sp!, {r1, pc}
 ENDPROC(__clear_user)
-ENDPROC(__clear_user_std)
 
-		.pushsection .fixup,"ax"
+		.section .fixup,"ax"
 		.align	0
 9001:		ldmfd	sp!, {r0, pc}
-		.popsection
+		.previous
 

@@ -16,8 +16,6 @@
  *
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/types.h>
@@ -34,7 +32,6 @@
 #include <mach/hardware.h>
 
 #include <asm/mach-types.h>
-#include <asm/system_info.h>
 #include <asm/hardware/dec21285.h>
 
 /*
@@ -52,7 +49,7 @@ static unsigned long timer_alive;
  */
 static void watchdog_fire(int irq, void *dev_id)
 {
-	pr_crit("Would Reboot\n");
+	printk(KERN_CRIT "Watchdog: Would Reboot.\n");
 	*CSR_TIMER4_CNTL = 0;
 	*CSR_TIMER4_CLR = 0;
 }
@@ -208,11 +205,13 @@ static int __init footbridge_watchdog_init(void)
 	if (retval < 0)
 		return retval;
 
-	pr_info("Footbridge Watchdog Timer: 0.01, timer margin: %d sec\n",
-		soft_margin);
+	printk(KERN_INFO
+		"Footbridge Watchdog Timer: 0.01, timer margin: %d sec\n",
+								soft_margin);
 
 	if (machine_is_cats())
-		pr_warn("Warning: Watchdog reset may not work on this machine\n");
+		printk(KERN_WARNING
+		  "Warning: Watchdog reset may not work on this machine.\n");
 	return 0;
 }
 

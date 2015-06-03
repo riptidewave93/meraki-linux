@@ -32,101 +32,109 @@
 #define MAX_HDRIVES     MAX_LDRIVES             /* max. host drive count */
 #endif
 
+/* typedefs */
+#ifdef __KERNEL__
+typedef u32     ulong32;
+typedef u64     ulong64;
+#endif
+
+#define PACKED  __attribute__((packed))
+
 /* scatter/gather element */
 typedef struct {
-    u32     sg_ptr;                         /* address */
-    u32     sg_len;                         /* length */
-} __attribute__((packed)) gdth_sg_str;
+    ulong32     sg_ptr;                         /* address */
+    ulong32     sg_len;                         /* length */
+} PACKED gdth_sg_str;
 
 /* scatter/gather element - 64bit addresses */
 typedef struct {
-    u64     sg_ptr;                         /* address */
-    u32     sg_len;                         /* length */
-} __attribute__((packed)) gdth_sg64_str;
+    ulong64     sg_ptr;                         /* address */
+    ulong32     sg_len;                         /* length */
+} PACKED gdth_sg64_str;
 
 /* command structure */
 typedef struct {
-    u32     BoardNode;                      /* board node (always 0) */
-    u32     CommandIndex;                   /* command number */
-    u16      OpCode;                         /* the command (READ,..) */
+    ulong32     BoardNode;                      /* board node (always 0) */
+    ulong32     CommandIndex;                   /* command number */
+    ushort      OpCode;                         /* the command (READ,..) */
     union {
         struct {
-            u16      DeviceNo;               /* number of cache drive */
-            u32     BlockNo;                /* block number */
-            u32     BlockCnt;               /* block count */
-            u32     DestAddr;               /* dest. addr. (if s/g: -1) */
-            u32     sg_canz;                /* s/g element count */
+            ushort      DeviceNo;               /* number of cache drive */
+            ulong32     BlockNo;                /* block number */
+            ulong32     BlockCnt;               /* block count */
+            ulong32     DestAddr;               /* dest. addr. (if s/g: -1) */
+            ulong32     sg_canz;                /* s/g element count */
             gdth_sg_str sg_lst[GDTH_MAXSG];     /* s/g list */
-        } __attribute__((packed)) cache;                         /* cache service cmd. str. */
+        } PACKED cache;                         /* cache service cmd. str. */
         struct {
-            u16      DeviceNo;               /* number of cache drive */
-            u64     BlockNo;                /* block number */
-            u32     BlockCnt;               /* block count */
-            u64     DestAddr;               /* dest. addr. (if s/g: -1) */
-            u32     sg_canz;                /* s/g element count */
+            ushort      DeviceNo;               /* number of cache drive */
+            ulong64     BlockNo;                /* block number */
+            ulong32     BlockCnt;               /* block count */
+            ulong64     DestAddr;               /* dest. addr. (if s/g: -1) */
+            ulong32     sg_canz;                /* s/g element count */
             gdth_sg64_str sg_lst[GDTH_MAXSG];   /* s/g list */
-        } __attribute__((packed)) cache64;                       /* cache service cmd. str. */
+        } PACKED cache64;                       /* cache service cmd. str. */
         struct {
-            u16      param_size;             /* size of p_param buffer */
-            u32     subfunc;                /* IOCTL function */
-            u32     channel;                /* device */
-            u64     p_param;                /* buffer */
-        } __attribute__((packed)) ioctl;                         /* IOCTL command structure */
+            ushort      param_size;             /* size of p_param buffer */
+            ulong32     subfunc;                /* IOCTL function */
+            ulong32     channel;                /* device */
+            ulong64     p_param;                /* buffer */
+        } PACKED ioctl;                         /* IOCTL command structure */
         struct {
-            u16      reserved;
+            ushort      reserved;
             union {
                 struct {
-                    u32  msg_handle;        /* message handle */
-                    u64  msg_addr;          /* message buffer address */
-                } __attribute__((packed)) msg;
-                u8       data[12];          /* buffer for rtc data, ... */
+                    ulong32  msg_handle;        /* message handle */
+                    ulong64  msg_addr;          /* message buffer address */
+                } PACKED msg;
+                unchar       data[12];          /* buffer for rtc data, ... */
             } su;
-        } __attribute__((packed)) screen;                        /* screen service cmd. str. */
+        } PACKED screen;                        /* screen service cmd. str. */
         struct {
-            u16      reserved;
-            u32     direction;              /* data direction */
-            u32     mdisc_time;             /* disc. time (0: no timeout)*/
-            u32     mcon_time;              /* connect time(0: no to.) */
-            u32     sdata;                  /* dest. addr. (if s/g: -1) */
-            u32     sdlen;                  /* data length (bytes) */
-            u32     clen;                   /* SCSI cmd. length(6,10,12) */
-            u8      cmd[12];                /* SCSI command */
-            u8      target;                 /* target ID */
-            u8      lun;                    /* LUN */
-            u8      bus;                    /* SCSI bus number */
-            u8      priority;               /* only 0 used */
-            u32     sense_len;              /* sense data length */
-            u32     sense_data;             /* sense data addr. */
-            u32     link_p;                 /* linked cmds (not supp.) */
-            u32     sg_ranz;                /* s/g element count */
+            ushort      reserved;
+            ulong32     direction;              /* data direction */
+            ulong32     mdisc_time;             /* disc. time (0: no timeout)*/
+            ulong32     mcon_time;              /* connect time(0: no to.) */
+            ulong32     sdata;                  /* dest. addr. (if s/g: -1) */
+            ulong32     sdlen;                  /* data length (bytes) */
+            ulong32     clen;                   /* SCSI cmd. length(6,10,12) */
+            unchar      cmd[12];                /* SCSI command */
+            unchar      target;                 /* target ID */
+            unchar      lun;                    /* LUN */
+            unchar      bus;                    /* SCSI bus number */
+            unchar      priority;               /* only 0 used */
+            ulong32     sense_len;              /* sense data length */
+            ulong32     sense_data;             /* sense data addr. */
+            ulong32     link_p;                 /* linked cmds (not supp.) */
+            ulong32     sg_ranz;                /* s/g element count */
             gdth_sg_str sg_lst[GDTH_MAXSG];     /* s/g list */
-        } __attribute__((packed)) raw;                           /* raw service cmd. struct. */
+        } PACKED raw;                           /* raw service cmd. struct. */
         struct {
-            u16      reserved;
-            u32     direction;              /* data direction */
-            u32     mdisc_time;             /* disc. time (0: no timeout)*/
-            u32     mcon_time;              /* connect time(0: no to.) */
-            u64     sdata;                  /* dest. addr. (if s/g: -1) */
-            u32     sdlen;                  /* data length (bytes) */
-            u32     clen;                   /* SCSI cmd. length(6,..,16) */
-            u8      cmd[16];                /* SCSI command */
-            u8      target;                 /* target ID */
-            u8      lun;                    /* LUN */
-            u8      bus;                    /* SCSI bus number */
-            u8      priority;               /* only 0 used */
-            u32     sense_len;              /* sense data length */
-            u64     sense_data;             /* sense data addr. */
-            u32     sg_ranz;                /* s/g element count */
+            ushort      reserved;
+            ulong32     direction;              /* data direction */
+            ulong32     mdisc_time;             /* disc. time (0: no timeout)*/
+            ulong32     mcon_time;              /* connect time(0: no to.) */
+            ulong64     sdata;                  /* dest. addr. (if s/g: -1) */
+            ulong32     sdlen;                  /* data length (bytes) */
+            ulong32     clen;                   /* SCSI cmd. length(6,..,16) */
+            unchar      cmd[16];                /* SCSI command */
+            unchar      target;                 /* target ID */
+            unchar      lun;                    /* LUN */
+            unchar      bus;                    /* SCSI bus number */
+            unchar      priority;               /* only 0 used */
+            ulong32     sense_len;              /* sense data length */
+            ulong64     sense_data;             /* sense data addr. */
+            ulong32     sg_ranz;                /* s/g element count */
             gdth_sg64_str sg_lst[GDTH_MAXSG];   /* s/g list */
-        } __attribute__((packed)) raw64;                         /* raw service cmd. struct. */
+        } PACKED raw64;                         /* raw service cmd. struct. */
     } u;
     /* additional variables */
-    u8      Service;                        /* controller service */
-    u8      reserved;
-    u16      Status;                         /* command result */
-    u32     Info;                           /* additional information */
+    unchar      Service;                        /* controller service */
+    unchar      reserved;
+    ushort      Status;                         /* command result */
+    ulong32     Info;                           /* additional information */
     void        *RequestBuffer;                 /* request buffer */
-} __attribute__((packed)) gdth_cmd_str;
+} PACKED gdth_cmd_str;
 
 /* controller event structure */
 #define ES_ASYNC    1
@@ -134,129 +142,129 @@ typedef struct {
 #define ES_TEST     3
 #define ES_SYNC     4
 typedef struct {
-    u16                  size;               /* size of structure */
+    ushort                  size;               /* size of structure */
     union {
         char                stream[16];
         struct {
-            u16          ionode;
-            u16          service;
-            u32         index;
-        } __attribute__((packed)) driver;
+            ushort          ionode;
+            ushort          service;
+            ulong32         index;
+        } PACKED driver;
         struct {
-            u16          ionode;
-            u16          service;
-            u16          status;
-            u32         info;
-            u8          scsi_coord[3];
-        } __attribute__((packed)) async;
+            ushort          ionode;
+            ushort          service;
+            ushort          status;
+            ulong32         info;
+            unchar          scsi_coord[3];
+        } PACKED async;
         struct {
-            u16          ionode;
-            u16          service;
-            u16          status;
-            u32         info;
-            u16          hostdrive;
-            u8          scsi_coord[3];
-            u8          sense_key;
-        } __attribute__((packed)) sync;
+            ushort          ionode;
+            ushort          service;
+            ushort          status;
+            ulong32         info;
+            ushort          hostdrive;
+            unchar          scsi_coord[3];
+            unchar          sense_key;
+        } PACKED sync;
         struct {
-            u32         l1, l2, l3, l4;
-        } __attribute__((packed)) test;
+            ulong32         l1, l2, l3, l4;
+        } PACKED test;
     } eu;
-    u32                 severity;
-    u8                  event_string[256];          
-} __attribute__((packed)) gdth_evt_data;
+    ulong32                 severity;
+    unchar                  event_string[256];          
+} PACKED gdth_evt_data;
 
 typedef struct {
-    u32         first_stamp;
-    u32         last_stamp;
-    u16          same_count;
-    u16          event_source;
-    u16          event_idx;
-    u8          application;
-    u8          reserved;
+    ulong32         first_stamp;
+    ulong32         last_stamp;
+    ushort          same_count;
+    ushort          event_source;
+    ushort          event_idx;
+    unchar          application;
+    unchar          reserved;
     gdth_evt_data   event_data;
-} __attribute__((packed)) gdth_evt_str;
+} PACKED gdth_evt_str;
 
 
 #ifdef GDTH_IOCTL_PROC
 /* IOCTL structure (write) */
 typedef struct {
-    u32                 magic;              /* IOCTL magic */
-    u16                  ioctl;              /* IOCTL */
-    u16                  ionode;             /* controller number */
-    u16                  service;            /* controller service */
-    u16                  timeout;            /* timeout */
+    ulong32                 magic;              /* IOCTL magic */
+    ushort                  ioctl;              /* IOCTL */
+    ushort                  ionode;             /* controller number */
+    ushort                  service;            /* controller service */
+    ushort                  timeout;            /* timeout */
     union {
         struct {
-            u8          command[512];       /* controller command */
-            u8          data[1];            /* add. data */
+            unchar          command[512];       /* controller command */
+            unchar          data[1];            /* add. data */
         } general;
         struct {
-            u8          lock;               /* lock/unlock */
-            u8          drive_cnt;          /* drive count */
-            u16          drives[MAX_HDRIVES];/* drives */
+            unchar          lock;               /* lock/unlock */
+            unchar          drive_cnt;          /* drive count */
+            ushort          drives[MAX_HDRIVES];/* drives */
         } lockdrv;
         struct {
-            u8          lock;               /* lock/unlock */
-            u8          channel;            /* channel */
+            unchar          lock;               /* lock/unlock */
+            unchar          channel;            /* channel */
         } lockchn;
         struct {
             int             erase;              /* erase event ? */
             int             handle;
-            u8          evt[EVENT_SIZE];    /* event structure */
+            unchar          evt[EVENT_SIZE];    /* event structure */
         } event;
         struct {
-            u8          bus;                /* SCSI bus */
-            u8          target;             /* target ID */
-            u8          lun;                /* LUN */
-            u8          cmd_len;            /* command length */
-            u8          cmd[12];            /* SCSI command */
+            unchar          bus;                /* SCSI bus */
+            unchar          target;             /* target ID */
+            unchar          lun;                /* LUN */
+            unchar          cmd_len;            /* command length */
+            unchar          cmd[12];            /* SCSI command */
         } scsi;
         struct {
-            u16          hdr_no;             /* host drive number */
-            u8          flag;               /* old meth./add/remove */
+            ushort          hdr_no;             /* host drive number */
+            unchar          flag;               /* old meth./add/remove */
         } rescan;
     } iu;
 } gdth_iowr_str;
 
 /* IOCTL structure (read) */
 typedef struct {
-    u32                 size;               /* buffer size */
-    u32                 status;             /* IOCTL error code */
+    ulong32                 size;               /* buffer size */
+    ulong32                 status;             /* IOCTL error code */
     union {
         struct {
-            u8          data[1];            /* data */
+            unchar          data[1];            /* data */
         } general;
         struct {
-            u16          version;            /* driver version */
+            ushort          version;            /* driver version */
         } drvers;
         struct {
-            u8          type;               /* controller type */
-            u16          info;               /* slot etc. */
-            u16          oem_id;             /* OEM ID */
-            u16          bios_ver;           /* not used */
-            u16          access;             /* not used */
-            u16          ext_type;           /* extended type */
-            u16          device_id;          /* device ID */
-            u16          sub_device_id;      /* sub device ID */
+            unchar          type;               /* controller type */
+            ushort          info;               /* slot etc. */
+            ushort          oem_id;             /* OEM ID */
+            ushort          bios_ver;           /* not used */
+            ushort          access;             /* not used */
+            ushort          ext_type;           /* extended type */
+            ushort          device_id;          /* device ID */
+            ushort          sub_device_id;      /* sub device ID */
         } ctrtype;
         struct {
-            u8          version;            /* OS version */
-            u8          subversion;         /* OS subversion */
-            u16          revision;           /* revision */
+            unchar          version;            /* OS version */
+            unchar          subversion;         /* OS subversion */
+            ushort          revision;           /* revision */
         } osvers;
         struct {
-            u16          count;              /* controller count */
+            ushort          count;              /* controller count */
         } ctrcnt;
         struct {
             int             handle;
-            u8          evt[EVENT_SIZE];    /* event structure */
+            unchar          evt[EVENT_SIZE];    /* event structure */
         } event;
         struct {
-            u8          bus;                /* SCSI bus, 0xff: invalid */
-            u8          target;             /* target ID */
-            u8          lun;                /* LUN */
-            u8          cluster_type;       /* cluster properties */
+            unchar          bus;                /* SCSI bus, 0xff: invalid */
+            unchar          target;             /* target ID */
+            unchar          lun;                /* LUN */
+            unchar          cluster_type;       /* cluster properties */
         } hdr_list[MAX_HDRIVES];                /* index is host drive number */
     } iu;
 } gdth_iord_str;
@@ -264,53 +272,53 @@ typedef struct {
 
 /* GDTIOCTL_GENERAL */
 typedef struct {
-    u16 ionode;                              /* controller number */
-    u16 timeout;                             /* timeout */
-    u32 info;                               /* error info */ 
-    u16 status;                              /* status */
-    unsigned long data_len;                             /* data buffer size */
-    unsigned long sense_len;                            /* sense buffer size */
+    ushort ionode;                              /* controller number */
+    ushort timeout;                             /* timeout */
+    ulong32 info;                               /* error info */ 
+    ushort status;                              /* status */
+    ulong data_len;                             /* data buffer size */
+    ulong sense_len;                            /* sense buffer size */
     gdth_cmd_str command;                       /* command */                   
 } gdth_ioctl_general;
 
 /* GDTIOCTL_LOCKDRV */
 typedef struct {
-    u16 ionode;                              /* controller number */
-    u8 lock;                                /* lock/unlock */
-    u8 drive_cnt;                           /* drive count */
-    u16 drives[MAX_HDRIVES];                 /* drives */
+    ushort ionode;                              /* controller number */
+    unchar lock;                                /* lock/unlock */
+    unchar drive_cnt;                           /* drive count */
+    ushort drives[MAX_HDRIVES];                 /* drives */
 } gdth_ioctl_lockdrv;
 
 /* GDTIOCTL_LOCKCHN */
 typedef struct {
-    u16 ionode;                              /* controller number */
-    u8 lock;                                /* lock/unlock */
-    u8 channel;                             /* channel */
+    ushort ionode;                              /* controller number */
+    unchar lock;                                /* lock/unlock */
+    unchar channel;                             /* channel */
 } gdth_ioctl_lockchn;
 
 /* GDTIOCTL_OSVERS */
 typedef struct {
-    u8 version;                             /* OS version */
-    u8 subversion;                          /* OS subversion */
-    u16 revision;                            /* revision */
+    unchar version;                             /* OS version */
+    unchar subversion;                          /* OS subversion */
+    ushort revision;                            /* revision */
 } gdth_ioctl_osvers;
 
 /* GDTIOCTL_CTRTYPE */
 typedef struct {
-    u16 ionode;                              /* controller number */
-    u8 type;                                /* controller type */
-    u16 info;                                /* slot etc. */
-    u16 oem_id;                              /* OEM ID */
-    u16 bios_ver;                            /* not used */
-    u16 access;                              /* not used */
-    u16 ext_type;                            /* extended type */
-    u16 device_id;                           /* device ID */
-    u16 sub_device_id;                       /* sub device ID */
+    ushort ionode;                              /* controller number */
+    unchar type;                                /* controller type */
+    ushort info;                                /* slot etc. */
+    ushort oem_id;                              /* OEM ID */
+    ushort bios_ver;                            /* not used */
+    ushort access;                              /* not used */
+    ushort ext_type;                            /* extended type */
+    ushort device_id;                           /* device ID */
+    ushort sub_device_id;                       /* sub device ID */
 } gdth_ioctl_ctrtype;
 
 /* GDTIOCTL_EVENT */
 typedef struct {
-    u16 ionode;
+    ushort ionode;
     int erase;                                  /* erase event? */
     int handle;                                 /* event handle */
     gdth_evt_str event;
@@ -318,22 +326,22 @@ typedef struct {
 
 /* GDTIOCTL_RESCAN/GDTIOCTL_HDRLIST */
 typedef struct {
-    u16 ionode;                              /* controller number */
-    u8 flag;                                /* add/remove */
-    u16 hdr_no;                              /* drive no. */
+    ushort ionode;                              /* controller number */
+    unchar flag;                                /* add/remove */
+    ushort hdr_no;                              /* drive no. */
     struct {
-        u8 bus;                             /* SCSI bus */
-        u8 target;                          /* target ID */
-        u8 lun;                             /* LUN */
-        u8 cluster_type;                    /* cluster properties */
+        unchar bus;                             /* SCSI bus */
+        unchar target;                          /* target ID */
+        unchar lun;                             /* LUN */
+        unchar cluster_type;                    /* cluster properties */
     } hdr_list[MAX_HDRIVES];                    /* index is host drive number */
 } gdth_ioctl_rescan;
 
 /* GDTIOCTL_RESET_BUS/GDTIOCTL_RESET_DRV */
 typedef struct {
-    u16 ionode;                              /* controller number */
-    u16 number;                              /* bus/host drive number */
-    u16 status;                              /* status */
+    ushort ionode;                              /* controller number */
+    ushort number;                              /* bus/host drive number */
+    ushort status;                              /* status */
 } gdth_ioctl_reset;
 
 #endif

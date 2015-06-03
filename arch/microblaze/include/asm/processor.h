@@ -14,6 +14,7 @@
 #include <asm/ptrace.h>
 #include <asm/setup.h>
 #include <asm/registers.h>
+#include <asm/segment.h>
 #include <asm/entry.h>
 #include <asm/current.h>
 
@@ -30,8 +31,6 @@ extern const struct seq_operations cpuinfo_op;
 
 /* Do necessary setup to start up a newly executed thread. */
 void start_thread(struct pt_regs *regs, unsigned long pc, unsigned long usp);
-
-extern void ret_from_fork(void);
 
 # endif /* __ASSEMBLY__ */
 
@@ -127,6 +126,10 @@ struct thread_struct {
 	.pgdir = swapper_pg_dir, \
 }
 
+/* Do necessary setup to start up a newly executed thread.  */
+void start_thread(struct pt_regs *regs,
+		unsigned long pc, unsigned long usp);
+
 /* Free all resources held by a thread. */
 extern inline void release_thread(struct task_struct *dead_task)
 {
@@ -153,7 +156,7 @@ unsigned long get_wchan(struct task_struct *p);
 #  define task_regs(task) ((struct pt_regs *)task_tos(task) - 1)
 
 #  define task_pt_regs_plus_args(tsk) \
-	((void *)task_pt_regs(tsk))
+	(((void *)task_pt_regs(tsk)) - STATE_SAVE_ARG_SPACE)
 
 #  define task_sp(task)	(task_regs(task)->r1)
 #  define task_pc(task)	(task_regs(task)->pc)
@@ -166,14 +169,6 @@ unsigned long get_wchan(struct task_struct *p);
 
 #  define STACK_TOP	TASK_SIZE
 #  define STACK_TOP_MAX	STACK_TOP
-
-void disable_hlt(void);
-void enable_hlt(void);
-void default_idle(void);
-
-#ifdef CONFIG_DEBUG_FS
-extern struct dentry *of_debugfs_root;
-#endif
 
 #  endif /* __ASSEMBLY__ */
 # endif /* CONFIG_MMU */

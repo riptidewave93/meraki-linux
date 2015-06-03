@@ -70,14 +70,8 @@ ret_from_exception:
 	CFI_STARTPROC simple
 	CFI_DEF_CFA r14, 0
 	CFI_REL_OFFSET 17, 64
-	CFI_REL_OFFSET 15, 60
+	CFI_REL_OFFSET 15, 0
 	CFI_REL_OFFSET 14, 56
-	CFI_REL_OFFSET 13, 52
-	CFI_REL_OFFSET 12, 48
-	CFI_REL_OFFSET 11, 44
-	CFI_REL_OFFSET 10, 40
-	CFI_REL_OFFSET 9, 36
-	CFI_REL_OFFSET 8, 32
 	preempt_stop()
 ENTRY(ret_from_irq)
 	!
@@ -139,13 +133,12 @@ work_pending:
 	! r8: current_thread_info
 	! t:  result of "tst	#_TIF_NEED_RESCHED, r0"
 	bf/s	work_resched
-	 tst	#_TIF_SIGPENDING, r0
+	 tst	#(_TIF_SIGPENDING | _TIF_RESTORE_SIGMASK), r0
 work_notifysig:
 	bt/s	__restore_all
 	 mov	r15, r4
 	mov	r12, r5		! set arg1(save_r0)
 	mov	r0, r6
-	sti
 	mov.l	2f, r1
 	mov.l	3f, r0
 	jmp	@r1

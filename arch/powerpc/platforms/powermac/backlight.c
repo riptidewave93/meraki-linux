@@ -12,8 +12,7 @@
 #include <linux/backlight.h>
 #include <linux/adb.h>
 #include <linux/pmu.h>
-#include <linux/atomic.h>
-#include <linux/export.h>
+#include <asm/atomic.h>
 #include <asm/prom.h>
 #include <asm/backlight.h>
 

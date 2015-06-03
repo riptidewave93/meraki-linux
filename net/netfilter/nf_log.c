@@ -16,7 +16,7 @@
 #define NF_LOG_PREFIXLEN		128
 #define NFLOGGER_NAME_LEN		64
 
-static const struct nf_logger __rcu *nf_loggers[NFPROTO_NUMPROTO] __read_mostly;
+static const struct nf_logger *nf_loggers[NFPROTO_NUMPROTO] __read_mostly;
 static struct list_head nf_loggers_l[NFPROTO_NUMPROTO] __read_mostly;
 static DEFINE_MUTEX(nf_log_mutex);
 
@@ -52,8 +52,7 @@ int nf_log_register(u_int8_t pf, struct nf_logger *logger)
 	} else {
 		/* register at end of list to honor first register win */
 		list_add_tail(&logger->list[pf], &nf_loggers_l[pf]);
-		llog = rcu_dereference_protected(nf_loggers[pf],
-						 lockdep_is_held(&nf_log_mutex));
+		llog = rcu_dereference(nf_loggers[pf]);
 		if (llog == NULL)
 			rcu_assign_pointer(nf_loggers[pf], logger);
 	}
@@ -71,10 +70,9 @@ void nf_log_unregister(struct nf_logger *logger)
 
 	mutex_lock(&nf_log_mutex);
 	for (i = 0; i < ARRAY_SIZE(nf_loggers); i++) {
-		c_logger = rcu_dereference_protected(nf_loggers[i],
-						     lockdep_is_held(&nf_log_mutex));
+		c_logger = rcu_dereference(nf_loggers[i]);
 		if (c_logger == logger)
-			RCU_INIT_POINTER(nf_loggers[i], NULL);
+			rcu_assign_pointer(nf_loggers[i], NULL);
 		list_del(&logger->list[i]);
 	}
 	mutex_unlock(&nf_log_mutex);
@@ -103,7 +101,7 @@ void nf_log_unbind_pf(u_int8_t pf)
 	if (pf >= ARRAY_SIZE(nf_loggers))
 		return;
 	mutex_lock(&nf_log_mutex);
-	RCU_INIT_POINTER(nf_loggers[pf], NULL);
+	rcu_assign_pointer(nf_loggers[pf], NULL);
 	mutex_unlock(&nf_log_mutex);
 }
 EXPORT_SYMBOL(nf_log_unbind_pf);
@@ -165,8 +163,7 @@ static int seq_show(struct seq_file *s, void *v)
 	struct nf_logger *t;
 	int ret;
 
-	logger = rcu_dereference_protected(nf_loggers[*pos],
-					   lockdep_is_held(&nf_log_mutex));
+	logger = nf_loggers[*pos];
 
 	if (!logger)
 		ret = seq_printf(s, "%2lld NONE (", *pos);
@@ -215,9 +212,9 @@ static const struct file_operations nflog_file_ops = {
 
 #ifdef CONFIG_SYSCTL
 static struct ctl_path nf_log_sysctl_path[] = {
-	{ .procname = "net", },
-	{ .procname = "netfilter", },
-	{ .procname = "nf_log", },
+	{ .procname = "net", .ctl_name = CTL_NET, },
+	{ .procname = "netfilter", .ctl_name = NET_NETFILTER, },
+	{ .procname = "nf_log", .ctl_name = CTL_UNNUMBERED, },
 	{ }
 };
 
@@ -254,8 +251,7 @@ static int nf_log_proc_dostring(ctl_table *table, int write,
 		mutex_unlock(&nf_log_mutex);
 	} else {
 		mutex_lock(&nf_log_mutex);
-		logger = rcu_dereference_protected(nf_loggers[tindex],
-						   lockdep_is_held(&nf_log_mutex));
+		logger = nf_loggers[tindex];
 		if (!logger)
 			table->data = "NONE";
 		else
@@ -273,6 +269,7 @@ static __init int netfilter_log_sysctl_init(void)
 
 	for (i = NFPROTO_UNSPEC; i < NFPROTO_NUMPROTO; i++) {
 		snprintf(nf_log_sysctl_fnames[i-NFPROTO_UNSPEC], 3, "%d", i);
+		nf_log_sysctl_table[i].ctl_name	= CTL_UNNUMBERED;
 		nf_log_sysctl_table[i].procname	=
 			nf_log_sysctl_fnames[i-NFPROTO_UNSPEC];
 		nf_log_sysctl_table[i].data = NULL;

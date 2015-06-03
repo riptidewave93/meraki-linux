@@ -16,17 +16,16 @@
 #include <linux/skbuff.h>
 #include <net/netfilter/nf_conntrack_extend.h>
 
-static struct nf_ct_ext_type __rcu *nf_ct_ext_types[NF_CT_EXT_NUM];
+static struct nf_ct_ext_type *nf_ct_ext_types[NF_CT_EXT_NUM];
 static DEFINE_MUTEX(nf_ct_ext_type_mutex);
 
 void __nf_ct_ext_destroy(struct nf_conn *ct)
 {
 	unsigned int i;
 	struct nf_ct_ext_type *t;
-	struct nf_ct_ext *ext = ct->ext;
 
 	for (i = 0; i < NF_CT_EXT_NUM; i++) {
-		if (!__nf_ct_ext_exist(ext, i))
+		if (!nf_ct_ext_exist(ct, i))
 			continue;
 
 		rcu_read_lock();
@@ -48,67 +47,71 @@ nf_ct_ext_create(struct nf_ct_ext **ext, enum nf_ct_ext_id id, gfp_t gfp)
 {
 	unsigned int off, len;
 	struct nf_ct_ext_type *t;
-	size_t alloc_size;
 
 	rcu_read_lock();
 	t = rcu_dereference(nf_ct_ext_types[id]);
 	BUG_ON(t == NULL);
 	off = ALIGN(sizeof(struct nf_ct_ext), t->align);
 	len = off + t->len;
-	alloc_size = t->alloc_size;
 	rcu_read_unlock();
 
-	*ext = kzalloc(alloc_size, gfp);
+	*ext = kzalloc(t->alloc_size, gfp);
 	if (!*ext)
 		return NULL;
 
+	INIT_RCU_HEAD(&(*ext)->rcu);
 	(*ext)->offset[id] = off;
 	(*ext)->len = len;
 
 	return (void *)(*ext) + off;
 }
 
+static void __nf_ct_ext_free_rcu(struct rcu_head *head)
+{
+	struct nf_ct_ext *ext = container_of(head, struct nf_ct_ext, rcu);
+	kfree(ext);
+}
+
 void *__nf_ct_ext_add(struct nf_conn *ct, enum nf_ct_ext_id id, gfp_t gfp)
 {
-	struct nf_ct_ext *old, *new;
+	struct nf_ct_ext *new;
 	int i, newlen, newoff;
 	struct nf_ct_ext_type *t;
 
 	/* Conntrack must not be confirmed to avoid races on reallocation. */
 	NF_CT_ASSERT(!nf_ct_is_confirmed(ct));
 
-	old = ct->ext;
-	if (!old)
+	if (!ct->ext)
 		return nf_ct_ext_create(&ct->ext, id, gfp);
 
-	if (__nf_ct_ext_exist(old, id))
+	if (nf_ct_ext_exist(ct, id))
 		return NULL;
 
 	rcu_read_lock();
 	t = rcu_dereference(nf_ct_ext_types[id]);
 	BUG_ON(t == NULL);
 
-	newoff = ALIGN(old->len, t->align);
+	newoff = ALIGN(ct->ext->len, t->align);
 	newlen = newoff + t->len;
 	rcu_read_unlock();
 
-	new = __krealloc(old, newlen, gfp);
+	new = __krealloc(ct->ext, newlen, gfp);
 	if (!new)
 		return NULL;
 
-	if (new != old) {
+	if (new != ct->ext) {
 		for (i = 0; i < NF_CT_EXT_NUM; i++) {
-			if (!__nf_ct_ext_exist(old, i))
+			if (!nf_ct_ext_exist(ct, i))
 				continue;
 
 			rcu_read_lock();
 			t = rcu_dereference(nf_ct_ext_types[i]);
 			if (t && t->move)
 				t->move((void *)new + new->offset[i],
-					(void *)old + old->offset[i]);
+					(void *)ct->ext + ct->ext->offset[i]);
 			rcu_read_unlock();
 		}
-		kfree_rcu(old, rcu);
+		call_rcu(&ct->ext->rcu, __nf_ct_ext_free_rcu);
 		ct->ext = new;
 	}
 
@@ -134,16 +137,15 @@ static void update_alloc_size(struct nf_ct_ext_type *type)
 	/* This assumes that extended areas in conntrack for the types
 	   whose NF_CT_EXT_F_PREALLOC bit set are allocated in order */
 	for (i = min; i <= max; i++) {
-		t1 = rcu_dereference_protected(nf_ct_ext_types[i],
-				lockdep_is_held(&nf_ct_ext_type_mutex));
+		t1 = nf_ct_ext_types[i];
 		if (!t1)
 			continue;
 
-		t1->alloc_size = ALIGN(sizeof(struct nf_ct_ext), t1->align) +
-				 t1->len;
+		t1->alloc_size = sizeof(struct nf_ct_ext)
+				 + ALIGN(sizeof(struct nf_ct_ext), t1->align)
+				 + t1->len;
 		for (j = 0; j < NF_CT_EXT_NUM; j++) {
-			t2 = rcu_dereference_protected(nf_ct_ext_types[j],
-				lockdep_is_held(&nf_ct_ext_type_mutex));
+			t2 = nf_ct_ext_types[j];
 			if (t2 == NULL || t2 == t1 ||
 			    (t2->flags & NF_CT_EXT_F_PREALLOC) == 0)
 				continue;
@@ -181,7 +183,7 @@ EXPORT_SYMBOL_GPL(nf_ct_extend_register);
 void nf_ct_extend_unregister(struct nf_ct_ext_type *type)
 {
 	mutex_lock(&nf_ct_ext_type_mutex);
-	RCU_INIT_POINTER(nf_ct_ext_types[type->id], NULL);
+	rcu_assign_pointer(nf_ct_ext_types[type->id], NULL);
 	update_alloc_size(type);
 	mutex_unlock(&nf_ct_ext_type_mutex);
 	rcu_barrier(); /* Wait for completion of call_rcu()'s */

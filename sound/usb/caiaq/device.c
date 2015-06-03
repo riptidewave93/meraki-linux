@@ -23,7 +23,6 @@
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/gfp.h>
 #include <linux/usb.h>
 #include <sound/initval.h>
 #include <sound/core.h>
@@ -36,7 +35,7 @@
 #include "input.h"
 
 MODULE_AUTHOR("Daniel Mack <daniel@caiaq.de>");
-MODULE_DESCRIPTION("caiaq USB audio");
+MODULE_DESCRIPTION("caiaq USB audio, version 1.3.20");
 MODULE_LICENSE("GPL");
 MODULE_SUPPORTED_DEVICE("{{Native Instruments, RigKontrol2},"
 			 "{Native Instruments, RigKontrol3},"
@@ -46,16 +45,12 @@ MODULE_SUPPORTED_DEVICE("{{Native Instruments, RigKontrol2},"
 			 "{Native Instruments, Audio 2 DJ},"
 			 "{Native Instruments, Audio 4 DJ},"
 			 "{Native Instruments, Audio 8 DJ},"
-			 "{Native Instruments, Traktor Audio 2},"
 			 "{Native Instruments, Session I/O},"
-			 "{Native Instruments, GuitarRig mobile}"
-			 "{Native Instruments, Traktor Kontrol X1}"
-			 "{Native Instruments, Traktor Kontrol S4}"
-			 "{Native Instruments, Maschine Controller}");
+			 "{Native Instruments, GuitarRig mobile}");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX; /* Index 0-max */
 static char* id[SNDRV_CARDS] = SNDRV_DEFAULT_STR; /* Id for this card */
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP; /* Enable this card */
+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP; /* Enable this card */
 static int snd_card_used[SNDRV_CARDS];
 
 module_param_array(index, int, NULL, 0444);
@@ -131,26 +126,6 @@ static struct usb_device_id snd_usb_id_table[] = {
 		.match_flags =  USB_DEVICE_ID_MATCH_DEVICE,
 		.idVendor =     USB_VID_NATIVEINSTRUMENTS,
 		.idProduct =    USB_PID_AUDIO2DJ
-	},
-	{
-		.match_flags =  USB_DEVICE_ID_MATCH_DEVICE,
-		.idVendor =     USB_VID_NATIVEINSTRUMENTS,
-		.idProduct =    USB_PID_TRAKTORKONTROLX1
-	},
-	{
-		.match_flags =  USB_DEVICE_ID_MATCH_DEVICE,
-		.idVendor =     USB_VID_NATIVEINSTRUMENTS,
-		.idProduct =    USB_PID_TRAKTORKONTROLS4
-	},
-	{
-		.match_flags =  USB_DEVICE_ID_MATCH_DEVICE,
-		.idVendor =     USB_VID_NATIVEINSTRUMENTS,
-		.idProduct =    USB_PID_TRAKTORAUDIO2
-	},
-	{
-		.match_flags =  USB_DEVICE_ID_MATCH_DEVICE,
-		.idVendor =     USB_VID_NATIVEINSTRUMENTS,
-		.idProduct =    USB_PID_MASCHINECONTROLLER
 	},
 	{ /* terminator */ }
 };
@@ -338,6 +313,12 @@ static void __devinit setup_card(struct snd_usb_caiaqdev *dev)
 		}
 
 		break;
+	case USB_ID(USB_VID_NATIVEINSTRUMENTS, USB_PID_AUDIO4DJ):
+		/* Audio 4 DJ - default input mode to phono */
+		dev->control_state[0] = 2;
+		snd_usb_caiaq_send_command(dev, EP1_CMD_WRITE_IO,
+			dev->control_state, 1);
+		break;
 	}
 
 	if (dev->spec.num_analog_audio_out +
@@ -485,7 +466,7 @@ static int __devinit snd_probe(struct usb_interface *intf,
 		     const struct usb_device_id *id)
 {
 	int ret;
-	struct snd_card *card = NULL;
+	struct snd_card *card;
 	struct usb_device *device = interface_to_usbdev(intf);
 
 	ret = create_card(device, intf, &card);
@@ -538,5 +519,16 @@ static struct usb_driver snd_usb_driver = {
 	.id_table 	= snd_usb_id_table,
 };
 
-module_usb_driver(snd_usb_driver);
+static int __init snd_module_init(void)
+{
+	return usb_register(&snd_usb_driver);
+}
+
+static void __exit snd_module_exit(void)
+{
+	usb_deregister(&snd_usb_driver);
+}
+
+module_init(snd_module_init)
+module_exit(snd_module_exit)
 

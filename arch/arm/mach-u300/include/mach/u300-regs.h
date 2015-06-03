@@ -6,7 +6,7 @@
  * Copyright (C) 2006-2009 ST-Ericsson AB
  * License terms: GNU General Public License (GPL) version 2
  * Basic register address definitions in physical memory and
- * some block definitions for core devices like the timer.
+ * some block defintions for core devices like the timer.
  * Author: Linus Walleij <linus.walleij@stericsson.com>
  */
 
@@ -23,11 +23,6 @@
 
 /* NFIF */
 #define U300_NAND_IF_PHYS_BASE		0x9f800000
-
-/* ALE, CLE offset for FSMC NAND */
-#define PLAT_NAND_CLE			(1 << 16)
-#define PLAT_NAND_ALE			(1 << 17)
-
 
 /* AHB Peripherals */
 #define U300_AHB_PER_PHYS_BASE		0xa0000000
@@ -53,6 +48,13 @@
 #endif
 
 /*
+ * All the following peripherals are specified at their PHYSICAL address,
+ * so if you need to access them (in the kernel), you MUST use the macros
+ * defined in <asm/io.h> to map to the IO_ADDRESS_AHB() IO_ADDRESS_FAST()
+ * etc.
+ */
+
+/*
  * AHB peripherals
  */
 
@@ -61,11 +63,11 @@
 
 /* Vectored Interrupt Controller 0, servicing 32 interrupts */
 #define U300_INTCON0_BASE		(U300_AHB_PER_PHYS_BASE+0x1000)
-#define U300_INTCON0_VBASE		IOMEM(U300_AHB_PER_VIRT_BASE+0x1000)
+#define U300_INTCON0_VBASE		(U300_AHB_PER_VIRT_BASE+0x1000)
 
 /* Vectored Interrupt Controller 1, servicing 32 interrupts */
 #define U300_INTCON1_BASE		(U300_AHB_PER_PHYS_BASE+0x2000)
-#define U300_INTCON1_VBASE		IOMEM(U300_AHB_PER_VIRT_BASE+0x2000)
+#define U300_INTCON1_VBASE		(U300_AHB_PER_VIRT_BASE+0x2000)
 
 /* Memory Stick Pro (MSPRO) controller */
 #define U300_MSPRO_BASE			(U300_AHB_PER_PHYS_BASE+0x3000)
@@ -101,7 +103,7 @@
 
 #ifdef CONFIG_MACH_U300_BS335
 /* Fast UART1 on U335 only */
-#define U300_UART1_BASE			(U300_FAST_PER_PHYS_BASE+0x7000)
+#define U300_UART1_BASE			(U300_SLOW_PER_PHYS_BASE+0x7000)
 #endif
 
 /*
@@ -113,7 +115,7 @@
 
 /* SYSCON */
 #define U300_SYSCON_BASE		(U300_SLOW_PER_PHYS_BASE+0x1000)
-#define U300_SYSCON_VBASE		IOMEM(U300_SLOW_PER_VIRT_BASE+0x1000)
+#define U300_SYSCON_VBASE		(U300_SLOW_PER_VIRT_BASE+0x1000)
 
 /* Watchdog */
 #define U300_WDOG_BASE			(U300_SLOW_PER_PHYS_BASE+0x2000)
@@ -123,7 +125,7 @@
 
 /* APP side special timer */
 #define U300_TIMER_APP_BASE		(U300_SLOW_PER_PHYS_BASE+0x4000)
-#define U300_TIMER_APP_VBASE		IOMEM(U300_SLOW_PER_VIRT_BASE+0x4000)
+#define U300_TIMER_APP_VBASE		(U300_SLOW_PER_VIRT_BASE+0x4000)
 
 /* Keypad */
 #define U300_KEYPAD_BASE		(U300_SLOW_PER_PHYS_BASE+0x5000)
@@ -178,5 +180,6 @@
 /*
  * Virtual accessor macros for static devices
  */
+
 
 #endif

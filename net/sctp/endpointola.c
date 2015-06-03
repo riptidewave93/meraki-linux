@@ -70,6 +70,8 @@ static struct sctp_endpoint *sctp_endpoint_init(struct sctp_endpoint *ep,
 	struct sctp_shared_key *null_key;
 	int err;
 
+	memset(ep, 0, sizeof(struct sctp_endpoint));
+
 	ep->digest = kzalloc(SCTP_SIGNATURE_SIZE, gfp);
 	if (!ep->digest)
 		return NULL;
@@ -142,7 +144,6 @@ static struct sctp_endpoint *sctp_endpoint_init(struct sctp_endpoint *ep,
 	/* Use SCTP specific send buffer space queues.  */
 	ep->sndbuf_policy = sctp_sndbuf_policy;
 
-	sk->sk_data_ready = sctp_data_ready;
 	sk->sk_write_space = sctp_write_space;
 	sock_set_flag(sk, SOCK_USE_WRITE_QUEUE);
 
@@ -330,7 +331,6 @@ static struct sctp_association *__sctp_endpoint_lookup_assoc(
 	struct sctp_transport **transport)
 {
 	struct sctp_association *asoc = NULL;
-	struct sctp_association *tmp;
 	struct sctp_transport *t = NULL;
 	struct sctp_hashbucket *head;
 	struct sctp_ep_common *epb;
@@ -339,32 +339,25 @@ static struct sctp_association *__sctp_endpoint_lookup_assoc(
 	int rport;
 
 	*transport = NULL;
-
-	/* If the local port is not set, there can't be any associations
-	 * on this endpoint.
-	 */
-	if (!ep->base.bind_addr.port)
-		goto out;
-
 	rport = ntohs(paddr->v4.sin_port);
 
 	hash = sctp_assoc_hashfn(ep->base.bind_addr.port, rport);
 	head = &sctp_assoc_hashtable[hash];
 	read_lock(&head->lock);
 	sctp_for_each_hentry(epb, node, &head->chain) {
-		tmp = sctp_assoc(epb);
-		if (tmp->ep != ep || rport != tmp->peer.port)
-			continue;
+		asoc = sctp_assoc(epb);
+		if (asoc->ep != ep || rport != asoc->peer.port)
+			goto next;
 
-		t = sctp_assoc_lookup_paddr(tmp, paddr);
+		t = sctp_assoc_lookup_paddr(asoc, paddr);
 		if (t) {
-			asoc = tmp;
 			*transport = t;
 			break;
 		}
+next:
+		asoc = NULL;
 	}
 	read_unlock(&head->lock);
-out:
 	return asoc;
 }
 
@@ -420,7 +413,7 @@ static void sctp_endpoint_bh_rcv(struct work_struct *work)
 	sctp_subtype_t subtype;
 	sctp_state_t state;
 	int error = 0;
-	int first_time = 1;	/* is this the first time through the loop */
+	int first_time = 1;	/* is this the first time through the looop */
 
 	if (ep->base.dead)
 		return;

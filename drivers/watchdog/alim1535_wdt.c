@@ -7,8 +7,6 @@
  *	2 of the License, or (at your option) any later version.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/types.h>
@@ -24,6 +22,7 @@
 #include <linux/io.h>
 
 #define WATCHDOG_NAME "ALi_M1535"
+#define PFX WATCHDOG_NAME ": "
 #define WATCHDOG_TIMEOUT 60	/* 60 sec default timeout */
 
 /* internal variables */
@@ -40,8 +39,8 @@ MODULE_PARM_DESC(timeout,
 		"Watchdog timeout in seconds. (0 < timeout < 18000, default="
 				__MODULE_STRING(WATCHDOG_TIMEOUT) ")");
 
-static bool nowayout = WATCHDOG_NOWAYOUT;
-module_param(nowayout, bool, 0);
+static int nowayout = WATCHDOG_NOWAYOUT;
+module_param(nowayout, int, 0);
 MODULE_PARM_DESC(nowayout,
 		"Watchdog cannot be stopped once started (default="
 				__MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
@@ -181,7 +180,7 @@ static long ali_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 {
 	void __user *argp = (void __user *)arg;
 	int __user *p = argp;
-	static const struct watchdog_info ident = {
+	static struct watchdog_info ident = {
 		.options =		WDIOF_KEEPALIVEPING |
 					WDIOF_SETTIMEOUT |
 					WDIOF_MAGICCLOSE,
@@ -269,7 +268,8 @@ static int ali_release(struct inode *inode, struct file *file)
 	if (ali_expect_release == 42)
 		ali_stop();
 	else {
-		pr_crit("Unexpected close, not stopping watchdog!\n");
+		printk(KERN_CRIT PFX
+				"Unexpected close, not stopping watchdog!\n");
 		ali_keepalive();
 	}
 	clear_bit(0, &ali_is_open);
@@ -301,7 +301,7 @@ static int ali_notify_sys(struct notifier_block *this,
  *	want to register another driver on the same PCI id.
  */
 
-static DEFINE_PCI_DEVICE_TABLE(ali_pci_tbl) __used = {
+static struct pci_device_id ali_pci_tbl[] = {
 	{ PCI_VENDOR_ID_AL, 0x1533, PCI_ANY_ID, PCI_ANY_ID,},
 	{ PCI_VENDOR_ID_AL, 0x1535, PCI_ANY_ID, PCI_ANY_ID,},
 	{ 0, },
@@ -362,12 +362,12 @@ static int __init ali_find_watchdog(void)
  */
 
 static const struct file_operations ali_fops = {
-	.owner		=	THIS_MODULE,
-	.llseek		=	no_llseek,
+	.owner 		=	THIS_MODULE,
+	.llseek 	=	no_llseek,
 	.write		=	ali_write,
 	.unlocked_ioctl =	ali_ioctl,
-	.open		=	ali_open,
-	.release	=	ali_release,
+	.open 		=	ali_open,
+	.release 	=	ali_release,
 };
 
 static struct miscdevice ali_miscdev = {
@@ -399,8 +399,9 @@ static int __init watchdog_init(void)
 	   if not reset to the default */
 	if (timeout < 1 || timeout >= 18000) {
 		timeout = WATCHDOG_TIMEOUT;
-		pr_info("timeout value must be 0 < timeout < 18000, using %d\n",
-			timeout);
+		printk(KERN_INFO PFX
+		     "timeout value must be 0 < timeout < 18000, using %d\n",
+							timeout);
 	}
 
 	/* Calculate the watchdog's timeout */
@@ -408,18 +409,20 @@ static int __init watchdog_init(void)
 
 	ret = register_reboot_notifier(&ali_notifier);
 	if (ret != 0) {
-		pr_err("cannot register reboot notifier (err=%d)\n", ret);
+		printk(KERN_ERR PFX
+			"cannot register reboot notifier (err=%d)\n", ret);
 		goto out;
 	}
 
 	ret = misc_register(&ali_miscdev);
 	if (ret != 0) {
-		pr_err("cannot register miscdev on minor=%d (err=%d)\n",
-		       WATCHDOG_MINOR, ret);
+		printk(KERN_ERR PFX
+			"cannot register miscdev on minor=%d (err=%d)\n",
+						WATCHDOG_MINOR, ret);
 		goto unreg_reboot;
 	}
 
-	pr_info("initialized. timeout=%d sec (nowayout=%d)\n",
+	printk(KERN_INFO PFX "initialized. timeout=%d sec (nowayout=%d)\n",
 		timeout, nowayout);
 
 out:

@@ -46,7 +46,7 @@
 /**
  * struct ps3_sys_manager_header - System manager message header.
  * @version: Header version, currently 1.
- * @size: Header size in bytes, currently 16.
+ * @size: Header size in bytes, curently 16.
  * @payload_size: Message payload size in bytes.
  * @service_id: Message type, one of enum ps3_sys_manager_service_id.
  * @request_tag: Unique number to identify reply.
@@ -80,7 +80,7 @@ static void __maybe_unused _dump_sm_header(
  *
  * Currently all messages received from the system manager are either
  * (16 bytes header + 8 bytes payload = 24 bytes) or (16 bytes header
- * + 16 bytes payload = 32 bytes).  This knowledge is used to simplify
+ * + 16 bytes payload = 32 bytes).  This knowlege is used to simplify
  * the logic.
  */
 
@@ -119,7 +119,7 @@ enum ps3_sys_manager_service_id {
  * enum ps3_sys_manager_attr - Notification attribute (bit position mask).
  * @PS3_SM_ATTR_POWER: Power button.
  * @PS3_SM_ATTR_RESET: Reset button, not available on retail console.
- * @PS3_SM_ATTR_THERMAL: System thermal alert.
+ * @PS3_SM_ATTR_THERMAL: Sytem thermal alert.
  * @PS3_SM_ATTR_CONTROLLER: Remote controller event.
  * @PS3_SM_ATTR_ALL: Logical OR of all.
  *

@@ -50,7 +50,7 @@
 
 struct c2_buf_list {
 	void *buf;
-	DEFINE_DMA_UNMAP_ADDR(mapping);
+	 DECLARE_PCI_UNMAP_ADDR(mapping)
 };
 
 

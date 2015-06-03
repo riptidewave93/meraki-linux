@@ -15,6 +15,7 @@
 #include <linux/vmalloc.h>
 #include <linux/module.h>
 #include <linux/init.h>
+#include <asm/system.h>
 #include <asm/mmu_context.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
@@ -57,7 +58,7 @@ int register_trapped_io(struct trapped_io *tiop)
 
 	for (k = 0; k < tiop->num_resources; k++) {
 		res = tiop->resource + k;
-		len += roundup(resource_size(res), PAGE_SIZE);
+		len += roundup((res->end - res->start) + 1, PAGE_SIZE);
 		flags |= res->flags;
 	}
 
@@ -84,20 +85,16 @@ int register_trapped_io(struct trapped_io *tiop)
 		       (unsigned long)(tiop->virt_base + len),
 		       res->flags & IORESOURCE_IO ? "io" : "mmio",
 		       (unsigned long)res->start);
-		len += roundup(resource_size(res), PAGE_SIZE);
+		len += roundup((res->end - res->start) + 1, PAGE_SIZE);
 	}
 
 	tiop->magic = IO_TRAPPED_MAGIC;
 	INIT_LIST_HEAD(&tiop->list);
 	spin_lock_irq(&trapped_lock);
-#ifdef CONFIG_HAS_IOPORT
 	if (flags & IORESOURCE_IO)
 		list_add(&tiop->list, &trapped_io);
-#endif
-#ifdef CONFIG_HAS_IOMEM
 	if (flags & IORESOURCE_MEM)
 		list_add(&tiop->list, &trapped_mem);
-#endif
 	spin_unlock_irq(&trapped_lock);
 
 	return 0;
@@ -127,7 +124,7 @@ void __iomem *match_trapped_io_handler(struct list_head *list,
 				return tiop->virt_base + voffs;
 			}
 
-			len = resource_size(res);
+			len = (res->end - res->start) + 1;
 			voffs += roundup(len, PAGE_SIZE);
 		}
 	}
@@ -172,7 +169,7 @@ static unsigned long lookup_address(struct trapped_io *tiop,
 
 	for (k = 0; k < tiop->num_resources; k++) {
 		res = tiop->resource + k;
-		len = roundup(resource_size(res), PAGE_SIZE);
+		len = roundup((res->end - res->start) + 1, PAGE_SIZE);
 		if (address < (vaddr + len))
 			return res->start + (address - vaddr);
 		vaddr += len;
@@ -187,31 +184,31 @@ static unsigned long long copy_word(unsigned long src_addr, int src_len,
 
 	switch (src_len) {
 	case 1:
-		tmp = __raw_readb(src_addr);
+		tmp = ctrl_inb(src_addr);
 		break;
 	case 2:
-		tmp = __raw_readw(src_addr);
+		tmp = ctrl_inw(src_addr);
 		break;
 	case 4:
-		tmp = __raw_readl(src_addr);
+		tmp = ctrl_inl(src_addr);
 		break;
 	case 8:
-		tmp = __raw_readq(src_addr);
+		tmp = ctrl_inq(src_addr);
 		break;
 	}
 
 	switch (dst_len) {
 	case 1:
-		__raw_writeb(tmp, dst_addr);
+		ctrl_outb(tmp, dst_addr);
 		break;
 	case 2:
-		__raw_writew(tmp, dst_addr);
+		ctrl_outw(tmp, dst_addr);
 		break;
 	case 4:
-		__raw_writel(tmp, dst_addr);
+		ctrl_outl(tmp, dst_addr);
 		break;
 	case 8:
-		__raw_writeq(tmp, dst_addr);
+		ctrl_outq(tmp, dst_addr);
 		break;
 	}
 
@@ -274,8 +271,6 @@ int handle_trapped_io(struct pt_regs *regs, unsigned long address)
 	insn_size_t instruction;
 	int tmp;
 
-	if (trapped_io_disable)
-		return 0;
 	if (!lookup_tiop(address))
 		return 0;
 
@@ -290,7 +285,7 @@ int handle_trapped_io(struct pt_regs *regs, unsigned long address)
 	}
 
 	tmp = handle_unaligned_access(instruction, regs,
-				      &trapped_io_access, 1, address);
+				      &trapped_io_access, 1);
 	set_fs(oldfs);
 	return tmp == 0;
 }

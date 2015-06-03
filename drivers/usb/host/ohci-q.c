@@ -8,7 +8,6 @@
  */
 
 #include <linux/irq.h>
-#include <linux/slab.h>
 
 static void urb_free_priv (struct ohci_hcd *hc, urb_priv_t *urb_priv)
 {
@@ -52,7 +51,7 @@ __acquires(ohci->lock)
 		ohci_to_hcd(ohci)->self.bandwidth_isoc_reqs--;
 		if (ohci_to_hcd(ohci)->self.bandwidth_isoc_reqs == 0) {
 			if (quirk_amdiso(ohci))
-				usb_amd_quirk_pll_enable();
+				quirk_amd_pll(1);
 			if (quirk_amdprefetch(ohci))
 				sb800_prefetch(ohci, 0);
 		}
@@ -428,7 +427,7 @@ static struct ed *ed_get (
 		ed->type = usb_pipetype(pipe);
 
 		info |= (ep->desc.bEndpointAddress & ~USB_DIR_IN) << 7;
-		info |= usb_endpoint_maxp(&ep->desc) << 16;
+		info |= le16_to_cpu(ep->desc.wMaxPacketSize) << 16;
 		if (udev->speed == USB_SPEED_LOW)
 			info |= ED_LOWSPEED;
 		/* only control transfers store pids in tds */
@@ -444,7 +443,7 @@ static struct ed *ed_get (
 				ed->load = usb_calc_bus_time (
 					udev->speed, !is_out,
 					ed->type == PIPE_ISOCHRONOUS,
-					usb_endpoint_maxp(&ep->desc))
+					le16_to_cpu(ep->desc.wMaxPacketSize))
 						/ 1000;
 			}
 		}
@@ -686,7 +685,7 @@ static void td_submit_urb (
 		}
 		if (ohci_to_hcd(ohci)->self.bandwidth_isoc_reqs == 0) {
 			if (quirk_amdiso(ohci))
-				usb_amd_quirk_pll_disable();
+				quirk_amd_pll(0);
 			if (quirk_amdprefetch(ohci))
 				sb800_prefetch(ohci, 1);
 		}
@@ -912,7 +911,7 @@ rescan_all:
 		/* only take off EDs that the HC isn't using, accounting for
 		 * frame counter wraps and EDs with partially retired TDs
 		 */
-		if (likely(ohci->rh_state == OHCI_RH_RUNNING)) {
+		if (likely (HC_IS_RUNNING(ohci_to_hcd(ohci)->state))) {
 			if (tick_before (tick, ed->tick)) {
 skip_ed:
 				last = &ed->ed_next;
@@ -1012,7 +1011,7 @@ rescan_this:
 
 		/* but if there's work queued, reschedule */
 		if (!list_empty (&ed->td_list)) {
-			if (ohci->rh_state == OHCI_RH_RUNNING)
+			if (HC_IS_RUNNING(ohci_to_hcd(ohci)->state))
 				ed_schedule (ohci, ed);
 		}
 
@@ -1021,7 +1020,9 @@ rescan_this:
 	}
 
 	/* maybe reenable control and bulk lists */
-	if (ohci->rh_state == OHCI_RH_RUNNING && !ohci->ed_rm_list) {
+	if (HC_IS_RUNNING(ohci_to_hcd(ohci)->state)
+			&& ohci_to_hcd(ohci)->state != HC_STATE_QUIESCING
+			&& !ohci->ed_rm_list) {
 		u32	command = 0, control = 0;
 
 		if (ohci->ed_controltail) {
@@ -1128,25 +1129,6 @@ dl_done_list (struct ohci_hcd *ohci)
 
 	while (td) {
 		struct td	*td_next = td->next_dl_td;
-		struct ed	*ed = td->ed;
-
-		/*
-		 * Some OHCI controllers (NVIDIA for sure, maybe others)
-		 * occasionally forget to add TDs to the done queue.  Since
-		 * TDs for a given endpoint are always processed in order,
-		 * if we find a TD on the donelist then all of its
-		 * predecessors must be finished as well.
-		 */
-		for (;;) {
-			struct td	*td2;
-
-			td2 = list_first_entry(&ed->td_list, struct td,
-					td_list);
-			if (td2 == td)
-				break;
-			takeback_td(ohci, td2);
-		}
-
 		takeback_td(ohci, td);
 		td = td_next;
 	}

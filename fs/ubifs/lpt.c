@@ -46,7 +46,6 @@
 #include "ubifs.h"
 #include <linux/crc16.h>
 #include <linux/math64.h>
-#include <linux/slab.h>
 
 /**
  * do_calc_lpt_geom - calculate sizes for the LPT area.
@@ -701,8 +700,8 @@ int ubifs_create_dflt_lpt(struct ubifs_info *c, int *main_lebs, int lpt_first,
 			alen = ALIGN(len, c->min_io_size);
 			set_ltab(c, lnum, c->leb_size - alen, alen - len);
 			memset(p, 0xff, alen - len);
-			err = ubifs_leb_change(c, lnum++, buf, alen,
-					       UBI_SHORTTERM);
+			err = ubi_leb_change(c->ubi, lnum++, buf, alen,
+					     UBI_SHORTTERM);
 			if (err)
 				goto out;
 			p = buf;
@@ -732,8 +731,8 @@ int ubifs_create_dflt_lpt(struct ubifs_info *c, int *main_lebs, int lpt_first,
 				set_ltab(c, lnum, c->leb_size - alen,
 					    alen - len);
 				memset(p, 0xff, alen - len);
-				err = ubifs_leb_change(c, lnum++, buf, alen,
-						       UBI_SHORTTERM);
+				err = ubi_leb_change(c->ubi, lnum++, buf, alen,
+						     UBI_SHORTTERM);
 				if (err)
 					goto out;
 				p = buf;
@@ -780,8 +779,8 @@ int ubifs_create_dflt_lpt(struct ubifs_info *c, int *main_lebs, int lpt_first,
 			alen = ALIGN(len, c->min_io_size);
 			set_ltab(c, lnum, c->leb_size - alen, alen - len);
 			memset(p, 0xff, alen - len);
-			err = ubifs_leb_change(c, lnum++, buf, alen,
-					       UBI_SHORTTERM);
+			err = ubi_leb_change(c->ubi, lnum++, buf, alen,
+					     UBI_SHORTTERM);
 			if (err)
 				goto out;
 			p = buf;
@@ -806,7 +805,7 @@ int ubifs_create_dflt_lpt(struct ubifs_info *c, int *main_lebs, int lpt_first,
 		alen = ALIGN(len, c->min_io_size);
 		set_ltab(c, lnum, c->leb_size - alen, alen - len);
 		memset(p, 0xff, alen - len);
-		err = ubifs_leb_change(c, lnum++, buf, alen, UBI_SHORTTERM);
+		err = ubi_leb_change(c->ubi, lnum++, buf, alen, UBI_SHORTTERM);
 		if (err)
 			goto out;
 		p = buf;
@@ -826,7 +825,7 @@ int ubifs_create_dflt_lpt(struct ubifs_info *c, int *main_lebs, int lpt_first,
 
 	/* Write remaining buffer */
 	memset(p, 0xff, alen - len);
-	err = ubifs_leb_change(c, lnum, buf, alen, UBI_SHORTTERM);
+	err = ubi_leb_change(c->ubi, lnum, buf, alen, UBI_SHORTTERM);
 	if (err)
 		goto out;
 
@@ -1222,7 +1221,7 @@ int ubifs_read_nnode(struct ubifs_info *c, struct ubifs_nnode *parent, int iip)
 		if (c->big_lpt)
 			nnode->num = calc_nnode_num_from_parent(c, parent, iip);
 	} else {
-		err = ubifs_leb_read(c, lnum, buf, offs, c->nnode_sz, 1);
+		err = ubi_read(c->ubi, lnum, buf, offs, c->nnode_sz);
 		if (err)
 			goto out;
 		err = ubifs_unpack_nnode(c, buf, nnode);
@@ -1247,7 +1246,6 @@ int ubifs_read_nnode(struct ubifs_info *c, struct ubifs_nnode *parent, int iip)
 
 out:
 	ubifs_err("error %d reading nnode at %d:%d", err, lnum, offs);
-	dbg_dump_stack();
 	kfree(nnode);
 	return err;
 }
@@ -1291,7 +1289,7 @@ static int read_pnode(struct ubifs_info *c, struct ubifs_nnode *parent, int iip)
 			lprops->flags = ubifs_categorize_lprops(c, lprops);
 		}
 	} else {
-		err = ubifs_leb_read(c, lnum, buf, offs, c->pnode_sz, 1);
+		err = ubi_read(c->ubi, lnum, buf, offs, c->pnode_sz);
 		if (err)
 			goto out;
 		err = unpack_pnode(c, buf, pnode);
@@ -1313,7 +1311,6 @@ static int read_pnode(struct ubifs_info *c, struct ubifs_nnode *parent, int iip)
 out:
 	ubifs_err("error %d reading pnode at %d:%d", err, lnum, offs);
 	dbg_dump_pnode(c, pnode, parent, iip);
-	dbg_dump_stack();
 	dbg_msg("calc num: %d", calc_pnode_num_from_parent(c, parent, iip));
 	kfree(pnode);
 	return err;
@@ -1333,7 +1330,7 @@ static int read_ltab(struct ubifs_info *c)
 	buf = vmalloc(c->ltab_sz);
 	if (!buf)
 		return -ENOMEM;
-	err = ubifs_leb_read(c, c->ltab_lnum, buf, c->ltab_offs, c->ltab_sz, 1);
+	err = ubi_read(c->ubi, c->ltab_lnum, buf, c->ltab_offs, c->ltab_sz);
 	if (err)
 		goto out;
 	err = unpack_ltab(c, buf);
@@ -1356,8 +1353,7 @@ static int read_lsave(struct ubifs_info *c)
 	buf = vmalloc(c->lsave_sz);
 	if (!buf)
 		return -ENOMEM;
-	err = ubifs_leb_read(c, c->lsave_lnum, buf, c->lsave_offs,
-			     c->lsave_sz, 1);
+	err = ubi_read(c->ubi, c->lsave_lnum, buf, c->lsave_offs, c->lsave_sz);
 	if (err)
 		goto out;
 	err = unpack_lsave(c, buf);
@@ -1817,8 +1813,8 @@ static struct ubifs_nnode *scan_get_nnode(struct ubifs_info *c,
 		if (c->big_lpt)
 			nnode->num = calc_nnode_num_from_parent(c, parent, iip);
 	} else {
-		err = ubifs_leb_read(c, branch->lnum, buf, branch->offs,
-				     c->nnode_sz, 1);
+		err = ubi_read(c->ubi, branch->lnum, buf, branch->offs,
+			       c->nnode_sz);
 		if (err)
 			return ERR_PTR(err);
 		err = ubifs_unpack_nnode(c, buf, nnode);
@@ -1886,8 +1882,8 @@ static struct ubifs_pnode *scan_get_pnode(struct ubifs_info *c,
 		ubifs_assert(branch->lnum >= c->lpt_first &&
 			     branch->lnum <= c->lpt_last);
 		ubifs_assert(branch->offs >= 0 && branch->offs < c->leb_size);
-		err = ubifs_leb_read(c, branch->lnum, buf, branch->offs,
-				     c->pnode_sz, 1);
+		err = ubi_read(c->ubi, branch->lnum, buf, branch->offs,
+			       c->pnode_sz);
 		if (err)
 			return ERR_PTR(err);
 		err = unpack_pnode(c, buf, pnode);
@@ -1986,11 +1982,12 @@ again:
 
 				if (path[h].in_tree)
 					continue;
-				nnode = kmemdup(&path[h].nnode, sz, GFP_NOFS);
+				nnode = kmalloc(sz, GFP_NOFS);
 				if (!nnode) {
 					err = -ENOMEM;
 					goto out;
 				}
+				memcpy(nnode, &path[h].nnode, sz);
 				parent = nnode->parent;
 				parent->nbranch[nnode->iip].nnode = nnode;
 				path[h].ptr.nnode = nnode;
@@ -2003,11 +2000,12 @@ again:
 				const size_t sz = sizeof(struct ubifs_pnode);
 				struct ubifs_nnode *parent;
 
-				pnode = kmemdup(&path[h].pnode, sz, GFP_NOFS);
+				pnode = kmalloc(sz, GFP_NOFS);
 				if (!pnode) {
 					err = -ENOMEM;
 					goto out;
 				}
+				memcpy(pnode, &path[h].pnode, sz);
 				parent = pnode->parent;
 				parent->nbranch[pnode->iip].pnode = pnode;
 				path[h].ptr.pnode = pnode;
@@ -2225,7 +2223,7 @@ int dbg_check_lpt_nodes(struct ubifs_info *c, struct ubifs_cnode *cnode,
 	struct ubifs_cnode *cn;
 	int num, iip = 0, err;
 
-	if (!dbg_is_chk_lprops(c))
+	if (!(ubifs_chk_flags & UBIFS_CHK_LPROPS))
 		return 0;
 
 	while (cnode) {

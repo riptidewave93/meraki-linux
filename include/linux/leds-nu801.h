@@ -13,8 +13,6 @@
  *
  */
 
-#include <linux/leds.h>
-
 struct led_nu801_template {
 	const char *name;	/* Name of this LED chain */
 	int num_leds;		/* Number of LEDs in the chain */
@@ -26,7 +24,6 @@ struct led_nu801_template {
 #ifdef CONFIG_LEDS_TRIGGERS
 	const char* default_trigger; /* default trigger */
 #endif
-	const char *led_colors[3];  /* rgb color order */
 };
 
 struct led_nu801_platform_data {

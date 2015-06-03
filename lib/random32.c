@@ -35,20 +35,17 @@
 
 #include <linux/types.h>
 #include <linux/percpu.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/jiffies.h>
 #include <linux/random.h>
 
+struct rnd_state {
+	u32 s1, s2, s3;
+};
+
 static DEFINE_PER_CPU(struct rnd_state, net_rand_state);
 
-/**
- *	prandom32 - seeded pseudo-random number generator.
- *	@state: pointer to state structure holding seeded state.
- *
- *	This is used for pseudo-randomness with no outside seeding.
- *	For more random results, use random32().
- */
-u32 prandom32(struct rnd_state *state)
+static u32 __random32(struct rnd_state *state)
 {
 #define TAUSWORTHE(s,a,b,c,d) ((s&c)<<d) ^ (((s <<a) ^ s)>>b)
 
@@ -58,7 +55,14 @@ u32 prandom32(struct rnd_state *state)
 
 	return (state->s1 ^ state->s2 ^ state->s3);
 }
-EXPORT_SYMBOL(prandom32);
+
+/*
+ * Handle minimum values for seeds
+ */
+static inline u32 __seed(u32 x, u32 m)
+{
+	return (x < m) ? x + m : x;
+}
 
 /**
  *	random32 - pseudo random number generator
@@ -71,7 +75,7 @@ u32 random32(void)
 {
 	unsigned long r;
 	struct rnd_state *state = &get_cpu_var(net_rand_state);
-	r = prandom32(state);
+	r = __random32(state);
 	put_cpu_var(state);
 	return r;
 }
@@ -114,12 +118,12 @@ static int __init random32_init(void)
 		state->s3 = __seed(LCG(state->s2), 16);
 
 		/* "warm it up" */
-		prandom32(state);
-		prandom32(state);
-		prandom32(state);
-		prandom32(state);
-		prandom32(state);
-		prandom32(state);
+		__random32(state);
+		__random32(state);
+		__random32(state);
+		__random32(state);
+		__random32(state);
+		__random32(state);
 	}
 	return 0;
 }
@@ -127,7 +131,7 @@ core_initcall(random32_init);
 
 /*
  *	Generate better values after random number generator
- *	is fully initialized.
+ *	is fully initalized.
  */
 static int __init random32_reseed(void)
 {
@@ -143,7 +147,7 @@ static int __init random32_reseed(void)
 		state->s3 = __seed(seeds[2], 16);
 
 		/* mix it in */
-		prandom32(state);
+		__random32(state);
 	}
 	return 0;
 }

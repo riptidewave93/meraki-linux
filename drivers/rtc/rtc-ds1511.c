@@ -2,7 +2,7 @@
  * An rtc driver for the Dallas DS1511
  *
  * Copyright (C) 2006 Atsushi Nemoto <anemo@mba.ocn.ne.jp>
- * Copyright (C) 2007 Andrew Sharp <andy.sharp@lsi.com>
+ * Copyright (C) 2007 Andrew Sharp <andy.sharp@onstor.com>
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 as
@@ -17,13 +17,11 @@
 #include <linux/bcd.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
-#include <linux/gfp.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/rtc.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
-#include <linux/module.h>
 
 #define DRV_VERSION "0.6"
 
@@ -89,6 +87,7 @@ enum ds1511reg {
 struct rtc_plat_data {
 	struct rtc_device *rtc;
 	void __iomem *ioaddr;		/* virtual base address */
+	unsigned long baseaddr;		/* physical base address */
 	int size;				/* amount of memory mapped */
 	int irq;
 	unsigned int irqen;
@@ -96,7 +95,6 @@ struct rtc_plat_data {
 	int alrm_min;
 	int alrm_hour;
 	int alrm_mday;
-	spinlock_t lock;
 };
 
 static DEFINE_SPINLOCK(ds1511_lock);
@@ -304,7 +302,7 @@ ds1511_rtc_update_alarm(struct rtc_plat_data *pdata)
 {
 	unsigned long flags;
 
-	spin_lock_irqsave(&pdata->lock, flags);
+	spin_lock_irqsave(&pdata->rtc->irq_lock, flags);
 	rtc_write(pdata->alrm_mday < 0 || (pdata->irqen & RTC_UF) ?
 	       0x80 : bin2bcd(pdata->alrm_mday) & 0x3f,
 	       RTC_ALARM_DATE);
@@ -319,7 +317,7 @@ ds1511_rtc_update_alarm(struct rtc_plat_data *pdata)
 	       RTC_ALARM_SEC);
 	rtc_write(rtc_read(RTC_CMD) | (pdata->irqen ? RTC_TIE : 0), RTC_CMD);
 	rtc_read(RTC_CMD1);	/* clear interrupts */
-	spin_unlock_irqrestore(&pdata->lock, flags);
+	spin_unlock_irqrestore(&pdata->rtc->irq_lock, flags);
 }
 
  static int
@@ -364,52 +362,66 @@ ds1511_interrupt(int irq, void *dev_id)
 {
 	struct platform_device *pdev = dev_id;
 	struct rtc_plat_data *pdata = platform_get_drvdata(pdev);
-	unsigned long events = 0;
+	unsigned long events = RTC_IRQF;
 
-	spin_lock(&pdata->lock);
 	/*
 	 * read and clear interrupt
 	 */
-	if (rtc_read(RTC_CMD1) & DS1511_IRQF) {
-		events = RTC_IRQF;
-		if (rtc_read(RTC_ALARM_SEC) & 0x80)
-			events |= RTC_UF;
-		else
-			events |= RTC_AF;
-		if (likely(pdata->rtc))
-			rtc_update_irq(pdata->rtc, 1, events);
+	if (!(rtc_read(RTC_CMD1) & DS1511_IRQF)) {
+		return IRQ_NONE;
 	}
-	spin_unlock(&pdata->lock);
-	return events ? IRQ_HANDLED : IRQ_NONE;
+	if (rtc_read(RTC_ALARM_SEC) & 0x80) {
+		events |= RTC_UF;
+	} else {
+		events |= RTC_AF;
+	}
+	rtc_update_irq(pdata->rtc, 1, events);
+	return IRQ_HANDLED;
 }
 
-static int ds1511_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
+ static int
+ds1511_rtc_ioctl(struct device *dev, unsigned int cmd, unsigned long arg)
 {
 	struct platform_device *pdev = to_platform_device(dev);
 	struct rtc_plat_data *pdata = platform_get_drvdata(pdev);
 
-	if (pdata->irq <= 0)
-		return -EINVAL;
-	if (enabled)
-		pdata->irqen |= RTC_AF;
-	else
+	if (pdata->irq <= 0) {
+		return -ENOIOCTLCMD; /* fall back into rtc-dev's emulation */
+	}
+	switch (cmd) {
+	case RTC_AIE_OFF:
 		pdata->irqen &= ~RTC_AF;
-	ds1511_rtc_update_alarm(pdata);
+		ds1511_rtc_update_alarm(pdata);
+		break;
+	case RTC_AIE_ON:
+		pdata->irqen |= RTC_AF;
+		ds1511_rtc_update_alarm(pdata);
+		break;
+	case RTC_UIE_OFF:
+		pdata->irqen &= ~RTC_UF;
+		ds1511_rtc_update_alarm(pdata);
+		break;
+	case RTC_UIE_ON:
+		pdata->irqen |= RTC_UF;
+		ds1511_rtc_update_alarm(pdata);
+		break;
+	default:
+		return -ENOIOCTLCMD;
+	}
 	return 0;
 }
 
 static const struct rtc_class_ops ds1511_rtc_ops = {
-	.read_time		= ds1511_rtc_read_time,
-	.set_time		= ds1511_rtc_set_time,
-	.read_alarm		= ds1511_rtc_read_alarm,
-	.set_alarm		= ds1511_rtc_set_alarm,
-	.alarm_irq_enable	= ds1511_rtc_alarm_irq_enable,
+	.read_time	= ds1511_rtc_read_time,
+	.set_time	= ds1511_rtc_set_time,
+	.read_alarm	= ds1511_rtc_read_alarm,
+	.set_alarm	= ds1511_rtc_set_alarm,
+	.ioctl		= ds1511_rtc_ioctl,
 };
 
  static ssize_t
-ds1511_nvram_read(struct file *filp, struct kobject *kobj,
-		  struct bin_attribute *ba,
-		  char *buf, loff_t pos, size_t size)
+ds1511_nvram_read(struct kobject *kobj, struct bin_attribute *ba,
+				char *buf, loff_t pos, size_t size)
 {
 	ssize_t count;
 
@@ -437,9 +449,8 @@ ds1511_nvram_read(struct file *filp, struct kobject *kobj,
 }
 
  static ssize_t
-ds1511_nvram_write(struct file *filp, struct kobject *kobj,
-		   struct bin_attribute *bin_attr,
-		   char *buf, loff_t pos, size_t size)
+ds1511_nvram_write(struct kobject *kobj, struct bin_attribute *bin_attr,
+				char *buf, loff_t pos, size_t size)
 {
 	ssize_t count;
 
@@ -481,23 +492,29 @@ ds1511_rtc_probe(struct platform_device *pdev)
 {
 	struct rtc_device *rtc;
 	struct resource *res;
-	struct rtc_plat_data *pdata;
+	struct rtc_plat_data *pdata = NULL;
 	int ret = 0;
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res) {
 		return -ENODEV;
 	}
-	pdata = devm_kzalloc(&pdev->dev, sizeof(*pdata), GFP_KERNEL);
-	if (!pdata)
+	pdata = kzalloc(sizeof(*pdata), GFP_KERNEL);
+	if (!pdata) {
 		return -ENOMEM;
-	pdata->size = resource_size(res);
-	if (!devm_request_mem_region(&pdev->dev, res->start, pdata->size,
-			pdev->name))
-		return -EBUSY;
-	ds1511_base = devm_ioremap(&pdev->dev, res->start, pdata->size);
-	if (!ds1511_base)
-		return -ENOMEM;
+	}
+	pdata->size = res->end - res->start + 1;
+	if (!request_mem_region(res->start, pdata->size, pdev->name)) {
+		ret = -EBUSY;
+		goto out;
+	}
+	pdata->baseaddr = res->start;
+	pdata->size = pdata->size;
+	ds1511_base = ioremap(pdata->baseaddr, pdata->size);
+	if (!ds1511_base) {
+		ret = -ENOMEM;
+		goto out;
+	}
 	pdata->ioaddr = ds1511_base;
 	pdata->irq = platform_get_irq(pdev, 0);
 
@@ -523,16 +540,14 @@ ds1511_rtc_probe(struct platform_device *pdev)
 		dev_warn(&pdev->dev, "voltage-low detected.\n");
 	}
 
-	spin_lock_init(&pdata->lock);
-	platform_set_drvdata(pdev, pdata);
 	/*
 	 * if the platform has an interrupt in mind for this device,
 	 * then by all means, set it
 	 */
 	if (pdata->irq > 0) {
 		rtc_read(RTC_CMD1);
-		if (devm_request_irq(&pdev->dev, pdata->irq, ds1511_interrupt,
-			IRQF_SHARED, pdev->name, pdev) < 0) {
+		if (request_irq(pdata->irq, ds1511_interrupt,
+			IRQF_DISABLED | IRQF_SHARED, pdev->name, pdev) < 0) {
 
 			dev_warn(&pdev->dev, "interrupt not available.\n");
 			pdata->irq = 0;
@@ -541,13 +556,33 @@ ds1511_rtc_probe(struct platform_device *pdev)
 
 	rtc = rtc_device_register(pdev->name, &pdev->dev, &ds1511_rtc_ops,
 		THIS_MODULE);
-	if (IS_ERR(rtc))
-		return PTR_ERR(rtc);
+	if (IS_ERR(rtc)) {
+		ret = PTR_ERR(rtc);
+		goto out;
+	}
 	pdata->rtc = rtc;
-
+	platform_set_drvdata(pdev, pdata);
 	ret = sysfs_create_bin_file(&pdev->dev.kobj, &ds1511_nvram_attr);
-	if (ret)
+	if (ret) {
+		goto out;
+	}
+	return 0;
+ out:
+	if (pdata->rtc) {
 		rtc_device_unregister(pdata->rtc);
+	}
+	if (pdata->irq > 0) {
+		free_irq(pdata->irq, pdev);
+	}
+	if (ds1511_base) {
+		iounmap(ds1511_base);
+		ds1511_base = NULL;
+	}
+	if (pdata->baseaddr) {
+		release_mem_region(pdata->baseaddr, pdata->size);
+	}
+
+	kfree(pdata);
 	return ret;
 }
 
@@ -558,13 +593,19 @@ ds1511_rtc_remove(struct platform_device *pdev)
 
 	sysfs_remove_bin_file(&pdev->dev.kobj, &ds1511_nvram_attr);
 	rtc_device_unregister(pdata->rtc);
+	pdata->rtc = NULL;
 	if (pdata->irq > 0) {
 		/*
 		 * disable the alarm interrupt
 		 */
 		rtc_write(rtc_read(RTC_CMD) & ~RTC_TIE, RTC_CMD);
 		rtc_read(RTC_CMD1);
+		free_irq(pdata->irq, pdev);
 	}
+	iounmap(pdata->ioaddr);
+	ds1511_base = NULL;
+	release_mem_region(pdata->baseaddr, pdata->size);
+	kfree(pdata);
 	return 0;
 }
 
@@ -580,9 +621,22 @@ static struct platform_driver ds1511_rtc_driver = {
 	},
 };
 
-module_platform_driver(ds1511_rtc_driver);
+ static int __init
+ds1511_rtc_init(void)
+{
+	return platform_driver_register(&ds1511_rtc_driver);
+}
 
-MODULE_AUTHOR("Andrew Sharp <andy.sharp@lsi.com>");
+ static void __exit
+ds1511_rtc_exit(void)
+{
+	platform_driver_unregister(&ds1511_rtc_driver);
+}
+
+module_init(ds1511_rtc_init);
+module_exit(ds1511_rtc_exit);
+
+MODULE_AUTHOR("Andrew Sharp <andy.sharp@onstor.com>");
 MODULE_DESCRIPTION("Dallas DS1511 RTC driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(DRV_VERSION);

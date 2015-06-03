@@ -18,9 +18,7 @@
  */
 
 #include <linux/kvm_host.h>
-#include <linux/slab.h>
 #include <linux/err.h>
-#include <linux/export.h>
 
 #include <asm/reg.h>
 #include <asm/cputable.h>
@@ -44,7 +42,7 @@ int kvmppc_core_check_processor_compat(void)
 {
 	int r;
 
-	if (strncmp(cur_cpu_spec->platform, "ppc440", 6) == 0)
+	if (strcmp(cur_cpu_spec->platform, "ppc440") == 0)
 		r = 0;
 	else
 		r = -ENOTSUPP;
@@ -73,13 +71,10 @@ int kvmppc_core_vcpu_setup(struct kvm_vcpu *vcpu)
 	/* Since the guest can directly access the timebase, it must know the
 	 * real timebase frequency. Accordingly, it must see the state of
 	 * CCR1[TCS]. */
-	/* XXX CCR1 doesn't exist on all 440 SoCs. */
 	vcpu->arch.ccr1 = mfspr(SPRN_CCR1);
 
 	for (i = 0; i < ARRAY_SIZE(vcpu_44x->shadow_refs); i++)
 		vcpu_44x->shadow_refs[i].gtlb_index = -1;
-
-	vcpu->arch.cpu_type = KVM_CPU_440;
 
 	return 0;
 }
@@ -110,16 +105,6 @@ int kvmppc_core_vcpu_translate(struct kvm_vcpu *vcpu,
 	return 0;
 }
 
-void kvmppc_core_get_sregs(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
-{
-	kvmppc_get_sregs_ivor(vcpu, sregs);
-}
-
-int kvmppc_core_set_sregs(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
-{
-	return kvmppc_set_sregs_ivor(vcpu, sregs);
-}
-
 struct kvm_vcpu *kvmppc_core_vcpu_create(struct kvm *kvm, unsigned int id)
 {
 	struct kvmppc_vcpu_44x *vcpu_44x;
@@ -137,14 +122,8 @@ struct kvm_vcpu *kvmppc_core_vcpu_create(struct kvm *kvm, unsigned int id)
 	if (err)
 		goto free_vcpu;
 
-	vcpu->arch.shared = (void*)__get_free_page(GFP_KERNEL|__GFP_ZERO);
-	if (!vcpu->arch.shared)
-		goto uninit_vcpu;
-
 	return vcpu;
 
-uninit_vcpu:
-	kvm_vcpu_uninit(vcpu);
 free_vcpu:
 	kmem_cache_free(kvm_vcpu_cache, vcpu_44x);
 out:
@@ -155,7 +134,6 @@ void kvmppc_core_vcpu_free(struct kvm_vcpu *vcpu)
 {
 	struct kvmppc_vcpu_44x *vcpu_44x = to_44x(vcpu);
 
-	free_page((unsigned long)vcpu->arch.shared);
 	kvm_vcpu_uninit(vcpu);
 	kmem_cache_free(kvm_vcpu_cache, vcpu_44x);
 }
@@ -168,7 +146,7 @@ static int __init kvmppc_44x_init(void)
 	if (r)
 		return r;
 
-	return kvm_init(NULL, sizeof(struct kvmppc_vcpu_44x), 0, THIS_MODULE);
+	return kvm_init(NULL, sizeof(struct kvmppc_vcpu_44x), THIS_MODULE);
 }
 
 static void __exit kvmppc_44x_exit(void)

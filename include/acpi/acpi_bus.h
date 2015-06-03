@@ -148,7 +148,9 @@ struct acpi_device_flags {
 	u32 suprise_removal_ok:1;
 	u32 power_manageable:1;
 	u32 performance_manageable:1;
-	u32 reserved:24;
+	u32 wake_capable:1;	/* Wakeup(_PRW) supported? */
+	u32 force_power_state:1;
+	u32 reserved:22;
 };
 
 /* File System */
@@ -182,7 +184,7 @@ struct acpi_device_pnp {
 
 #define acpi_device_bid(d)	((d)->pnp.bus_id)
 #define acpi_device_adr(d)	((d)->pnp.bus_address)
-const char *acpi_device_hid(struct acpi_device *device);
+char *acpi_device_hid(struct acpi_device *device);
 #define acpi_device_name(d)	((d)->pnp.device_name)
 #define acpi_device_class(d)	((d)->pnp.device_class)
 
@@ -210,7 +212,7 @@ struct acpi_device_power_state {
 struct acpi_device_power {
 	int state;		/* Current state */
 	struct acpi_device_power_flags flags;
-	struct acpi_device_power_state states[ACPI_D_STATE_COUNT];	/* Power states (D0-D3Cold) */
+	struct acpi_device_power_state states[4];	/* Power states (D0-D3) */
 };
 
 /* Performance Management */
@@ -240,14 +242,18 @@ struct acpi_device_perf {
 struct acpi_device_wakeup_flags {
 	u8 valid:1;		/* Can successfully enable wakeup? */
 	u8 run_wake:1;		/* Run-Wake GPE devices */
-	u8 notifier_present:1;  /* Wake-up notify handler has been installed */
+};
+
+struct acpi_device_wakeup_state {
+	u8 enabled:1;
 };
 
 struct acpi_device_wakeup {
 	acpi_handle gpe_device;
-	u64 gpe_number;
-	u64 sleep_state;
+	acpi_integer gpe_number;
+	acpi_integer sleep_state;
 	struct acpi_handle_list resources;
+	struct acpi_device_wakeup_state state;
 	struct acpi_device_wakeup_flags flags;
 	int prepare_count;
 };
@@ -319,12 +325,10 @@ void acpi_bus_data_handler(acpi_handle handle, void *context);
 acpi_status acpi_bus_get_status_handle(acpi_handle handle,
 				       unsigned long long *sta);
 int acpi_bus_get_status(struct acpi_device *device);
+int acpi_bus_get_power(acpi_handle handle, int *state);
 int acpi_bus_set_power(acpi_handle handle, int state);
-int acpi_bus_update_power(acpi_handle handle, int *state_p);
 bool acpi_bus_power_manageable(acpi_handle handle);
 bool acpi_bus_can_wakeup(acpi_handle handle);
-int acpi_power_resource_register_device(struct device *dev, acpi_handle handle);
-void acpi_power_resource_unregister_device(struct device *dev, acpi_handle handle);
 #ifdef CONFIG_ACPI_PROC_EVENT
 int acpi_bus_generate_proc_event(struct acpi_device *device, u8 type, int data);
 int acpi_bus_generate_proc_event4(const char *class, const char *bid, u8 type, int data);
@@ -366,46 +370,37 @@ struct acpi_pci_root {
 	struct acpi_pci_id id;
 	struct pci_bus *bus;
 	u16 segment;
-	struct resource secondary;	/* downstream bus range */
+	u8 bus_nr;
 
 	u32 osc_support_set;	/* _OSC state of support bits */
 	u32 osc_control_set;	/* _OSC state of control bits */
+	u32 osc_control_qry;	/* the latest _OSC query result */
+
+	u32 osc_queried:1;	/* has _OSC control been queried? */
 };
 
 /* helper */
-acpi_handle acpi_get_child(acpi_handle, u64);
+acpi_handle acpi_get_child(acpi_handle, acpi_integer);
 int acpi_is_root_bridge(acpi_handle);
 acpi_handle acpi_get_pci_rootbridge_handle(unsigned int, unsigned int);
 struct acpi_pci_root *acpi_pci_find_root(acpi_handle handle);
 #define DEVICE_ACPI_HANDLE(dev) ((acpi_handle)((dev)->archdata.acpi_handle))
 
-int acpi_enable_wakeup_device_power(struct acpi_device *dev, int state);
-int acpi_disable_wakeup_device_power(struct acpi_device *dev);
-
-#ifdef CONFIG_PM
+#ifdef CONFIG_PM_SLEEP
 int acpi_pm_device_sleep_state(struct device *, int *);
-#else
+int acpi_pm_device_sleep_wake(struct device *, bool);
+#else /* !CONFIG_PM_SLEEP */
 static inline int acpi_pm_device_sleep_state(struct device *d, int *p)
 {
 	if (p)
 		*p = ACPI_STATE_D0;
 	return ACPI_STATE_D3;
 }
-#endif
-
-#ifdef CONFIG_PM_SLEEP
-int acpi_pm_device_run_wake(struct device *, bool);
-int acpi_pm_device_sleep_wake(struct device *, bool);
-#else
-static inline int acpi_pm_device_run_wake(struct device *dev, bool enable)
-{
-	return -ENODEV;
-}
 static inline int acpi_pm_device_sleep_wake(struct device *dev, bool enable)
 {
 	return -ENODEV;
 }
-#endif
+#endif /* !CONFIG_PM_SLEEP */
 
 #endif				/* CONFIG_ACPI */
 

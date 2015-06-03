@@ -963,12 +963,11 @@ static const struct file_operations mdc800_device_ops =
 	.write =	mdc800_device_write,
 	.open =		mdc800_device_open,
 	.release =	mdc800_device_release,
-	.llseek =	noop_llseek,
 };
 
 
 
-static const struct usb_device_id mdc800_table[] = {
+static struct usb_device_id mdc800_table [] = {
 	{ USB_DEVICE(MDC800_VENDOR_ID, MDC800_PRODUCT_ID) },
 	{ }						/* Terminating entry */
 };

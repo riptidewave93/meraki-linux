@@ -4,7 +4,7 @@
 #define XT_MAX_COMMENT_LEN 256
 
 struct xt_comment_info {
-	char comment[XT_MAX_COMMENT_LEN];
+	unsigned char comment[XT_MAX_COMMENT_LEN];
 };
 
 #endif /* XT_COMMENT_H */

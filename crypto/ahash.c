@@ -21,8 +21,6 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/seq_file.h>
-#include <linux/cryptouser.h>
-#include <net/netlink.h>
 
 #include "internal.h"
 
@@ -46,14 +44,11 @@ static int hash_walk_next(struct crypto_hash_walk *walk)
 	unsigned int nbytes = min(walk->entrylen,
 				  ((unsigned int)(PAGE_SIZE)) - offset);
 
-	walk->data = kmap_atomic(walk->pg);
+	walk->data = crypto_kmap(walk->pg, 0);
 	walk->data += offset;
 
-	if (offset & alignmask) {
-		unsigned int unaligned = alignmask + 1 - (offset & alignmask);
-		if (nbytes > unaligned)
-			nbytes = unaligned;
-	}
+	if (offset & alignmask)
+		nbytes = alignmask + 1 - (offset & alignmask);
 
 	walk->entrylen -= nbytes;
 	return nbytes;
@@ -83,6 +78,7 @@ int crypto_hash_walk_done(struct crypto_hash_walk *walk, int err)
 	walk->data -= walk->offset;
 
 	if (nbytes && walk->offset & alignmask && !err) {
+		walk->offset += alignmask - 1;
 		walk->offset = ALIGN(walk->offset, alignmask + 1);
 		walk->data += walk->offset;
 
@@ -93,7 +89,7 @@ int crypto_hash_walk_done(struct crypto_hash_walk *walk, int err)
 		return nbytes;
 	}
 
-	kunmap_atomic(walk->data);
+	crypto_kunmap(walk->data, 0);
 	crypto_yield(walk->flags);
 
 	if (err)
@@ -176,7 +172,7 @@ int crypto_ahash_setkey(struct crypto_ahash *tfm, const u8 *key,
 
 	return tfm->setkey(tfm, key, keylen);
 }
-EXPORT_SYMBOL(crypto_ahash_setkey);
+EXPORT_SYMBOL_GPL(crypto_ahash_setkey);
 
 static int ahash_nosetkey(struct crypto_ahash *tfm, const u8 *key,
 			  unsigned int keylen)
@@ -210,10 +206,14 @@ static void ahash_op_unaligned_done(struct crypto_async_request *req, int err)
 	struct ahash_request_priv *priv = areq->priv;
 	crypto_completion_t complete = priv->complete;
 	void *data = priv->data;
+	void *result = priv->result;
+	areq->base.complete = complete;
+	areq->base.data = data;
 
 	ahash_op_unaligned_finish(areq, err);
+	areq->result = result;
 
-	complete(data, err);
+	complete(req, err);
 }
 
 static int ahash_op_unaligned(struct ahash_request *req,
@@ -274,7 +274,7 @@ int crypto_ahash_digest(struct ahash_request *req)
 {
 	return crypto_ahash_op(req, crypto_ahash_reqtfm(req)->digest);
 }
-EXPORT_SYMBOL(crypto_ahash_digest);
+EXPORT_SYMBOL_GPL(crypto_ahash_digest);
 
 static void ahash_def_finup_finish2(struct ahash_request *req, int err)
 {
@@ -399,31 +399,6 @@ static unsigned int crypto_ahash_extsize(struct crypto_alg *alg)
 	return sizeof(struct crypto_shash *);
 }
 
-#ifdef CONFIG_NET
-static int crypto_ahash_report(struct sk_buff *skb, struct crypto_alg *alg)
-{
-	struct crypto_report_hash rhash;
-
-	strncpy(rhash.type, "ahash", sizeof(rhash.type));
-
-	rhash.blocksize = alg->cra_blocksize;
-	rhash.digestsize = __crypto_hash_alg_common(alg)->digestsize;
-
-	NLA_PUT(skb, CRYPTOCFGA_REPORT_HASH,
-		sizeof(struct crypto_report_hash), &rhash);
-
-	return 0;
-
-nla_put_failure:
-	return -EMSGSIZE;
-}
-#else
-static int crypto_ahash_report(struct sk_buff *skb, struct crypto_alg *alg)
-{
-	return -ENOSYS;
-}
-#endif
-
 static void crypto_ahash_show(struct seq_file *m, struct crypto_alg *alg)
 	__attribute__ ((unused));
 static void crypto_ahash_show(struct seq_file *m, struct crypto_alg *alg)
@@ -442,7 +417,6 @@ const struct crypto_type crypto_ahash_type = {
 #ifdef CONFIG_PROC_FS
 	.show = crypto_ahash_show,
 #endif
-	.report = crypto_ahash_report,
 	.maskclear = ~CRYPTO_ALG_TYPE_MASK,
 	.maskset = CRYPTO_ALG_TYPE_AHASH_MASK,
 	.type = CRYPTO_ALG_TYPE_AHASH,
@@ -455,7 +429,7 @@ struct crypto_ahash *crypto_alloc_ahash(const char *alg_name, u32 type,
 {
 	return crypto_alloc_tfm(alg_name, &crypto_ahash_type, type, mask);
 }
-EXPORT_SYMBOL(crypto_alloc_ahash);
+EXPORT_SYMBOL_GPL(crypto_alloc_ahash);
 
 static int ahash_prepare_alg(struct ahash_alg *alg)
 {

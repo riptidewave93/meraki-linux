@@ -12,7 +12,7 @@ struct pt_regs;
 
 extern int		register_exec_domain(struct exec_domain *);
 extern int		unregister_exec_domain(struct exec_domain *);
-extern int		__set_personality(unsigned int);
+extern int		__set_personality(unsigned long);
 
 #endif /* __KERNEL__ */
 
@@ -22,7 +22,6 @@ extern int		__set_personality(unsigned int);
  * These occupy the top three bytes.
  */
 enum {
-	UNAME26	=               0x0020000,
 	ADDR_NO_RANDOMIZE = 	0x0040000,	/* disable randomization of VA space */
 	FDPIC_FUNCPTRS =	0x0080000,	/* userspace function ptrs point to descriptors
 						 * (signal handling)

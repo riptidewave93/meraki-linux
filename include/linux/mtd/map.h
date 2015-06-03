@@ -26,11 +26,11 @@
 #include <linux/list.h>
 #include <linux/string.h>
 #include <linux/bug.h>
-#include <linux/kernel.h>
+
 
 #include <asm/unaligned.h>
+#include <asm/system.h>
 #include <asm/io.h>
-#include <asm/barrier.h>
 
 #ifdef CONFIG_MTD_MAP_BANK_WIDTH_1
 #define map_bankwidth(map) 1
@@ -214,7 +214,6 @@ struct map_info {
 	void __iomem *virt;
 	void *cached;
 
-	int swap; /* this mapping's byte-swapping requirement */
 	int bankwidth; /* in octets. This isn't necessarily the width
 		       of actual bus cycles -- it's the repeat interval
 		      in bytes, before you are talking to the first chip again.
@@ -342,7 +341,8 @@ static inline map_word map_word_load(struct map_info *map, const void *ptr)
 #endif
 	else if (map_bankwidth_is_large(map))
 		memcpy(r.x, ptr, map->bankwidth);
-
+	else
+		r.x[0] = 0;	
 	return r;
 }
 
@@ -362,7 +362,7 @@ static inline map_word map_word_load_partial(struct map_info *map, map_word orig
 			bitpos = (map_bankwidth(map)-1-i)*8;
 #endif
 			orig.x[0] &= ~(0xff << bitpos);
-			orig.x[0] |= (unsigned long)buf[i-start] << bitpos;
+			orig.x[0] |= buf[i-start] << bitpos;
 		}
 	}
 	return orig;
@@ -381,7 +381,7 @@ static inline map_word map_word_ff(struct map_info *map)
 
 	if (map_bankwidth(map) < MAP_FF_LIMIT) {
 		int bw = 8 * map_bankwidth(map);
-		r.x[0] = (1UL << bw) - 1;
+		r.x[0] = (1 << bw) - 1;
 	} else {
 		for (i=0; i<map_words(map); i++)
 			r.x[i] = ~0UL;

@@ -4,7 +4,6 @@
  */
 
 #include <linux/delay.h>
-#include <asm/unaligned.h>
 #include <linux/fb.h>
 #include <video/mach64.h>
 #include "atyfb.h"
@@ -243,7 +242,7 @@ void atyfb_copyarea(struct fb_info *info, const struct fb_copyarea *area)
 void atyfb_fillrect(struct fb_info *info, const struct fb_fillrect *rect)
 {
 	struct atyfb_par *par = (struct atyfb_par *) info->par;
-	u32 color, dx = rect->dx, width = rect->width, rotation = 0;
+	u32 color = rect->color, dx = rect->dx, width = rect->width, rotation = 0;
 
 	if (par->asleep)
 		return;
@@ -254,11 +253,8 @@ void atyfb_fillrect(struct fb_info *info, const struct fb_fillrect *rect)
 		return;
 	}
 
-	if (info->fix.visual == FB_VISUAL_TRUECOLOR ||
-	    info->fix.visual == FB_VISUAL_DIRECTCOLOR)
-		color = ((u32 *)(info->pseudo_palette))[rect->color];
-	else
-		color = rect->color;
+	color |= (rect->color << 8);
+	color |= (rect->color << 16);
 
 	if (info->var.bits_per_pixel == 24) {
 		/* In 24 bpp, the engine is in 8 bpp - this requires that all */
@@ -420,7 +416,7 @@ void atyfb_imageblit(struct fb_info *info, const struct fb_image *image)
 		u32 *pbitmap, dwords = (src_bytes + 3) / 4;
 		for (pbitmap = (u32*)(image->data); dwords; dwords--, pbitmap++) {
 			wait_for_fifo(1, par);
-			aty_st_le32(HOST_DATA0, get_unaligned_le32(pbitmap), par);
+			aty_st_le32(HOST_DATA0, le32_to_cpup(pbitmap), par);
 		}
 	}
 

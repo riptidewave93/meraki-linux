@@ -18,7 +18,7 @@
  *
  */
 #include <stdarg.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
@@ -36,20 +36,19 @@
 #include <linux/spinlock.h>
 #include <linux/pm.h>
 #include <linux/proc_fs.h>
-#include <linux/seq_file.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/device.h>
-#include <linux/syscore_ops.h>
+#include <linux/sysdev.h>
 #include <linux/freezer.h>
 #include <linux/syscalls.h>
 #include <linux/suspend.h>
 #include <linux/cpu.h>
-#include <linux/compat.h>
 #include <asm/prom.h>
 #include <asm/machdep.h>
 #include <asm/io.h>
 #include <asm/pgtable.h>
+#include <asm/system.h>
 #include <asm/sections.h>
 #include <asm/irq.h>
 #include <asm/pmac_feature.h>
@@ -72,7 +71,6 @@
 /* How many iterations between battery polls */
 #define BATTERY_POLLING_COUNT	2
 
-static DEFINE_MUTEX(pmu_info_proc_mutex);
 static volatile unsigned char __iomem *via;
 
 /* VIA registers - spaced 0x200 bytes apart */
@@ -188,11 +186,17 @@ static int init_pmu(void);
 static void pmu_start(void);
 static irqreturn_t via_pmu_interrupt(int irq, void *arg);
 static irqreturn_t gpio1_interrupt(int irq, void *arg);
-static const struct file_operations pmu_info_proc_fops;
-static const struct file_operations pmu_irqstats_proc_fops;
+static int proc_get_info(char *page, char **start, off_t off,
+			  int count, int *eof, void *data);
+static int proc_get_irqstats(char *page, char **start, off_t off,
+			  int count, int *eof, void *data);
 static void pmu_pass_intr(unsigned char *data, int len);
-static const struct file_operations pmu_battery_proc_fops;
-static const struct file_operations pmu_options_proc_fops;
+static int proc_get_batt(char *page, char **start, off_t off,
+			int count, int *eof, void *data);
+static int proc_read_options(char *page, char **start, off_t off,
+			int count, int *eof, void *data);
+static int proc_write_options(struct file *file, const char __user *buffer,
+			unsigned long count, void *data);
 
 #ifdef CONFIG_ADB
 struct adb_driver via_pmu_driver = {
@@ -401,12 +405,11 @@ static int __init via_pmu_start(void)
 		printk(KERN_ERR "via-pmu: can't map interrupt\n");
 		return -ENODEV;
 	}
-	/* We set IRQF_NO_SUSPEND because we don't want the interrupt
-	 * to be disabled between the 2 passes of driver suspend, we
-	 * control our own disabling for that one
+	/* We set IRQF_TIMER because we don't want the interrupt to be disabled
+	 * between the 2 passes of driver suspend, we control our own disabling
+	 * for that one
 	 */
-	if (request_irq(irq, via_pmu_interrupt, IRQF_NO_SUSPEND,
-			"VIA-PMU", (void *)0)) {
+	if (request_irq(irq, via_pmu_interrupt, IRQF_TIMER, "VIA-PMU", (void *)0)) {
 		printk(KERN_ERR "via-pmu: can't request irq %d\n", irq);
 		return -ENODEV;
 	}
@@ -465,8 +468,8 @@ static int __init via_pmu_dev_init(void)
 #endif
 
 #ifdef CONFIG_PPC32
-  	if (of_machine_is_compatible("AAPL,3400/2400") ||
-  		of_machine_is_compatible("AAPL,3500")) {
+  	if (machine_is_compatible("AAPL,3400/2400") ||
+  		machine_is_compatible("AAPL,3500")) {
 		int mb = pmac_call_feature(PMAC_FTR_GET_MB_INFO,
 			NULL, PMAC_MB_INFO_MODEL, 0);
 		pmu_battery_count = 1;
@@ -474,8 +477,8 @@ static int __init via_pmu_dev_init(void)
 			pmu_batteries[0].flags |= PMU_BATT_TYPE_COMET;
 		else
 			pmu_batteries[0].flags |= PMU_BATT_TYPE_HOOPER;
-	} else if (of_machine_is_compatible("AAPL,PowerBook1998") ||
-		of_machine_is_compatible("PowerBook1,1")) {
+	} else if (machine_is_compatible("AAPL,PowerBook1998") ||
+		machine_is_compatible("PowerBook1,1")) {
 		pmu_battery_count = 2;
 		pmu_batteries[0].flags |= PMU_BATT_TYPE_SMART;
 		pmu_batteries[1].flags |= PMU_BATT_TYPE_SMART;
@@ -504,15 +507,19 @@ static int __init via_pmu_dev_init(void)
 		for (i=0; i<pmu_battery_count; i++) {
 			char title[16];
 			sprintf(title, "battery_%ld", i);
-			proc_pmu_batt[i] = proc_create_data(title, 0, proc_pmu_root,
-					&pmu_battery_proc_fops, (void *)i);
+			proc_pmu_batt[i] = create_proc_read_entry(title, 0, proc_pmu_root,
+						proc_get_batt, (void *)i);
 		}
 
-		proc_pmu_info = proc_create("info", 0, proc_pmu_root, &pmu_info_proc_fops);
-		proc_pmu_irqstats = proc_create("interrupts", 0, proc_pmu_root,
-						&pmu_irqstats_proc_fops);
-		proc_pmu_options = proc_create("options", 0600, proc_pmu_root,
-						&pmu_options_proc_fops);
+		proc_pmu_info = create_proc_read_entry("info", 0, proc_pmu_root,
+					proc_get_info, NULL);
+		proc_pmu_irqstats = create_proc_read_entry("interrupts", 0, proc_pmu_root,
+					proc_get_irqstats, NULL);
+		proc_pmu_options = create_proc_entry("options", 0600, proc_pmu_root);
+		if (proc_pmu_options) {
+			proc_pmu_options->read_proc = proc_read_options;
+			proc_pmu_options->write_proc = proc_write_options;
+		}
 	}
 	return 0;
 }
@@ -792,33 +799,27 @@ query_battery_state(void)
 			2, PMU_SMART_BATTERY_STATE, pmu_cur_battery+1);
 }
 
-static int pmu_info_proc_show(struct seq_file *m, void *v)
+static int
+proc_get_info(char *page, char **start, off_t off,
+		int count, int *eof, void *data)
 {
-	seq_printf(m, "PMU driver version     : %d\n", PMU_DRIVER_VERSION);
-	seq_printf(m, "PMU firmware version   : %02x\n", pmu_version);
-	seq_printf(m, "AC Power               : %d\n",
+	char* p = page;
+
+	p += sprintf(p, "PMU driver version     : %d\n", PMU_DRIVER_VERSION);
+	p += sprintf(p, "PMU firmware version   : %02x\n", pmu_version);
+	p += sprintf(p, "AC Power               : %d\n",
 		((pmu_power_flags & PMU_PWR_AC_PRESENT) != 0) || pmu_battery_count == 0);
-	seq_printf(m, "Battery count          : %d\n", pmu_battery_count);
+	p += sprintf(p, "Battery count          : %d\n", pmu_battery_count);
 
-	return 0;
+	return p - page;
 }
 
-static int pmu_info_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, pmu_info_proc_show, NULL);
-}
-
-static const struct file_operations pmu_info_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= pmu_info_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
-static int pmu_irqstats_proc_show(struct seq_file *m, void *v)
+static int
+proc_get_irqstats(char *page, char **start, off_t off,
+		  int count, int *eof, void *data)
 {
 	int i;
+	char* p = page;
 	static const char *irq_names[] = {
 		"Total CB1 triggered events",
 		"Total GPIO1 triggered events",
@@ -834,76 +835,60 @@ static int pmu_irqstats_proc_show(struct seq_file *m, void *v)
         };
 
 	for (i=0; i<11; i++) {
-		seq_printf(m, " %2u: %10u (%s)\n",
+		p += sprintf(p, " %2u: %10u (%s)\n",
 			     i, pmu_irq_stats[i], irq_names[i]);
 	}
-	return 0;
+	return p - page;
 }
 
-static int pmu_irqstats_proc_open(struct inode *inode, struct file *file)
+static int
+proc_get_batt(char *page, char **start, off_t off,
+		int count, int *eof, void *data)
 {
-	return single_open(file, pmu_irqstats_proc_show, NULL);
-}
-
-static const struct file_operations pmu_irqstats_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= pmu_irqstats_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
-static int pmu_battery_proc_show(struct seq_file *m, void *v)
-{
-	long batnum = (long)m->private;
+	long batnum = (long)data;
+	char *p = page;
 	
-	seq_putc(m, '\n');
-	seq_printf(m, "flags      : %08x\n", pmu_batteries[batnum].flags);
-	seq_printf(m, "charge     : %d\n", pmu_batteries[batnum].charge);
-	seq_printf(m, "max_charge : %d\n", pmu_batteries[batnum].max_charge);
-	seq_printf(m, "current    : %d\n", pmu_batteries[batnum].amperage);
-	seq_printf(m, "voltage    : %d\n", pmu_batteries[batnum].voltage);
-	seq_printf(m, "time rem.  : %d\n", pmu_batteries[batnum].time_remaining);
-	return 0;
+	p += sprintf(p, "\n");
+	p += sprintf(p, "flags      : %08x\n",
+		pmu_batteries[batnum].flags);
+	p += sprintf(p, "charge     : %d\n",
+		pmu_batteries[batnum].charge);
+	p += sprintf(p, "max_charge : %d\n",
+		pmu_batteries[batnum].max_charge);
+	p += sprintf(p, "current    : %d\n",
+		pmu_batteries[batnum].amperage);
+	p += sprintf(p, "voltage    : %d\n",
+		pmu_batteries[batnum].voltage);
+	p += sprintf(p, "time rem.  : %d\n",
+		pmu_batteries[batnum].time_remaining);
+
+	return p - page;
 }
 
-static int pmu_battery_proc_open(struct inode *inode, struct file *file)
+static int
+proc_read_options(char *page, char **start, off_t off,
+			int count, int *eof, void *data)
 {
-	return single_open(file, pmu_battery_proc_show, PDE(inode)->data);
-}
+	char *p = page;
 
-static const struct file_operations pmu_battery_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= pmu_battery_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
-static int pmu_options_proc_show(struct seq_file *m, void *v)
-{
 #if defined(CONFIG_SUSPEND) && defined(CONFIG_PPC32)
 	if (pmu_kind == PMU_KEYLARGO_BASED &&
 	    pmac_call_feature(PMAC_FTR_SLEEP_STATE,NULL,0,-1) >= 0)
-		seq_printf(m, "lid_wakeup=%d\n", option_lid_wakeup);
+		p += sprintf(p, "lid_wakeup=%d\n", option_lid_wakeup);
 #endif
 	if (pmu_kind == PMU_KEYLARGO_BASED)
-		seq_printf(m, "server_mode=%d\n", option_server_mode);
+		p += sprintf(p, "server_mode=%d\n", option_server_mode);
 
-	return 0;
+	return p - page;
 }
-
-static int pmu_options_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, pmu_options_proc_show, NULL);
-}
-
-static ssize_t pmu_options_proc_write(struct file *file,
-		const char __user *buffer, size_t count, loff_t *pos)
+			
+static int
+proc_write_options(struct file *file, const char __user *buffer,
+			unsigned long count, void *data)
 {
 	char tmp[33];
 	char *label, *val;
-	size_t fcount = count;
+	unsigned long fcount = count;
 	
 	if (!count)
 		return -EINVAL;
@@ -941,15 +926,6 @@ static ssize_t pmu_options_proc_write(struct file *file,
 	}
 	return fcount;
 }
-
-static const struct file_operations pmu_options_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= pmu_options_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-	.write		= pmu_options_proc_write,
-};
 
 #ifdef CONFIG_ADB
 /* Send an ADB command */
@@ -2078,7 +2054,7 @@ pmu_open(struct inode *inode, struct file *file)
 	pp->rb_get = pp->rb_put = 0;
 	spin_lock_init(&pp->lock);
 	init_waitqueue_head(&pp->wait);
-	mutex_lock(&pmu_info_proc_mutex);
+	lock_kernel();
 	spin_lock_irqsave(&all_pvt_lock, flags);
 #if defined(CONFIG_INPUT_ADBHID) && defined(CONFIG_PMAC_BACKLIGHT)
 	pp->backlight_locker = 0;
@@ -2086,7 +2062,7 @@ pmu_open(struct inode *inode, struct file *file)
 	list_add(&pp->list, &all_pmu_pvt);
 	spin_unlock_irqrestore(&all_pvt_lock, flags);
 	file->private_data = pp;
-	mutex_unlock(&pmu_info_proc_mutex);
+	unlock_kernel();
 	return 0;
 }
 
@@ -2256,7 +2232,7 @@ static int pmu_sleep_valid(suspend_state_t state)
 		&& (pmac_call_feature(PMAC_FTR_SLEEP_STATE, NULL, 0, -1) >= 0);
 }
 
-static const struct platform_suspend_ops pmu_pm_ops = {
+static struct platform_suspend_ops pmu_pm_ops = {
 	.enter = powerbook_sleep,
 	.valid = pmu_sleep_valid,
 };
@@ -2275,7 +2251,8 @@ static int register_pmu_pm_ops(void)
 device_initcall(register_pmu_pm_ops);
 #endif
 
-static int pmu_ioctl(struct file *filp,
+static int
+pmu_ioctl(struct inode * inode, struct file *filp,
 		     u_int cmd, u_long arg)
 {
 	__u32 __user *argp = (__u32 __user *)arg;
@@ -2338,67 +2315,13 @@ static int pmu_ioctl(struct file *filp,
 	return error;
 }
 
-static long pmu_unlocked_ioctl(struct file *filp,
-			       u_int cmd, u_long arg)
-{
-	int ret;
-
-	mutex_lock(&pmu_info_proc_mutex);
-	ret = pmu_ioctl(filp, cmd, arg);
-	mutex_unlock(&pmu_info_proc_mutex);
-
-	return ret;
-}
-
-#ifdef CONFIG_COMPAT
-#define PMU_IOC_GET_BACKLIGHT32	_IOR('B', 1, compat_size_t)
-#define PMU_IOC_SET_BACKLIGHT32	_IOW('B', 2, compat_size_t)
-#define PMU_IOC_GET_MODEL32	_IOR('B', 3, compat_size_t)
-#define PMU_IOC_HAS_ADB32	_IOR('B', 4, compat_size_t)
-#define PMU_IOC_CAN_SLEEP32	_IOR('B', 5, compat_size_t)
-#define PMU_IOC_GRAB_BACKLIGHT32 _IOR('B', 6, compat_size_t)
-
-static long compat_pmu_ioctl (struct file *filp, u_int cmd, u_long arg)
-{
-	switch (cmd) {
-	case PMU_IOC_SLEEP:
-		break;
-	case PMU_IOC_GET_BACKLIGHT32:
-		cmd = PMU_IOC_GET_BACKLIGHT;
-		break;
-	case PMU_IOC_SET_BACKLIGHT32:
-		cmd = PMU_IOC_SET_BACKLIGHT;
-		break;
-	case PMU_IOC_GET_MODEL32:
-		cmd = PMU_IOC_GET_MODEL;
-		break;
-	case PMU_IOC_HAS_ADB32:
-		cmd = PMU_IOC_HAS_ADB;
-		break;
-	case PMU_IOC_CAN_SLEEP32:
-		cmd = PMU_IOC_CAN_SLEEP;
-		break;
-	case PMU_IOC_GRAB_BACKLIGHT32:
-		cmd = PMU_IOC_GRAB_BACKLIGHT;
-		break;
-	default:
-		return -ENOIOCTLCMD;
-	}
-	return pmu_unlocked_ioctl(filp, cmd, (unsigned long)compat_ptr(arg));
-}
-#endif
-
 static const struct file_operations pmu_device_fops = {
 	.read		= pmu_read,
 	.write		= pmu_write,
 	.poll		= pmu_fpoll,
-	.unlocked_ioctl	= pmu_unlocked_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl	= compat_pmu_ioctl,
-#endif
+	.ioctl		= pmu_ioctl,
 	.open		= pmu_open,
 	.release	= pmu_release,
-	.llseek		= noop_llseek,
 };
 
 static struct miscdevice pmu_device = {
@@ -2526,9 +2449,12 @@ void pmu_blink(int n)
 #if defined(CONFIG_SUSPEND) && defined(CONFIG_PPC32)
 int pmu_sys_suspended;
 
-static int pmu_syscore_suspend(void)
+static int pmu_sys_suspend(struct sys_device *sysdev, pm_message_t state)
 {
-	/* Suspend PMU event interrupts */
+	if (state.event != PM_EVENT_SUSPEND || pmu_sys_suspended)
+		return 0;
+
+	/* Suspend PMU event interrupts */\
 	pmu_suspend();
 	pmu_sys_suspended = 1;
 
@@ -2540,12 +2466,12 @@ static int pmu_syscore_suspend(void)
 	return 0;
 }
 
-static void pmu_syscore_resume(void)
+static int pmu_sys_resume(struct sys_device *sysdev)
 {
 	struct adb_request req;
 
 	if (!pmu_sys_suspended)
-		return;
+		return 0;
 
 	/* Tell PMU we are ready */
 	pmu_request(&req, NULL, 2, PMU_SYSTEM_READY, 2);
@@ -2558,21 +2484,50 @@ static void pmu_syscore_resume(void)
 	/* Resume PMU event interrupts */
 	pmu_resume();
 	pmu_sys_suspended = 0;
-}
-
-static struct syscore_ops pmu_syscore_ops = {
-	.suspend = pmu_syscore_suspend,
-	.resume = pmu_syscore_resume,
-};
-
-static int pmu_syscore_register(void)
-{
-	register_syscore_ops(&pmu_syscore_ops);
 
 	return 0;
 }
-subsys_initcall(pmu_syscore_register);
+
 #endif /* CONFIG_SUSPEND && CONFIG_PPC32 */
+
+static struct sysdev_class pmu_sysclass = {
+	.name = "pmu",
+};
+
+static struct sys_device device_pmu = {
+	.cls		= &pmu_sysclass,
+};
+
+static struct sysdev_driver driver_pmu = {
+#if defined(CONFIG_SUSPEND) && defined(CONFIG_PPC32)
+	.suspend	= &pmu_sys_suspend,
+	.resume		= &pmu_sys_resume,
+#endif /* CONFIG_SUSPEND && CONFIG_PPC32 */
+};
+
+static int __init init_pmu_sysfs(void)
+{
+	int rc;
+
+	rc = sysdev_class_register(&pmu_sysclass);
+	if (rc) {
+		printk(KERN_ERR "Failed registering PMU sys class\n");
+		return -ENODEV;
+	}
+	rc = sysdev_register(&device_pmu);
+	if (rc) {
+		printk(KERN_ERR "Failed registering PMU sys device\n");
+		return -ENODEV;
+	}
+	rc = sysdev_driver_register(&pmu_sysclass, &driver_pmu);
+	if (rc) {
+		printk(KERN_ERR "Failed registering PMU sys driver\n");
+		return -ENODEV;
+	}
+	return 0;
+}
+
+subsys_initcall(init_pmu_sysfs);
 
 EXPORT_SYMBOL(pmu_request);
 EXPORT_SYMBOL(pmu_queue_request);

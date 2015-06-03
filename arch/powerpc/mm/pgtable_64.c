@@ -26,7 +26,6 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/string.h>
-#include <linux/export.h>
 #include <linux/types.h>
 #include <linux/mman.h>
 #include <linux/mm.h>
@@ -35,8 +34,7 @@
 #include <linux/vmalloc.h>
 #include <linux/init.h>
 #include <linux/bootmem.h>
-#include <linux/memblock.h>
-#include <linux/slab.h>
+#include <linux/lmb.h>
 
 #include <asm/pgalloc.h>
 #include <asm/page.h>
@@ -51,6 +49,7 @@
 #include <asm/processor.h>
 #include <asm/cputable.h>
 #include <asm/sections.h>
+#include <asm/system.h>
 #include <asm/abs_addr.h>
 #include <asm/firmware.h>
 
@@ -67,7 +66,7 @@ static void *early_alloc_pgtable(unsigned long size)
 	if (init_bootmem_done)
 		pt = __alloc_bootmem(size, size, __pa(MAX_DMA_ADDRESS));
 	else
-		pt = __va(memblock_alloc_base(size, size,
+		pt = __va(lmb_alloc_base(size, size,
 					 __pa(MAX_DMA_ADDRESS)));
 	memset(pt, 0, size);
 
@@ -223,8 +222,6 @@ void __iomem * __ioremap_caller(phys_addr_t addr, unsigned long size,
 					    caller);
 		if (area == NULL)
 			return NULL;
-
-		area->phys_addr = paligned;
 		ret = __ioremap_at(paligned, area->addr, size, flags);
 		if (!ret)
 			vunmap(area->addr);
@@ -255,17 +252,7 @@ void __iomem * ioremap(phys_addr_t addr, unsigned long size)
 	return __ioremap_caller(addr, size, flags, caller);
 }
 
-void __iomem * ioremap_wc(phys_addr_t addr, unsigned long size)
-{
-	unsigned long flags = _PAGE_NO_CACHE;
-	void *caller = __builtin_return_address(0);
-
-	if (ppc_md.ioremap)
-		return ppc_md.ioremap(addr, size, flags, caller);
-	return __ioremap_caller(addr, size, flags, caller);
-}
-
-void __iomem * ioremap_prot(phys_addr_t addr, unsigned long size,
+void __iomem * ioremap_flags(phys_addr_t addr, unsigned long size,
 			     unsigned long flags)
 {
 	void *caller = __builtin_return_address(0);
@@ -276,14 +263,6 @@ void __iomem * ioremap_prot(phys_addr_t addr, unsigned long size,
 
 	/* we don't want to let _PAGE_USER and _PAGE_EXEC leak out */
 	flags &= ~(_PAGE_USER | _PAGE_EXEC);
-
-#ifdef _PAGE_BAP_SR
-	/* _PAGE_USER contains _PAGE_BAP_SR on BookE using the new PTE format
-	 * which means that we just cleared supervisor access... oops ;-) This
-	 * restores it
-	 */
-	flags |= _PAGE_BAP_SR;
-#endif
 
 	if (ppc_md.ioremap)
 		return ppc_md.ioremap(addr, size, flags, caller);
@@ -321,8 +300,7 @@ void iounmap(volatile void __iomem *token)
 }
 
 EXPORT_SYMBOL(ioremap);
-EXPORT_SYMBOL(ioremap_wc);
-EXPORT_SYMBOL(ioremap_prot);
+EXPORT_SYMBOL(ioremap_flags);
 EXPORT_SYMBOL(__ioremap);
 EXPORT_SYMBOL(__ioremap_at);
 EXPORT_SYMBOL(iounmap);

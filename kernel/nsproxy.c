@@ -13,8 +13,7 @@
  *             Pavel Emelianov <xemul@openvz.org>
  */
 
-#include <linux/slab.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/nsproxy.h>
 #include <linux/init_task.h>
 #include <linux/mnt_namespace.h>
@@ -22,24 +21,10 @@
 #include <linux/pid_namespace.h>
 #include <net/net_namespace.h>
 #include <linux/ipc_namespace.h>
-#include <linux/proc_fs.h>
-#include <linux/file.h>
-#include <linux/syscalls.h>
 
 static struct kmem_cache *nsproxy_cachep;
 
-struct nsproxy init_nsproxy = {
-	.count	= ATOMIC_INIT(1),
-	.uts_ns	= &init_uts_ns,
-#if defined(CONFIG_POSIX_MQUEUE) || defined(CONFIG_SYSVIPC)
-	.ipc_ns	= &init_ipc_ns,
-#endif
-	.mnt_ns	= NULL,
-	.pid_ns	= &init_pid_ns,
-#ifdef CONFIG_NET
-	.net_ns	= &init_net,
-#endif
-};
+struct nsproxy init_nsproxy = INIT_NSPROXY(init_nsproxy);
 
 static inline struct nsproxy *create_nsproxy(void)
 {
@@ -72,13 +57,13 @@ static struct nsproxy *create_new_namespaces(unsigned long flags,
 		goto out_ns;
 	}
 
-	new_nsp->uts_ns = copy_utsname(flags, tsk);
+	new_nsp->uts_ns = copy_utsname(flags, tsk->nsproxy->uts_ns);
 	if (IS_ERR(new_nsp->uts_ns)) {
 		err = PTR_ERR(new_nsp->uts_ns);
 		goto out_uts;
 	}
 
-	new_nsp->ipc_ns = copy_ipcs(flags, tsk);
+	new_nsp->ipc_ns = copy_ipcs(flags, tsk->nsproxy->ipc_ns);
 	if (IS_ERR(new_nsp->ipc_ns)) {
 		err = PTR_ERR(new_nsp->ipc_ns);
 		goto out_ipc;
@@ -201,6 +186,10 @@ int unshare_nsproxy_namespaces(unsigned long unshare_flags,
 		goto out;
 	}
 
+	err = ns_cgroup_clone(current, task_pid(current));
+	if (err)
+		put_nsproxy(*new_nsp);
+
 out:
 	return err;
 }
@@ -232,47 +221,10 @@ void exit_task_namespaces(struct task_struct *p)
 	switch_task_namespaces(p, NULL);
 }
 
-SYSCALL_DEFINE2(setns, int, fd, int, nstype)
-{
-	const struct proc_ns_operations *ops;
-	struct task_struct *tsk = current;
-	struct nsproxy *new_nsproxy;
-	struct proc_inode *ei;
-	struct file *file;
-	int err;
-
-	if (!capable(CAP_SYS_ADMIN))
-		return -EPERM;
-
-	file = proc_ns_fget(fd);
-	if (IS_ERR(file))
-		return PTR_ERR(file);
-
-	err = -EINVAL;
-	ei = PROC_I(file->f_dentry->d_inode);
-	ops = ei->ns_ops;
-	if (nstype && (ops->type != nstype))
-		goto out;
-
-	new_nsproxy = create_new_namespaces(0, tsk, tsk->fs);
-	if (IS_ERR(new_nsproxy)) {
-		err = PTR_ERR(new_nsproxy);
-		goto out;
-	}
-
-	err = ops->install(new_nsproxy, ei->ns);
-	if (err) {
-		free_nsproxy(new_nsproxy);
-		goto out;
-	}
-	switch_task_namespaces(tsk, new_nsproxy);
-out:
-	fput(file);
-	return err;
-}
-
-int __init nsproxy_cache_init(void)
+static int __init nsproxy_cache_init(void)
 {
 	nsproxy_cachep = KMEM_CACHE(nsproxy, SLAB_PANIC);
 	return 0;
 }
+
+module_init(nsproxy_cache_init);

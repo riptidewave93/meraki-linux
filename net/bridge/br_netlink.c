@@ -11,14 +11,10 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
-#include <linux/etherdevice.h>
 #include <net/rtnetlink.h>
 #include <net/net_namespace.h>
 #include <net/sock.h>
-
 #include "br_private.h"
-#include "br_private_stp.h"
 
 static inline size_t br_nlmsg_size(void)
 {
@@ -45,8 +41,8 @@ static int br_fill_ifinfo(struct sk_buff *skb, const struct net_bridge_port *por
 	struct nlmsghdr *nlh;
 	u8 operstate = netif_running(dev) ? dev->operstate : IF_OPER_DOWN;
 
-	br_debug(br, "br_fill_info event %d port %s master %s\n",
-		     event, dev->name, br->dev->name);
+	pr_debug("br_fill_info event %d port %s master %s\n",
+		 event, dev->name, br->dev->name);
 
 	nlh = nlmsg_put(skb, pid, seq, event, sizeof(*hdr), flags);
 	if (nlh == NULL)
@@ -90,9 +86,7 @@ void br_ifinfo_notify(int event, struct net_bridge_port *port)
 	struct sk_buff *skb;
 	int err = -ENOBUFS;
 
-	br_debug(port->br, "port %u(%s) event %d\n",
-		 (unsigned)port->port_no, port->dev->name, event);
-
+	pr_debug("bridge notify event=%d\n", event);
 	skb = nlmsg_new(br_nlmsg_size(), GFP_ATOMIC);
 	if (skb == NULL)
 		goto errout;
@@ -121,23 +115,19 @@ static int br_dump_ifinfo(struct sk_buff *skb, struct netlink_callback *cb)
 	int idx;
 
 	idx = 0;
-	rcu_read_lock();
-	for_each_netdev_rcu(net, dev) {
-		struct net_bridge_port *port = br_port_get_rcu(dev);
-
+	for_each_netdev(net, dev) {
 		/* not a bridge port */
-		if (!port || idx < cb->args[0])
+		if (dev->br_port == NULL || idx < cb->args[0])
 			goto skip;
 
-		if (br_fill_ifinfo(skb, port,
-				   NETLINK_CB(cb->skb).pid,
+		if (br_fill_ifinfo(skb, dev->br_port, NETLINK_CB(cb->skb).pid,
 				   cb->nlh->nlmsg_seq, RTM_NEWLINK,
 				   NLM_F_MULTI) < 0)
 			break;
 skip:
 		++idx;
 	}
-	rcu_read_unlock();
+
 	cb->args[0] = idx;
 
 	return skb->len;
@@ -175,7 +165,7 @@ static int br_rtm_setlink(struct sk_buff *skb,  struct nlmsghdr *nlh, void *arg)
 	if (!dev)
 		return -ENODEV;
 
-	p = br_port_get_rtnl(dev);
+	p = dev->br_port;
 	if (!p)
 		return -EINVAL;
 
@@ -189,77 +179,23 @@ static int br_rtm_setlink(struct sk_buff *skb,  struct nlmsghdr *nlh, void *arg)
 
 	p->state = new_state;
 	br_log_state(p);
-
-	spin_lock_bh(&p->br->lock);
-	br_port_state_selection(p->br);
-	spin_unlock_bh(&p->br->lock);
-
-	br_ifinfo_notify(RTM_NEWLINK, p);
-
 	return 0;
 }
 
-static int br_validate(struct nlattr *tb[], struct nlattr *data[])
-{
-	if (tb[IFLA_ADDRESS]) {
-		if (nla_len(tb[IFLA_ADDRESS]) != ETH_ALEN)
-			return -EINVAL;
-		if (!is_valid_ether_addr(nla_data(tb[IFLA_ADDRESS])))
-			return -EADDRNOTAVAIL;
-	}
-
-	return 0;
-}
-
-struct rtnl_link_ops br_link_ops __read_mostly = {
-	.kind		= "bridge",
-	.priv_size	= sizeof(struct net_bridge),
-	.setup		= br_dev_setup,
-	.validate	= br_validate,
-	.dellink	= br_dev_delete,
-};
 
 int __init br_netlink_init(void)
 {
-	int err;
+	if (__rtnl_register(PF_BRIDGE, RTM_GETLINK, NULL, br_dump_ifinfo))
+		return -ENOBUFS;
 
-	err = rtnl_link_register(&br_link_ops);
-	if (err < 0)
-		goto err1;
-
-	err = __rtnl_register(PF_BRIDGE, RTM_GETLINK, NULL,
-			      br_dump_ifinfo, NULL);
-	if (err)
-		goto err2;
-	err = __rtnl_register(PF_BRIDGE, RTM_SETLINK,
-			      br_rtm_setlink, NULL, NULL);
-	if (err)
-		goto err3;
-	err = __rtnl_register(PF_BRIDGE, RTM_NEWNEIGH,
-			      br_fdb_add, NULL, NULL);
-	if (err)
-		goto err3;
-	err = __rtnl_register(PF_BRIDGE, RTM_DELNEIGH,
-			      br_fdb_delete, NULL, NULL);
-	if (err)
-		goto err3;
-	err = __rtnl_register(PF_BRIDGE, RTM_GETNEIGH,
-			      NULL, br_fdb_dump, NULL);
-	if (err)
-		goto err3;
+	/* Only the first call to __rtnl_register can fail */
+	__rtnl_register(PF_BRIDGE, RTM_SETLINK, br_rtm_setlink, NULL);
 
 	return 0;
-
-err3:
-	rtnl_unregister_all(PF_BRIDGE);
-err2:
-	rtnl_link_unregister(&br_link_ops);
-err1:
-	return err;
 }
 
 void __exit br_netlink_fini(void)
 {
-	rtnl_link_unregister(&br_link_ops);
 	rtnl_unregister_all(PF_BRIDGE);
 }
+

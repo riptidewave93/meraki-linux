@@ -1,5 +1,3 @@
-#include <linux/types.h>
-
 /* platform data for the PL061 GPIO driver */
 
 struct pl061_platform_data {
@@ -7,7 +5,8 @@ struct pl061_platform_data {
 	unsigned	gpio_base;
 
 	/* number of the first IRQ.
-	 * If the IRQ functionality in not desired this must be set to 0.
+	 * If the IRQ functionality in not desired this must be set to
+	 * (unsigned) -1.
 	 */
 	unsigned	irq_base;
 

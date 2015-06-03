@@ -66,6 +66,9 @@ enum async_tx_flags {
 	ASYNC_TX_XOR_DROP_DST	 = (1 << 1),
 	ASYNC_TX_ACK		 = (1 << 2),
 	ASYNC_TX_FENCE		 = (1 << 3),
+	ASYNC_TX_PQ_ZERO_P	 = (1 << 4),
+	ASYNC_TX_PQ_ZERO_Q	 = (1 << 5),
+	ASYNC_TX_ASYNC_ONLY	 = (1 << 6),
 };
 
 /**

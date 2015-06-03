@@ -51,7 +51,7 @@
 
 /*
  * The offset of the ELF paddr field from the acutal required
- * pseudo-physical address (numeric).
+ * psuedo-physical address (numeric).
  *
  * This is used to maintain backwards compatibility with older kernels
  * which wrote __PAGE_OFFSET into that field. This field defaults to 0

@@ -22,6 +22,7 @@
 #define __ASM_ARCH_HARDWARE_H
 
 #include <asm/sizes.h>
+#include <mach/memory.h>
 #include <cfg_global.h>
 #include <mach/csp/mm_io.h>
 
@@ -34,6 +35,8 @@
 
 #define RAM_SIZE                (CFG_GLOBAL_RAM_SIZE-CFG_GLOBAL_RAM_SIZE_RESERVED)
 #define RAM_BASE                PAGE_OFFSET
+
+#define pcibios_assign_all_busses()	1
 
 /* Macros to make managing spinlocks a bit more controlled in terms of naming. */
 /* See reg_gpio.h, reg_irq.h, arch.c, gpio.c for example usage. */

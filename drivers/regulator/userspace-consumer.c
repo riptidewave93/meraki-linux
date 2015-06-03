@@ -18,11 +18,9 @@
 
 #include <linux/err.h>
 #include <linux/mutex.h>
-#include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/regulator/consumer.h>
 #include <linux/regulator/userspace-consumer.h>
-#include <linux/slab.h>
 
 struct userspace_consumer_data {
 	const char *name;
@@ -185,7 +183,18 @@ static struct platform_driver regulator_userspace_consumer_driver = {
 	},
 };
 
-module_platform_driver(regulator_userspace_consumer_driver);
+
+static int __init regulator_userspace_consumer_init(void)
+{
+	return platform_driver_register(&regulator_userspace_consumer_driver);
+}
+module_init(regulator_userspace_consumer_init);
+
+static void __exit regulator_userspace_consumer_exit(void)
+{
+	platform_driver_unregister(&regulator_userspace_consumer_driver);
+}
+module_exit(regulator_userspace_consumer_exit);
 
 MODULE_AUTHOR("Mike Rapoport <mike@compulab.co.il>");
 MODULE_DESCRIPTION("Userspace consumer for voltage and current regulators");

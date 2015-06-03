@@ -14,15 +14,17 @@
 #include <linux/interrupt.h>
 #include <linux/bitops.h>
 #include <linux/bio.h>
+#include <linux/device.h>
 #include <linux/pci.h>
 #include <linux/completion.h>
 #include <linux/pm.h>
-#include <linux/mutex.h>
 #ifdef CONFIG_BLK_DEV_IDEACPI
 #include <acpi/acpi.h>
 #endif
 #include <asm/byteorder.h>
+#include <asm/system.h>
 #include <asm/io.h>
+#include <asm/mutex.h>
 
 /* for request_sense */
 #include <linux/cdrom.h>
@@ -40,8 +42,6 @@
 #define ERROR_MAX	8	/* Max read/write errors per sector */
 #define ERROR_RESET	3	/* Reset controller every 4th retry */
 #define ERROR_RECAL	1	/* Recalibrate every 2nd retry */
-
-struct device;
 
 /* Error codes returned in rq->errors to the higher part of the driver. */
 enum {
@@ -125,8 +125,8 @@ struct ide_io_ports {
  * Timeouts for various operations:
  */
 enum {
-	/* spec allows up to 20ms, but CF cards and SSD drives need more */
-	WAIT_DRQ	= 1 * HZ,	/* 1s */
+	/* spec allows up to 20ms */
+	WAIT_DRQ	= HZ / 10,	/* 100ms */
 	/* some laptops are very slow */
 	WAIT_READY	= 5 * HZ,	/* 5s */
 	/* should be less than 3ms (?), if all ATAPI CD is closed at boot */
@@ -362,7 +362,7 @@ struct ide_drive_s;
 struct ide_disk_ops {
 	int		(*check)(struct ide_drive_s *, const char *);
 	int		(*get_capacity)(struct ide_drive_s *);
-	void		(*unlock_native_capacity)(struct ide_drive_s *);
+	u64		(*set_capacity)(struct ide_drive_s *, u64);
 	void		(*setup)(struct ide_drive_s *);
 	void		(*flush)(struct ide_drive_s *);
 	int		(*init_media)(struct ide_drive_s *, struct gendisk *);
@@ -458,7 +458,7 @@ enum {
 	IDE_DFLAG_DOORLOCKING		= (1 << 15),
 	/* disallow DMA */
 	IDE_DFLAG_NODMA			= (1 << 16),
-	/* powermanagement told us not to do anything, so sleep nicely */
+	/* powermanagment told us not to do anything, so sleep nicely */
 	IDE_DFLAG_BLOCKED		= (1 << 17),
 	/* sleeping & sleep field valid */
 	IDE_DFLAG_SLEEPING		= (1 << 18),
@@ -515,9 +515,7 @@ struct ide_drive_s {
         u8	init_speed;	/* transfer rate set at boot */
         u8	current_speed;	/* current transfer rate set */
 	u8	desired_speed;	/* desired transfer rate set */
-	u8	pio_mode;	/* for ->set_pio_mode _only_ */
-	u8	dma_mode;	/* for ->set_dma_mode _only_ */
-	u8	dn;		/* now wide spread use */
+        u8	dn;		/* now wide spread use */
 	u8	acoustic;	/* acoustic management */
 	u8	media;		/* disk, cdrom, tape, floppy, ... */
 	u8	ready_stat;	/* min status value for drive ready */
@@ -624,8 +622,8 @@ extern const struct ide_tp_ops default_tp_ops;
  */
 struct ide_port_ops {
 	void	(*init_dev)(ide_drive_t *);
-	void	(*set_pio_mode)(struct hwif_s *, ide_drive_t *);
-	void	(*set_dma_mode)(struct hwif_s *, ide_drive_t *);
+	void	(*set_pio_mode)(ide_drive_t *, const u8);
+	void	(*set_dma_mode)(ide_drive_t *, const u8);
 	int	(*reset_poll)(ide_drive_t *);
 	void	(*pre_reset)(ide_drive_t *);
 	void	(*resetproc)(ide_drive_t *);
@@ -920,7 +918,7 @@ __IDE_PROC_DEVSET(_name, _min, _max, NULL, NULL)
 
 typedef struct {
 	const char	*name;
-	umode_t		mode;
+	mode_t		mode;
 	const struct file_operations *proc_fops;
 } ide_proc_entry_t;
 
@@ -1169,7 +1167,6 @@ extern void ide_stall_queue(ide_drive_t *drive, unsigned long timeout);
 extern void ide_timer_expiry(unsigned long);
 extern irqreturn_t ide_intr(int irq, void *dev_id);
 extern void do_ide_request(struct request_queue *);
-extern void ide_requeue_and_plug(ide_drive_t *drive, struct request *rq);
 
 void ide_init_disk(struct gendisk *, ide_drive_t *);
 
@@ -1497,6 +1494,7 @@ int ide_timing_compute(ide_drive_t *, u8, struct ide_timing *, int, int);
 #ifdef CONFIG_IDE_XFER_MODE
 int ide_scan_pio_blacklist(char *);
 const char *ide_xfer_verbose(u8);
+u8 ide_get_best_pio_mode(ide_drive_t *, u8, u8);
 int ide_pio_need_iordy(ide_drive_t *, const u8);
 int ide_set_pio_mode(ide_drive_t *, u8);
 int ide_set_dma_mode(ide_drive_t *, u8);

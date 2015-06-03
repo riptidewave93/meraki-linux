@@ -8,7 +8,7 @@
  * gpio interface, extbus, and support for serial and parallel flashes.
  *
  * Copyright 2005, Broadcom Corporation
- * Copyright 2006, Michael Buesch <m@bues.ch>
+ * Copyright 2006, Michael Buesch <mb@bu3sch.de>
  *
  * Licensed under the GPL version 2. See COPYING for details.
  */
@@ -123,8 +123,6 @@
 #define SSB_CHIPCO_FLASHDATA		0x0048
 #define SSB_CHIPCO_BCAST_ADDR		0x0050
 #define SSB_CHIPCO_BCAST_DATA		0x0054
-#define SSB_CHIPCO_GPIOPULLUP		0x0058		/* Rev >= 20 only */
-#define SSB_CHIPCO_GPIOPULLDOWN		0x005C		/* Rev >= 20 only */
 #define SSB_CHIPCO_GPIOIN		0x0060
 #define SSB_CHIPCO_GPIOOUT		0x0064
 #define SSB_CHIPCO_GPIOOUTEN		0x0068
@@ -133,9 +131,6 @@
 #define SSB_CHIPCO_GPIOIRQ		0x0074
 #define SSB_CHIPCO_WATCHDOG		0x0080
 #define SSB_CHIPCO_GPIOTIMER		0x0088		/* LED powersave (corerev >= 16) */
-#define  SSB_CHIPCO_GPIOTIMER_OFFTIME	0x0000FFFF
-#define  SSB_CHIPCO_GPIOTIMER_OFFTIME_SHIFT	0
-#define  SSB_CHIPCO_GPIOTIMER_ONTIME	0xFFFF0000
 #define  SSB_CHIPCO_GPIOTIMER_ONTIME_SHIFT	16
 #define SSB_CHIPCO_GPIOTOUTM		0x008C		/* LED powersave (corerev >= 16) */
 #define SSB_CHIPCO_CLOCK_N		0x0090
@@ -194,10 +189,8 @@
 #define  SSB_CHIPCO_CLKCTLST_HAVEALPREQ	0x00000008 /* ALP available request */
 #define  SSB_CHIPCO_CLKCTLST_HAVEHTREQ	0x00000010 /* HT available request */
 #define  SSB_CHIPCO_CLKCTLST_HWCROFF	0x00000020 /* Force HW clock request off */
-#define  SSB_CHIPCO_CLKCTLST_HAVEALP	0x00010000 /* ALP available */
-#define  SSB_CHIPCO_CLKCTLST_HAVEHT	0x00020000 /* HT available */
-#define  SSB_CHIPCO_CLKCTLST_4328A0_HAVEHT	0x00010000 /* 4328a0 has reversed bits */
-#define  SSB_CHIPCO_CLKCTLST_4328A0_HAVEALP	0x00020000 /* 4328a0 has reversed bits */
+#define  SSB_CHIPCO_CLKCTLST_HAVEHT	0x00010000 /* HT available */
+#define  SSB_CHIPCO_CLKCTLST_HAVEALP	0x00020000 /* APL available */
 #define SSB_CHIPCO_HW_WORKAROUND	0x01E4 /* Hardware workaround (rev >= 20) */
 #define SSB_CHIPCO_UART0_DATA		0x0300
 #define SSB_CHIPCO_UART0_IMR		0x0304
@@ -219,7 +212,6 @@
 #define SSB_CHIPCO_PMU_CTL			0x0600 /* PMU control */
 #define  SSB_CHIPCO_PMU_CTL_ILP_DIV		0xFFFF0000 /* ILP div mask */
 #define  SSB_CHIPCO_PMU_CTL_ILP_DIV_SHIFT	16
-#define  SSB_CHIPCO_PMU_CTL_PLL_UPD		0x00000400
 #define  SSB_CHIPCO_PMU_CTL_NOILPONW		0x00000200 /* No ILP on wait */
 #define  SSB_CHIPCO_PMU_CTL_HTREQEN		0x00000100 /* HT req enable */
 #define  SSB_CHIPCO_PMU_CTL_ALPREQEN		0x00000080 /* ALP req enable */
@@ -662,6 +654,5 @@ enum ssb_pmu_ldo_volt_id {
 void ssb_pmu_set_ldo_voltage(struct ssb_chipcommon *cc,
 			     enum ssb_pmu_ldo_volt_id id, u32 voltage);
 void ssb_pmu_set_ldo_paref(struct ssb_chipcommon *cc, bool on);
-void ssb_pmu_spuravoid_pllupdate(struct ssb_chipcommon *cc, int spuravoid);
 
 #endif /* LINUX_SSB_CHIPCO_H_ */

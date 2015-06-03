@@ -12,6 +12,7 @@
 
 #include <asm/ecard.h>
 #include <asm/io.h>
+#include <asm/system.h>
 
 #include "../scsi.h"
 #include <scsi/scsi_host.h>

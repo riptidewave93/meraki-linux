@@ -4,7 +4,6 @@
  * Copyright (c) 2004-2006 Herbert Xu <herbert@gondor.apana.org.au>
  */
 
-#include <linux/gfp.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
@@ -54,12 +53,12 @@ static int xfrm4_mode_tunnel_output(struct xfrm_state *x, struct sk_buff *skb)
 
 	top_iph->frag_off = (flags & XFRM_STATE_NOPMTUDISC) ?
 		0 : (XFRM_MODE_SKB_CB(skb)->frag_off & htons(IP_DF));
+	ip_select_ident(top_iph, dst->child, NULL);
 
-	top_iph->ttl = ip4_dst_hoplimit(dst->child);
+	top_iph->ttl = dst_metric(dst->child, RTAX_HOPLIMIT);
 
 	top_iph->saddr = x->props.saddr.a4;
 	top_iph->daddr = x->id.daddr.a4;
-	ip_select_ident(skb, NULL);
 
 	return 0;
 }

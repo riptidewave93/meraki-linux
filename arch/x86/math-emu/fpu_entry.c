@@ -28,7 +28,6 @@
 #include <linux/regset.h>
 
 #include <asm/uaccess.h>
-#include <asm/traps.h>
 #include <asm/desc.h>
 #include <asm/user.h>
 #include <asm/i387.h>
@@ -270,7 +269,7 @@ void math_emulate(struct math_emu_info *info)
 			FPU_EIP = FPU_ORIG_EIP;	/* Point to current FPU instruction. */
 
 			RE_ENTRANT_CHECK_OFF;
-			current->thread.trap_nr = X86_TRAP_MF;
+			current->thread.trap_no = 16;
 			current->thread.error_code = 0;
 			send_sig(SIGFPE, current, 1);
 			return;
@@ -663,7 +662,7 @@ static int valid_prefix(u_char *Byte, u_char __user **fpu_eip,
 void math_abort(struct math_emu_info *info, unsigned int signal)
 {
 	FPU_EIP = FPU_ORIG_EIP;
-	current->thread.trap_nr = X86_TRAP_MF;
+	current->thread.trap_no = 16;
 	current->thread.error_code = 0;
 	send_sig(signal, current, 1);
 	RE_ENTRANT_CHECK_OFF;
@@ -682,7 +681,7 @@ int fpregs_soft_set(struct task_struct *target,
 		    unsigned int pos, unsigned int count,
 		    const void *kbuf, const void __user *ubuf)
 {
-	struct i387_soft_struct *s387 = &target->thread.fpu.state->soft;
+	struct i387_soft_struct *s387 = &target->thread.xstate->soft;
 	void *space = s387->st_space;
 	int ret;
 	int offset, other, i, tags, regnr, tag, newtop;
@@ -734,7 +733,7 @@ int fpregs_soft_get(struct task_struct *target,
 		    unsigned int pos, unsigned int count,
 		    void *kbuf, void __user *ubuf)
 {
-	struct i387_soft_struct *s387 = &target->thread.fpu.state->soft;
+	struct i387_soft_struct *s387 = &target->thread.xstate->soft;
 	const void *space = s387->st_space;
 	int ret;
 	int offset = (S387->ftop & 7) * 10, other = 80 - offset;

@@ -1,3 +1,8 @@
-obj-$(CONFIG_COMEDI_KCOMEDILIB)	+= kcomedilib.o
+obj-$(CONFIG_COMEDI)	+= kcomedilib.o
 
-kcomedilib-objs := kcomedilib_main.o
+kcomedilib-objs :=				\
+			data.o			\
+			ksyms.o			\
+			dio.o			\
+			kcomedilib_main.o	\
+			get.o

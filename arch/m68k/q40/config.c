@@ -24,11 +24,11 @@
 #include <linux/rtc.h>
 #include <linux/vt_kern.h>
 #include <linux/bcd.h>
-#include <linux/platform_device.h>
 
 #include <asm/io.h>
 #include <asm/rtc.h>
 #include <asm/bootinfo.h>
+#include <asm/system.h>
 #include <asm/pgtable.h>
 #include <asm/setup.h>
 #include <asm/irq.h>
@@ -126,7 +126,7 @@ static void q40_reset(void)
 {
         halted = 1;
         printk("\n\n*******************************************\n"
-		"Called q40_reset : press the RESET button!!\n"
+		"Called q40_reset : press the RESET button!! \n"
 		"*******************************************\n");
 	Q40_LED_ON();
 	while (1)
@@ -329,18 +329,3 @@ static int q40_set_rtc_pll(struct rtc_pll_info *pll)
 	} else
 		return -EINVAL;
 }
-
-static __init int q40_add_kbd_device(void)
-{
-	struct platform_device *pdev;
-
-	if (!MACH_IS_Q40)
-		return -ENODEV;
-
-	pdev = platform_device_register_simple("q40kbd", -1, NULL, 0);
-	if (IS_ERR(pdev))
-		return PTR_ERR(pdev);
-
-	return 0;
-}
-arch_initcall(q40_add_kbd_device);

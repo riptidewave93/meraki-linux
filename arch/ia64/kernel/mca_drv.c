@@ -22,12 +22,12 @@
 #include <linux/smp.h>
 #include <linux/workqueue.h>
 #include <linux/mm.h>
-#include <linux/slab.h>
 
 #include <asm/delay.h>
 #include <asm/machvec.h>
 #include <asm/page.h>
 #include <asm/ptrace.h>
+#include <asm/system.h>
 #include <asm/sal.h>
 #include <asm/mca.h>
 

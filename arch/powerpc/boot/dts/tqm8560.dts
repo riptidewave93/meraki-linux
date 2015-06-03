@@ -312,8 +312,6 @@
 		#address-cells = <2>;
 		#size-cells = <1>;
 		reg = <0xe0005000 0x100>;	// BRx, ORx, etc.
-		interrupt-parent = <&mpic>;
-		interrupts = <19 2>;
 
 		ranges = <
 			0 0x0 0xfc000000 0x04000000	// NOR FLASH bank 1
@@ -384,14 +382,7 @@
 		interrupt-map = <
 				/* IDSEL 28 */
 				 0xe000 0 0 1 &mpic 2 1
-				 0xe000 0 0 2 &mpic 3 1
-				 0xe000 0 0 3 &mpic 6 1
-				 0xe000 0 0 4 &mpic 5 1
-
-				/* IDSEL 11 */
-				 0x5800 0 0 1 &mpic 6 1
-				 0x5800 0 0 2 &mpic 5 1
-				 >;
+				 0xe000 0 0 2 &mpic 3 1>;
 
 		interrupt-parent = <&mpic>;
 		interrupts = <24 2>;

@@ -16,7 +16,6 @@
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
-#include <linux/gfp.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/soc.h>
@@ -36,11 +35,13 @@
 
 static DECLARE_WAIT_QUEUE_HEAD(ac97_waitq);
 
-/* REVISIT: How to find txx9aclc_drvdata from snd_ac97? */
-static struct txx9aclc_plat_drvdata *txx9aclc_drvdata;
+/* REVISIT: How to find txx9aclc_soc_device from snd_ac97? */
+static struct txx9aclc_soc_device *txx9aclc_soc_dev;
 
-static int txx9aclc_regready(struct txx9aclc_plat_drvdata *drvdata)
+static int txx9aclc_regready(struct txx9aclc_soc_device *dev)
 {
+	struct txx9aclc_plat_drvdata *drvdata = txx9aclc_get_plat_drvdata(dev);
+
 	return __raw_readl(drvdata->base + ACINTSTS) & ACINT_REGACCRDY;
 }
 
@@ -48,7 +49,8 @@ static int txx9aclc_regready(struct txx9aclc_plat_drvdata *drvdata)
 static unsigned short txx9aclc_ac97_read(struct snd_ac97 *ac97,
 					 unsigned short reg)
 {
-	struct txx9aclc_plat_drvdata *drvdata = txx9aclc_drvdata;
+	struct txx9aclc_soc_device *dev = txx9aclc_soc_dev;
+	struct txx9aclc_plat_drvdata *drvdata = txx9aclc_get_plat_drvdata(dev);
 	void __iomem *base = drvdata->base;
 	u32 dat;
 
@@ -58,15 +60,15 @@ static unsigned short txx9aclc_ac97_read(struct snd_ac97 *ac97,
 	dat = (reg << ACREGACC_REG_SHIFT) | ACREGACC_READ;
 	__raw_writel(dat, base + ACREGACC);
 	__raw_writel(ACINT_REGACCRDY, base + ACINTEN);
-	if (!wait_event_timeout(ac97_waitq, txx9aclc_regready(txx9aclc_drvdata), HZ)) {
+	if (!wait_event_timeout(ac97_waitq, txx9aclc_regready(dev), HZ)) {
 		__raw_writel(ACINT_REGACCRDY, base + ACINTDIS);
-		printk(KERN_ERR "ac97 read timeout (reg %#x)\n", reg);
+		dev_err(dev->soc_dev.dev, "ac97 read timeout (reg %#x)\n", reg);
 		dat = 0xffff;
 		goto done;
 	}
 	dat = __raw_readl(base + ACREGACC);
 	if (((dat >> ACREGACC_REG_SHIFT) & 0xff) != reg) {
-		printk(KERN_ERR "reg mismatch %x with %x\n",
+		dev_err(dev->soc_dev.dev, "reg mismatch %x with %x\n",
 			dat, reg);
 		dat = 0xffff;
 		goto done;
@@ -81,15 +83,16 @@ done:
 static void txx9aclc_ac97_write(struct snd_ac97 *ac97, unsigned short reg,
 				unsigned short val)
 {
-	struct txx9aclc_plat_drvdata *drvdata = txx9aclc_drvdata;
+	struct txx9aclc_soc_device *dev = txx9aclc_soc_dev;
+	struct txx9aclc_plat_drvdata *drvdata = txx9aclc_get_plat_drvdata(dev);
 	void __iomem *base = drvdata->base;
 
 	__raw_writel(((reg | (ac97->num << 7)) << ACREGACC_REG_SHIFT) |
 		     (val << ACREGACC_DAT_SHIFT),
 		     base + ACREGACC);
 	__raw_writel(ACINT_REGACCRDY, base + ACINTEN);
-	if (!wait_event_timeout(ac97_waitq, txx9aclc_regready(txx9aclc_drvdata), HZ)) {
-		printk(KERN_ERR
+	if (!wait_event_timeout(ac97_waitq, txx9aclc_regready(dev), HZ)) {
+		dev_err(dev->soc_dev.dev,
 			"ac97 write timeout (reg %#x)\n", reg);
 	}
 	__raw_writel(ACINT_REGACCRDY, base + ACINTDIS);
@@ -97,7 +100,8 @@ static void txx9aclc_ac97_write(struct snd_ac97 *ac97, unsigned short reg,
 
 static void txx9aclc_ac97_cold_reset(struct snd_ac97 *ac97)
 {
-	struct txx9aclc_plat_drvdata *drvdata = txx9aclc_drvdata;
+	struct txx9aclc_soc_device *dev = txx9aclc_soc_dev;
+	struct txx9aclc_plat_drvdata *drvdata = txx9aclc_get_plat_drvdata(dev);
 	void __iomem *base = drvdata->base;
 	u32 ready = ACINT_CODECRDY(ac97->num) | ACINT_REGACCRDY;
 
@@ -136,23 +140,31 @@ static irqreturn_t txx9aclc_ac97_irq(int irq, void *dev_id)
 	return IRQ_HANDLED;
 }
 
-static int txx9aclc_ac97_probe(struct snd_soc_dai *dai)
+static int txx9aclc_ac97_probe(struct platform_device *pdev,
+			       struct snd_soc_dai *dai)
 {
-	txx9aclc_drvdata = snd_soc_dai_get_drvdata(dai);
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct txx9aclc_soc_device *dev =
+		container_of(socdev, struct txx9aclc_soc_device, soc_dev);
+
+	dev->aclc_pdev = to_platform_device(dai->dev);
+	txx9aclc_soc_dev = dev;
 	return 0;
 }
 
-static int txx9aclc_ac97_remove(struct snd_soc_dai *dai)
+static void txx9aclc_ac97_remove(struct platform_device *pdev,
+				 struct snd_soc_dai *dai)
 {
-	struct txx9aclc_plat_drvdata *drvdata = snd_soc_dai_get_drvdata(dai);
+	struct platform_device *aclc_pdev = to_platform_device(dai->dev);
+	struct txx9aclc_plat_drvdata *drvdata = platform_get_drvdata(aclc_pdev);
 
 	/* disable AC-link */
 	__raw_writel(ACCTL_ENLINK, drvdata->base + ACCTLDIS);
-	txx9aclc_drvdata = NULL;
-	return 0;
+	txx9aclc_soc_dev = NULL;
 }
 
-static struct snd_soc_dai_driver txx9aclc_ac97_dai = {
+struct snd_soc_dai txx9aclc_ac97_dai = {
+	.name			= "txx9aclc_ac97",
 	.ac97_control		= 1,
 	.probe			= txx9aclc_ac97_probe,
 	.remove			= txx9aclc_ac97_remove,
@@ -169,6 +181,7 @@ static struct snd_soc_dai_driver txx9aclc_ac97_dai = {
 		.channels_max	= 2,
 	},
 };
+EXPORT_SYMBOL_GPL(txx9aclc_ac97_dai);
 
 static int __devinit txx9aclc_ac97_dev_probe(struct platform_device *pdev)
 {
@@ -201,16 +214,17 @@ static int __devinit txx9aclc_ac97_dev_probe(struct platform_device *pdev)
 	if (!drvdata->base)
 		return -EBUSY;
 	err = devm_request_irq(&pdev->dev, irq, txx9aclc_ac97_irq,
-			       0, dev_name(&pdev->dev), drvdata);
+			       IRQF_DISABLED, dev_name(&pdev->dev), drvdata);
 	if (err < 0)
 		return err;
 
-	return snd_soc_register_dai(&pdev->dev, &txx9aclc_ac97_dai);
+	txx9aclc_ac97_dai.dev = &pdev->dev;
+	return snd_soc_register_dai(&txx9aclc_ac97_dai);
 }
 
 static int __devexit txx9aclc_ac97_dev_remove(struct platform_device *pdev)
 {
-	snd_soc_unregister_dai(&pdev->dev);
+	snd_soc_unregister_dai(&txx9aclc_ac97_dai);
 	return 0;
 }
 
@@ -223,9 +237,19 @@ static struct platform_driver txx9aclc_ac97_driver = {
 	},
 };
 
-module_platform_driver(txx9aclc_ac97_driver);
+static int __init txx9aclc_ac97_init(void)
+{
+	return platform_driver_register(&txx9aclc_ac97_driver);
+}
+
+static void __exit txx9aclc_ac97_exit(void)
+{
+	platform_driver_unregister(&txx9aclc_ac97_driver);
+}
+
+module_init(txx9aclc_ac97_init);
+module_exit(txx9aclc_ac97_exit);
 
 MODULE_AUTHOR("Atsushi Nemoto <anemo@mba.ocn.ne.jp>");
 MODULE_DESCRIPTION("TXx9 ACLC AC97 driver");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:txx9aclc-ac97");

@@ -120,8 +120,6 @@ struct pt_regs {
 
 #include <asm/m32r.h>		/* M32R_PSW_BSM, M32R_PSW_BPM */
 
-#define arch_has_single_step() (1)
-
 struct task_struct;
 extern void init_debug_traps(struct task_struct *);
 #define arch_ptrace_attach(child) \
@@ -137,6 +135,8 @@ extern void init_debug_traps(struct task_struct *);
 
 #define instruction_pointer(regs) ((regs)->bpc)
 #define profile_pc(regs) instruction_pointer(regs)
+
+extern void show_regs(struct pt_regs *);
 
 extern void withdraw_debug_trap(struct pt_regs *regs);
 

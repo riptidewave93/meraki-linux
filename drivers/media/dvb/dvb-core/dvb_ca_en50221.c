@@ -1181,7 +1181,7 @@ static int dvb_ca_en50221_thread(void *data)
  *
  * @return 0 on success, <0 on error.
  */
-static int dvb_ca_en50221_io_do_ioctl(struct file *file,
+static int dvb_ca_en50221_io_do_ioctl(struct inode *inode, struct file *file,
 				      unsigned int cmd, void *parg)
 {
 	struct dvb_device *dvbdev = file->private_data;
@@ -1255,10 +1255,10 @@ static int dvb_ca_en50221_io_do_ioctl(struct file *file,
  *
  * @return 0 on success, <0 on error.
  */
-static long dvb_ca_en50221_io_ioctl(struct file *file,
-				    unsigned int cmd, unsigned long arg)
+static int dvb_ca_en50221_io_ioctl(struct inode *inode, struct file *file,
+				   unsigned int cmd, unsigned long arg)
 {
-	return dvb_usercopy(file, cmd, arg, dvb_ca_en50221_io_do_ioctl);
+	return dvb_usercopy(inode, file, cmd, arg, dvb_ca_en50221_io_do_ioctl);
 }
 
 
@@ -1306,20 +1306,13 @@ static ssize_t dvb_ca_en50221_io_write(struct file *file,
 	/* fragment the packets & store in the buffer */
 	while (fragpos < count) {
 		fraglen = ca->slot_info[slot].link_buf_size - 2;
-		if (fraglen < 0)
-			break;
-		if (fraglen > HOST_LINK_BUF_SIZE - 2)
-			fraglen = HOST_LINK_BUF_SIZE - 2;
 		if ((count - fragpos) < fraglen)
 			fraglen = count - fragpos;
 
 		fragbuf[0] = connection_id;
 		fragbuf[1] = ((fragpos + fraglen) < count) ? 0x80 : 0x00;
-		status = copy_from_user(fragbuf + 2, buf + fragpos, fraglen);
-		if (status) {
-			status = -EFAULT;
+		if ((status = copy_from_user(fragbuf + 2, buf + fragpos, fraglen)) != 0)
 			goto exit;
-		}
 
 		timeout = jiffies + HZ / 2;
 		written = 0;
@@ -1494,11 +1487,8 @@ static ssize_t dvb_ca_en50221_io_read(struct file *file, char __user * buf,
 
 	hdr[0] = slot;
 	hdr[1] = connection_id;
-	status = copy_to_user(buf, hdr, 2);
-	if (status) {
-		status = -EFAULT;
+	if ((status = copy_to_user(buf, hdr, 2)) != 0)
 		goto exit;
-	}
 	status = pktlen;
 
 exit:
@@ -1621,11 +1611,10 @@ static const struct file_operations dvb_ca_fops = {
 	.owner = THIS_MODULE,
 	.read = dvb_ca_en50221_io_read,
 	.write = dvb_ca_en50221_io_write,
-	.unlocked_ioctl = dvb_ca_en50221_io_ioctl,
+	.ioctl = dvb_ca_en50221_io_ioctl,
 	.open = dvb_ca_en50221_io_open,
 	.release = dvb_ca_en50221_io_release,
 	.poll = dvb_ca_en50221_io_poll,
-	.llseek = noop_llseek,
 };
 
 static struct dvb_device dvbdev_ca = {

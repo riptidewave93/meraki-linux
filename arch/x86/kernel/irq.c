@@ -4,12 +4,9 @@
 #include <linux/cpu.h>
 #include <linux/interrupt.h>
 #include <linux/kernel_stat.h>
-#include <linux/of.h>
 #include <linux/seq_file.h>
 #include <linux/smp.h>
 #include <linux/ftrace.h>
-#include <linux/delay.h>
-#include <linux/export.h>
 
 #include <asm/apic.h>
 #include <asm/io_apic.h>
@@ -21,7 +18,7 @@
 atomic_t irq_err_count;
 
 /* Function pointer for generic interrupt vector handling */
-void (*x86_platform_ipi_callback)(void) = NULL;
+void (*generic_interrupt_extension)(void) = NULL;
 
 /*
  * 'what should we do if we get a hw irq event on an illegal vector'.
@@ -46,9 +43,9 @@ void ack_bad_irq(unsigned int irq)
 
 #define irq_stats(x)		(&per_cpu(irq_stat, x))
 /*
- * /proc/interrupts printing for arch specific interrupts
+ * /proc/interrupts printing:
  */
-int arch_show_interrupts(struct seq_file *p, int prec)
+static int show_other_interrupts(struct seq_file *p, int prec)
 {
 	int j;
 
@@ -70,19 +67,15 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 	for_each_online_cpu(j)
 		seq_printf(p, "%10u ", irq_stats(j)->apic_perf_irqs);
 	seq_printf(p, "  Performance monitoring interrupts\n");
-	seq_printf(p, "%*s: ", prec, "IWI");
+	seq_printf(p, "%*s: ", prec, "PND");
 	for_each_online_cpu(j)
-		seq_printf(p, "%10u ", irq_stats(j)->apic_irq_work_irqs);
-	seq_printf(p, "  IRQ work interrupts\n");
-	seq_printf(p, "%*s: ", prec, "RTR");
-	for_each_online_cpu(j)
-		seq_printf(p, "%10u ", irq_stats(j)->icr_read_retry_count);
-	seq_printf(p, "  APIC ICR read retries\n");
+		seq_printf(p, "%10u ", irq_stats(j)->apic_pending_irqs);
+	seq_printf(p, "  Performance pending work\n");
 #endif
-	if (x86_platform_ipi_callback) {
+	if (generic_interrupt_extension) {
 		seq_printf(p, "%*s: ", prec, "PLT");
 		for_each_online_cpu(j)
-			seq_printf(p, "%10u ", irq_stats(j)->x86_platform_ipis);
+			seq_printf(p, "%10u ", irq_stats(j)->generic_irqs);
 		seq_printf(p, "  Platform interrupts\n");
 	}
 #ifdef CONFIG_SMP
@@ -99,17 +92,17 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 		seq_printf(p, "%10u ", irq_stats(j)->irq_tlb_count);
 	seq_printf(p, "  TLB shootdowns\n");
 #endif
-#ifdef CONFIG_X86_THERMAL_VECTOR
+#ifdef CONFIG_X86_MCE
 	seq_printf(p, "%*s: ", prec, "TRM");
 	for_each_online_cpu(j)
 		seq_printf(p, "%10u ", irq_stats(j)->irq_thermal_count);
 	seq_printf(p, "  Thermal event interrupts\n");
-#endif
-#ifdef CONFIG_X86_MCE_THRESHOLD
+# ifdef CONFIG_X86_MCE_THRESHOLD
 	seq_printf(p, "%*s: ", prec, "THR");
 	for_each_online_cpu(j)
 		seq_printf(p, "%10u ", irq_stats(j)->irq_threshold_count);
 	seq_printf(p, "  Threshold APIC interrupts\n");
+# endif
 #endif
 #ifdef CONFIG_X86_MCE
 	seq_printf(p, "%*s: ", prec, "MCE");
@@ -128,6 +121,59 @@ int arch_show_interrupts(struct seq_file *p, int prec)
 	return 0;
 }
 
+int show_interrupts(struct seq_file *p, void *v)
+{
+	unsigned long flags, any_count = 0;
+	int i = *(loff_t *) v, j, prec;
+	struct irqaction *action;
+	struct irq_desc *desc;
+
+	if (i > nr_irqs)
+		return 0;
+
+	for (prec = 3, j = 1000; prec < 10 && j <= nr_irqs; ++prec)
+		j *= 10;
+
+	if (i == nr_irqs)
+		return show_other_interrupts(p, prec);
+
+	/* print header */
+	if (i == 0) {
+		seq_printf(p, "%*s", prec + 8, "");
+		for_each_online_cpu(j)
+			seq_printf(p, "CPU%-8d", j);
+		seq_putc(p, '\n');
+	}
+
+	desc = irq_to_desc(i);
+	if (!desc)
+		return 0;
+
+	spin_lock_irqsave(&desc->lock, flags);
+	for_each_online_cpu(j)
+		any_count |= kstat_irqs_cpu(i, j);
+	action = desc->action;
+	if (!action && !any_count)
+		goto out;
+
+	seq_printf(p, "%*d: ", prec, i);
+	for_each_online_cpu(j)
+		seq_printf(p, "%10u ", kstat_irqs_cpu(i, j));
+	seq_printf(p, " %8s", desc->chip->name);
+	seq_printf(p, "-%-8s", desc->name);
+
+	if (action) {
+		seq_printf(p, "  %s", action->name);
+		while ((action = action->next) != NULL)
+			seq_printf(p, ", %s", action->name);
+	}
+
+	seq_putc(p, '\n');
+out:
+	spin_unlock_irqrestore(&desc->lock, flags);
+	return 0;
+}
+
 /*
  * /proc/stat helpers
  */
@@ -139,21 +185,20 @@ u64 arch_irq_stat_cpu(unsigned int cpu)
 	sum += irq_stats(cpu)->apic_timer_irqs;
 	sum += irq_stats(cpu)->irq_spurious_count;
 	sum += irq_stats(cpu)->apic_perf_irqs;
-	sum += irq_stats(cpu)->apic_irq_work_irqs;
-	sum += irq_stats(cpu)->icr_read_retry_count;
+	sum += irq_stats(cpu)->apic_pending_irqs;
 #endif
-	if (x86_platform_ipi_callback)
-		sum += irq_stats(cpu)->x86_platform_ipis;
+	if (generic_interrupt_extension)
+		sum += irq_stats(cpu)->generic_irqs;
 #ifdef CONFIG_SMP
 	sum += irq_stats(cpu)->irq_resched_count;
 	sum += irq_stats(cpu)->irq_call_count;
 	sum += irq_stats(cpu)->irq_tlb_count;
 #endif
-#ifdef CONFIG_X86_THERMAL_VECTOR
+#ifdef CONFIG_X86_MCE
 	sum += irq_stats(cpu)->irq_thermal_count;
-#endif
-#ifdef CONFIG_X86_MCE_THRESHOLD
+# ifdef CONFIG_X86_MCE_THRESHOLD
 	sum += irq_stats(cpu)->irq_threshold_count;
+# endif
 #endif
 #ifdef CONFIG_X86_MCE
 	sum += per_cpu(mce_exception_count, cpu);
@@ -165,6 +210,10 @@ u64 arch_irq_stat_cpu(unsigned int cpu)
 u64 arch_irq_stat(void)
 {
 	u64 sum = atomic_read(&irq_err_count);
+
+#ifdef CONFIG_X86_IO_APIC
+	sum += atomic_read(&irq_mis_count);
+#endif
 	return sum;
 }
 
@@ -182,10 +231,10 @@ unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 	unsigned vector = ~regs->orig_ax;
 	unsigned irq;
 
-	irq_enter();
 	exit_idle();
+	irq_enter();
 
-	irq = __this_cpu_read(vector_irq[vector]);
+	irq = __get_cpu_var(vector_irq)[vector];
 
 	if (!handle_irq(irq, regs)) {
 		ack_APIC_irq();
@@ -202,22 +251,22 @@ unsigned int __irq_entry do_IRQ(struct pt_regs *regs)
 }
 
 /*
- * Handler for X86_PLATFORM_IPI_VECTOR.
+ * Handler for GENERIC_INTERRUPT_VECTOR.
  */
-void smp_x86_platform_ipi(struct pt_regs *regs)
+void smp_generic_interrupt(struct pt_regs *regs)
 {
 	struct pt_regs *old_regs = set_irq_regs(regs);
 
 	ack_APIC_irq();
 
-	irq_enter();
-
 	exit_idle();
 
-	inc_irq_stat(x86_platform_ipis);
+	irq_enter();
 
-	if (x86_platform_ipi_callback)
-		x86_platform_ipi_callback();
+	inc_irq_stat(generic_irqs);
+
+	if (generic_interrupt_extension)
+		generic_interrupt_extension();
 
 	irq_exit();
 
@@ -225,105 +274,3 @@ void smp_x86_platform_ipi(struct pt_regs *regs)
 }
 
 EXPORT_SYMBOL_GPL(vector_used_by_percpu_irq);
-
-#ifdef CONFIG_HOTPLUG_CPU
-/* A cpu has been removed from cpu_online_mask.  Reset irq affinities. */
-void fixup_irqs(void)
-{
-	unsigned int irq, vector;
-	static int warned;
-	struct irq_desc *desc;
-	struct irq_data *data;
-	struct irq_chip *chip;
-
-	for_each_irq_desc(irq, desc) {
-		int break_affinity = 0;
-		int set_affinity = 1;
-		const struct cpumask *affinity;
-
-		if (!desc)
-			continue;
-		if (irq == 2)
-			continue;
-
-		/* interrupt's are disabled at this point */
-		raw_spin_lock(&desc->lock);
-
-		data = irq_desc_get_irq_data(desc);
-		affinity = data->affinity;
-		if (!irq_has_action(irq) || irqd_is_per_cpu(data) ||
-		    cpumask_subset(affinity, cpu_online_mask)) {
-			raw_spin_unlock(&desc->lock);
-			continue;
-		}
-
-		/*
-		 * Complete the irq move. This cpu is going down and for
-		 * non intr-remapping case, we can't wait till this interrupt
-		 * arrives at this cpu before completing the irq move.
-		 */
-		irq_force_complete_move(irq);
-
-		if (cpumask_any_and(affinity, cpu_online_mask) >= nr_cpu_ids) {
-			break_affinity = 1;
-			affinity = cpu_all_mask;
-		}
-
-		chip = irq_data_get_irq_chip(data);
-		if (!irqd_can_move_in_process_context(data) && chip->irq_mask)
-			chip->irq_mask(data);
-
-		if (chip->irq_set_affinity)
-			chip->irq_set_affinity(data, affinity, true);
-		else if (!(warned++))
-			set_affinity = 0;
-
-		/*
-		 * We unmask if the irq was not marked masked by the
-		 * core code. That respects the lazy irq disable
-		 * behaviour.
-		 */
-		if (!irqd_can_move_in_process_context(data) &&
-		    !irqd_irq_masked(data) && chip->irq_unmask)
-			chip->irq_unmask(data);
-
-		raw_spin_unlock(&desc->lock);
-
-		if (break_affinity && set_affinity)
-			printk("Broke affinity for irq %i\n", irq);
-		else if (!set_affinity)
-			printk("Cannot set affinity for irq %i\n", irq);
-	}
-
-	/*
-	 * We can remove mdelay() and then send spuriuous interrupts to
-	 * new cpu targets for all the irqs that were handled previously by
-	 * this cpu. While it works, I have seen spurious interrupt messages
-	 * (nothing wrong but still...).
-	 *
-	 * So for now, retain mdelay(1) and check the IRR and then send those
-	 * interrupts to new targets as this cpu is already offlined...
-	 */
-	mdelay(1);
-
-	for (vector = FIRST_EXTERNAL_VECTOR; vector < NR_VECTORS; vector++) {
-		unsigned int irr;
-
-		if (__this_cpu_read(vector_irq[vector]) < 0)
-			continue;
-
-		irr = apic_read(APIC_IRR + (vector / 32 * 0x10));
-		if (irr  & (1 << (vector % 32))) {
-			irq = __this_cpu_read(vector_irq[vector]);
-
-			desc = irq_to_desc(irq);
-			data = irq_desc_get_irq_data(desc);
-			chip = irq_data_get_irq_chip(data);
-			raw_spin_lock(&desc->lock);
-			if (chip->irq_retrigger)
-				chip->irq_retrigger(data);
-			raw_spin_unlock(&desc->lock);
-		}
-	}
-}
-#endif

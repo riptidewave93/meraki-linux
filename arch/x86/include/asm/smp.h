@@ -17,24 +17,12 @@
 #endif
 #include <asm/thread_info.h>
 #include <asm/cpumask.h>
-#include <asm/cpufeature.h>
 
 extern int smp_num_siblings;
 extern unsigned int num_processors;
 
-static inline bool cpu_has_ht_siblings(void)
-{
-	bool has_siblings = false;
-#ifdef CONFIG_SMP
-	has_siblings = cpu_has_ht && smp_num_siblings > 1;
-#endif
-	return has_siblings;
-}
-
 DECLARE_PER_CPU(cpumask_var_t, cpu_sibling_map);
 DECLARE_PER_CPU(cpumask_var_t, cpu_core_map);
-/* cpus sharing the last level cache: */
-DECLARE_PER_CPU(cpumask_var_t, cpu_llc_shared_map);
 DECLARE_PER_CPU(u16, cpu_llc_id);
 DECLARE_PER_CPU(int, cpu_number);
 
@@ -48,21 +36,14 @@ static inline struct cpumask *cpu_core_mask(int cpu)
 	return per_cpu(cpu_core_map, cpu);
 }
 
-static inline struct cpumask *cpu_llc_shared_mask(int cpu)
-{
-	return per_cpu(cpu_llc_shared_map, cpu);
-}
-
 DECLARE_EARLY_PER_CPU(u16, x86_cpu_to_apicid);
 DECLARE_EARLY_PER_CPU(u16, x86_bios_cpu_apicid);
-#if defined(CONFIG_X86_LOCAL_APIC) && defined(CONFIG_X86_32)
-DECLARE_EARLY_PER_CPU(int, x86_cpu_to_logical_apicid);
-#endif
 
 /* Static state in head.S used to set up a CPU */
-extern unsigned long stack_start; /* Initial stack pointer address */
-
-struct task_struct;
+extern struct {
+	void *sp;
+	unsigned short ss;
+} stack_start;
 
 struct smp_ops {
 	void (*smp_prepare_boot_cpu)(void);
@@ -72,7 +53,7 @@ struct smp_ops {
 	void (*stop_other_cpus)(int wait);
 	void (*smp_send_reschedule)(int cpu);
 
-	int (*cpu_up)(unsigned cpu, struct task_struct *tidle);
+	int (*cpu_up)(unsigned cpu);
 	int (*cpu_disable)(void);
 	void (*cpu_die)(unsigned int cpu);
 	void (*play_dead)(void);
@@ -115,9 +96,9 @@ static inline void smp_cpus_done(unsigned int max_cpus)
 	smp_ops.smp_cpus_done(max_cpus);
 }
 
-static inline int __cpu_up(unsigned int cpu, struct task_struct *tidle)
+static inline int __cpu_up(unsigned int cpu)
 {
-	return smp_ops.cpu_up(cpu, tidle);
+	return smp_ops.cpu_up(cpu);
 }
 
 static inline int __cpu_disable(void)
@@ -154,7 +135,7 @@ void cpu_disable_common(void);
 void native_smp_prepare_boot_cpu(void);
 void native_smp_prepare_cpus(unsigned int max_cpus);
 void native_smp_cpus_done(unsigned int max_cpus);
-int native_cpu_up(unsigned int cpunum, struct task_struct *tidle);
+int native_cpu_up(unsigned int cpunum);
 int native_cpu_disable(void);
 void native_cpu_die(unsigned int cpu);
 void native_play_dead(void);
@@ -164,7 +145,6 @@ int wbinvd_on_all_cpus(void);
 
 void native_send_call_func_ipi(const struct cpumask *mask);
 void native_send_call_func_single_ipi(int cpu);
-void x86_idle_thread_init(unsigned int cpu, struct task_struct *idle);
 
 void smp_store_cpu_info(int id);
 #define cpu_physical_id(cpu)	per_cpu(x86_cpu_to_apicid, cpu)
@@ -227,12 +207,6 @@ extern int hard_smp_processor_id(void);
 # endif
 
 #endif /* CONFIG_X86_LOCAL_APIC */
-
-#ifdef CONFIG_DEBUG_NMI_SELFTEST
-extern void nmi_selftest(void);
-#else
-#define nmi_selftest() do { } while (0)
-#endif
 
 #endif /* __ASSEMBLY__ */
 #endif /* _ASM_X86_SMP_H */

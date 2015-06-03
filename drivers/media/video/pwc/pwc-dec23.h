@@ -25,20 +25,15 @@
 #ifndef PWC_DEC23_H
 #define PWC_DEC23_H
 
-struct pwc_device;
+#include "pwc.h"
 
 struct pwc_dec23_private
 {
-	struct mutex lock;
-
-	unsigned char last_cmd, last_cmd_valid;
-
   unsigned int scalebits;
   unsigned int nbitsmask, nbits; /* Number of bits of a color in the compressed stream */
 
   unsigned int reservoir;
   unsigned int nbits_in_reservoir;
-
   const unsigned char *stream;
   int temp_colors[16];
 
@@ -54,8 +49,19 @@ struct pwc_dec23_private
 
 };
 
-void pwc_dec23_init(struct pwc_device *pdev, const unsigned char *cmd);
-void pwc_dec23_decompress(struct pwc_device *pdev,
+
+int pwc_dec23_alloc(struct pwc_device *pwc);
+int pwc_dec23_init(struct pwc_device *pwc, int type, unsigned char *cmd);
+void pwc_dec23_exit(void);
+void pwc_dec23_decompress(const struct pwc_device *pwc,
 			  const void *src,
-			  void *dst);
+			  void *dst,
+			  int flags);
+
+
+
 #endif
+
+
+/* vim: set cino= formatoptions=croql cindent shiftwidth=8 tabstop=8: */
+

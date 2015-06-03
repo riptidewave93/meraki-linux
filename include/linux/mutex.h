@@ -15,7 +15,7 @@
 #include <linux/linkage.h>
 #include <linux/lockdep.h>
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 /*
  * Simple, straightforward mutexes with strict semantics:
@@ -51,7 +51,7 @@ struct mutex {
 	spinlock_t		wait_lock;
 	struct list_head	wait_list;
 #if defined(CONFIG_DEBUG_MUTEXES) || defined(CONFIG_SMP)
-	struct task_struct	*owner;
+	struct thread_info	*owner;
 #endif
 #ifdef CONFIG_DEBUG_MUTEXES
 	const char 		*name;
@@ -78,21 +78,13 @@ struct mutex_waiter {
 # include <linux/mutex-debug.h>
 #else
 # define __DEBUG_MUTEX_INITIALIZER(lockname)
-/**
- * mutex_init - initialize the mutex
- * @mutex: the mutex to be initialized
- *
- * Initialize the mutex to unlocked state.
- *
- * It is not allowed to initialize an already locked mutex.
- */
 # define mutex_init(mutex) \
 do {							\
 	static struct lock_class_key __key;		\
 							\
 	__mutex_init((mutex), #mutex, &__key);		\
 } while (0)
-static inline void mutex_destroy(struct mutex *lock) {}
+# define mutex_destroy(mutex)				do { } while (0)
 #endif
 
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
@@ -132,7 +124,6 @@ static inline int mutex_is_locked(struct mutex *lock)
  */
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 extern void mutex_lock_nested(struct mutex *lock, unsigned int subclass);
-extern void _mutex_lock_nest_lock(struct mutex *lock, struct lockdep_map *nest_lock);
 extern int __must_check mutex_lock_interruptible_nested(struct mutex *lock,
 					unsigned int subclass);
 extern int __must_check mutex_lock_killable_nested(struct mutex *lock,
@@ -141,13 +132,6 @@ extern int __must_check mutex_lock_killable_nested(struct mutex *lock,
 #define mutex_lock(lock) mutex_lock_nested(lock, 0)
 #define mutex_lock_interruptible(lock) mutex_lock_interruptible_nested(lock, 0)
 #define mutex_lock_killable(lock) mutex_lock_killable_nested(lock, 0)
-
-#define mutex_lock_nest_lock(lock, nest_lock)				\
-do {									\
-	typecheck(struct lockdep_map *, &(nest_lock)->dep_map);		\
-	_mutex_lock_nest_lock(lock, &(nest_lock)->dep_map);		\
-} while (0)
-
 #else
 extern void mutex_lock(struct mutex *lock);
 extern int __must_check mutex_lock_interruptible(struct mutex *lock);
@@ -156,7 +140,6 @@ extern int __must_check mutex_lock_killable(struct mutex *lock);
 # define mutex_lock_nested(lock, subclass) mutex_lock(lock)
 # define mutex_lock_interruptible_nested(lock, subclass) mutex_lock_interruptible(lock)
 # define mutex_lock_killable_nested(lock, subclass) mutex_lock_killable(lock)
-# define mutex_lock_nest_lock(lock, nest_lock) mutex_lock(lock)
 #endif
 
 /*
@@ -168,9 +151,5 @@ extern int __must_check mutex_lock_killable(struct mutex *lock);
 extern int mutex_trylock(struct mutex *lock);
 extern void mutex_unlock(struct mutex *lock);
 extern int atomic_dec_and_mutex_lock(atomic_t *cnt, struct mutex *lock);
-
-#ifndef CONFIG_HAVE_ARCH_MUTEX_CPU_RELAX
-#define arch_mutex_cpu_relax()	cpu_relax()
-#endif
 
 #endif

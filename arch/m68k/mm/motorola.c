@@ -18,12 +18,12 @@
 #include <linux/types.h>
 #include <linux/init.h>
 #include <linux/bootmem.h>
-#include <linux/gfp.h>
 
 #include <asm/setup.h>
 #include <asm/uaccess.h>
 #include <asm/page.h>
 #include <asm/pgalloc.h>
+#include <asm/system.h>
 #include <asm/machdep.h>
 #include <asm/io.h>
 #include <asm/dma.h>

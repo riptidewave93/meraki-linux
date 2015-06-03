@@ -104,6 +104,8 @@ typedef struct {
 #define ELF_CLASS	ELFCLASS32
 #define ELF_DATA	ELFDATA2MSB
 
+#define USE_ELF_CORE_DUMP
+
 #define ELF_EXEC_PAGESIZE	4096
 
 

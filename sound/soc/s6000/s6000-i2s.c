@@ -16,7 +16,6 @@
 #include <linux/clk.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
-#include <linux/slab.h>
 
 #include <sound/core.h>
 #include <sound/pcm.h>
@@ -140,7 +139,7 @@ static void s6000_i2s_stop_channel(struct s6000_i2s_dev *dev, int channel)
 static void s6000_i2s_start(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct s6000_i2s_dev *dev = snd_soc_dai_get_drvdata(rtd->cpu_dai);
+	struct s6000_i2s_dev *dev = rtd->dai->cpu_dai->private_data;
 	int channel;
 
 	channel = (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) ?
@@ -152,7 +151,7 @@ static void s6000_i2s_start(struct snd_pcm_substream *substream)
 static void s6000_i2s_stop(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct s6000_i2s_dev *dev = snd_soc_dai_get_drvdata(rtd->cpu_dai);
+	struct s6000_i2s_dev *dev = rtd->dai->cpu_dai->private_data;
 	int channel;
 
 	channel = (substream->stream == SNDRV_PCM_STREAM_PLAYBACK) ?
@@ -194,7 +193,7 @@ static unsigned int s6000_i2s_int_sources(struct s6000_i2s_dev *dev)
 
 static unsigned int s6000_i2s_check_xrun(struct snd_soc_dai *cpu_dai)
 {
-	struct s6000_i2s_dev *dev = snd_soc_dai_get_drvdata(cpu_dai);
+	struct s6000_i2s_dev *dev = cpu_dai->private_data;
 	unsigned int errors;
 	unsigned int ret;
 
@@ -232,7 +231,7 @@ static void s6000_i2s_wait_disabled(struct s6000_i2s_dev *dev)
 static int s6000_i2s_set_dai_fmt(struct snd_soc_dai *cpu_dai,
 				   unsigned int fmt)
 {
-	struct s6000_i2s_dev *dev = snd_soc_dai_get_drvdata(cpu_dai);
+	struct s6000_i2s_dev *dev = cpu_dai->private_data;
 	u32 w;
 
 	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
@@ -273,7 +272,7 @@ static int s6000_i2s_set_dai_fmt(struct snd_soc_dai *cpu_dai,
 
 static int s6000_i2s_set_clkdiv(struct snd_soc_dai *dai, int div_id, int div)
 {
-	struct s6000_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
+	struct s6000_i2s_dev *dev = dai->private_data;
 
 	if (!div || (div & 1) || div > (S6_I2S_DIV_MASK + 1) * 2)
 		return -EINVAL;
@@ -287,7 +286,7 @@ static int s6000_i2s_hw_params(struct snd_pcm_substream *substream,
 			       struct snd_pcm_hw_params *params,
 			       struct snd_soc_dai *dai)
 {
-	struct s6000_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
+	struct s6000_i2s_dev *dev = dai->private_data;
 	int interf;
 	u32 w = 0;
 
@@ -326,16 +325,14 @@ static int s6000_i2s_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static int s6000_i2s_dai_probe(struct snd_soc_dai *dai)
+static int s6000_i2s_dai_probe(struct platform_device *pdev,
+			       struct snd_soc_dai *dai)
 {
-	struct s6000_i2s_dev *dev = snd_soc_dai_get_drvdata(dai);
-	struct s6000_snd_platform_data *pdata = dai->dev->platform_data;
+	struct s6000_i2s_dev *dev = dai->private_data;
+	struct s6000_snd_platform_data *pdata = pdev->dev.platform_data;
 
 	if (!pdata)
 		return -EINVAL;
-
-	dai->capture_dma_data = &dev->dma_params;
-	dai->playback_dma_data = &dev->dma_params;
 
 	dev->wide = pdata->wide;
 	dev->channel_in = pdata->channel_in;
@@ -354,10 +351,10 @@ static int s6000_i2s_dai_probe(struct snd_soc_dai *dai)
 
 		dev->channel_in = 0;
 		dev->channel_out = 1;
-		dai->driver->capture.channels_min = 2 * dev->lines_in;
-		dai->driver->capture.channels_max = dai->driver->capture.channels_min;
-		dai->driver->playback.channels_min = 2 * dev->lines_out;
-		dai->driver->playback.channels_max = dai->driver->playback.channels_min;
+		dai->capture.channels_min = 2 * dev->lines_in;
+		dai->capture.channels_max = dai->capture.channels_min;
+		dai->playback.channels_min = 2 * dev->lines_out;
+		dai->playback.channels_max = dai->playback.channels_min;
 
 		for (i = 0; i < dev->lines_out; i++)
 			s6_i2s_write_reg(dev, S6_I2S_DATA_CFG(i), S6_I2S_OUT);
@@ -374,10 +371,10 @@ static int s6000_i2s_dai_probe(struct snd_soc_dai *dai)
 		if (dev->lines_in > 1 || dev->lines_out > 1)
 			return -EINVAL;
 
-		dai->driver->capture.channels_min = 2 * dev->lines_in;
-		dai->driver->capture.channels_max = 8 * dev->lines_in;
-		dai->driver->playback.channels_min = 2 * dev->lines_out;
-		dai->driver->playback.channels_max = 8 * dev->lines_out;
+		dai->capture.channels_min = 2 * dev->lines_in;
+		dai->capture.channels_max = 8 * dev->lines_in;
+		dai->playback.channels_min = 2 * dev->lines_out;
+		dai->playback.channels_max = 8 * dev->lines_out;
 
 		if (dev->lines_in)
 			cfg[dev->channel_in] = S6_I2S_IN;
@@ -409,13 +406,15 @@ static int s6000_i2s_dai_probe(struct snd_soc_dai *dai)
 			 SNDRV_PCM_RATE_8000_192000)
 #define S6000_I2S_FORMATS (SNDRV_PCM_FMTBIT_S16_LE | SNDRV_PCM_FMTBIT_S32_LE)
 
-static const struct snd_soc_dai_ops s6000_i2s_dai_ops = {
+static struct snd_soc_dai_ops s6000_i2s_dai_ops = {
 	.set_fmt = s6000_i2s_set_dai_fmt,
 	.set_clkdiv = s6000_i2s_set_clkdiv,
 	.hw_params = s6000_i2s_hw_params,
 };
 
-static struct snd_soc_dai_driver s6000_i2s_dai = {
+struct snd_soc_dai s6000_i2s_dai = {
+	.name = "s6000-i2s",
+	.id = 0,
 	.probe = s6000_i2s_dai_probe,
 	.playback = {
 		.channels_min = 2,
@@ -434,7 +433,8 @@ static struct snd_soc_dai_driver s6000_i2s_dai = {
 		.rate_max = 1562500,
 	},
 	.ops = &s6000_i2s_dai_ops,
-};
+}
+EXPORT_SYMBOL_GPL(s6000_i2s_dai);
 
 static int __devinit s6000_i2s_probe(struct platform_device *pdev)
 {
@@ -450,15 +450,16 @@ static int __devinit s6000_i2s_probe(struct platform_device *pdev)
 		goto err_release_none;
 	}
 
-	region = request_mem_region(scbmem->start, resource_size(scbmem),
-								pdev->name);
+	region = request_mem_region(scbmem->start,
+				    scbmem->end - scbmem->start + 1,
+				    pdev->name);
 	if (!region) {
 		dev_err(&pdev->dev, "I2S SCB region already claimed\n");
 		ret = -EBUSY;
 		goto err_release_none;
 	}
 
-	mmio = ioremap(scbmem->start, resource_size(scbmem));
+	mmio = ioremap(scbmem->start, scbmem->end - scbmem->start + 1);
 	if (!mmio) {
 		dev_err(&pdev->dev, "can't ioremap SCB region\n");
 		ret = -ENOMEM;
@@ -472,8 +473,9 @@ static int __devinit s6000_i2s_probe(struct platform_device *pdev)
 		goto err_release_map;
 	}
 
-	region = request_mem_region(sifmem->start, resource_size(sifmem),
-								pdev->name);
+	region = request_mem_region(sifmem->start,
+				    sifmem->end - sifmem->start + 1,
+				    pdev->name);
 	if (!region) {
 		dev_err(&pdev->dev, "I2S SIF region already claimed\n");
 		ret = -EBUSY;
@@ -487,8 +489,8 @@ static int __devinit s6000_i2s_probe(struct platform_device *pdev)
 		goto err_release_sif;
 	}
 
-	region = request_mem_region(dma1->start, resource_size(dma1),
-								pdev->name);
+	region = request_mem_region(dma1->start, dma1->end - dma1->start + 1,
+				    pdev->name);
 	if (!region) {
 		dev_err(&pdev->dev, "I2S DMA region already claimed\n");
 		ret = -EBUSY;
@@ -497,8 +499,9 @@ static int __devinit s6000_i2s_probe(struct platform_device *pdev)
 
 	dma2 = platform_get_resource(pdev, IORESOURCE_DMA, 1);
 	if (dma2) {
-		region = request_mem_region(dma2->start, resource_size(dma2),
-								pdev->name);
+		region = request_mem_region(dma2->start,
+					    dma2->end - dma2->start + 1,
+					    pdev->name);
 		if (!region) {
 			dev_err(&pdev->dev,
 				"I2S DMA region already claimed\n");
@@ -512,7 +515,10 @@ static int __devinit s6000_i2s_probe(struct platform_device *pdev)
 		ret = -ENOMEM;
 		goto err_release_dma2;
 	}
-	dev_set_drvdata(&pdev->dev, dev);
+
+	s6000_i2s_dai.dev = &pdev->dev;
+	s6000_i2s_dai.private_data = dev;
+	s6000_i2s_dai.dma_data = &dev->dma_params;
 
 	dev->sifbase = sifmem->start;
 	dev->scbbase = mmio;
@@ -543,7 +549,7 @@ static int __devinit s6000_i2s_probe(struct platform_device *pdev)
 			 S6_I2S_INT_UNDERRUN |
 			 S6_I2S_INT_OVERRUN);
 
-	ret = snd_soc_register_dai(&pdev->dev, &s6000_i2s_dai);
+	ret = snd_soc_register_dai(&s6000_i2s_dai);
 	if (ret)
 		goto err_release_dev;
 
@@ -553,46 +559,48 @@ err_release_dev:
 	kfree(dev);
 err_release_dma2:
 	if (dma2)
-		release_mem_region(dma2->start, resource_size(dma2));
+		release_mem_region(dma2->start, dma2->end - dma2->start + 1);
 err_release_dma1:
-	release_mem_region(dma1->start, resource_size(dma1));
+	release_mem_region(dma1->start, dma1->end - dma1->start + 1);
 err_release_sif:
-	release_mem_region(sifmem->start, resource_size(sifmem));
+	release_mem_region(sifmem->start, (sifmem->end - sifmem->start) + 1);
 err_release_map:
 	iounmap(mmio);
 err_release_scb:
-	release_mem_region(scbmem->start, resource_size(scbmem));
+	release_mem_region(scbmem->start, (scbmem->end - scbmem->start) + 1);
 err_release_none:
 	return ret;
 }
 
 static void __devexit s6000_i2s_remove(struct platform_device *pdev)
 {
-	struct s6000_i2s_dev *dev = dev_get_drvdata(&pdev->dev);
+	struct s6000_i2s_dev *dev = s6000_i2s_dai.private_data;
 	struct resource *region;
 	void __iomem *mmio = dev->scbbase;
 
-	snd_soc_unregister_dai(&pdev->dev);
+	snd_soc_unregister_dai(&s6000_i2s_dai);
 
 	s6000_i2s_stop_channel(dev, 0);
 	s6000_i2s_stop_channel(dev, 1);
 
 	s6_i2s_write_reg(dev, S6_I2S_INTERRUPT_ENABLE, 0);
+	s6000_i2s_dai.private_data = 0;
 	kfree(dev);
 
 	region = platform_get_resource(pdev, IORESOURCE_DMA, 0);
-	release_mem_region(region->start, resource_size(region));
+	release_mem_region(region->start, region->end - region->start + 1);
 
 	region = platform_get_resource(pdev, IORESOURCE_DMA, 1);
 	if (region)
-		release_mem_region(region->start, resource_size(region));
+		release_mem_region(region->start,
+				   region->end - region->start + 1);
 
 	region = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	release_mem_region(region->start, resource_size(region));
+	release_mem_region(region->start, (region->end - region->start) + 1);
 
 	iounmap(mmio);
 	region = platform_get_resource(pdev, IORESOURCE_IO, 0);
-	release_mem_region(region->start, resource_size(region));
+	release_mem_region(region->start, (region->end - region->start) + 1);
 }
 
 static struct platform_driver s6000_i2s_driver = {
@@ -604,7 +612,17 @@ static struct platform_driver s6000_i2s_driver = {
 	},
 };
 
-module_platform_driver(s6000_i2s_driver);
+static int __init s6000_i2s_init(void)
+{
+	return platform_driver_register(&s6000_i2s_driver);
+}
+module_init(s6000_i2s_init);
+
+static void __exit s6000_i2s_exit(void)
+{
+	platform_driver_unregister(&s6000_i2s_driver);
+}
+module_exit(s6000_i2s_exit);
 
 MODULE_AUTHOR("Daniel Gloeckner");
 MODULE_DESCRIPTION("Stretch s6000 family I2S SoC Interface");

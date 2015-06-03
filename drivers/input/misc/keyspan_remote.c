@@ -312,7 +312,7 @@ static void keyspan_check_data(struct usb_keyspan *remote)
 			remote->data.tester = remote->data.tester >> 5;
 			remote->data.bits_left -= 5;
 		} else {
-			err("Bad message received, no stop bit found.\n");
+			err("Bad message recieved, no stop bit found.\n");
 		}
 
 		dev_dbg(&remote->udev->dev,
@@ -464,7 +464,7 @@ static int keyspan_probe(struct usb_interface *interface, const struct usb_devic
 	remote->in_endpoint = endpoint;
 	remote->toggle = -1;	/* Set to -1 so we will always not match the toggle from the first remote message. */
 
-	remote->in_buffer = usb_alloc_coherent(udev, RECV_SIZE, GFP_ATOMIC, &remote->in_dma);
+	remote->in_buffer = usb_buffer_alloc(udev, RECV_SIZE, GFP_ATOMIC, &remote->in_dma);
 	if (!remote->in_buffer) {
 		error = -ENOMEM;
 		goto fail1;
@@ -543,7 +543,7 @@ static int keyspan_probe(struct usb_interface *interface, const struct usb_devic
 	return 0;
 
  fail3:	usb_free_urb(remote->irq_urb);
- fail2:	usb_free_coherent(udev, RECV_SIZE, remote->in_buffer, remote->in_dma);
+ fail2:	usb_buffer_free(udev, RECV_SIZE, remote->in_buffer, remote->in_dma);
  fail1:	kfree(remote);
 	input_free_device(input_dev);
 
@@ -564,7 +564,7 @@ static void keyspan_disconnect(struct usb_interface *interface)
 		input_unregister_device(remote->input);
 		usb_kill_urb(remote->irq_urb);
 		usb_free_urb(remote->irq_urb);
-		usb_free_coherent(remote->udev, RECV_SIZE, remote->in_buffer, remote->in_dma);
+		usb_buffer_free(remote->udev, RECV_SIZE, remote->in_buffer, remote->in_dma);
 		kfree(remote);
 	}
 }
@@ -580,7 +580,26 @@ static struct usb_driver keyspan_driver =
 	.id_table =	keyspan_table
 };
 
-module_usb_driver(keyspan_driver);
+static int __init usb_keyspan_init(void)
+{
+	int result;
+
+	/* register this driver with the USB subsystem */
+	result = usb_register(&keyspan_driver);
+	if (result)
+		err("usb_register failed. Error number %d\n", result);
+
+	return result;
+}
+
+static void __exit usb_keyspan_exit(void)
+{
+	/* deregister this driver with the USB subsystem */
+	usb_deregister(&keyspan_driver);
+}
+
+module_init(usb_keyspan_init);
+module_exit(usb_keyspan_exit);
 
 MODULE_DEVICE_TABLE(usb, keyspan_table);
 MODULE_AUTHOR(DRIVER_AUTHOR);

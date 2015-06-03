@@ -27,7 +27,7 @@ static struct exec_domain *exec_domains = &default_exec_domain;
 static DEFINE_RWLOCK(exec_domains_lock);
 
 
-static unsigned long ident_map[32] = {
+static u_long ident_map[32] = {
 	0,	1,	2,	3,	4,	5,	6,	7,
 	8,	9,	10,	11,	12,	13,	14,	15,
 	16,	17,	18,	19,	20,	21,	22,	23,
@@ -56,10 +56,10 @@ default_handler(int segment, struct pt_regs *regp)
 }
 
 static struct exec_domain *
-lookup_exec_domain(unsigned int personality)
+lookup_exec_domain(u_long personality)
 {
-	unsigned int pers = personality(personality);
-	struct exec_domain *ep;
+	struct exec_domain *	ep;
+	u_long			pers = personality(personality);
 
 	read_lock(&exec_domains_lock);
 	for (ep = exec_domains; ep; ep = ep->next) {
@@ -70,7 +70,7 @@ lookup_exec_domain(unsigned int personality)
 
 #ifdef CONFIG_MODULES
 	read_unlock(&exec_domains_lock);
-	request_module("personality-%d", pers);
+	request_module("personality-%ld", pers);
 	read_lock(&exec_domains_lock);
 
 	for (ep = exec_domains; ep; ep = ep->next) {
@@ -134,14 +134,23 @@ unregister:
 	return 0;
 }
 
-int __set_personality(unsigned int personality)
+int
+__set_personality(u_long personality)
 {
-	struct exec_domain *oep = current_thread_info()->exec_domain;
+	struct exec_domain	*ep, *oep;
 
-	current_thread_info()->exec_domain = lookup_exec_domain(personality);
+	ep = lookup_exec_domain(personality);
+	if (ep == current_thread_info()->exec_domain) {
+		current->personality = personality;
+		module_put(ep->module);
+		return 0;
+	}
+
 	current->personality = personality;
-	module_put(oep->module);
+	oep = current_thread_info()->exec_domain;
+	current_thread_info()->exec_domain = ep;
 
+	module_put(oep->module);
 	return 0;
 }
 
@@ -179,14 +188,17 @@ static int __init proc_execdomains_init(void)
 module_init(proc_execdomains_init);
 #endif
 
-SYSCALL_DEFINE1(personality, unsigned int, personality)
+SYSCALL_DEFINE1(personality, u_long, personality)
 {
-	unsigned int old = current->personality;
+	u_long old = current->personality;
 
-	if (personality != 0xffffffff)
+	if (personality != 0xffffffff) {
 		set_personality(personality);
+		if (current->personality != personality)
+			return -EINVAL;
+	}
 
-	return old;
+	return (long)old;
 }
 
 

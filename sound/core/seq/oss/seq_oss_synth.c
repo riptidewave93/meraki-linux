@@ -24,8 +24,6 @@
 #include "seq_oss_midi.h"
 #include "../seq_lock.h"
 #include <linux/init.h>
-#include <linux/module.h>
-#include <linux/slab.h>
 
 /*
  * constants

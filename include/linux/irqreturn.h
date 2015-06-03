@@ -8,9 +8,9 @@
  * @IRQ_WAKE_THREAD	handler requests to wake the handler thread
  */
 enum irqreturn {
-	IRQ_NONE		= (0 << 0),
-	IRQ_HANDLED		= (1 << 0),
-	IRQ_WAKE_THREAD		= (1 << 1),
+	IRQ_NONE,
+	IRQ_HANDLED,
+	IRQ_WAKE_THREAD,
 };
 
 typedef enum irqreturn irqreturn_t;

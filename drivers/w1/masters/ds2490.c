@@ -1,7 +1,7 @@
 /*
  *	dscore.c
  *
- * Copyright (c) 2004 Evgeniy Polyakov <zbr@ioremap.net>
+ * Copyright (c) 2004 Evgeniy Polyakov <johnpol@2ka.mipt.ru>
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -23,7 +23,6 @@
 #include <linux/kernel.h>
 #include <linux/mod_devicetable.h>
 #include <linux/usb.h>
-#include <linux/slab.h>
 
 #include "../w1_int.h"
 #include "../w1.h"
@@ -1002,8 +1001,27 @@ static void ds_disconnect(struct usb_interface *intf)
 	kfree(dev);
 }
 
-module_usb_driver(ds_driver);
+static int ds_init(void)
+{
+	int err;
+
+	err = usb_register(&ds_driver);
+	if (err) {
+		printk(KERN_INFO "Failed to register DS9490R USB device: err=%d.\n", err);
+		return err;
+	}
+
+	return 0;
+}
+
+static void ds_fini(void)
+{
+	usb_deregister(&ds_driver);
+}
+
+module_init(ds_init);
+module_exit(ds_fini);
 
 MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Evgeniy Polyakov <zbr@ioremap.net>");
+MODULE_AUTHOR("Evgeniy Polyakov <johnpol@2ka.mipt.ru>");
 MODULE_DESCRIPTION("DS2490 USB <-> W1 bus master driver (DS9490*)");

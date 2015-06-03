@@ -1,12 +1,3 @@
-config PPC_47x
-	bool "Support for 47x variant"
-	depends on 44x
-	default n
-	select MPIC
-	help
-	  This option enables support for the 47x family of processors and is
-	  not currently compatible with other 44x or 46x varients
-
 config BAMBOO
 	bool "Bamboo"
 	depends on 44x
@@ -16,17 +7,6 @@ config BAMBOO
 	select PCI
 	help
 	  This option enables support for the IBM PPC440EP evaluation board.
-
-config BLUESTONE
-	bool "Bluestone"
-	depends on 44x
-	default n
-	select PPC44x_SIMPLE
-	select APM821xx
-	select PPC4xx_PCI_EXPRESS
-	select IBM_EMAC_RGMII
-	help
-	  This option enables support for the APM APM821xx Evaluation board.
 
 config EBONY
 	bool "Ebony"
@@ -75,8 +55,6 @@ config KATMAI
 	select 440SPe
 	select PCI
 	select PPC4xx_PCI_EXPRESS
-	select PCI_MSI
-	select PPC4xx_MSI
 	help
 	  This option enables support for the AMCC PPC440SPe evaluation board.
 
@@ -111,22 +89,58 @@ config ARCHES
 	select 460EX # Odd since it uses 460GT but the effects are the same
 	select PCI
 	select PPC4xx_PCI_EXPRESS
+	select IBM_NEW_EMAC_RGMII
 	help
 	  This option enables support for the AMCC Dual PPC460GT evaluation board.
+
+config BEECH
+	bool "Beech"
+	depends on 44x
+	default n
+	select PPC44x_SIMPLE
+	select APM82181
+	select PPC4xx_PCI_EXPRESS
+	select IBM_NEW_EMAC_RGMII
+	help
+	  This option enables support for the AMCC APM82181 validation board.
+
+config BLUESTONE
+	bool "Bluestone"
+	depends on 44x
+	default n
+	select PPC44x_SIMPLE
+	select APM82181
+	select PPC4xx_PCI_EXPRESS
+	select IBM_NEW_EMAC_RGMII
+	help
+	  This option enables support for the AMCC APM82181 evaluation board.
 
 config CANYONLANDS
 	bool "Canyonlands"
 	depends on 44x
 	default n
+	select PPC44x_SIMPLE
 	select 460EX
 	select PCI
 	select PPC4xx_PCI_EXPRESS
-	select PCI_MSI
-	select PPC4xx_MSI
-	select IBM_EMAC_RGMII
-	select IBM_EMAC_ZMII
+	select IBM_NEW_EMAC_RGMII
+	select IBM_NEW_EMAC_ZMII
 	help
 	  This option enables support for the AMCC PPC460EX evaluation board.
+
+config ACER
+	bool "Acer 460EX/EXr/431EXr"
+	depends on 44x
+	default n
+	select 460EX
+	select PPC44x_SIMPLE
+	select PCI
+	select PPC4xx_PCI_EXPRESS
+	select IBM_NEW_EMAC_RGMII
+	select IBM_NEW_EMAC_ZMII
+
+	help
+	  This option enables support for the AMCC Acer validation board. Acer board has socketed CPU - but ONLY 460EX and 460EX variants (460EXr/431EXr) are currently supported.
 
 config GLACIER
 	bool "Glacier"
@@ -136,8 +150,8 @@ config GLACIER
 	select 460EX # Odd since it uses 460GT but the effects are the same
 	select PCI
 	select PPC4xx_PCI_EXPRESS
-	select IBM_EMAC_RGMII
-	select IBM_EMAC_ZMII
+	select IBM_NEW_EMAC_RGMII
+	select IBM_NEW_EMAC_ZMII
 	help
 	  This option enables support for the AMCC PPC460GT evaluation board.
 
@@ -149,11 +163,55 @@ config REDWOOD
 	select 460SX
 	select PCI
 	select PPC4xx_PCI_EXPRESS
-	select PCI_MSI
-	select PPC4xx_MSI
 	help
 	  This option enables support for the AMCC PPC460SX Redwood board.
+	
+config SERENGETI
+	bool "Serengeti"
+	depends on 44x
+	default n
+	select APM86xxx
+	select APM862xx
+	select MPIC
+	select PCI if !PALLADIUM
+	select APM86xxx_PCI_EXPRESS if !PALLADIUM
+	help
+	  This option enables support for the APM APM862xx Serengeti board.
 
+config APM86xxx_NOCOHERENT_CACHE
+	bool "Disable Coherent Cache"
+	depends on SERENGETI || CASCADE
+	select NOT_COHERENT_CACHE
+	help
+	  This option disables memory coherency on APM86xxx processors.
+
+config APM86xxx_IOCOHERENT
+	bool "Enable IO Coherency"
+	depends on SERENGETI || CASCADE
+	select APM86xxx_NOCOHERENT_CACHE
+	help
+	  This option enables IO coherency on APM86xxx processors while allows
+	  memory coherency disable. 
+	  	  
+config APM86xxx_WAP
+	bool "Enable WAP Optimization"
+	depends on SERENGETI
+	help
+	  This option enables Wireless Access Point optimization on APM86xxx 
+	  processors. 
+	  	  
+config CASCADE
+	bool "Cascade"
+	depends on 44x
+	default n
+	select APM86xxx
+	select APM867xx
+	select MPIC
+	select PCI if !PALLADIUM
+	select APM86xxx_PCI_EXPRESS if !PALLADIUM
+	help
+	  This option enables support for the APM APM867xx Cascade board.
+	  	  
 config EIGER
 	bool "Eiger"
 	depends on 44x
@@ -162,7 +220,7 @@ config EIGER
 	select 460SX
 	select PCI
 	select PPC4xx_PCI_EXPRESS
-	select IBM_EMAC_RGMII
+	select IBM_NEW_EMAC_RGMII
 	help
 	  This option enables support for the AMCC PPC460SX evaluation board.
 
@@ -176,37 +234,21 @@ config YOSEMITE
 	help
 	  This option enables support for the AMCC PPC440EP evaluation board.
 
-config ISS4xx
-	bool "ISS 4xx Simulator"
-	depends on (44x || 40x)
-	default n
-	select 405GP if 40x
-	select 440GP if 44x && !PPC_47x
-	select PPC_FPU
-	select OF_RTC
-	help
-	  This option enables support for the IBM ISS simulation environment
+#config LUAN
+#	bool "Luan"
+#	depends on 44x
+#	default n
+#	select 440SP
+#	help
+#	  This option enables support for the IBM PPC440SP evaluation board.
 
-config CURRITUCK
-	bool "IBM Currituck (476fpe) Support"
-	depends on PPC_47x
-	default n
-	select SWIOTLB
-	select 476FPE
-	select PPC4xx_PCI_EXPRESS
-	help
-	  This option enables support for the IBM Currituck (476fpe) evaluation board
-
-config ICON
-	bool "Icon"
-	depends on 44x
-	default n
-	select PPC44x_SIMPLE
-	select 440SPe
-	select PCI
-	select PPC4xx_PCI_EXPRESS
-	help
-	  This option enables support for the AMCC PPC440SPe evaluation board.
+#config OCOTEA
+#	bool "Ocotea"
+#	depends on 44x
+#	default n
+#	select 440GX
+#	help
+#	  This option enables support for the IBM PPC440GX evaluation board.
 
 config XILINX_VIRTEX440_GENERIC_BOARD
 	bool "Generic Xilinx Virtex 5 FXT board support"
@@ -250,68 +292,120 @@ config PPC4xx_GPIO
 	help
 	  Enable gpiolib support for ppc440 based boards
 
+config PPC4xx_OCM
+	bool "PPC4xx On Chip Memory (OCM) support"
+	depends on 4xx
+	select PPC_LIB_RHEAP
+	help
+	  Enable OCM support for PowerPC 4xx platforms with on chip memory.
+
+config PPC4xx_CPM
+	bool "PPC4xx Clock Power Management (CPM) support"
+	depends on 4xx
+	help
+	  Enable CPM support for PowerPC 4xx platforms.
+
+config APM86xxx_OCM
+	bool "APM86xxx On Chip Memory (OCM) support"
+	depends on APM86xxx
+	select PPC_LIB_RHEAP
+	help
+	  Enable OCM support for APM86xxx platforms with on chip memory.
+
+config APM86xxx_OCM_TEST
+	bool "APM86xxx On Chip Memory Test"
+	depends on APM86xxx_OCM
+	help
+	  Enable OCM testing for APM86xxx platforms with on chip memory.
+
+config APM86xxx_GPT
+	bool "APM General Purpose Timer"
+	depends on APM86xxx
+	select MPIC_64BITS_TIMER
+	default y if APM86xxx 
+	help
+	  Enable APM86xxx General Purpose Timer support found on the MPIC
+
+config ISS
+	bool "PPC4xx ISS support"
+	depends on 44x && (SERENGETI || CASCADE)
+	default n
+	help
+	  This is to enable support for APM ISS simulation.	
+
 # 44x specific CPU modules, selected based on the board above.
 config 440EP
 	bool
 	select PPC_FPU
 	select IBM440EP_ERR42
-	select IBM_EMAC_ZMII
+	select IBM_NEW_EMAC_ZMII
 	select USB_ARCH_HAS_OHCI
 
 config 440EPX
 	bool
 	select PPC_FPU
-	select IBM_EMAC_EMAC4
-	select IBM_EMAC_RGMII
-	select IBM_EMAC_ZMII
+	select IBM_NEW_EMAC_EMAC4
+	select IBM_NEW_EMAC_RGMII
+	select IBM_NEW_EMAC_ZMII
 
 config 440GRX
 	bool
-	select IBM_EMAC_EMAC4
-	select IBM_EMAC_RGMII
-	select IBM_EMAC_ZMII
+	select IBM_NEW_EMAC_EMAC4
+	select IBM_NEW_EMAC_RGMII
+	select IBM_NEW_EMAC_ZMII
 
 config 440GP
 	bool
-	select IBM_EMAC_ZMII
+	select IBM_NEW_EMAC_ZMII
 
 config 440GX
 	bool
-	select IBM_EMAC_EMAC4
-	select IBM_EMAC_RGMII
-	select IBM_EMAC_ZMII #test only
-	select IBM_EMAC_TAH  #test only
+	select IBM_NEW_EMAC_EMAC4
+#	select IBM_NEW_EMAC_RGMII
+#	select IBM_NEW_EMAC_ZMII #test only
+	select IBM_NEW_EMAC_TAH  #test only
 
 config 440SP
 	bool
 
 config 440SPe
 	bool
-	select IBM_EMAC_EMAC4
+	select IBM_NEW_EMAC_EMAC4
 
 config 460EX
 	bool
 	select PPC_FPU
-	select IBM_EMAC_EMAC4
-	select IBM_EMAC_TAH
+	select IBM_NEW_EMAC_EMAC4
+	select IBM_NEW_EMAC_TAH
 
 config 460SX
 	bool
 	select PPC_FPU
-	select IBM_EMAC_EMAC4
-	select IBM_EMAC_RGMII
-	select IBM_EMAC_ZMII
-	select IBM_EMAC_TAH
+	select IBM_NEW_EMAC_EMAC4
+	select IBM_NEW_EMAC_RGMII
+	select IBM_NEW_EMAC_ZMII
+	select IBM_NEW_EMAC_TAH
 
-config 476FPE
+config APM82181
 	bool
 	select PPC_FPU
+	select IBM_NEW_EMAC_EMAC4
+	select IBM_NEW_EMAC_TAH
 
-config APM821xx
+config APM86xxx
 	bool
 	select PPC_FPU
-	select IBM_EMAC_EMAC4
-	select IBM_EMAC_TAH
+	select IBM_NEW_EMAC_EMAC4
+	select IBM_NEW_EMAC_RGMII
+	select IBM_NEW_EMAC_ZMII
+	select IBM_NEW_EMAC_TAH
+	select IPP
+
+config APM862xx
+	bool
+
+config APM867xx
+	bool
 
 # 44x errata/workaround config symbols, selected by the CPU models above
 config IBM440EP_ERR42

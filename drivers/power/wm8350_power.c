@@ -184,13 +184,12 @@ static ssize_t charger_state_show(struct device *dev,
 
 static DEVICE_ATTR(charger_state, 0444, charger_state_show, NULL);
 
-static irqreturn_t wm8350_charger_handler(int irq, void *data)
+static void wm8350_charger_handler(struct wm8350 *wm8350, int irq, void *data)
 {
-	struct wm8350 *wm8350 = data;
 	struct wm8350_power *power = &wm8350->power;
 	struct wm8350_charger_policy *policy = power->policy;
 
-	switch (irq - wm8350->irq_base) {
+	switch (irq) {
 	case WM8350_IRQ_CHG_BAT_FAIL:
 		dev_err(wm8350->dev, "battery failed\n");
 		break;
@@ -239,8 +238,6 @@ static irqreturn_t wm8350_charger_handler(int irq, void *data)
 	default:
 		dev_err(wm8350->dev, "Unknown interrupt %d\n", irq);
 	}
-
-	return IRQ_HANDLED;
 }
 
 /*********************************************************************
@@ -390,56 +387,74 @@ static void wm8350_init_charger(struct wm8350 *wm8350)
 {
 	/* register our interest in charger events */
 	wm8350_register_irq(wm8350, WM8350_IRQ_CHG_BAT_HOT,
-			    wm8350_charger_handler, 0, "Battery hot", wm8350);
+			    wm8350_charger_handler, NULL);
+	wm8350_unmask_irq(wm8350, WM8350_IRQ_CHG_BAT_HOT);
 	wm8350_register_irq(wm8350, WM8350_IRQ_CHG_BAT_COLD,
-			    wm8350_charger_handler, 0, "Battery cold", wm8350);
+			    wm8350_charger_handler, NULL);
+	wm8350_unmask_irq(wm8350, WM8350_IRQ_CHG_BAT_COLD);
 	wm8350_register_irq(wm8350, WM8350_IRQ_CHG_BAT_FAIL,
-			    wm8350_charger_handler, 0, "Battery fail", wm8350);
+			    wm8350_charger_handler, NULL);
+	wm8350_unmask_irq(wm8350, WM8350_IRQ_CHG_BAT_FAIL);
 	wm8350_register_irq(wm8350, WM8350_IRQ_CHG_TO,
-			    wm8350_charger_handler, 0,
-			    "Charger timeout", wm8350);
+			    wm8350_charger_handler, NULL);
+	wm8350_unmask_irq(wm8350, WM8350_IRQ_CHG_TO);
 	wm8350_register_irq(wm8350, WM8350_IRQ_CHG_END,
-			    wm8350_charger_handler, 0,
-			    "Charge end", wm8350);
+			    wm8350_charger_handler, NULL);
+	wm8350_unmask_irq(wm8350, WM8350_IRQ_CHG_END);
 	wm8350_register_irq(wm8350, WM8350_IRQ_CHG_START,
-			    wm8350_charger_handler, 0,
-			    "Charge start", wm8350);
+			    wm8350_charger_handler, NULL);
+	wm8350_unmask_irq(wm8350, WM8350_IRQ_CHG_START);
 	wm8350_register_irq(wm8350, WM8350_IRQ_CHG_FAST_RDY,
-			    wm8350_charger_handler, 0,
-			    "Fast charge ready", wm8350);
+			    wm8350_charger_handler, NULL);
+	wm8350_unmask_irq(wm8350, WM8350_IRQ_CHG_FAST_RDY);
 	wm8350_register_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_3P9,
-			    wm8350_charger_handler, 0,
-			    "Battery <3.9V", wm8350);
+			    wm8350_charger_handler, NULL);
+	wm8350_unmask_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_3P9);
 	wm8350_register_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_3P1,
-			    wm8350_charger_handler, 0,
-			    "Battery <3.1V", wm8350);
+			    wm8350_charger_handler, NULL);
+	wm8350_unmask_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_3P1);
 	wm8350_register_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_2P85,
-			    wm8350_charger_handler, 0,
-			    "Battery <2.85V", wm8350);
+			    wm8350_charger_handler, NULL);
+	wm8350_unmask_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_2P85);
 
 	/* and supply change events */
 	wm8350_register_irq(wm8350, WM8350_IRQ_EXT_USB_FB,
-			    wm8350_charger_handler, 0, "USB", wm8350);
+			    wm8350_charger_handler, NULL);
+	wm8350_unmask_irq(wm8350, WM8350_IRQ_EXT_USB_FB);
 	wm8350_register_irq(wm8350, WM8350_IRQ_EXT_WALL_FB,
-			    wm8350_charger_handler, 0, "Wall", wm8350);
+			    wm8350_charger_handler, NULL);
+	wm8350_unmask_irq(wm8350, WM8350_IRQ_EXT_WALL_FB);
 	wm8350_register_irq(wm8350, WM8350_IRQ_EXT_BAT_FB,
-			    wm8350_charger_handler, 0, "Battery", wm8350);
+			    wm8350_charger_handler, NULL);
+	wm8350_unmask_irq(wm8350, WM8350_IRQ_EXT_BAT_FB);
 }
 
 static void free_charger_irq(struct wm8350 *wm8350)
 {
-	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_BAT_HOT, wm8350);
-	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_BAT_COLD, wm8350);
-	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_BAT_FAIL, wm8350);
-	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_TO, wm8350);
-	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_END, wm8350);
-	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_START, wm8350);
-	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_3P9, wm8350);
-	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_3P1, wm8350);
-	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_2P85, wm8350);
-	wm8350_free_irq(wm8350, WM8350_IRQ_EXT_USB_FB, wm8350);
-	wm8350_free_irq(wm8350, WM8350_IRQ_EXT_WALL_FB, wm8350);
-	wm8350_free_irq(wm8350, WM8350_IRQ_EXT_BAT_FB, wm8350);
+	wm8350_mask_irq(wm8350, WM8350_IRQ_CHG_BAT_HOT);
+	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_BAT_HOT);
+	wm8350_mask_irq(wm8350, WM8350_IRQ_CHG_BAT_COLD);
+	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_BAT_COLD);
+	wm8350_mask_irq(wm8350, WM8350_IRQ_CHG_BAT_FAIL);
+	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_BAT_FAIL);
+	wm8350_mask_irq(wm8350, WM8350_IRQ_CHG_TO);
+	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_TO);
+	wm8350_mask_irq(wm8350, WM8350_IRQ_CHG_END);
+	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_END);
+	wm8350_mask_irq(wm8350, WM8350_IRQ_CHG_START);
+	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_START);
+	wm8350_mask_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_3P9);
+	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_3P9);
+	wm8350_mask_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_3P1);
+	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_3P1);
+	wm8350_mask_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_2P85);
+	wm8350_free_irq(wm8350, WM8350_IRQ_CHG_VBATT_LT_2P85);
+	wm8350_mask_irq(wm8350, WM8350_IRQ_EXT_USB_FB);
+	wm8350_free_irq(wm8350, WM8350_IRQ_EXT_USB_FB);
+	wm8350_mask_irq(wm8350, WM8350_IRQ_EXT_WALL_FB);
+	wm8350_free_irq(wm8350, WM8350_IRQ_EXT_WALL_FB);
+	wm8350_mask_irq(wm8350, WM8350_IRQ_EXT_BAT_FB);
+	wm8350_free_irq(wm8350, WM8350_IRQ_EXT_BAT_FB);
 }
 
 static __devinit int wm8350_power_probe(struct platform_device *pdev)
@@ -522,7 +537,17 @@ static struct platform_driver wm8350_power_driver = {
 	},
 };
 
-module_platform_driver(wm8350_power_driver);
+static int __init wm8350_power_init(void)
+{
+	return platform_driver_register(&wm8350_power_driver);
+}
+module_init(wm8350_power_init);
+
+static void __exit wm8350_power_exit(void)
+{
+	platform_driver_unregister(&wm8350_power_driver);
+}
+module_exit(wm8350_power_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Power supply driver for WM8350");

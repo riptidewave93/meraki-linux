@@ -10,7 +10,6 @@
 
 
 #include <linux/list.h>
-#include <linux/slab.h>
 #include <linux/rbtree.h>
 #include <linux/debugfs.h>
 #include "trace_stat.h"
@@ -307,8 +306,6 @@ static int tracing_stat_init(void)
 	struct dentry *d_tracing;
 
 	d_tracing = tracing_init_dentry();
-	if (!d_tracing)
-		return 0;
 
 	stat_dir = debugfs_create_dir("trace_stat", d_tracing);
 	if (!stat_dir)

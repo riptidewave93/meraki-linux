@@ -16,9 +16,10 @@
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/errno.h>
+#include <linux/slab.h>
 #include <linux/stddef.h>
 #include <linux/spinlock.h>
-#include <linux/export.h>
+#include <linux/module.h>
 
 #include <asm/irq.h>
 #include <asm/io.h>

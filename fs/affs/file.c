@@ -406,19 +406,10 @@ static int affs_write_begin(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned flags,
 			struct page **pagep, void **fsdata)
 {
-	int ret;
-
 	*pagep = NULL;
-	ret = cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
+	return cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
 				affs_get_block,
 				&AFFS_I(mapping->host)->mmu_private);
-	if (unlikely(ret)) {
-		loff_t isize = mapping->host->i_size;
-		if (pos + len > isize)
-			vmtruncate(mapping->host, isize);
-	}
-
-	return ret;
 }
 
 static sector_t _affs_bmap(struct address_space *mapping, sector_t block)
@@ -429,6 +420,7 @@ static sector_t _affs_bmap(struct address_space *mapping, sector_t block)
 const struct address_space_operations affs_aops = {
 	.readpage = affs_readpage,
 	.writepage = affs_writepage,
+	.sync_page = block_sync_page,
 	.write_begin = affs_write_begin,
 	.write_end = generic_write_end,
 	.bmap = _affs_bmap
@@ -785,6 +777,7 @@ out:
 const struct address_space_operations affs_aops_ofs = {
 	.readpage = affs_readpage_ofs,
 	//.writepage = affs_writepage_ofs,
+	//.sync_page = affs_sync_page_ofs,
 	.write_begin = affs_write_begin_ofs,
 	.write_end = affs_write_end_ofs
 };
@@ -892,9 +885,9 @@ affs_truncate(struct inode *inode)
 		if (AFFS_SB(sb)->s_flags & SF_OFS) {
 			struct buffer_head *bh = affs_bread_ino(inode, last_blk, 0);
 			u32 tmp;
-			if (IS_ERR(bh)) {
+			if (IS_ERR(ext_bh)) {
 				affs_warning(sb, "truncate", "unexpected read error for last block %u (%d)",
-					     ext, PTR_ERR(bh));
+					     ext, PTR_ERR(ext_bh));
 				return;
 			}
 			tmp = be32_to_cpu(AFFS_DATA_HEAD(bh)->next);
@@ -923,20 +916,14 @@ affs_truncate(struct inode *inode)
 	affs_free_prealloc(inode);
 }
 
-int affs_file_fsync(struct file *filp, loff_t start, loff_t end, int datasync)
+int affs_file_fsync(struct file *filp, struct dentry *dentry, int datasync)
 {
-	struct inode *inode = filp->f_mapping->host;
+	struct inode * inode = dentry->d_inode;
 	int ret, err;
 
-	err = filemap_write_and_wait_range(inode->i_mapping, start, end);
-	if (err)
-		return err;
-
-	mutex_lock(&inode->i_mutex);
 	ret = write_inode_now(inode, 0);
 	err = sync_blockdev(inode->i_sb->s_bdev);
 	if (!ret)
 		ret = err;
-	mutex_unlock(&inode->i_mutex);
 	return ret;
 }

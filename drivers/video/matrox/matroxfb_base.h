@@ -12,7 +12,7 @@
 #undef MATROXFB_DEBUG
 
 /* heavy debugging: */
-/* -- logs putc[s], so every time a char is displayed, it's logged */
+/* -- logs putc[s], so everytime a char is displayed, it's logged */
 #undef MATROXFB_DEBUG_HEAVY
 
 /* This one _could_ cause infinite loops */
@@ -151,13 +151,13 @@ static inline void mga_writel(vaddr_t va, unsigned int offs, u_int32_t value) {
 static inline void mga_memcpy_toio(vaddr_t va, const void* src, int len) {
 #if defined(__alpha__) || defined(__i386__) || defined(__x86_64__)
 	/*
-	 * iowrite32_rep works for us if:
+	 * memcpy_toio works for us if:
 	 *  (1) Copies data as 32bit quantities, not byte after byte,
 	 *  (2) Performs LE ordered stores, and
 	 *  (3) It copes with unaligned source (destination is guaranteed to be page
 	 *      aligned and length is guaranteed to be multiple of 4).
 	 */
-	iowrite32_rep(va.vaddr, src, len >> 2);
+	memcpy_toio(va.vaddr, src, len);
 #else
         u_int32_t __iomem* addr = va.vaddr;
 
@@ -307,8 +307,6 @@ struct matrox_accel_data {
 #endif
 	u_int32_t	m_dwg_rect;
 	u_int32_t	m_opmode;
-	u_int32_t	m_access;
-	u_int32_t	m_pitch;
 };
 
 struct v4l2_queryctrl;
@@ -698,7 +696,7 @@ void matroxfb_unregister_driver(struct matroxfb_driver* drv);
 
 #define mga_fifo(n)	do {} while ((mga_inl(M_FIFOSTATUS) & 0xFF) < (n))
 
-#define WaitTillIdle()	do { mga_inl(M_STATUS); do {} while (mga_inl(M_STATUS) & 0x10000); } while (0)
+#define WaitTillIdle()	do {} while (mga_inl(M_STATUS) & 0x10000)
 
 /* code speedup */
 #ifdef CONFIG_FB_MATROX_MILLENIUM

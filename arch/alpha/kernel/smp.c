@@ -31,7 +31,7 @@
 
 #include <asm/hwrpb.h>
 #include <asm/ptrace.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>
@@ -357,9 +357,23 @@ secondary_cpu_start(int cpuid, struct task_struct *idle)
  * Bring one cpu online.
  */
 static int __cpuinit
-smp_boot_one_cpu(int cpuid, struct task_struct *idle)
+smp_boot_one_cpu(int cpuid)
 {
+	struct task_struct *idle;
 	unsigned long timeout;
+
+	/* Cook up an idler for this guy.  Note that the address we
+	   give to kernel_thread is irrelevant -- it's going to start
+	   where HWRPB.CPU_restart says to start.  But this gets all
+	   the other task-y sort of data structures set up like we
+	   wish.  We can't use kernel_thread since we must avoid
+	   rescheduling the child.  */
+	idle = fork_idle(cpuid);
+	if (IS_ERR(idle))
+		panic("failed fork for CPU %d", cpuid);
+
+	DBGS(("smp_boot_one_cpu: CPU %d state 0x%lx flags 0x%lx\n",
+	      cpuid, idle->state, idle->flags));
 
 	/* Signal the secondary to wait a moment.  */
 	smp_secondary_alive = -1;
@@ -436,8 +450,8 @@ setup_smp(void)
 		smp_num_probed = 1;
 	}
 
-	printk(KERN_INFO "SMP: %d CPUs probed -- cpu_present_mask = %lx\n",
-	       smp_num_probed, cpumask_bits(cpu_present_mask)[0]);
+	printk(KERN_INFO "SMP: %d CPUs probed -- cpu_present_map = %lx\n",
+	       smp_num_probed, cpu_present_map.bits[0]);
 }
 
 /*
@@ -473,9 +487,9 @@ smp_prepare_boot_cpu(void)
 }
 
 int __cpuinit
-__cpu_up(unsigned int cpu, struct task_struct *tidle)
+__cpu_up(unsigned int cpu)
 {
-	smp_boot_one_cpu(cpu, tidle);
+	smp_boot_one_cpu(cpu);
 
 	return cpu_online(cpu) ? 0 : -ENOSYS;
 }
@@ -571,7 +585,8 @@ handle_ipi(struct pt_regs *regs)
 
 		switch (which) {
 		case IPI_RESCHEDULE:
-			scheduler_ipi();
+			/* Reschedule callback.  Everything to be done
+			   is done by the interrupt return path.  */
 			break;
 
 		case IPI_CALL_FUNC:
@@ -615,9 +630,8 @@ smp_send_reschedule(int cpu)
 void
 smp_send_stop(void)
 {
-	cpumask_t to_whom;
-	cpumask_copy(&to_whom, cpu_possible_mask);
-	cpumask_clear_cpu(smp_processor_id(), &to_whom);
+	cpumask_t to_whom = cpu_possible_map;
+	cpu_clear(smp_processor_id(), to_whom);
 #ifdef DEBUG_IPI_MSG
 	if (hard_smp_processor_id() != boot_cpu_id)
 		printk(KERN_WARNING "smp_send_stop: Not on boot cpu.\n");

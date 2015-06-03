@@ -16,7 +16,6 @@
 #include <linux/platform_device.h>
 #include <linux/rtnetlink.h>
 #include <linux/skbuff.h>
-#include <linux/slab.h>
 #include <linux/spinlock.h>
 #include "init.h"
 #include "irq_kern.h"
@@ -24,6 +23,11 @@
 #include "mconsole_kern.h"
 #include "net_kern.h"
 #include "net_user.h"
+
+static inline void set_ether_mac(struct net_device *dev, unsigned char *addr)
+{
+	memcpy(dev->dev_addr, addr, ETH_ALEN);
+}
 
 #define DRIVER_NAME "uml-netdev"
 
@@ -161,7 +165,7 @@ static int uml_net_open(struct net_device *dev)
 	}
 
 	err = um_request_irq(dev->irq, lp->fd, IRQ_READ, uml_net_interrupt,
-			     IRQF_SHARED, dev->name, dev);
+			     IRQF_DISABLED | IRQF_SHARED, dev->name, dev);
 	if (err != 0) {
 		printk(KERN_ERR "uml_net_open: failed to get irq(%d)\n", err);
 		err = -ENETUNREACH;
@@ -255,21 +259,24 @@ static void uml_net_tx_timeout(struct net_device *dev)
 	netif_wake_queue(dev);
 }
 
+static int uml_net_set_mac(struct net_device *dev, void *addr)
+{
+	struct uml_net_private *lp = netdev_priv(dev);
+	struct sockaddr *hwaddr = addr;
+
+	spin_lock_irq(&lp->lock);
+	set_ether_mac(dev, hwaddr->sa_data);
+	spin_unlock_irq(&lp->lock);
+
+	return 0;
+}
+
 static int uml_net_change_mtu(struct net_device *dev, int new_mtu)
 {
 	dev->mtu = new_mtu;
 
 	return 0;
 }
-
-#ifdef CONFIG_NET_POLL_CONTROLLER
-static void uml_net_poll_controller(struct net_device *dev)
-{
-	disable_irq(dev->irq);
-	uml_net_interrupt(dev->irq, dev);
-	enable_irq(dev->irq);
-}
-#endif
 
 static void uml_net_get_drvinfo(struct net_device *dev,
 				struct ethtool_drvinfo *info)
@@ -293,7 +300,7 @@ static void uml_net_user_timer_expire(unsigned long _conn)
 #endif
 }
 
-static int setup_etheraddr(char *str, unsigned char *addr, char *name)
+static void setup_etheraddr(char *str, unsigned char *addr, char *name)
 {
 	char *end;
 	int i;
@@ -334,13 +341,12 @@ static int setup_etheraddr(char *str, unsigned char *addr, char *name)
 		       addr[0] | 0x02, addr[1], addr[2], addr[3], addr[4],
 		       addr[5]);
 	}
-	return 0;
+	return;
 
 random:
 	printk(KERN_INFO
 	       "Choosing a random ethernet address for device %s\n", name);
 	random_ether_addr(addr);
-	return 1;
 }
 
 static DEFINE_SPINLOCK(devices_lock);
@@ -369,14 +375,12 @@ static const struct net_device_ops uml_netdev_ops = {
 	.ndo_open 		= uml_net_open,
 	.ndo_stop 		= uml_net_close,
 	.ndo_start_xmit 	= uml_net_start_xmit,
-	.ndo_set_rx_mode	= uml_net_set_multicast_list,
+	.ndo_set_multicast_list = uml_net_set_multicast_list,
 	.ndo_tx_timeout 	= uml_net_tx_timeout,
-	.ndo_set_mac_address	= eth_mac_addr,
+	.ndo_set_mac_address	= uml_net_set_mac,
 	.ndo_change_mtu 	= uml_net_change_mtu,
+	.ndo_set_mac_address 	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	.ndo_poll_controller = uml_net_poll_controller,
-#endif
 };
 
 /*
@@ -392,7 +396,6 @@ static void eth_configure(int n, void *init, char *mac,
 	struct net_device *dev;
 	struct uml_net_private *lp;
 	int err, size;
-	int random_mac;
 
 	size = transport->private_size + sizeof(struct uml_net_private);
 
@@ -419,7 +422,7 @@ static void eth_configure(int n, void *init, char *mac,
 	 */
 	snprintf(dev->name, sizeof(dev->name), "eth%d", n);
 
-	random_mac = setup_etheraddr(mac, device->mac, dev->name);
+	setup_etheraddr(mac, device->mac, dev->name);
 
 	printk(KERN_INFO "Netdevice %d (%pM) : ", n, device->mac);
 
@@ -474,11 +477,7 @@ static void eth_configure(int n, void *init, char *mac,
 	    ((*transport->user->init)(&lp->user, dev) != 0))
 		goto out_unregister;
 
-	/* don't use eth_mac_addr, it will not work here */
-	memcpy(dev->dev_addr, device->mac, ETH_ALEN);
-	if (random_mac)
-		dev->addr_assign_type |= NET_ADDR_RANDOM;
-
+	set_ether_mac(dev, device->mac);
 	dev->mtu = transport->user->mtu;
 	dev->netdev_ops = &uml_netdev_ops;
 	dev->ethtool_ops = &uml_net_ethtool_ops;

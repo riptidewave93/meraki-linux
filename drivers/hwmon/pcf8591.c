@@ -1,34 +1,35 @@
 /*
- * Copyright (C) 2001-2004 Aurelien Jarno <aurelien@aurel32.net>
- * Ported to Linux 2.6 by Aurelien Jarno <aurelien@aurel32.net> with
- * the help of Jean Delvare <khali@linux-fr.org>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- * GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
- */
+    Copyright (C) 2001-2004 Aurelien Jarno <aurelien@aurel32.net>
+    Ported to Linux 2.6 by Aurelien Jarno <aurelien@aurel32.net> with
+    the help of Jean Delvare <khali@linux-fr.org>
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
+    This program is free software; you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation; either version 2 of the License, or
+    (at your option) any later version.
+
+    This program is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with this program; if not, write to the Free Software
+    Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
+*/
 
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
 #include <linux/mutex.h>
-#include <linux/err.h>
-#include <linux/hwmon.h>
+
+/* Addresses to scan */
+static const unsigned short normal_i2c[] = { 0x48, 0x49, 0x4a, 0x4b, 0x4c,
+					0x4d, 0x4e, 0x4f, I2C_CLIENT_END };
 
 /* Insmod parameters */
+I2C_CLIENT_INSMOD_1(pcf8591);
 
 static int input_mode;
 module_param(input_mode, int, 0);
@@ -39,34 +40,28 @@ MODULE_PARM_DESC(input_mode,
 	" 2 = single ended and differential mixed\n"
 	" 3 = two differential inputs\n");
 
-/*
- * The PCF8591 control byte
- *      7    6    5    4    3    2    1    0
- *   |  0 |AOEF|   AIP   |  0 |AINC|  AICH   |
- */
+/* The PCF8591 control byte
+      7    6    5    4    3    2    1    0
+   |  0 |AOEF|   AIP   |  0 |AINC|  AICH   | */
 
 /* Analog Output Enable Flag (analog output active if 1) */
 #define PCF8591_CONTROL_AOEF		0x40
 
-/*
- * Analog Input Programming
- * 0x00 = four single ended inputs
- * 0x10 = three differential inputs
- * 0x20 = single ended and differential mixed
- * 0x30 = two differential inputs
- */
+/* Analog Input Programming
+   0x00 = four single ended inputs
+   0x10 = three differential inputs
+   0x20 = single ended and differential mixed
+   0x30 = two differential inputs */
 #define PCF8591_CONTROL_AIP_MASK	0x30
 
 /* Autoincrement Flag (switch on if 1) */
 #define PCF8591_CONTROL_AINC		0x04
 
-/*
- * Channel selection
- * 0x00 = channel 0
- * 0x01 = channel 1
- * 0x02 = channel 2
- * 0x03 = channel 3
- */
+/* Channel selection
+   0x00 = channel 0
+   0x01 = channel 1
+   0x02 = channel 2
+   0x03 = channel 3 */
 #define PCF8591_CONTROL_AICH_MASK	0x03
 
 /* Initial values */
@@ -74,10 +69,9 @@ MODULE_PARM_DESC(input_mode,
 #define PCF8591_INIT_AOUT	0	/* DAC out = 0 */
 
 /* Conversions */
-#define REG_TO_SIGNED(reg)	(((reg) & 0x80) ? ((reg) - 256) : (reg))
+#define REG_TO_SIGNED(reg)	(((reg) & 0x80)?((reg) - 256):(reg))
 
 struct pcf8591_data {
-	struct device *hwmon_dev;
 	struct mutex update_lock;
 
 	u8 control;
@@ -89,9 +83,7 @@ static int pcf8591_read_channel(struct device *dev, int channel);
 
 /* following are the sysfs callback functions */
 #define show_in_channel(channel)					\
-static ssize_t show_in##channel##_input(struct device *dev,		\
-					struct device_attribute *attr,	\
-					char *buf)			\
+static ssize_t show_in##channel##_input(struct device *dev, struct device_attribute *attr, char *buf)	\
 {									\
 	return sprintf(buf, "%d\n", pcf8591_read_channel(dev, channel));\
 }									\
@@ -103,57 +95,39 @@ show_in_channel(1);
 show_in_channel(2);
 show_in_channel(3);
 
-static ssize_t show_out0_ouput(struct device *dev,
-			       struct device_attribute *attr, char *buf)
+static ssize_t show_out0_ouput(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct pcf8591_data *data = i2c_get_clientdata(to_i2c_client(dev));
 	return sprintf(buf, "%d\n", data->aout * 10);
 }
 
-static ssize_t set_out0_output(struct device *dev,
-			       struct device_attribute *attr,
-			       const char *buf, size_t count)
+static ssize_t set_out0_output(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
-	unsigned long val;
+	unsigned int value;
 	struct i2c_client *client = to_i2c_client(dev);
 	struct pcf8591_data *data = i2c_get_clientdata(client);
-	int err;
-
-	err = kstrtoul(buf, 10, &val);
-	if (err)
-		return err;
-
-	val /= 10;
-	if (val > 255)
-		return -EINVAL;
-
-	data->aout = val;
-	i2c_smbus_write_byte_data(client, data->control, data->aout);
-	return count;
+	if ((value = (simple_strtoul(buf, NULL, 10) + 5) / 10) <= 255) {
+		data->aout = value;
+		i2c_smbus_write_byte_data(client, data->control, data->aout);
+		return count;
+	}
+	return -EINVAL;
 }
 
 static DEVICE_ATTR(out0_output, S_IWUSR | S_IRUGO,
 		   show_out0_ouput, set_out0_output);
 
-static ssize_t show_out0_enable(struct device *dev,
-				struct device_attribute *attr, char *buf)
+static ssize_t show_out0_enable(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct pcf8591_data *data = i2c_get_clientdata(to_i2c_client(dev));
 	return sprintf(buf, "%u\n", !(!(data->control & PCF8591_CONTROL_AOEF)));
 }
 
-static ssize_t set_out0_enable(struct device *dev,
-			       struct device_attribute *attr,
-			       const char *buf, size_t count)
+static ssize_t set_out0_enable(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct i2c_client *client = to_i2c_client(dev);
 	struct pcf8591_data *data = i2c_get_clientdata(client);
-	unsigned long val;
-	int err;
-
-	err = kstrtoul(buf, 10, &val);
-	if (err)
-		return err;
+	unsigned long val = simple_strtoul(buf, NULL, 10);
 
 	mutex_lock(&data->update_lock);
 	if (val)
@@ -194,14 +168,31 @@ static const struct attribute_group pcf8591_attr_group_opt = {
  * Real code
  */
 
+/* Return 0 if detection is successful, -ENODEV otherwise */
+static int pcf8591_detect(struct i2c_client *client, int kind,
+			  struct i2c_board_info *info)
+{
+	struct i2c_adapter *adapter = client->adapter;
+
+	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE
+				     | I2C_FUNC_SMBUS_WRITE_BYTE_DATA))
+		return -ENODEV;
+
+	/* Now, we would do the remaining detection. But the PCF8591 is plainly
+	   impossible to detect! Stupid chip. */
+
+	strlcpy(info->type, "pcf8591", I2C_NAME_SIZE);
+
+	return 0;
+}
+
 static int pcf8591_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id)
 {
 	struct pcf8591_data *data;
 	int err;
 
-	data = kzalloc(sizeof(struct pcf8591_data), GFP_KERNEL);
-	if (!data) {
+	if (!(data = kzalloc(sizeof(struct pcf8591_data), GFP_KERNEL))) {
 		err = -ENOMEM;
 		goto exit;
 	}
@@ -219,22 +210,16 @@ static int pcf8591_probe(struct i2c_client *client,
 
 	/* Register input2 if not in "two differential inputs" mode */
 	if (input_mode != 3) {
-		err = device_create_file(&client->dev, &dev_attr_in2_input);
-		if (err)
+		if ((err = device_create_file(&client->dev,
+					      &dev_attr_in2_input)))
 			goto exit_sysfs_remove;
 	}
 
 	/* Register input3 only in "four single ended inputs" mode */
 	if (input_mode == 0) {
-		err = device_create_file(&client->dev, &dev_attr_in3_input);
-		if (err)
+		if ((err = device_create_file(&client->dev,
+					      &dev_attr_in3_input)))
 			goto exit_sysfs_remove;
-	}
-
-	data->hwmon_dev = hwmon_device_register(&client->dev);
-	if (IS_ERR(data->hwmon_dev)) {
-		err = PTR_ERR(data->hwmon_dev);
-		goto exit_sysfs_remove;
 	}
 
 	return 0;
@@ -250,9 +235,6 @@ exit:
 
 static int pcf8591_remove(struct i2c_client *client)
 {
-	struct pcf8591_data *data = i2c_get_clientdata(client);
-
-	hwmon_device_unregister(data->hwmon_dev);
 	sysfs_remove_group(&client->dev.kobj, &pcf8591_attr_group_opt);
 	sysfs_remove_group(&client->dev.kobj, &pcf8591_attr_group);
 	kfree(i2c_get_clientdata(client));
@@ -268,10 +250,8 @@ static void pcf8591_init_client(struct i2c_client *client)
 
 	i2c_smbus_write_byte_data(client, data->control, data->aout);
 
-	/*
-	 * The first byte transmitted contains the conversion code of the
-	 * previous read cycle. FLUSH IT!
-	 */
+	/* The first byte transmitted contains the conversion code of the
+	   previous read cycle. FLUSH IT! */
 	i2c_smbus_read_byte(client);
 }
 
@@ -288,10 +268,8 @@ static int pcf8591_read_channel(struct device *dev, int channel)
 			      | channel;
 		i2c_smbus_write_byte(client, data->control);
 
-		/*
-		 * The first byte transmitted contains the conversion code of
-		 * the previous read cycle. FLUSH IT!
-		 */
+		/* The first byte transmitted contains the conversion code of
+		   the previous read cycle. FLUSH IT! */
 		i2c_smbus_read_byte(client);
 	}
 	value = i2c_smbus_read_byte(client);
@@ -300,9 +278,9 @@ static int pcf8591_read_channel(struct device *dev, int channel)
 
 	if ((channel == 2 && input_mode == 2) ||
 	    (channel != 3 && (input_mode == 1 || input_mode == 3)))
-		return 10 * REG_TO_SIGNED(value);
+		return (10 * REG_TO_SIGNED(value));
 	else
-		return 10 * value;
+		return (10 * value);
 }
 
 static const struct i2c_device_id pcf8591_id[] = {
@@ -318,12 +296,17 @@ static struct i2c_driver pcf8591_driver = {
 	.probe		= pcf8591_probe,
 	.remove		= pcf8591_remove,
 	.id_table	= pcf8591_id,
+
+	.class		= I2C_CLASS_HWMON,	/* Nearest choice */
+	.detect		= pcf8591_detect,
+	.address_data	= &addr_data,
 };
 
 static int __init pcf8591_init(void)
 {
 	if (input_mode < 0 || input_mode > 3) {
-		pr_warn("invalid input_mode (%d)\n", input_mode);
+		printk(KERN_WARNING "pcf8591: invalid input_mode (%d)\n",
+		       input_mode);
 		input_mode = 0;
 	}
 	return i2c_add_driver(&pcf8591_driver);

@@ -113,6 +113,7 @@
  
 #include <linux/module.h>
 
+#include <asm/system.h>
 #include <linux/signal.h>
 #include <linux/proc_fs.h>
 #include <asm/io.h>

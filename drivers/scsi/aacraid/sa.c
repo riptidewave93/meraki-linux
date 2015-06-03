@@ -5,8 +5,7 @@
  * based on the old aacraid driver that is..
  * Adaptec aacraid device driver for Linux.
  *
- * Copyright (c) 2000-2010 Adaptec, Inc.
- *               2010 PMC-Sierra, Inc. (aacraid@pmc-sierra.com)
+ * Copyright (c) 2000-2007 Adaptec, Inc. (aacraid@adaptec.com)
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -34,6 +33,7 @@
 #include <linux/types.h>
 #include <linux/pci.h>
 #include <linux/spinlock.h>
+#include <linux/slab.h>
 #include <linux/blkdev.h>
 #include <linux/delay.h>
 #include <linux/completion.h>
@@ -385,7 +385,6 @@ int aac_sa_init(struct aac_dev *dev)
 
 	if(aac_init_adapter(dev) == NULL)
 		goto error_irq;
-	dev->sync_mode = 0;	/* sync. mode not supported */
 	if (request_irq(dev->pdev->irq, dev->a_ops.adapter_intr,
 			IRQF_SHARED|IRQF_DISABLED,
 			"aacraid", (void *)dev ) < 0) {
@@ -393,10 +392,6 @@ int aac_sa_init(struct aac_dev *dev)
 			name, instance);
 		goto error_iounmap;
 	}
-	dev->dbg_base = dev->scsi_host_ptr->base;
-	dev->dbg_base_mapped = dev->base;
-	dev->dbg_size = dev->base_size;
-
 	aac_adapter_enable_int(dev);
 
 	/*

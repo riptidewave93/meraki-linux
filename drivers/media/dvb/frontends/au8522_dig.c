@@ -23,6 +23,7 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include "dvb_frontend.h"
 #include "au8522.h"
@@ -83,14 +84,6 @@ static int au8522_i2c_gate_ctrl(struct dvb_frontend *fe, int enable)
 	struct au8522_state *state = fe->demodulator_priv;
 
 	dprintk("%s(%d)\n", __func__, enable);
-
-	if (state->operational_mode == AU8522_ANALOG_MODE) {
-		/* We're being asked to manage the gate even though we're
-		   not in digital mode.  This can occur if we get switched
-		   over to analog mode before the dvb_frontend kernel thread
-		   has completely shutdown */
-		return 0;
-	}
 
 	if (enable)
 		return au8522_writereg(state, 0x106, 1);
@@ -576,22 +569,27 @@ static int au8522_enable_modulation(struct dvb_frontend *fe,
 }
 
 /* Talk to the demod, set the FEC, GUARD, QAM settings etc */
-static int au8522_set_frontend(struct dvb_frontend *fe)
+static int au8522_set_frontend(struct dvb_frontend *fe,
+			       struct dvb_frontend_parameters *p)
 {
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct au8522_state *state = fe->demodulator_priv;
 	int ret = -EINVAL;
 
-	dprintk("%s(frequency=%d)\n", __func__, c->frequency);
+	dprintk("%s(frequency=%d)\n", __func__, p->frequency);
 
-	if ((state->current_frequency == c->frequency) &&
-	    (state->current_modulation == c->modulation))
+	if ((state->current_frequency == p->frequency) &&
+	    (state->current_modulation == p->u.vsb.modulation))
 		return 0;
+
+	au8522_enable_modulation(fe, p->u.vsb.modulation);
+
+	/* Allow the demod to settle */
+	msleep(100);
 
 	if (fe->ops.tuner_ops.set_params) {
 		if (fe->ops.i2c_gate_ctrl)
 			fe->ops.i2c_gate_ctrl(fe, 1);
-		ret = fe->ops.tuner_ops.set_params(fe);
+		ret = fe->ops.tuner_ops.set_params(fe, p);
 		if (fe->ops.i2c_gate_ctrl)
 			fe->ops.i2c_gate_ctrl(fe, 0);
 	}
@@ -599,12 +597,7 @@ static int au8522_set_frontend(struct dvb_frontend *fe)
 	if (ret < 0)
 		return ret;
 
-	/* Allow the tuner to settle */
-	msleep(100);
-
-	au8522_enable_modulation(fe, c->modulation);
-
-	state->current_frequency = c->frequency;
+	state->current_frequency = p->frequency;
 
 	return 0;
 }
@@ -615,13 +608,6 @@ int au8522_init(struct dvb_frontend *fe)
 {
 	struct au8522_state *state = fe->demodulator_priv;
 	dprintk("%s()\n", __func__);
-
-	state->operational_mode = AU8522_DIGITAL_MODE;
-
-	/* Clear out any state associated with the digital side of the
-	   chip, so that when it gets powered back up it won't think
-	   that it is already tuned */
-	state->current_frequency = 0;
 
 	au8522_writereg(state, 0xa4, 1 << 5);
 
@@ -635,7 +621,7 @@ static int au8522_led_gpio_enable(struct au8522_state *state, int onoff)
 	struct au8522_led_config *led_config = state->config->led_cfg;
 	u8 val;
 
-	/* bail out if we can't control an LED */
+	/* bail out if we cant control an LED */
 	if (!led_config || !led_config->gpio_output ||
 	    !led_config->gpio_output_enable || !led_config->gpio_output_disable)
 		return 0;
@@ -665,7 +651,7 @@ static int au8522_led_ctrl(struct au8522_state *state, int led)
 	struct au8522_led_config *led_config = state->config->led_cfg;
 	int i, ret = 0;
 
-	/* bail out if we can't control an LED */
+	/* bail out if we cant control an LED */
 	if (!led_config || !led_config->gpio_leds ||
 	    !led_config->num_led_states || !led_config->led_states)
 		return 0;
@@ -718,15 +704,6 @@ int au8522_sleep(struct dvb_frontend *fe)
 {
 	struct au8522_state *state = fe->demodulator_priv;
 	dprintk("%s()\n", __func__);
-
-	/* Only power down if the digital side is currently using the chip */
-	if (state->operational_mode == AU8522_ANALOG_MODE) {
-		/* We're not in one of the expected power modes, which means
-		   that the DVB thread is probably telling us to go to sleep
-		   even though the analog frontend has already started using
-		   the chip.  So ignore the request */
-		return 0;
-	}
 
 	/* turn off led */
 	au8522_led_ctrl(state, 0);
@@ -803,7 +780,7 @@ static int au8522_led_status(struct au8522_state *state, const u16 *snr)
 	int led;
 	u16 strong;
 
-	/* bail out if we can't control an LED */
+	/* bail out if we cant control an LED */
 	if (!led_config)
 		return 0;
 
@@ -862,36 +839,7 @@ static int au8522_read_snr(struct dvb_frontend *fe, u16 *snr)
 static int au8522_read_signal_strength(struct dvb_frontend *fe,
 				       u16 *signal_strength)
 {
-	/* borrowed from lgdt330x.c
-	 *
-	 * Calculate strength from SNR up to 35dB
-	 * Even though the SNR can go higher than 35dB,
-	 * there is some comfort factor in having a range of
-	 * strong signals that can show at 100%
-	 */
-	u16 snr;
-	u32 tmp;
-	int ret = au8522_read_snr(fe, &snr);
-
-	*signal_strength = 0;
-
-	if (0 == ret) {
-		/* The following calculation method was chosen
-		 * purely for the sake of code re-use from the
-		 * other demod drivers that use this method */
-
-		/* Convert from SNR in dB * 10 to 8.24 fixed-point */
-		tmp = (snr * ((1 << 24) / 10));
-
-		/* Convert from 8.24 fixed-point to
-		 * scale the range 0 - 35*2^24 into 0 - 65535*/
-		if (tmp >= 8960 * 0x10000)
-			*signal_strength = 0xffff;
-		else
-			*signal_strength = tmp / 8960;
-	}
-
-	return ret;
+	return au8522_read_snr(fe, signal_strength);
 }
 
 static int au8522_read_ucblocks(struct dvb_frontend *fe, u32 *ucblocks)
@@ -911,13 +859,13 @@ static int au8522_read_ber(struct dvb_frontend *fe, u32 *ber)
 	return au8522_read_ucblocks(fe, ber);
 }
 
-static int au8522_get_frontend(struct dvb_frontend *fe)
+static int au8522_get_frontend(struct dvb_frontend *fe,
+				struct dvb_frontend_parameters *p)
 {
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct au8522_state *state = fe->demodulator_priv;
 
-	c->frequency = state->current_frequency;
-	c->modulation = state->current_modulation;
+	p->frequency = state->current_frequency;
+	p->u.vsb.modulation = state->current_modulation;
 
 	return 0;
 }
@@ -985,8 +933,6 @@ struct dvb_frontend *au8522_attach(const struct au8522_config *config,
 	/* setup the state */
 	state->config = config;
 	state->i2c = i2c;
-	state->operational_mode = AU8522_DIGITAL_MODE;
-
 	/* create dvb_frontend */
 	memcpy(&state->frontend.ops, &au8522_ops,
 	       sizeof(struct dvb_frontend_ops));
@@ -1010,9 +956,10 @@ error:
 EXPORT_SYMBOL(au8522_attach);
 
 static struct dvb_frontend_ops au8522_ops = {
-	.delsys = { SYS_ATSC, SYS_DVBC_ANNEX_B },
+
 	.info = {
 		.name			= "Auvitek AU8522 QAM/8VSB Frontend",
+		.type			= FE_ATSC,
 		.frequency_min		= 54000000,
 		.frequency_max		= 858000000,
 		.frequency_stepsize	= 62500,

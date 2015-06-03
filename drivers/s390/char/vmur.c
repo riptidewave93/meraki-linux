@@ -12,8 +12,7 @@
 #define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/cdev.h>
-#include <linux/slab.h>
-#include <linux/module.h>
+#include <linux/smp_lock.h>
 
 #include <asm/uaccess.h>
 #include <asm/cio.h>
@@ -64,17 +63,14 @@ static int ur_set_offline(struct ccw_device *cdev);
 static int ur_pm_suspend(struct ccw_device *cdev);
 
 static struct ccw_driver ur_driver = {
-	.driver = {
-		.name	= "vmur",
-		.owner	= THIS_MODULE,
-	},
+	.name		= "vmur",
+	.owner		= THIS_MODULE,
 	.ids		= ur_ids,
 	.probe		= ur_probe,
 	.remove		= ur_remove,
 	.set_online	= ur_set_online,
 	.set_offline	= ur_set_offline,
 	.freeze		= ur_pm_suspend,
-	.int_class	= IOINT_VMR,
 };
 
 static DEFINE_MUTEX(vmur_mutex);
@@ -699,6 +695,7 @@ static int ur_open(struct inode *inode, struct file *file)
 
 	if (accmode == O_RDWR)
 		return -EACCES;
+	lock_kernel();
 	/*
 	 * We treat the minor number as the devno of the ur device
 	 * to find in the driver tree.
@@ -752,6 +749,7 @@ static int ur_open(struct inode *inode, struct file *file)
 		goto fail_urfile_free;
 	urf->file_reclen = rc;
 	file->private_data = urf;
+	unlock_kernel();
 	return 0;
 
 fail_urfile_free:
@@ -763,6 +761,7 @@ fail_unlock:
 fail_put:
 	urdev_put(urd);
 out:
+	unlock_kernel();
 	return rc;
 }
 
@@ -903,7 +902,7 @@ static int ur_set_online(struct ccw_device *cdev)
 		goto fail_urdev_put;
 	}
 
-	urd->char_device->ops = &ur_fops;
+	cdev_init(urd->char_device, &ur_fops);
 	urd->char_device->dev = MKDEV(major, minor);
 	urd->char_device->owner = ur_fops.owner;
 

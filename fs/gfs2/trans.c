@@ -23,7 +23,6 @@
 #include "meta_io.h"
 #include "trans.h"
 #include "util.h"
-#include "trace_gfs2.h"
 
 int gfs2_trans_begin(struct gfs2_sbd *sdp, unsigned int blocks,
 		     unsigned int revokes)
@@ -74,23 +73,6 @@ fail_holder_uninit:
 	kfree(tr);
 
 	return error;
-}
-
-/**
- * gfs2_log_release - Release a given number of log blocks
- * @sdp: The GFS2 superblock
- * @blks: The number of blocks
- *
- */
-
-static void gfs2_log_release(struct gfs2_sbd *sdp, unsigned int blks)
-{
-
-	atomic_add(blks, &sdp->sd_log_blks_free);
-	trace_gfs2_log_blocks(sdp, blks);
-	gfs2_assert_withdraw(sdp, atomic_read(&sdp->sd_log_blks_free) <=
-				  sdp->sd_jdesc->jd_blocks);
-	up_read(&sdp->sd_log_flush_lock);
 }
 
 void gfs2_trans_end(struct gfs2_sbd *sdp)
@@ -145,22 +127,14 @@ void gfs2_trans_add_bh(struct gfs2_glock *gl, struct buffer_head *bh, int meta)
 	struct gfs2_sbd *sdp = gl->gl_sbd;
 	struct gfs2_bufdata *bd;
 
-	lock_buffer(bh);
-	gfs2_log_lock(sdp);
 	bd = bh->b_private;
 	if (bd)
 		gfs2_assert(sdp, bd->bd_gl == gl);
 	else {
-		gfs2_log_unlock(sdp);
-		unlock_buffer(bh);
 		gfs2_attach_bufdata(gl, bh, meta);
 		bd = bh->b_private;
-		lock_buffer(bh);
-		gfs2_log_lock(sdp);
 	}
 	lops_add(sdp, &bd->bd_le);
-	gfs2_log_unlock(sdp);
-	unlock_buffer(bh);
 }
 
 void gfs2_trans_add_revoke(struct gfs2_sbd *sdp, struct gfs2_bufdata *bd)
@@ -191,5 +165,10 @@ void gfs2_trans_add_unrevoke(struct gfs2_sbd *sdp, u64 blkno, unsigned int len)
 		}
 	}
 	gfs2_log_unlock(sdp);
+}
+
+void gfs2_trans_add_rg(struct gfs2_rgrpd *rgd)
+{
+	lops_add(rgd->rd_sbd, &rgd->rd_le);
 }
 

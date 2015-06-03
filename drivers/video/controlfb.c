@@ -40,8 +40,6 @@
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
-#include <linux/of.h>
-#include <linux/of_address.h>
 #include <linux/fb.h>
 #include <linux/init.h>
 #include <linux/pci.h>
@@ -420,7 +418,7 @@ static int __init init_control(struct fb_info_control *p)
 
 	/* Try to pick a video mode out of NVRAM if we have one. */
 #ifdef CONFIG_NVRAM
-	if (default_cmode == CMODE_NVRAM) {
+	if (default_cmode == CMODE_NVRAM){
 		cmode = nvram_read_byte(NV_CMODE);
 		if(cmode < CMODE_8 || cmode > CMODE_32)
 			cmode = CMODE_8;
@@ -550,7 +548,7 @@ static void control_set_hardware(struct fb_info_control *p, struct fb_par_contro
 
 
 /*
- * Parse user specified options (`video=controlfb:')
+ * Parse user speficied options (`video=controlfb:')
  */
 static void __init control_setup(char *options)
 {
@@ -709,11 +707,11 @@ static int __init control_of_init(struct device_node *dp)
 
 	/* Map in frame buffer and registers */
 	p->fb_orig_base = fb_res.start;
-	p->fb_orig_size = resource_size(&fb_res);
+	p->fb_orig_size = fb_res.end - fb_res.start + 1;
 	/* use the big-endian aperture (??) */
 	p->frame_buffer_phys = fb_res.start + 0x800000;
 	p->control_regs_phys = reg_res.start;
-	p->control_regs_size = resource_size(&reg_res);
+	p->control_regs_size = reg_res.end - reg_res.start + 1;
 
 	if (!p->fb_orig_base ||
 	    !request_mem_region(p->fb_orig_base,p->fb_orig_size,"controlfb")) {

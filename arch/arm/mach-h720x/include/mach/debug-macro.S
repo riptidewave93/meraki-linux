@@ -11,15 +11,15 @@
  *
 */
 
-#include <mach/hardware.h>
+		.equ    io_virt, IO_BASE
+		.equ    io_phys, IO_START
 
-		.equ    io_virt, IO_VIRT
-		.equ    io_phys, IO_PHYS
-
-		.macro  addruart, rp, rv, tmp
-		mov     \rp, #0x00020000	@ UART1
-		add     \rv, \rp, #io_virt	@ virtual address
-		add     \rp, \rp, #io_phys	@ physical base address
+		.macro  addruart,rx
+		mrc     p15, 0, \rx, c1, c0
+		tst     \rx, #1  	       @ MMU enabled?
+		moveq   \rx, #io_phys	       @ physical base address
+		movne   \rx, #io_virt	       @ virtual address
+		add     \rx, \rx, #0x00020000   @ UART1
 		.endm
 
 		.macro  senduart,rd,rx

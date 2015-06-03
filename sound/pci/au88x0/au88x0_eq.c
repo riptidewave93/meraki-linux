@@ -896,8 +896,7 @@ static int __devinit vortex_eq_init(vortex_t * vortex)
 		if ((kcontrol =
 		     snd_ctl_new1(&vortex_eq_kcontrol, vortex)) == NULL)
 			return -ENOMEM;
-		snprintf(kcontrol->id.name, sizeof(kcontrol->id.name),
-			"%s Playback Volume", EqBandLabels[i]);
+		strcpy(kcontrol->id.name, EqBandLabels[i]);
 		kcontrol->private_value = i;
 		if ((err = snd_ctl_add(vortex->card, kcontrol)) < 0)
 			return err;

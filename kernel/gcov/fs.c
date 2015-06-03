@@ -561,7 +561,6 @@ static ssize_t reset_read(struct file *file, char __user *addr, size_t len,
 static const struct file_operations gcov_reset_fops = {
 	.write	= reset_write,
 	.read	= reset_read,
-	.llseek = noop_llseek,
 };
 
 /*

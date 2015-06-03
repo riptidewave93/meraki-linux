@@ -30,7 +30,6 @@
 #include <linux/pci.h>
 #include <linux/stop_machine.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
 #include <asm/io.h>
 
 

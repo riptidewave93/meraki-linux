@@ -18,7 +18,6 @@
 #include <linux/string.h>
 #include <linux/init.h>
 #include <linux/bootmem.h>
-#include <linux/export.h>
 #include <linux/mm.h>
 #include <linux/list.h>
 #include <linux/syscalls.h>
@@ -32,6 +31,8 @@
 #include <asm/byteorder.h>
 #include <asm/machdep.h>
 #include <asm/ppc-pci.h>
+
+unsigned long pci_probe_only = 1;
 
 /* pci_io_base -- the base address from which io bars are offsets.
  * This is the lowest I/O base address (so bar values are always positive),
@@ -53,14 +54,17 @@ static int __init pcibios_init(void)
 	 */
 	ppc_md.phys_mem_access_prot = pci_phys_mem_access_prot;
 
+	if (pci_probe_only)
+		ppc_pci_flags |= PPC_PCI_PROBE_ONLY;
+
 	/* On ppc64, we always enable PCI domains and we keep domain 0
 	 * backward compatible in /proc for video cards
 	 */
-	pci_add_flags(PCI_ENABLE_PROC_DOMAINS | PCI_COMPAT_DOMAIN_0);
+	ppc_pci_flags |= PPC_PCI_ENABLE_PROC_DOMAINS | PPC_PCI_COMPAT_DOMAIN_0;
 
 	/* Scan all of the recorded PCI controllers.  */
 	list_for_each_entry_safe(hose, tmp, &hose_list, list_node) {
-		pcibios_scan_phb(hose);
+		pcibios_scan_phb(hose, hose->dn);
 		pci_bus_add_devices(hose->bus);
 	}
 
@@ -126,13 +130,30 @@ EXPORT_SYMBOL_GPL(pcibios_unmap_io_space);
 
 #endif /* CONFIG_HOTPLUG */
 
-static int __devinit pcibios_map_phb_io_space(struct pci_controller *hose)
+int __devinit pcibios_map_io_space(struct pci_bus *bus)
 {
 	struct vm_struct *area;
 	unsigned long phys_page;
 	unsigned long size_page;
 	unsigned long io_virt_offset;
+	struct pci_controller *hose;
 
+	WARN_ON(bus == NULL);
+
+	/* If this not a PHB, nothing to do, page tables still exist and
+	 * thus HPTEs will be faulted in when needed
+	 */
+	if (bus->self) {
+		pr_debug("IO mapping for PCI-PCI bridge %s\n",
+			 pci_name(bus->self));
+		pr_debug("  virt=0x%016llx...0x%016llx\n",
+			 bus->resource[0]->start + _IO_BASE,
+			 bus->resource[0]->end + _IO_BASE);
+		return 0;
+	}
+
+	/* Get the host bridge */
+	hose = pci_bus_to_host(bus);
 	phys_page = _ALIGN_DOWN(hose->io_base_phys, PAGE_SIZE);
 	size_page = _ALIGN_UP(hose->pci_io_size, PAGE_SIZE);
 
@@ -168,38 +189,20 @@ static int __devinit pcibios_map_phb_io_space(struct pci_controller *hose)
 		return -ENOMEM;
 
 	/* Fixup hose IO resource */
-	io_virt_offset = pcibios_io_space_offset(hose);
+	io_virt_offset = (unsigned long)hose->io_base_virt - _IO_BASE;
 	hose->io_resource.start += io_virt_offset;
 	hose->io_resource.end += io_virt_offset;
 
-	pr_debug("  hose->io_resource=%pR\n", &hose->io_resource);
+	pr_debug("  hose->io_resource=0x%016llx...0x%016llx\n",
+		 hose->io_resource.start, hose->io_resource.end);
 
 	return 0;
-}
-
-int __devinit pcibios_map_io_space(struct pci_bus *bus)
-{
-	WARN_ON(bus == NULL);
-
-	/* If this not a PHB, nothing to do, page tables still exist and
-	 * thus HPTEs will be faulted in when needed
-	 */
-	if (bus->self) {
-		pr_debug("IO mapping for PCI-PCI bridge %s\n",
-			 pci_name(bus->self));
-		pr_debug("  virt=0x%016llx...0x%016llx\n",
-			 bus->resource[0]->start + _IO_BASE,
-			 bus->resource[0]->end + _IO_BASE);
-		return 0;
-	}
-
-	return pcibios_map_phb_io_space(pci_bus_to_host(bus));
 }
 EXPORT_SYMBOL_GPL(pcibios_map_io_space);
 
 void __devinit pcibios_setup_phb_io_space(struct pci_controller *hose)
 {
-	pcibios_map_phb_io_space(hose);
+	pcibios_map_io_space(hose->bus);
 }
 
 #define IOBASE_BRIDGE_NUMBER	0
@@ -221,7 +224,7 @@ long sys_pciconfig_iobase(long which, unsigned long in_bus,
 	 * G5 machines... So when something asks for bus 0 io base
 	 * (bus 0 is HT root), we return the AGP one instead.
 	 */
-	if (in_bus == 0 && of_machine_is_compatible("MacRISC4")) {
+	if (in_bus == 0 && machine_is_compatible("MacRISC4")) {
 		struct device_node *agp;
 
 		agp = of_find_compatible_node(NULL, NULL, "u3-agp");
@@ -240,10 +243,10 @@ long sys_pciconfig_iobase(long which, unsigned long in_bus,
 			break;
 		bus = NULL;
 	}
-	if (bus == NULL || bus->dev.of_node == NULL)
+	if (bus == NULL || bus->sysdata == NULL)
 		return -ENODEV;
 
-	hose_node = bus->dev.of_node;
+	hose_node = (struct device_node *)bus->sysdata;
 	hose = PCI_DN(hose_node)->phb;
 
 	switch (which) {

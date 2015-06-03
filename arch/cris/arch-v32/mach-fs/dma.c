@@ -9,6 +9,7 @@
 #include <hwregs/config_defs.h>
 #include <hwregs/strmux_defs.h>
 #include <linux/errno.h>
+#include <asm/system.h>
 #include <mach/arbiter.h>
 
 static char used_dma_channels[MAX_DMA_CHANNELS];

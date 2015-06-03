@@ -11,11 +11,8 @@
 
 #include <linux/tracehook.h>
 #include <linux/signal.h>
-#include <linux/key.h>
-#include <asm/hw_breakpoint.h>
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
-#include <asm/debug.h>
 
 #include "signal.h"
 
@@ -58,7 +55,10 @@ void __user * get_sigframe(struct k_sigaction *ka, struct pt_regs *regs,
 void restore_sigmask(sigset_t *set)
 {
 	sigdelsetmask(set, ~_BLOCKABLE);
-	set_current_blocked(set);
+	spin_lock_irq(&current->sighand->siglock);
+	current->blocked = *set;
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
 }
 
 static void check_syscall_restart(struct pt_regs *regs, struct k_sigaction *ka,
@@ -112,9 +112,8 @@ static void check_syscall_restart(struct pt_regs *regs, struct k_sigaction *ka,
 	}
 }
 
-static int do_signal(struct pt_regs *regs)
+static int do_signal_pending(sigset_t *oldset, struct pt_regs *regs)
 {
-	sigset_t *oldset;
 	siginfo_t info;
 	int signr;
 	struct k_sigaction ka;
@@ -123,7 +122,7 @@ static int do_signal(struct pt_regs *regs)
 
 	if (current_thread_info()->local_flags & _TLF_RESTORE_SIGMASK)
 		oldset = &current->saved_sigmask;
-	else
+	else if (!oldset)
 		oldset = &current->blocked;
 
 	signr = get_signal_to_deliver(&info, &ka, regs, NULL);
@@ -138,21 +137,20 @@ static int do_signal(struct pt_regs *regs)
 			ti->local_flags &= ~_TLF_RESTORE_SIGMASK;
 			sigprocmask(SIG_SETMASK, &current->saved_sigmask, NULL);
 		}
-		regs->trap = 0;
 		return 0;               /* no signals delivered */
 	}
 
-#ifndef CONFIG_PPC_ADV_DEBUG_REGS
         /*
 	 * Reenable the DABR before delivering the signal to
 	 * user space. The DABR will have been cleared if it
 	 * triggered inside the kernel.
 	 */
-	if (current->thread.dabr)
+	if (current->thread.dabr) {
 		set_dabr(current->thread.dabr);
+#if defined(CONFIG_BOOKE)
+		mtspr(SPRN_DBCR0, current->thread.dbcr0);
 #endif
-	/* Re-enable the breakpoints for the signal stack */
-	thread_change_pc(current, regs);
+	}
 
 	if (is32) {
         	if (ka.sa.sa_flags & SA_SIGINFO)
@@ -165,9 +163,14 @@ static int do_signal(struct pt_regs *regs)
 		ret = handle_rt_signal64(signr, &ka, &info, oldset, regs);
 	}
 
-	regs->trap = 0;
 	if (ret) {
-		block_sigmask(&ka, signr);
+		spin_lock_irq(&current->sighand->siglock);
+		sigorsets(&current->blocked, &current->blocked,
+			  &ka.sa.sa_mask);
+		if (!(ka.sa.sa_flags & SA_NODEFER))
+			sigaddset(&current->blocked, signr);
+		recalc_sigpending();
+		spin_unlock_irq(&current->sighand->siglock);
 
 		/*
 		 * A signal was successfully delivered; the saved sigmask is in
@@ -185,16 +188,14 @@ static int do_signal(struct pt_regs *regs)
 	return ret;
 }
 
-void do_notify_resume(struct pt_regs *regs, unsigned long thread_info_flags)
+void do_signal(struct pt_regs *regs, unsigned long thread_info_flags)
 {
 	if (thread_info_flags & _TIF_SIGPENDING)
-		do_signal(regs);
+		do_signal_pending(NULL, regs);
 
 	if (thread_info_flags & _TIF_NOTIFY_RESUME) {
 		clear_thread_flag(TIF_NOTIFY_RESUME);
 		tracehook_notify_resume(regs);
-		if (current->replacement_session_keyring)
-			key_replace_session_keyring();
 	}
 }
 

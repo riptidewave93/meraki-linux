@@ -81,7 +81,7 @@ static const struct waveform_board waveform_boards[] = {
 /* Data unique to this driver */
 struct waveform_private {
 	struct timer_list timer;
-	struct timeval last;	/* time at which last timer interrupt occurred */
+	struct timeval last;	/* time at which last timer interrupt occured */
 	unsigned int uvolt_amplitude;	/* waveform amplitude in microvolts */
 	unsigned long usec_period;	/* waveform period in microseconds */
 	unsigned long usec_current;	/* current time (modulo waveform period) */
@@ -107,18 +107,7 @@ static struct comedi_driver driver_waveform = {
 	.num_names = ARRAY_SIZE(waveform_boards),
 };
 
-static int __init driver_waveform_init_module(void)
-{
-	return comedi_driver_register(&driver_waveform);
-}
-
-static void __exit driver_waveform_cleanup_module(void)
-{
-	comedi_driver_unregister(&driver_waveform);
-}
-
-module_init(driver_waveform_init_module);
-module_exit(driver_waveform_cleanup_module);
+COMEDI_INITCLEANUP(driver_waveform);
 
 static int waveform_ai_cmdtest(struct comedi_device *dev,
 			       struct comedi_subdevice *s,
@@ -560,7 +549,3 @@ static int waveform_ao_insn_write(struct comedi_device *dev,
 
 	return insn->n;
 }
-
-MODULE_AUTHOR("Comedi http://www.comedi.org");
-MODULE_DESCRIPTION("Comedi low-level driver");
-MODULE_LICENSE("GPL");

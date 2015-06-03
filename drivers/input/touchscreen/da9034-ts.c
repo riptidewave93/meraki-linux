@@ -19,7 +19,6 @@
 #include <linux/input.h>
 #include <linux/workqueue.h>
 #include <linux/mfd/da903x.h>
-#include <linux/slab.h>
 
 #define DA9034_MANUAL_CTRL	0x50
 #define DA9034_LDO_ADC_EN	(1 << 4)
@@ -379,7 +378,18 @@ static struct platform_driver da9034_touch_driver = {
 	.probe		= da9034_touch_probe,
 	.remove		= __devexit_p(da9034_touch_remove),
 };
-module_platform_driver(da9034_touch_driver);
+
+static int __init da9034_touch_init(void)
+{
+	return platform_driver_register(&da9034_touch_driver);
+}
+module_init(da9034_touch_init);
+
+static void __exit da9034_touch_exit(void)
+{
+	platform_driver_unregister(&da9034_touch_driver);
+}
+module_exit(da9034_touch_exit);
 
 MODULE_DESCRIPTION("Touchscreen driver for Dialog Semiconductor DA9034");
 MODULE_AUTHOR("Eric Miao <eric.miao@marvell.com>, Bin Yang <bin.yang@marvell.com>");

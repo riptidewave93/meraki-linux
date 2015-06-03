@@ -15,14 +15,12 @@
 #include <linux/init.h>
 #include <linux/io.h>
 #include <linux/spinlock.h>
-#include <video/vga.h>
  
 #include <asm/pgtable.h>
 #include <asm/page.h>
 #include <asm/irq.h>
 #include <asm/mach-types.h>
 #include <asm/setup.h>
-#include <asm/system_misc.h>
 #include <asm/hardware/dec21285.h>
 
 #include <asm/mach/irq.h>
@@ -34,13 +32,12 @@ unsigned int mem_fclk_21285 = 50000000;
 
 EXPORT_SYMBOL(mem_fclk_21285);
 
-static int __init early_fclk(char *arg)
+static void __init early_fclk(char **arg)
 {
-	mem_fclk_21285 = simple_strtoul(arg, NULL, 0);
-	return 0;
+	mem_fclk_21285 = simple_strtoul(*arg, arg, 0);
 }
 
-early_param("mem_fclk_21285", early_fclk);
+__early_param("mem_fclk_21285=", early_fclk);
 
 static int __init parse_tag_memclk(const struct tag *tag)
 {
@@ -77,20 +74,20 @@ static const int fb_irq_mask[] = {
 	IRQ_MASK_PCI_PERR,	/* 19 */
 };
 
-static void fb_mask_irq(struct irq_data *d)
+static void fb_mask_irq(unsigned int irq)
 {
-	*CSR_IRQ_DISABLE = fb_irq_mask[_DC21285_INR(d->irq)];
+	*CSR_IRQ_DISABLE = fb_irq_mask[_DC21285_INR(irq)];
 }
 
-static void fb_unmask_irq(struct irq_data *d)
+static void fb_unmask_irq(unsigned int irq)
 {
-	*CSR_IRQ_ENABLE = fb_irq_mask[_DC21285_INR(d->irq)];
+	*CSR_IRQ_ENABLE = fb_irq_mask[_DC21285_INR(irq)];
 }
 
 static struct irq_chip fb_chip = {
-	.irq_ack	= fb_mask_irq,
-	.irq_mask	= fb_mask_irq,
-	.irq_unmask	= fb_unmask_irq,
+	.ack	= fb_mask_irq,
+	.mask	= fb_mask_irq,
+	.unmask = fb_unmask_irq,
 };
 
 static void __init __fb_init_irq(void)
@@ -104,7 +101,8 @@ static void __init __fb_init_irq(void)
 	*CSR_FIQ_DISABLE = -1;
 
 	for (irq = _DC21285_IRQ(0); irq < _DC21285_IRQ(20); irq++) {
-		irq_set_chip_and_handler(irq, &fb_chip, handle_level_irq);
+		set_irq_chip(irq, &fb_chip);
+		set_irq_handler(irq, handle_level_irq);
 		set_irq_flags(irq, IRQF_VALID | IRQF_PROBE);
 	}
 }
@@ -199,43 +197,9 @@ void __init footbridge_map_io(void)
 	 */
 	if (footbridge_cfn_mode())
 		iotable_init(ebsa285_host_io_desc, ARRAY_SIZE(ebsa285_host_io_desc));
-
-	vga_base = PCIMEM_BASE;
-}
-
-void footbridge_restart(char mode, const char *cmd)
-{
-	if (mode == 's') {
-		/* Jump into the ROM */
-		soft_restart(0x41000000);
-	} else {
-		/*
-		 * Force the watchdog to do a CPU reset.
-		 *
-		 * After making sure that the watchdog is disabled
-		 * (so we can change the timer registers) we first
-		 * enable the timer to autoreload itself.  Next, the
-		 * timer interval is set really short and any
-		 * current interrupt request is cleared (so we can
-		 * see an edge transition).  Finally, TIMER4 is
-		 * enabled as the watchdog.
-		 */
-		*CSR_SA110_CNTL &= ~(1 << 13);
-		*CSR_TIMER4_CNTL = TIMER_CNTL_ENABLE |
-				   TIMER_CNTL_AUTORELOAD |
-				   TIMER_CNTL_DIV16;
-		*CSR_TIMER4_LOAD = 0x2;
-		*CSR_TIMER4_CLR  = 0;
-		*CSR_SA110_CNTL |= (1 << 13);
-	}
 }
 
 #ifdef CONFIG_FOOTBRIDGE_ADDIN
-
-static inline unsigned long fb_bus_sdram_offset(void)
-{
-	return *CSR_PCISDRAMBASE & 0xfffffff0;
-}
 
 /*
  * These two functions convert virtual addresses to PCI addresses and PCI
@@ -246,30 +210,19 @@ unsigned long __virt_to_bus(unsigned long res)
 {
 	WARN_ON(res < PAGE_OFFSET || res >= (unsigned long)high_memory);
 
-	return res + (fb_bus_sdram_offset() - PAGE_OFFSET);
+	return (res - PAGE_OFFSET) + (*CSR_PCISDRAMBASE & 0xfffffff0);
 }
 EXPORT_SYMBOL(__virt_to_bus);
 
 unsigned long __bus_to_virt(unsigned long res)
 {
-	res = res - (fb_bus_sdram_offset() - PAGE_OFFSET);
+	res -= (*CSR_PCISDRAMBASE & 0xfffffff0);
+	res += PAGE_OFFSET;
 
 	WARN_ON(res < PAGE_OFFSET || res >= (unsigned long)high_memory);
 
 	return res;
 }
 EXPORT_SYMBOL(__bus_to_virt);
-
-unsigned long __pfn_to_bus(unsigned long pfn)
-{
-	return __pfn_to_phys(pfn) + (fb_bus_sdram_offset() - PHYS_OFFSET);
-}
-EXPORT_SYMBOL(__pfn_to_bus);
-
-unsigned long __bus_to_pfn(unsigned long bus)
-{
-	return __phys_to_pfn(bus - (fb_bus_sdram_offset() - PHYS_OFFSET));
-}
-EXPORT_SYMBOL(__bus_to_pfn);
 
 #endif

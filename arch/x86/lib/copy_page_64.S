@@ -2,7 +2,6 @@
 
 #include <linux/linkage.h>
 #include <asm/dwarf2.h>
-#include <asm/alternative-asm.h>
 
 	ALIGN
 copy_page_c:
@@ -20,12 +19,14 @@ ENDPROC(copy_page_c)
 
 ENTRY(copy_page)
 	CFI_STARTPROC
-	subq	$2*8,%rsp
-	CFI_ADJUST_CFA_OFFSET 2*8
+	subq	$3*8,%rsp
+	CFI_ADJUST_CFA_OFFSET 3*8
 	movq	%rbx,(%rsp)
 	CFI_REL_OFFSET rbx, 0
 	movq	%r12,1*8(%rsp)
 	CFI_REL_OFFSET r12, 1*8
+	movq	%r13,2*8(%rsp)
+	CFI_REL_OFFSET r13, 2*8
 
 	movl	$(4096/64)-5,%ecx
 	.p2align 4
@@ -89,8 +90,10 @@ ENTRY(copy_page)
 	CFI_RESTORE rbx
 	movq	1*8(%rsp),%r12
 	CFI_RESTORE r12
-	addq	$2*8,%rsp
-	CFI_ADJUST_CFA_OFFSET -2*8
+	movq	2*8(%rsp),%r13
+	CFI_RESTORE r13
+	addq	$3*8,%rsp
+	CFI_ADJUST_CFA_OFFSET -3*8
 	ret
 .Lcopy_page_end:
 	CFI_ENDPROC
@@ -107,6 +110,10 @@ ENDPROC(copy_page)
 2:
 	.previous
 	.section .altinstructions,"a"
-	altinstruction_entry copy_page, 1b, X86_FEATURE_REP_GOOD,	\
-		.Lcopy_page_end-copy_page, 2b-1b
+	.align 8
+	.quad copy_page
+	.quad 1b
+	.byte X86_FEATURE_REP_GOOD
+	.byte .Lcopy_page_end - copy_page
+	.byte 2b - 1b
 	.previous

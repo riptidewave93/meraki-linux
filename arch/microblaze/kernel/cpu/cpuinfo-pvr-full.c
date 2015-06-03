@@ -21,14 +21,8 @@
  */
 
 #define CI(c, p) { ci->c = PVR_##p(pvr); }
-
-#if defined(CONFIG_EARLY_PRINTK) && defined(CONFIG_SERIAL_UARTLITE_CONSOLE)
 #define err_printk(x) \
 	early_printk("ERROR: Microblaze " x "-different for PVR and DTS\n");
-#else
-#define err_printk(x) \
-	printk(KERN_INFO "ERROR: Microblaze " x "-different for PVR and DTS\n");
-#endif
 
 void set_cpuinfo_pvr_full(struct cpuinfo *ci, struct device_node *cpu)
 {
@@ -72,13 +66,11 @@ void set_cpuinfo_pvr_full(struct cpuinfo *ci, struct device_node *cpu)
 	CI(pvr_user2, USER2);
 
 	CI(mmu, USE_MMU);
-	CI(mmu_privins, MMU_PRIVINS);
-	CI(endian, ENDIAN);
 
 	CI(use_icache, USE_ICACHE);
 	CI(icache_tagbits, ICACHE_ADDR_TAG_BITS);
 	CI(icache_write, ICACHE_ALLOW_WR);
-	ci->icache_line_length = PVR_ICACHE_LINE_LEN(pvr) << 2;
+	CI(icache_line, ICACHE_LINE_LEN);
 	CI(icache_size, ICACHE_BYTE_SIZE);
 	CI(icache_base, ICACHE_BASEADDR);
 	CI(icache_high, ICACHE_HIGHADDR);
@@ -86,15 +78,10 @@ void set_cpuinfo_pvr_full(struct cpuinfo *ci, struct device_node *cpu)
 	CI(use_dcache, USE_DCACHE);
 	CI(dcache_tagbits, DCACHE_ADDR_TAG_BITS);
 	CI(dcache_write, DCACHE_ALLOW_WR);
-	ci->dcache_line_length = PVR_DCACHE_LINE_LEN(pvr) << 2;
+	CI(dcache_line, DCACHE_LINE_LEN);
 	CI(dcache_size, DCACHE_BYTE_SIZE);
 	CI(dcache_base, DCACHE_BASEADDR);
 	CI(dcache_high, DCACHE_HIGHADDR);
-
-	temp = PVR_DCACHE_USE_WRITEBACK(pvr);
-	if (ci->dcache_wb != temp)
-		err_printk("DCACHE WB");
-	ci->dcache_wb = temp;
 
 	CI(use_dopb, D_OPB);
 	CI(use_iopb, I_OPB);

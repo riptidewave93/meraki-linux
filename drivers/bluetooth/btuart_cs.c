@@ -38,8 +38,11 @@
 #include <linux/serial.h>
 #include <linux/serial_reg.h>
 #include <linux/bitops.h>
+#include <asm/system.h>
 #include <asm/io.h>
 
+#include <pcmcia/cs_types.h>
+#include <pcmcia/cs.h>
 #include <pcmcia/cistpl.h>
 #include <pcmcia/ciscode.h>
 #include <pcmcia/ds.h>
@@ -64,6 +67,7 @@ MODULE_LICENSE("GPL");
 
 typedef struct btuart_info_t {
 	struct pcmcia_device *p_dev;
+	dev_node_t node;
 
 	struct hci_dev *hdev;
 
@@ -140,9 +144,9 @@ static void btuart_write_wakeup(btuart_info_t *info)
 	}
 
 	do {
-		unsigned int iobase = info->p_dev->resource[0]->start;
+		register unsigned int iobase = info->p_dev->io.BasePort1;
 		register struct sk_buff *skb;
-		int len;
+		register int len;
 
 		clear_bit(XMIT_WAKEUP, &(info->tx_state));
 
@@ -181,7 +185,7 @@ static void btuart_receive(btuart_info_t *info)
 		return;
 	}
 
-	iobase = info->p_dev->resource[0]->start;
+	iobase = info->p_dev->io.BasePort1;
 
 	do {
 		info->hdev->stat.byte_rx++;
@@ -291,11 +295,9 @@ static irqreturn_t btuart_interrupt(int irq, void *dev_inst)
 	int iir, lsr;
 	irqreturn_t r = IRQ_NONE;
 
-	if (!info || !info->hdev)
-		/* our irq handler is shared */
-		return IRQ_NONE;
+	BUG_ON(!info->hdev);
 
-	iobase = info->p_dev->resource[0]->start;
+	iobase = info->p_dev->io.BasePort1;
 
 	spin_lock(&(info->lock));
 
@@ -352,7 +354,7 @@ static void btuart_change_speed(btuart_info_t *info, unsigned int speed)
 		return;
 	}
 
-	iobase = info->p_dev->resource[0]->start;
+	iobase = info->p_dev->io.BasePort1;
 
 	spin_lock_irqsave(&(info->lock), flags);
 
@@ -396,7 +398,7 @@ static void btuart_change_speed(btuart_info_t *info, unsigned int speed)
 
 static int btuart_hci_flush(struct hci_dev *hdev)
 {
-	btuart_info_t *info = hci_get_drvdata(hdev);
+	btuart_info_t *info = (btuart_info_t *)(hdev->driver_data);
 
 	/* Drop TX queue */
 	skb_queue_purge(&(info->txq));
@@ -434,7 +436,7 @@ static int btuart_hci_send_frame(struct sk_buff *skb)
 		return -ENODEV;
 	}
 
-	info = hci_get_drvdata(hdev);
+	info = (btuart_info_t *)(hdev->driver_data);
 
 	switch (bt_cb(skb)->pkt_type) {
 	case HCI_COMMAND_PKT:
@@ -446,7 +448,7 @@ static int btuart_hci_send_frame(struct sk_buff *skb)
 	case HCI_SCODATA_PKT:
 		hdev->stat.sco_tx++;
 		break;
-	}
+	};
 
 	/* Prepend skb with frame type */
 	memcpy(skb_push(skb, 1), &bt_cb(skb)->pkt_type, 1);
@@ -455,6 +457,11 @@ static int btuart_hci_send_frame(struct sk_buff *skb)
 	btuart_write_wakeup(info);
 
 	return 0;
+}
+
+
+static void btuart_hci_destruct(struct hci_dev *hdev)
+{
 }
 
 
@@ -471,7 +478,7 @@ static int btuart_hci_ioctl(struct hci_dev *hdev, unsigned int cmd, unsigned lon
 static int btuart_open(btuart_info_t *info)
 {
 	unsigned long flags;
-	unsigned int iobase = info->p_dev->resource[0]->start;
+	unsigned int iobase = info->p_dev->io.BasePort1;
 	struct hci_dev *hdev;
 
 	spin_lock_init(&(info->lock));
@@ -491,15 +498,18 @@ static int btuart_open(btuart_info_t *info)
 
 	info->hdev = hdev;
 
-	hdev->bus = HCI_PCCARD;
-	hci_set_drvdata(hdev, info);
+	hdev->type = HCI_PCCARD;
+	hdev->driver_data = info;
 	SET_HCIDEV_DEV(hdev, &info->p_dev->dev);
 
 	hdev->open     = btuart_hci_open;
 	hdev->close    = btuart_hci_close;
 	hdev->flush    = btuart_hci_flush;
 	hdev->send     = btuart_hci_send_frame;
+	hdev->destruct = btuart_hci_destruct;
 	hdev->ioctl    = btuart_hci_ioctl;
+
+	hdev->owner = THIS_MODULE;
 
 	spin_lock_irqsave(&(info->lock), flags);
 
@@ -538,7 +548,7 @@ static int btuart_open(btuart_info_t *info)
 static int btuart_close(btuart_info_t *info)
 {
 	unsigned long flags;
-	unsigned int iobase = info->p_dev->resource[0]->start;
+	unsigned int iobase = info->p_dev->io.BasePort1;
 	struct hci_dev *hdev = info->hdev;
 
 	if (!hdev)
@@ -556,7 +566,9 @@ static int btuart_close(btuart_info_t *info)
 
 	spin_unlock_irqrestore(&(info->lock), flags);
 
-	hci_unregister_dev(hdev);
+	if (hci_unregister_dev(hdev) < 0)
+		BT_ERR("Can't unregister HCI device %s", hdev->name);
+
 	hci_free_dev(hdev);
 
 	return 0;
@@ -567,15 +579,23 @@ static int btuart_probe(struct pcmcia_device *link)
 	btuart_info_t *info;
 
 	/* Create new info device */
-	info = devm_kzalloc(&link->dev, sizeof(*info), GFP_KERNEL);
+	info = kzalloc(sizeof(*info), GFP_KERNEL);
 	if (!info)
 		return -ENOMEM;
 
 	info->p_dev = link;
 	link->priv = info;
 
-	link->config_flags |= CONF_ENABLE_IRQ | CONF_AUTO_SET_VPP |
-		CONF_AUTO_SET_IO;
+	link->io.Attributes1 = IO_DATA_PATH_WIDTH_8;
+	link->io.NumPorts1 = 8;
+	link->irq.Attributes = IRQ_TYPE_DYNAMIC_SHARING | IRQ_HANDLE_PRESENT;
+	link->irq.IRQInfo1 = IRQ_LEVEL_ID;
+
+	link->irq.Handler = btuart_interrupt;
+	link->irq.Instance = info;
+
+	link->conf.Attributes = CONF_ENABLE_IRQ;
+	link->conf.IntType = INT_MEMORY_AND_IO;
 
 	return btuart_config(link);
 }
@@ -583,44 +603,49 @@ static int btuart_probe(struct pcmcia_device *link)
 
 static void btuart_detach(struct pcmcia_device *link)
 {
+	btuart_info_t *info = link->priv;
+
 	btuart_release(link);
+	kfree(info);
 }
 
-static int btuart_check_config(struct pcmcia_device *p_dev, void *priv_data)
+static int btuart_check_config(struct pcmcia_device *p_dev,
+			       cistpl_cftable_entry_t *cf,
+			       cistpl_cftable_entry_t *dflt,
+			       unsigned int vcc,
+			       void *priv_data)
 {
 	int *try = priv_data;
 
-	if (!try)
-		p_dev->io_lines = 16;
-
-	if ((p_dev->resource[0]->end != 8) || (p_dev->resource[0]->start == 0))
-		return -EINVAL;
-
-	p_dev->resource[0]->end = 8;
-	p_dev->resource[0]->flags &= ~IO_DATA_PATH_WIDTH;
-	p_dev->resource[0]->flags |= IO_DATA_PATH_WIDTH_8;
-
-	return pcmcia_request_io(p_dev);
+	if (cf->vpp1.present & (1 << CISTPL_POWER_VNOM))
+		p_dev->conf.Vpp = cf->vpp1.param[CISTPL_POWER_VNOM] / 10000;
+	if ((cf->io.nwin > 0) && (cf->io.win[0].len == 8) &&
+	    (cf->io.win[0].base != 0)) {
+		p_dev->io.BasePort1 = cf->io.win[0].base;
+		p_dev->io.IOAddrLines = (*try == 0) ? 16 :
+			cf->io.flags & CISTPL_IO_LINES_MASK;
+		if (!pcmcia_request_io(p_dev, &p_dev->io))
+			return 0;
+	}
+	return -ENODEV;
 }
 
 static int btuart_check_config_notpicky(struct pcmcia_device *p_dev,
+					cistpl_cftable_entry_t *cf,
+					cistpl_cftable_entry_t *dflt,
+					unsigned int vcc,
 					void *priv_data)
 {
 	static unsigned int base[5] = { 0x3f8, 0x2f8, 0x3e8, 0x2e8, 0x0 };
 	int j;
 
-	if (p_dev->io_lines > 3)
-		return -ENODEV;
-
-	p_dev->resource[0]->flags &= ~IO_DATA_PATH_WIDTH;
-	p_dev->resource[0]->flags |= IO_DATA_PATH_WIDTH_8;
-	p_dev->resource[0]->end = 8;
-
-	for (j = 0; j < 5; j++) {
-		p_dev->resource[0]->start = base[j];
-		p_dev->io_lines = base[j] ? 16 : 3;
-		if (!pcmcia_request_io(p_dev))
-			return 0;
+	if ((cf->io.nwin > 0) && ((cf->io.flags & CISTPL_IO_LINES_MASK) <= 3)) {
+		for (j = 0; j < 5; j++) {
+			p_dev->io.BasePort1 = base[j];
+			p_dev->io.IOAddrLines = base[j] ? 16 : 3;
+			if (!pcmcia_request_io(p_dev, &p_dev->io))
+				return 0;
+		}
 	}
 	return -ENODEV;
 }
@@ -644,19 +669,27 @@ static int btuart_config(struct pcmcia_device *link)
 		goto found_port;
 
 	BT_ERR("No usable port range found");
+	cs_error(link, RequestIO, -ENODEV);
 	goto failed;
 
 found_port:
-	i = pcmcia_request_irq(link, btuart_interrupt);
-	if (i != 0)
-		goto failed;
+	i = pcmcia_request_irq(link, &link->irq);
+	if (i != 0) {
+		cs_error(link, RequestIRQ, i);
+		link->irq.AssignedIRQ = 0;
+	}
 
-	i = pcmcia_enable_device(link);
-	if (i != 0)
+	i = pcmcia_request_configuration(link, &link->conf);
+	if (i != 0) {
+		cs_error(link, RequestConfiguration, i);
 		goto failed;
+	}
 
 	if (btuart_open(info) != 0)
 		goto failed;
+
+	strcpy(info->node.dev_name, info->hdev->name);
+	link->dev_node = &info->node;
 
 	return 0;
 
@@ -675,7 +708,7 @@ static void btuart_release(struct pcmcia_device *link)
 	pcmcia_disable_device(link);
 }
 
-static const struct pcmcia_device_id btuart_ids[] = {
+static struct pcmcia_device_id btuart_ids[] = {
 	/* don't use this driver. Use serial_cs + hci_uart instead */
 	PCMCIA_DEVICE_NULL
 };
@@ -683,7 +716,9 @@ MODULE_DEVICE_TABLE(pcmcia, btuart_ids);
 
 static struct pcmcia_driver btuart_driver = {
 	.owner		= THIS_MODULE,
-	.name		= "btuart_cs",
+	.drv		= {
+		.name	= "btuart_cs",
+	},
 	.probe		= btuart_probe,
 	.remove		= btuart_detach,
 	.id_table	= btuart_ids,

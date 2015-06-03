@@ -40,8 +40,7 @@ static struct symbol *symtab[HASH_BUCKETS];
 static FILE *debugfile;
 
 int cur_line = 1;
-char *cur_filename, *source_file;
-int in_source_file;
+char *cur_filename;
 
 static int flag_debug, flag_dump_defs, flag_reference, flag_dump_types,
 	   flag_preserve, flag_warnings;
@@ -54,22 +53,12 @@ static int nsyms;
 static struct symbol *expansion_trail;
 static struct symbol *visited_symbols;
 
-static const struct {
-	int n;
-	const char *name;
-} symbol_types[] = {
-	[SYM_NORMAL]     = { 0, NULL},
-	[SYM_TYPEDEF]    = {'t', "typedef"},
-	[SYM_ENUM]       = {'e', "enum"},
-	[SYM_STRUCT]     = {'s', "struct"},
-	[SYM_UNION]      = {'u', "union"},
-	[SYM_ENUM_CONST] = {'E', "enum constant"},
+static const char *const symbol_type_name[] = {
+	"normal", "typedef", "enum", "struct", "union"
 };
 
 static int equal_list(struct string_list *a, struct string_list *b);
 static void print_list(FILE * f, struct string_list *list);
-static struct string_list *concat_list(struct string_list *start, ...);
-static struct string_list *mk_node(const char *string);
 static void print_location(void);
 static void print_type_name(enum symbol_type type, const char *name);
 
@@ -151,20 +140,14 @@ static unsigned long crc32(const char *s)
 
 static enum symbol_type map_to_ns(enum symbol_type t)
 {
-	switch (t) {
-	case SYM_ENUM_CONST:
-	case SYM_NORMAL:
-	case SYM_TYPEDEF:
-		return SYM_NORMAL;
-	case SYM_ENUM:
-	case SYM_STRUCT:
-	case SYM_UNION:
-		return SYM_STRUCT;
-	}
+	if (t == SYM_TYPEDEF)
+		t = SYM_NORMAL;
+	else if (t == SYM_UNION)
+		t = SYM_STRUCT;
 	return t;
 }
 
-struct symbol *find_symbol(const char *name, enum symbol_type ns, int exact)
+struct symbol *find_symbol(const char *name, enum symbol_type ns)
 {
 	unsigned long h = crc32(name) % HASH_BUCKETS;
 	struct symbol *sym;
@@ -175,8 +158,6 @@ struct symbol *find_symbol(const char *name, enum symbol_type ns, int exact)
 		    sym->is_declared)
 			break;
 
-	if (exact && sym && sym->type != ns)
-		return NULL;
 	return sym;
 }
 
@@ -199,47 +180,10 @@ static struct symbol *__add_symbol(const char *name, enum symbol_type type,
 			    struct string_list *defn, int is_extern,
 			    int is_reference)
 {
-	unsigned long h;
+	unsigned long h = crc32(name) % HASH_BUCKETS;
 	struct symbol *sym;
 	enum symbol_status status = STATUS_UNCHANGED;
-	/* The parser adds symbols in the order their declaration completes,
-	 * so it is safe to store the value of the previous enum constant in
-	 * a static variable.
-	 */
-	static int enum_counter;
-	static struct string_list *last_enum_expr;
 
-	if (type == SYM_ENUM_CONST) {
-		if (defn) {
-			free_list(last_enum_expr, NULL);
-			last_enum_expr = copy_list_range(defn, NULL);
-			enum_counter = 1;
-		} else {
-			struct string_list *expr;
-			char buf[20];
-
-			snprintf(buf, sizeof(buf), "%d", enum_counter++);
-			if (last_enum_expr) {
-				expr = copy_list_range(last_enum_expr, NULL);
-				defn = concat_list(mk_node("("),
-						   expr,
-						   mk_node(")"),
-						   mk_node("+"),
-						   mk_node(buf), NULL);
-			} else {
-				defn = mk_node(buf);
-			}
-		}
-	} else if (type == SYM_ENUM) {
-		free_list(last_enum_expr, NULL);
-		last_enum_expr = NULL;
-		enum_counter = 0;
-		if (!name)
-			/* Anonymous enum definition, nothing more to do */
-			return NULL;
-	}
-
-	h = crc32(name) % HASH_BUCKETS;
 	for (sym = symtab[h]; sym; sym = sym->hash_next) {
 		if (map_to_ns(sym->type) == map_to_ns(type) &&
 		    strcmp(name, sym->name) == 0) {
@@ -303,12 +247,8 @@ static struct symbol *__add_symbol(const char *name, enum symbol_type type,
 	sym->is_override = 0;
 
 	if (flag_debug) {
-		if (symbol_types[type].name)
-			fprintf(debugfile, "Defn for %s %s == <",
-				symbol_types[type].name, name);
-		else
-			fprintf(debugfile, "Defn for type%d %s == <",
-				type, name);
+		fprintf(debugfile, "Defn for %s %s == <",
+			symbol_type_name[type], name);
 		if (is_extern)
 			fputs("extern ", debugfile);
 		print_list(debugfile, defn);
@@ -348,35 +288,6 @@ void free_list(struct string_list *s, struct string_list *e)
 	}
 }
 
-static struct string_list *mk_node(const char *string)
-{
-	struct string_list *newnode;
-
-	newnode = xmalloc(sizeof(*newnode));
-	newnode->string = xstrdup(string);
-	newnode->tag = SYM_NORMAL;
-	newnode->next = NULL;
-
-	return newnode;
-}
-
-static struct string_list *concat_list(struct string_list *start, ...)
-{
-	va_list ap;
-	struct string_list *n, *n2;
-
-	if (!start)
-		return NULL;
-	for (va_start(ap, start); (n = va_arg(ap, struct string_list *));) {
-		for (n2 = n; n2->next; n2 = n2->next)
-			;
-		n2->next = start;
-		start = n;
-	}
-	va_end(ap);
-	return start;
-}
-
 struct string_list *copy_node(struct string_list *node)
 {
 	struct string_list *newnode;
@@ -386,22 +297,6 @@ struct string_list *copy_node(struct string_list *node)
 	newnode->tag = node->tag;
 
 	return newnode;
-}
-
-struct string_list *copy_list_range(struct string_list *start,
-				    struct string_list *end)
-{
-	struct string_list *res, *n;
-
-	if (start == end)
-		return NULL;
-	n = res = copy_node(start);
-	for (start = start->next; start != end; start = start->next) {
-		n->next = copy_node(start);
-		n = n->next;
-	}
-	n->next = NULL;
-	return res;
 }
 
 static int equal_list(struct string_list *a, struct string_list *b)
@@ -449,10 +344,10 @@ static struct string_list *read_node(FILE *f)
 	node.string = buffer;
 
 	if (node.string[1] == '#') {
-		size_t n;
+		int n;
 
-		for (n = 0; n < ARRAY_SIZE(symbol_types); n++) {
-			if (node.string[0] == symbol_types[n].n) {
+		for (n = 0; n < ARRAY_SIZE(symbol_type_name); n++) {
+			if (node.string[0] == symbol_type_name[n][0]) {
 				node.tag = n;
 				node.string += 2;
 				return copy_node(&node);
@@ -502,8 +397,8 @@ static void read_reference(FILE *f)
 
 static void print_node(FILE * f, struct string_list *list)
 {
-	if (symbol_types[list->tag].n) {
-		putc(symbol_types[list->tag].n, f);
+	if (list->tag != SYM_NORMAL) {
+		putc(symbol_type_name[list->tag][0], f);
 		putc('#', f);
 	}
 	fputs(list->string, f);
@@ -573,9 +468,8 @@ static unsigned long expand_and_crc_sym(struct symbol *sym, unsigned long crc)
 			crc = partial_crc32_one(' ', crc);
 			break;
 
-		case SYM_ENUM_CONST:
 		case SYM_TYPEDEF:
-			subsym = find_symbol(cur->string, cur->tag, 0);
+			subsym = find_symbol(cur->string, cur->tag);
 			/* FIXME: Bad reference files can segfault here. */
 			if (subsym->expansion_trail) {
 				if (flag_dump_defs)
@@ -592,30 +486,55 @@ static unsigned long expand_and_crc_sym(struct symbol *sym, unsigned long crc)
 		case SYM_STRUCT:
 		case SYM_UNION:
 		case SYM_ENUM:
-			subsym = find_symbol(cur->string, cur->tag, 0);
+			subsym = find_symbol(cur->string, cur->tag);
 			if (!subsym) {
-				struct string_list *n;
+				struct string_list *n, *t = NULL;
 
 				error_with_pos("expand undefined %s %s",
-					       symbol_types[cur->tag].name,
+					       symbol_type_name[cur->tag],
 					       cur->string);
-				n = concat_list(mk_node
-						(symbol_types[cur->tag].name),
-						mk_node(cur->string),
-						mk_node("{"),
-						mk_node("UNKNOWN"),
-						mk_node("}"), NULL);
+
+				n = xmalloc(sizeof(*n));
+				n->string = xstrdup(symbol_type_name[cur->tag]);
+				n->tag = SYM_NORMAL;
+				n->next = t;
+				t = n;
+
+				n = xmalloc(sizeof(*n));
+				n->string = xstrdup(cur->string);
+				n->tag = SYM_NORMAL;
+				n->next = t;
+				t = n;
+
+				n = xmalloc(sizeof(*n));
+				n->string = xstrdup("{");
+				n->tag = SYM_NORMAL;
+				n->next = t;
+				t = n;
+
+				n = xmalloc(sizeof(*n));
+				n->string = xstrdup("UNKNOWN");
+				n->tag = SYM_NORMAL;
+				n->next = t;
+				t = n;
+
+				n = xmalloc(sizeof(*n));
+				n->string = xstrdup("}");
+				n->tag = SYM_NORMAL;
+				n->next = t;
+				t = n;
+
 				subsym =
 				    add_symbol(cur->string, cur->tag, n, 0);
 			}
 			if (subsym->expansion_trail) {
 				if (flag_dump_defs) {
 					fprintf(debugfile, "%s %s ",
-						symbol_types[cur->tag].name,
+						symbol_type_name[cur->tag],
 						cur->string);
 				}
 
-				crc = partial_crc32(symbol_types[cur->tag].name,
+				crc = partial_crc32(symbol_type_name[cur->tag],
 						    crc);
 				crc = partial_crc32_one(' ', crc);
 				crc = partial_crc32(cur->string, crc);
@@ -646,7 +565,7 @@ void export_symbol(const char *name)
 {
 	struct symbol *sym;
 
-	sym = find_symbol(name, SYM_NORMAL, 0);
+	sym = find_symbol(name, SYM_NORMAL);
 	if (!sym)
 		error_with_pos("export undefined symbol %s", name);
 	else {
@@ -705,8 +624,8 @@ static void print_location(void)
 
 static void print_type_name(enum symbol_type type, const char *name)
 {
-	if (symbol_types[type].name)
-		fprintf(stderr, "%s %s", symbol_types[type].name, name);
+	if (type != SYM_NORMAL)
+		fprintf(stderr, "%s %s", symbol_type_name[type], name);
 	else
 		fprintf(stderr, "%s", name);
 }
@@ -839,10 +758,8 @@ int main(int argc, char **argv)
 		/* setlinebuf(debugfile); */
 	}
 
-	if (flag_reference) {
+	if (flag_reference)
 		read_reference(ref_file);
-		fclose(ref_file);
-	}
 
 	yyparse();
 
@@ -852,8 +769,8 @@ int main(int argc, char **argv)
 
 			if (sym->is_override)
 				fputs("override ", dumpfile);
-			if (symbol_types[sym->type].n) {
-				putc(symbol_types[sym->type].n, dumpfile);
+			if (sym->type != SYM_NORMAL) {
+				putc(symbol_type_name[sym->type][0], dumpfile);
 				putc('#', dumpfile);
 			}
 			fputs(sym->name, dumpfile);

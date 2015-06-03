@@ -21,7 +21,6 @@
  */
 
 #include <linux/buffer_head.h>
-#include <linux/slab.h>
 
 #include "dir.h"
 #include "aops.h"
@@ -1527,20 +1526,14 @@ static int ntfs_dir_open(struct inode *vi, struct file *filp)
  * this problem for now.  We do write the $BITMAP attribute if it is present
  * which is the important one for a directory so things are not too bad.
  */
-static int ntfs_dir_fsync(struct file *filp, loff_t start, loff_t end,
-			  int datasync)
+static int ntfs_dir_fsync(struct file *filp, struct dentry *dentry,
+		int datasync)
 {
-	struct inode *bmp_vi, *vi = filp->f_mapping->host;
+	struct inode *bmp_vi, *vi = dentry->d_inode;
 	int err, ret;
 	ntfs_attr na;
 
 	ntfs_debug("Entering for inode 0x%lx.", vi->i_ino);
-
-	err = filemap_write_and_wait_range(vi->i_mapping, start, end);
-	if (err)
-		return err;
-	mutex_lock(&vi->i_mutex);
-
 	BUG_ON(!S_ISDIR(vi->i_mode));
 	/* If the bitmap attribute inode is in memory sync it, too. */
 	na.mft_no = vi->i_ino;
@@ -1552,7 +1545,7 @@ static int ntfs_dir_fsync(struct file *filp, loff_t start, loff_t end,
  		write_inode_now(bmp_vi, !datasync);
 		iput(bmp_vi);
 	}
-	ret = __ntfs_write_inode(vi, 1);
+	ret = ntfs_write_inode(vi, 1);
 	write_inode_now(vi, !datasync);
 	err = sync_blockdev(vi->i_sb->s_bdev);
 	if (unlikely(err && !ret))
@@ -1562,7 +1555,6 @@ static int ntfs_dir_fsync(struct file *filp, loff_t start, loff_t end,
 	else
 		ntfs_warning(vi->i_sb, "Failed to f%ssync inode 0x%lx.  Error "
 				"%u.", datasync ? "data" : "", vi->i_ino, -ret);
-	mutex_unlock(&vi->i_mutex);
 	return ret;
 }
 

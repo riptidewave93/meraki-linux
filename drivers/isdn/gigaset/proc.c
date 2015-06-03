@@ -14,6 +14,7 @@
  */
 
 #include "gigaset.h"
+#include <linux/ctype.h>
 
 static ssize_t show_cidmode(struct device *dev,
 			    struct device_attribute *attr, char *buf)
@@ -35,10 +36,10 @@ static ssize_t set_cidmode(struct device *dev, struct device_attribute *attr,
 		if (!isspace(*end++))
 			return -EINVAL;
 	if (value < 0 || value > 1)
-		return -EINVAL;
+			return -EINVAL;
 
 	if (mutex_lock_interruptible(&cs->mutex))
-		return -ERESTARTSYS;
+		return -ERESTARTSYS; // FIXME -EINTR?
 
 	cs->waiting = 1;
 	if (!gigaset_add_event(cs, &cs->at_state, EV_PROC_CIDMODE,
@@ -47,6 +48,8 @@ static ssize_t set_cidmode(struct device *dev, struct device_attribute *attr,
 		mutex_unlock(&cs->mutex);
 		return -ENOMEM;
 	}
+
+	gig_dbg(DEBUG_CMD, "scheduling PROC_CIDMODE");
 	gigaset_schedule_event(cs);
 
 	wait_event(cs->waitqueue, !cs->waiting);
@@ -56,7 +59,7 @@ static ssize_t set_cidmode(struct device *dev, struct device_attribute *attr,
 	return count;
 }
 
-static DEVICE_ATTR(cidmode, S_IRUGO | S_IWUSR, show_cidmode, set_cidmode);
+static DEVICE_ATTR(cidmode, S_IRUGO|S_IWUSR, show_cidmode, set_cidmode);
 
 /* free sysfs for device */
 void gigaset_free_dev_sysfs(struct cardstate *cs)

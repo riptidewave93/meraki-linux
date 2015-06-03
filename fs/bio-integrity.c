@@ -22,10 +22,8 @@
 
 #include <linux/blkdev.h>
 #include <linux/mempool.h>
-#include <linux/export.h>
 #include <linux/bio.h>
 #include <linux/workqueue.h>
-#include <linux/slab.h>
 
 struct integrity_slab {
 	struct kmem_cache *slab;
@@ -357,7 +355,7 @@ static void bio_integrity_generate(struct bio *bio)
 	bix.sector_size = bi->sector_size;
 
 	bio_for_each_segment(bv, bio, i) {
-		void *kaddr = kmap_atomic(bv->bv_page);
+		void *kaddr = kmap_atomic(bv->bv_page, KM_USER0);
 		bix.data_buf = kaddr + bv->bv_offset;
 		bix.data_size = bv->bv_len;
 		bix.prot_buf = prot_buf;
@@ -371,7 +369,7 @@ static void bio_integrity_generate(struct bio *bio)
 		total += sectors * bi->tuple_size;
 		BUG_ON(total > bio->bi_integrity->bip_size);
 
-		kunmap_atomic(kaddr);
+		kunmap_atomic(kaddr, KM_USER0);
 	}
 }
 
@@ -414,10 +412,10 @@ int bio_integrity_prep(struct bio *bio)
 
 	/* Allocate kernel buffer for protection data */
 	len = sectors * blk_integrity_tuple_size(bi);
-	buf = kmalloc(len, GFP_NOIO | q->bounce_gfp);
+	buf = kmalloc(len, GFP_NOIO | __GFP_NOFAIL | q->bounce_gfp);
 	if (unlikely(buf == NULL)) {
 		printk(KERN_ERR "could not allocate integrity buffer\n");
-		return -ENOMEM;
+		return -EIO;
 	}
 
 	end = (((unsigned long) buf) + len + PAGE_SIZE - 1) >> PAGE_SHIFT;
@@ -498,7 +496,7 @@ static int bio_integrity_verify(struct bio *bio)
 	bix.sector_size = bi->sector_size;
 
 	bio_for_each_segment(bv, bio, i) {
-		void *kaddr = kmap_atomic(bv->bv_page);
+		void *kaddr = kmap_atomic(bv->bv_page, KM_USER0);
 		bix.data_buf = kaddr + bv->bv_offset;
 		bix.data_size = bv->bv_len;
 		bix.prot_buf = prot_buf;
@@ -507,7 +505,7 @@ static int bio_integrity_verify(struct bio *bio)
 		ret = bi->verify_fn(&bix);
 
 		if (ret) {
-			kunmap_atomic(kaddr);
+			kunmap_atomic(kaddr, KM_USER0);
 			return ret;
 		}
 
@@ -517,7 +515,7 @@ static int bio_integrity_verify(struct bio *bio)
 		total += sectors * bi->tuple_size;
 		BUG_ON(total > bio->bi_integrity->bip_size);
 
-		kunmap_atomic(kaddr);
+		kunmap_atomic(kaddr, KM_USER0);
 	}
 
 	return ret;
@@ -762,9 +760,6 @@ int bioset_integrity_create(struct bio_set *bs, int pool_size)
 {
 	unsigned int max_slab = vecs_to_idx(BIO_MAX_PAGES);
 
-	if (bs->bio_integrity_pool)
-		return 0;
-
 	bs->bio_integrity_pool =
 		mempool_create_slab_pool(pool_size, bip_slab[max_slab].slab);
 
@@ -786,12 +781,7 @@ void __init bio_integrity_init(void)
 {
 	unsigned int i;
 
-	/*
-	 * kintegrityd won't block much but may burn a lot of CPU cycles.
-	 * Make it highpri CPU intensive wq with max concurrency of 1.
-	 */
-	kintegrityd_wq = alloc_workqueue("kintegrityd", WQ_MEM_RECLAIM |
-					 WQ_HIGHPRI | WQ_CPU_INTENSIVE, 1);
+	kintegrityd_wq = create_workqueue("kintegrityd");
 	if (!kintegrityd_wq)
 		panic("Failed to create kintegrityd\n");
 

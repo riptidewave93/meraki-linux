@@ -26,7 +26,7 @@
  * Or, point your browser to http://www.gnu.org/copyleft/gpl.html
  *
  *
- * the project's page is at http://www.linuxtv.org/ 
+ * the project's page is at http://www.linuxtv.org/dvb/
  */
 
 
@@ -49,10 +49,10 @@
 #include <linux/crc32.h>
 #include <linux/i2c.h>
 #include <linux/kthread.h>
-#include <linux/slab.h>
 #include <asm/unaligned.h>
 #include <asm/byteorder.h>
 
+#include <asm/system.h>
 
 #include <linux/dvb/frontend.h>
 
@@ -707,7 +707,7 @@ static void gpioirq(unsigned long cookie)
 
 
 #ifdef CONFIG_DVB_AV7110_OSD
-static int dvb_osd_ioctl(struct file *file,
+static int dvb_osd_ioctl(struct inode *inode, struct file *file,
 			 unsigned int cmd, void *parg)
 {
 	struct dvb_device *dvbdev = file->private_data;
@@ -726,10 +726,9 @@ static int dvb_osd_ioctl(struct file *file,
 
 static const struct file_operations dvb_osd_fops = {
 	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= dvb_generic_ioctl,
+	.ioctl		= dvb_generic_ioctl,
 	.open		= dvb_generic_open,
 	.release	= dvb_generic_release,
-	.llseek		= noop_llseek,
 };
 
 static struct dvb_device dvbdev_osd = {
@@ -990,7 +989,7 @@ static int av7110_start_feed(struct dvb_demux_feed *feed)
 
 	if (feed->type == DMX_TYPE_TS) {
 		if ((feed->ts_type & TS_DECODER) &&
-		    (feed->pes_type <= DMX_TS_PES_PCR)) {
+		    (feed->pes_type < DMX_TS_PES_OTHER)) {
 			switch (demux->dmx.frontend->source) {
 			case DMX_MEMORY_FE:
 				if (feed->ts_type & TS_DECODER)
@@ -1567,27 +1566,20 @@ static int get_firmware(struct av7110* av7110)
 	return ret;
 }
 
-static int alps_bsrv2_tuner_set_params(struct dvb_frontend *fe)
+static int alps_bsrv2_tuner_set_params(struct dvb_frontend* fe, struct dvb_frontend_parameters *params)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct av7110* av7110 = fe->dvb->priv;
 	u8 pwr = 0;
 	u8 buf[4];
 	struct i2c_msg msg = { .addr = 0x61, .flags = 0, .buf = buf, .len = sizeof(buf) };
-	u32 div = (p->frequency + 479500) / 125;
+	u32 div = (params->frequency + 479500) / 125;
 
-	if (p->frequency > 2000000)
-		pwr = 3;
-	else if (p->frequency > 1800000)
-		pwr = 2;
-	else if (p->frequency > 1600000)
-		pwr = 1;
-	else if (p->frequency > 1200000)
-		pwr = 0;
-	else if (p->frequency >= 1100000)
-		pwr = 1;
-	else
-		pwr = 2;
+	if (params->frequency > 2000000) pwr = 3;
+	else if (params->frequency > 1800000) pwr = 2;
+	else if (params->frequency > 1600000) pwr = 1;
+	else if (params->frequency > 1200000) pwr = 0;
+	else if (params->frequency >= 1100000) pwr = 1;
+	else pwr = 2;
 
 	buf[0] = (div >> 8) & 0x7f;
 	buf[1] = div & 0xff;
@@ -1610,20 +1602,19 @@ static struct ves1x93_config alps_bsrv2_config = {
 	.invert_pwm = 0,
 };
 
-static int alps_tdbe2_tuner_set_params(struct dvb_frontend *fe)
+static int alps_tdbe2_tuner_set_params(struct dvb_frontend* fe, struct dvb_frontend_parameters *params)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct av7110* av7110 = fe->dvb->priv;
 	u32 div;
 	u8 data[4];
 	struct i2c_msg msg = { .addr = 0x62, .flags = 0, .buf = data, .len = sizeof(data) };
 
-	div = (p->frequency + 35937500 + 31250) / 62500;
+	div = (params->frequency + 35937500 + 31250) / 62500;
 
 	data[0] = (div >> 8) & 0x7f;
 	data[1] = div & 0xff;
 	data[2] = 0x85 | ((div >> 10) & 0x60);
-	data[3] = (p->frequency < 174000000 ? 0x88 : p->frequency < 470000000 ? 0x84 : 0x81);
+	data[3] = (params->frequency < 174000000 ? 0x88 : params->frequency < 470000000 ? 0x84 : 0x81);
 
 	if (fe->ops.i2c_gate_ctrl)
 		fe->ops.i2c_gate_ctrl(fe, 1);
@@ -1642,15 +1633,14 @@ static struct ves1820_config alps_tdbe2_config = {
 
 
 
-static int grundig_29504_451_tuner_set_params(struct dvb_frontend *fe)
+static int grundig_29504_451_tuner_set_params(struct dvb_frontend* fe, struct dvb_frontend_parameters *params)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct av7110* av7110 = fe->dvb->priv;
 	u32 div;
 	u8 data[4];
 	struct i2c_msg msg = { .addr = 0x61, .flags = 0, .buf = data, .len = sizeof(data) };
 
-	div = p->frequency / 125;
+	div = params->frequency / 125;
 	data[0] = (div >> 8) & 0x7f;
 	data[1] = div & 0xff;
 	data[2] = 0x8e;
@@ -1669,12 +1659,11 @@ static struct tda8083_config grundig_29504_451_config = {
 
 
 
-static int philips_cd1516_tuner_set_params(struct dvb_frontend *fe)
+static int philips_cd1516_tuner_set_params(struct dvb_frontend* fe, struct dvb_frontend_parameters *params)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct av7110* av7110 = fe->dvb->priv;
 	u32 div;
-	u32 f = p->frequency;
+	u32 f = params->frequency;
 	u8 data[4];
 	struct i2c_msg msg = { .addr = 0x61, .flags = 0, .buf = data, .len = sizeof(data) };
 
@@ -1701,17 +1690,16 @@ static struct ves1820_config philips_cd1516_config = {
 
 
 
-static int alps_tdlb7_tuner_set_params(struct dvb_frontend *fe)
+static int alps_tdlb7_tuner_set_params(struct dvb_frontend* fe, struct dvb_frontend_parameters *params)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct av7110* av7110 = fe->dvb->priv;
 	u32 div, pwr;
 	u8 data[4];
 	struct i2c_msg msg = { .addr = 0x60, .flags = 0, .buf = data, .len = sizeof(data) };
 
-	div = (p->frequency + 36200000) / 166666;
+	div = (params->frequency + 36200000) / 166666;
 
-	if (p->frequency <= 782000000)
+	if (params->frequency <= 782000000)
 		pwr = 1;
 	else
 		pwr = 2;
@@ -1839,9 +1827,8 @@ static u8 nexusca_stv0297_inittab[] = {
 	0xff, 0xff,
 };
 
-static int nexusca_stv0297_tuner_set_params(struct dvb_frontend *fe)
+static int nexusca_stv0297_tuner_set_params(struct dvb_frontend* fe, struct dvb_frontend_parameters *params)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct av7110* av7110 = fe->dvb->priv;
 	u32 div;
 	u8 data[4];
@@ -1849,19 +1836,19 @@ static int nexusca_stv0297_tuner_set_params(struct dvb_frontend *fe)
 	struct i2c_msg readmsg = { .addr = 0x63, .flags = I2C_M_RD, .buf = data, .len = 1 };
 	int i;
 
-	div = (p->frequency + 36150000 + 31250) / 62500;
+	div = (params->frequency + 36150000 + 31250) / 62500;
 
 	data[0] = (div >> 8) & 0x7f;
 	data[1] = div & 0xff;
 	data[2] = 0xce;
 
-	if (p->frequency < 45000000)
+	if (params->frequency < 45000000)
 		return -EINVAL;
-	else if (p->frequency < 137000000)
+	else if (params->frequency < 137000000)
 		data[3] = 0x01;
-	else if (p->frequency < 403000000)
+	else if (params->frequency < 403000000)
 		data[3] = 0x02;
-	else if (p->frequency < 860000000)
+	else if (params->frequency < 860000000)
 		data[3] = 0x04;
 	else
 		return -EINVAL;
@@ -1895,36 +1882,27 @@ static struct stv0297_config nexusca_stv0297_config = {
 
 
 
-static int grundig_29504_401_tuner_set_params(struct dvb_frontend *fe)
+static int grundig_29504_401_tuner_set_params(struct dvb_frontend* fe, struct dvb_frontend_parameters *params)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct av7110* av7110 = fe->dvb->priv;
 	u32 div;
 	u8 cfg, cpump, band_select;
 	u8 data[4];
 	struct i2c_msg msg = { .addr = 0x61, .flags = 0, .buf = data, .len = sizeof(data) };
 
-	div = (36125000 + p->frequency) / 166666;
+	div = (36125000 + params->frequency) / 166666;
 
 	cfg = 0x88;
 
-	if (p->frequency < 175000000)
-		cpump = 2;
-	else if (p->frequency < 390000000)
-		cpump = 1;
-	else if (p->frequency < 470000000)
-		cpump = 2;
-	else if (p->frequency < 750000000)
-		cpump = 1;
-	else
-		cpump = 3;
+	if (params->frequency < 175000000) cpump = 2;
+	else if (params->frequency < 390000000) cpump = 1;
+	else if (params->frequency < 470000000) cpump = 2;
+	else if (params->frequency < 750000000) cpump = 1;
+	else cpump = 3;
 
-	if (p->frequency < 175000000)
-		band_select = 0x0e;
-	else if (p->frequency < 470000000)
-		band_select = 0x05;
-	else
-		band_select = 0x03;
+	if (params->frequency < 175000000) band_select = 0x0e;
+	else if (params->frequency < 470000000) band_select = 0x05;
+	else band_select = 0x03;
 
 	data[0] = (div >> 8) & 0x7f;
 	data[1] = div & 0xff;
@@ -1984,14 +1962,15 @@ static int av7110_fe_lock_fix(struct av7110* av7110, fe_status_t status)
 	return ret;
 }
 
-static int av7110_fe_set_frontend(struct dvb_frontend *fe)
+static int av7110_fe_set_frontend(struct dvb_frontend* fe, struct dvb_frontend_parameters* params)
 {
 	struct av7110* av7110 = fe->dvb->priv;
 
 	int ret = av7110_fe_lock_fix(av7110, 0);
-	if (!ret)
-		ret = av7110->fe_set_frontend(fe);
-
+	if (!ret) {
+		av7110->saved_fe_params = *params;
+		ret = av7110->fe_set_frontend(fe, params);
+	}
 	return ret;
 }
 
@@ -2100,7 +2079,7 @@ static void dvb_s_recover(struct av7110* av7110)
 	msleep(20);
 	av7110_fe_set_tone(av7110->fe, av7110->saved_tone);
 
-	av7110_fe_set_frontend(av7110->fe);
+	av7110_fe_set_frontend(av7110->fe, &av7110->saved_fe_params);
 }
 
 static u8 read_pwm(struct av7110* av7110)
@@ -2310,7 +2289,12 @@ static int frontend_init(struct av7110 *av7110)
 /* Budgetpatch note:
  * Original hardware design by Roberto Deza:
  * There is a DVB_Wiki at
- * http://www.linuxtv.org/
+ * http://212.227.36.83/linuxtv/wiki/index.php/Main_Page
+ * where is described this 'DVB TT Budget Patch', on Card Modding:
+ * http://212.227.36.83/linuxtv/wiki/index.php/DVB_TT_Budget_Patch
+ * On the short description there is also a link to a external file,
+ * with more details:
+ * http://perso.wanadoo.es/jesussolano/Ttf_tsc1.zip
  *
  * New software triggering design by Emard that works on
  * original Roberto Deza's hardware:
@@ -2351,7 +2335,7 @@ static int frontend_init(struct av7110 *av7110)
  * increment. That's how the 7146 is programmed to do event
  * counting in this budget-patch.c
  * I *think* HPS setting has something to do with the phase
- * of HS but I can't be 100% sure in that.
+ * of HS but I cant be 100% sure in that.
  *
  * hardware debug note: a working budget card (including budget patch)
  * with vpeirq() interrupt setup in mode "0x90" (every 64K) will
@@ -2441,7 +2425,7 @@ static int __devinit av7110_attach(struct saa7146_dev* dev,
 		 * use 0x15 to track VPE  interrupts - increase by 1 every vpeirq() is called
 		 */
 		saa7146_write(dev, EC1SSR, (0x03<<2) | 3 );
-		/* set event counter 1 threshold to maximum allowed value        (rEC p55) */
+		/* set event counter 1 treshold to maximum allowed value        (rEC p55) */
 		saa7146_write(dev, ECT1R,  0x3fff );
 #endif
 		/* Set RPS1 Address register to point to RPS code               (r108 p42) */
@@ -2491,6 +2475,7 @@ static int __devinit av7110_attach(struct saa7146_dev* dev,
 	   get recognized before the main driver is fully loaded */
 	saa7146_write(dev, GPIO_CTRL, 0x500000);
 
+	av7110->i2c_adap.class = I2C_CLASS_TV_DIGITAL;
 	strlcpy(av7110->i2c_adap.name, pci_ext->ext_priv, sizeof(av7110->i2c_adap.name));
 
 	saa7146_i2c_adapter_prepare(dev, &av7110->i2c_adap, SAA7146_I2C_BUS_BIT_RATE_120); /* 275 kHz */
@@ -2574,7 +2559,7 @@ static int __devinit av7110_attach(struct saa7146_dev* dev,
 		 * use 0x15 to track VPE  interrupts - increase by 1 every vpeirq() is called
 		 */
 		saa7146_write(dev, EC1SSR, (0x03<<2) | 3 );
-		/* set event counter 1 threshold to maximum allowed value        (rEC p55) */
+		/* set event counter 1 treshold to maximum allowed value        (rEC p55) */
 		saa7146_write(dev, ECT1R,  0x3fff );
 #endif
 		/* Setup BUDGETPATCH MAIN RPS1 "program" (p35) */
@@ -2904,7 +2889,7 @@ MODULE_DEVICE_TABLE(pci, pci_tbl);
 
 
 static struct saa7146_extension av7110_extension_driver = {
-	.name		= "av7110",
+	.name		= "dvb",
 	.flags		= SAA7146_USE_I2C_IRQ,
 
 	.module		= THIS_MODULE,

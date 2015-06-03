@@ -18,8 +18,6 @@
  *	Includes, defines, variables, module parameters, ...
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 /* Includes */
 #include <linux/module.h>		/* For module specific items */
 #include <linux/moduleparam.h>		/* For new moduleparam's */
@@ -39,6 +37,7 @@
 
 /* Module and version information */
 #define DRV_NAME	"sch311x_wdt"
+#define PFX		DRV_NAME ": "
 
 /* Runtime registers */
 #define RESGEN			0x1d
@@ -80,8 +79,8 @@ MODULE_PARM_DESC(timeout,
 	"Watchdog timeout in seconds. 1<= timeout <=15300, default="
 		__MODULE_STRING(WATCHDOG_TIMEOUT) ".");
 
-static bool nowayout = WATCHDOG_NOWAYOUT;
-module_param(nowayout, bool, 0);
+static int nowayout = WATCHDOG_NOWAYOUT;
+module_param(nowayout, int, 0);
 MODULE_PARM_DESC(nowayout,
 	"Watchdog cannot be stopped once started (default="
 		__MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
@@ -202,7 +201,7 @@ static void sch311x_wdt_get_status(int *status)
 	spin_lock(&sch311x_wdt_data.io_lock);
 
 	/* -- Watchdog timer control --
-	 * Bit 0   Status Bit: 0 = Timer counting, 1 = Timeout occurred
+	 * Bit 0   Status Bit: 0 = Timer counting, 1 = Timeout occured
 	 * Bit 1   Reserved
 	 * Bit 2   Force Timeout: 1 = Forces WD timeout event (self-cleaning)
 	 * Bit 3   P20 Force Timeout enabled:
@@ -251,7 +250,7 @@ static long sch311x_wdt_ioctl(struct file *file, unsigned int cmd,
 	int new_timeout;
 	void __user *argp = (void __user *)arg;
 	int __user *p = argp;
-	static const struct watchdog_info ident = {
+	static struct watchdog_info ident = {
 		.options		= WDIOF_KEEPALIVEPING |
 					  WDIOF_SETTIMEOUT |
 					  WDIOF_MAGICCLOSE,
@@ -324,7 +323,8 @@ static int sch311x_wdt_close(struct inode *inode, struct file *file)
 	if (sch311x_wdt_expect_close == 42) {
 		sch311x_wdt_stop();
 	} else {
-		pr_crit("Unexpected close, not stopping watchdog!\n");
+		printk(KERN_CRIT PFX
+				"Unexpected close, not stopping watchdog!\n");
 		sch311x_wdt_keepalive();
 	}
 	clear_bit(0, &sch311x_wdt_is_open);
@@ -425,14 +425,14 @@ static int __devinit sch311x_wdt_probe(struct platform_device *pdev)
 	val = therm_trip ? 0x06 : 0x04;
 	outb(val, sch311x_wdt_data.runtime_reg + RESGEN);
 
-	sch311x_wdt_miscdev.parent = dev;
-
 	err = misc_register(&sch311x_wdt_miscdev);
 	if (err != 0) {
 		dev_err(dev, "cannot register miscdev on minor=%d (err=%d)\n",
 							WATCHDOG_MINOR, err);
 		goto exit_release_region3;
 	}
+
+	sch311x_wdt_miscdev.parent = dev;
 
 	dev_info(dev,
 		"SMSC SCH311x WDT initialized. timeout=%d sec (nowayout=%d)\n",
@@ -472,10 +472,15 @@ static void sch311x_wdt_shutdown(struct platform_device *dev)
 	sch311x_wdt_stop();
 }
 
+#define sch311x_wdt_suspend NULL
+#define sch311x_wdt_resume  NULL
+
 static struct platform_driver sch311x_wdt_driver = {
 	.probe		= sch311x_wdt_probe,
 	.remove		= __devexit_p(sch311x_wdt_remove),
 	.shutdown	= sch311x_wdt_shutdown,
+	.suspend	= sch311x_wdt_suspend,
+	.resume		= sch311x_wdt_resume,
 	.driver		= {
 		.owner = THIS_MODULE,
 		.name = DRV_NAME,
@@ -503,20 +508,21 @@ static int __init sch311x_detect(int sio_config_port, unsigned short *addr)
 	sch311x_sio_outb(sio_config_port, 0x07, 0x0a);
 
 	/* Check if Logical Device Register is currently active */
-	if ((sch311x_sio_inb(sio_config_port, 0x30) & 0x01) == 0)
-		pr_info("Seems that LDN 0x0a is not active...\n");
+	if (sch311x_sio_inb(sio_config_port, 0x30) && 0x01 == 0)
+		printk(KERN_INFO PFX "Seems that LDN 0x0a is not active...\n");
 
 	/* Get the base address of the runtime registers */
 	base_addr = (sch311x_sio_inb(sio_config_port, 0x60) << 8) |
 			   sch311x_sio_inb(sio_config_port, 0x61);
 	if (!base_addr) {
-		pr_err("Base address not set\n");
+		printk(KERN_ERR PFX "Base address not set.\n");
 		err = -ENODEV;
 		goto exit;
 	}
 	*addr = base_addr;
 
-	pr_info("Found an SMSC SCH311%d chip at 0x%04x\n", dev_id, base_addr);
+	printk(KERN_INFO PFX "Found an SMSC SCH311%d chip at 0x%04x\n",
+		dev_id, base_addr);
 
 exit:
 	sch311x_sio_exit(sio_config_port);

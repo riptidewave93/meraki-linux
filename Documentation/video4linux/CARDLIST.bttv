@@ -71,7 +71,7 @@
  70 -> Prolink Pixelview PV-BT878P+ (Rev.4C,8E)
  71 -> Lifeview FlyVideo 98EZ (capture only) LR51          [1851:1851]
  72 -> Prolink Pixelview PV-BT878P+9B (PlayTV Pro rev.9B FM+NICAM) [1554:4011]
- 73 -> Sensoray 311/611                                    [6000:0311,6000:0611]
+ 73 -> Sensoray 311                                        [6000:0311]
  74 -> RemoteVision MX (RV605)
  75 -> Powercolor MTV878/ MTV878R/ MTV878F
  76 -> Canopus WinDVR PCI (COMPAQ Presario 3524JP, 5112JP) [0e11:0079]
@@ -100,7 +100,7 @@
  99 -> AD-TVK503
 100 -> Hercules Smart TV Stereo
 101 -> Pace TV & Radio Card
-102 -> IVC-200                                             [0000:a155,0001:a155,0002:a155,0003:a155,0100:a155,0101:a155,0102:a155,0103:a155,0800:a155,0801:a155,0802:a155,0803:a155]
+102 -> IVC-200                                             [0000:a155,0001:a155,0002:a155,0003:a155,0100:a155,0101:a155,0102:a155,0103:a155]
 103 -> Grand X-Guard / Trust 814PCI                        [0304:0102]
 104 -> Nebula Electronics DigiTV                           [0071:0101]
 105 -> ProVideo PV143                                      [aa00:1430,aa00:1431,aa00:1432,aa00:1433,aa03:1433]
@@ -158,4 +158,3 @@
 157 -> Geovision GV-800(S) (master)                        [800a:763d]
 158 -> Geovision GV-800(S) (slave)                         [800b:763d,800c:763d,800d:763d]
 159 -> ProVideo PV183                                      [1830:1540,1831:1540,1832:1540,1833:1540,1834:1540,1835:1540,1836:1540,1837:1540]
-160 -> Tongwei Video Technology TD-3116                    [f200:3116]

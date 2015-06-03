@@ -1,6 +1,6 @@
 /* linux/arch/arm/plat-s3c24xx/irq-om.c
  *
- * Copyright (c) 2003-2004 Simtec Electronics
+ * Copyright (c) 2003,2004 Simtec Electronics
  *	Ben Dooks <ben@simtec.co.uk>
  *	http://armlinux.simtec.co.uk/
  *
@@ -14,13 +14,11 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/interrupt.h>
-#include <linux/irq.h>
+#include <linux/sysdev.h>
 
 #include <plat/cpu.h>
 #include <plat/pm.h>
 #include <plat/irq.h>
-
-#include <asm/irq.h>
 
 /* state for IRQs over sleep */
 
@@ -32,15 +30,15 @@
 unsigned long s3c_irqwake_intallow	= 1L << (IRQ_RTC - IRQ_EINT0) | 0xfL;
 unsigned long s3c_irqwake_eintallow	= 0x0000fff0L;
 
-int s3c_irq_wake(struct irq_data *data, unsigned int state)
+int s3c_irq_wake(unsigned int irqno, unsigned int state)
 {
-	unsigned long irqbit = 1 << (data->irq - IRQ_EINT0);
+	unsigned long irqbit = 1 << (irqno - IRQ_EINT0);
 
 	if (!(s3c_irqwake_intallow & irqbit))
 		return -ENOENT;
 
 	printk(KERN_INFO "wake %s for irq %d\n",
-	       state ? "enabled" : "disabled", data->irq);
+	       state ? "enabled" : "disabled", irqno);
 
 	if (!state)
 		s3c_irqwake_intmask |= irqbit;
@@ -64,7 +62,7 @@ static unsigned long save_extint[3];
 static unsigned long save_eintflt[4];
 static unsigned long save_eintmask;
 
-int s3c24xx_irq_suspend(void)
+int s3c24xx_irq_suspend(struct sys_device *dev, pm_message_t state)
 {
 	unsigned int i;
 
@@ -80,7 +78,7 @@ int s3c24xx_irq_suspend(void)
 	return 0;
 }
 
-void s3c24xx_irq_resume(void)
+int s3c24xx_irq_resume(struct sys_device *dev)
 {
 	unsigned int i;
 
@@ -92,4 +90,6 @@ void s3c24xx_irq_resume(void)
 
 	s3c_pm_do_restore(irq_save, ARRAY_SIZE(irq_save));
 	__raw_writel(save_eintmask, S3C24XX_EINTMASK);
+
+	return 0;
 }

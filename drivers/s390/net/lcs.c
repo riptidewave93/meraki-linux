@@ -37,7 +37,6 @@
 #include <linux/igmp.h>
 #include <linux/delay.h>
 #include <linux/kthread.h>
-#include <linux/slab.h>
 #include <net/arp.h>
 #include <net/ip.h>
 
@@ -48,9 +47,10 @@
 #include <asm/ccwgroup.h>
 
 #include "lcs.h"
+#include "cu3088.h"
 
 
-#if !defined(CONFIG_ETHERNET) && \
+#if !defined(CONFIG_NET_ETHERNET) && \
     !defined(CONFIG_TR) && !defined(CONFIG_FDDI)
 #error Cannot compile lcs.c without some net devices switched on.
 #endif
@@ -60,11 +60,7 @@
  */
 
 static char version[] __initdata = "LCS driver";
-
-/**
-  * the root device for lcs group devices
-  */
-static struct device *lcs_root_dev;
+static char debug_buffer[255];
 
 /**
  * Some prototypes.
@@ -80,7 +76,6 @@ static int lcs_recovery(void *ptr);
 /**
  * Debug Facility Stuff
  */
-static char debug_buffer[255];
 static debug_info_t *lcs_dbf_setup;
 static debug_info_t *lcs_dbf_trace;
 
@@ -840,7 +835,7 @@ lcs_notify_lancmd_waiters(struct lcs_card *card, struct lcs_cmd *cmd)
 }
 
 /**
- * Emit buffer of a lan command.
+ * Emit buffer of a lan comand.
  */
 static void
 lcs_lancmd_timeout(unsigned long data)
@@ -894,7 +889,7 @@ lcs_send_lancmd(struct lcs_card *card, struct lcs_buffer *buffer,
 	rc = lcs_ready_buffer(&card->write, buffer);
 	if (rc)
 		return rc;
-	init_timer_on_stack(&timer);
+	init_timer(&timer);
 	timer.function = lcs_lancmd_timeout;
 	timer.data = (unsigned long) reply;
 	timer.expires = jiffies + HZ*card->lancmd_timeout;
@@ -1122,7 +1117,7 @@ list_modified:
 	list_for_each_entry_safe(ipm, tmp, &card->ipm_list, list){
 		switch (ipm->ipm_state) {
 		case LCS_IPM_STATE_SET_REQUIRED:
-			/* del from ipm_list so no one else can tamper with
+			/* del from ipm_list so noone else can tamper with
 			 * this entry */
 			list_del_init(&ipm->list);
 			spin_unlock_irqrestore(&card->ipm_lock, flags);
@@ -1188,8 +1183,7 @@ lcs_remove_mc_addresses(struct lcs_card *card, struct in_device *in4_dev)
 	spin_lock_irqsave(&card->ipm_lock, flags);
 	list_for_each(l, &card->ipm_list) {
 		ipm = list_entry(l, struct lcs_ipm_list, list);
-		for (im4 = rcu_dereference(in4_dev->mc_list);
-		     im4 != NULL; im4 = rcu_dereference(im4->next_rcu)) {
+		for (im4 = in4_dev->mc_list; im4 != NULL; im4 = im4->next) {
 			lcs_get_mac_for_ipm(im4->multiaddr, buf, card->dev);
 			if ( (ipm->ipm.ip_addr == im4->multiaddr) &&
 			     (memcmp(buf, &ipm->ipm.mac_addr,
@@ -1234,13 +1228,13 @@ lcs_set_mc_addresses(struct lcs_card *card, struct in_device *in4_dev)
 	unsigned long flags;
 
 	LCS_DBF_TEXT(4, trace, "setmclst");
-	for (im4 = rcu_dereference(in4_dev->mc_list); im4 != NULL;
-	     im4 = rcu_dereference(im4->next_rcu)) {
+	for (im4 = in4_dev->mc_list; im4; im4 = im4->next) {
 		lcs_get_mac_for_ipm(im4->multiaddr, buf, card->dev);
 		ipm = lcs_check_addr_entry(card, im4, buf);
 		if (ipm != NULL)
 			continue;	/* Address already in list. */
-		ipm = kzalloc(sizeof(struct lcs_ipm_list), GFP_ATOMIC);
+		ipm = (struct lcs_ipm_list *)
+			kzalloc(sizeof(struct lcs_ipm_list), GFP_ATOMIC);
 		if (ipm == NULL) {
 			pr_info("Not enough memory to add"
 				" new multicast entry!\n");
@@ -1271,10 +1265,10 @@ lcs_register_mc_addresses(void *data)
 	in4_dev = in_dev_get(card->dev);
 	if (in4_dev == NULL)
 		goto out;
-	rcu_read_lock();
+	read_lock(&in4_dev->mc_list_lock);
 	lcs_remove_mc_addresses(card,in4_dev);
 	lcs_set_mc_addresses(card, in4_dev);
-	rcu_read_unlock();
+	read_unlock(&in4_dev->mc_list_lock);
 	in_dev_put(in4_dev);
 
 	netif_carrier_off(card->dev);
@@ -1481,6 +1475,7 @@ lcs_tasklet(unsigned long data)
 	struct lcs_channel *channel;
 	struct lcs_buffer *iob;
 	int buf_idx;
+	int rc;
 
 	channel = (struct lcs_channel *) data;
 	LCS_DBF_TEXT_(5, trace, "tlet%s", dev_name(&channel->ccwdev->dev));
@@ -1497,11 +1492,14 @@ lcs_tasklet(unsigned long data)
 	channel->buf_idx = buf_idx;
 
 	if (channel->state == LCS_CH_STATE_STOPPED)
-		lcs_start_channel(channel);
+		// FIXME: what if rc != 0 ??
+		rc = lcs_start_channel(channel);
 	spin_lock_irqsave(get_ccwdev_lock(channel->ccwdev), flags);
 	if (channel->state == LCS_CH_STATE_SUSPENDED &&
-	    channel->iob[channel->io_idx].state == LCS_BUF_STATE_READY)
-		__lcs_resume_channel(channel);
+	    channel->iob[channel->io_idx].state == LCS_BUF_STATE_READY) {
+		// FIXME: what if rc != 0 ??
+		rc = __lcs_resume_channel(channel);
+	}
 	spin_unlock_irqrestore(get_ccwdev_lock(channel->ccwdev), flags);
 
 	/* Something happened on the channel. Wake up waiters. */
@@ -1634,7 +1632,7 @@ lcs_startlan_auto(struct lcs_card *card)
 	int rc;
 
 	LCS_DBF_TEXT(2, trace, "strtauto");
-#ifdef CONFIG_ETHERNET
+#ifdef CONFIG_NET_ETHERNET
 	card->lan_type = LCS_FRAME_TYPE_ENET;
 	rc = lcs_send_startlan(card, LCS_INITIATOR_TCPIP);
 	if (rc == 0)
@@ -1970,15 +1968,6 @@ lcs_portno_store (struct device *dev, struct device_attribute *attr, const char 
 
 static DEVICE_ATTR(portno, 0644, lcs_portno_show, lcs_portno_store);
 
-static const char *lcs_type[] = {
-	"not a channel",
-	"2216 parallel",
-	"2216 channel",
-	"OSA LCS card",
-	"unknown channel type",
-	"unsupported channel type",
-};
-
 static ssize_t
 lcs_type_show(struct device *dev, struct device_attribute *attr, char *buf)
 {
@@ -1988,7 +1977,7 @@ lcs_type_show(struct device *dev, struct device_attribute *attr, char *buf)
 	if (!cgdev)
 		return -ENODEV;
 
-	return sprintf(buf, "%s\n", lcs_type[cgdev->cdev[0]->id.driver_info]);
+	return sprintf(buf, "%s\n", cu3088_type[cgdev->cdev[0]->id.driver_info]);
 }
 
 static DEVICE_ATTR(type, 0444, lcs_type_show, NULL);
@@ -2120,7 +2109,7 @@ static const struct net_device_ops lcs_mc_netdev_ops = {
 	.ndo_stop		= lcs_stop_device,
 	.ndo_get_stats		= lcs_getstats,
 	.ndo_start_xmit		= lcs_start_xmit,
-	.ndo_set_rx_mode	= lcs_set_multicast_list,
+	.ndo_set_multicast_list = lcs_set_multicast_list,
 };
 
 static int
@@ -2141,12 +2130,8 @@ lcs_new_device(struct ccwgroup_device *ccwgdev)
 	card->write.ccwdev = ccwgdev->cdev[1];
 
 	recover_state = card->state;
-	rc = ccw_device_set_online(card->read.ccwdev);
-	if (rc)
-		goto out_err;
-	rc = ccw_device_set_online(card->write.ccwdev);
-	if (rc)
-		goto out_werr;
+	ccw_device_set_online(card->read.ccwdev);
+	ccw_device_set_online(card->write.ccwdev);
 
 	LCS_DBF_TEXT(3, setup, "lcsnewdv");
 
@@ -2166,7 +2151,7 @@ lcs_new_device(struct ccwgroup_device *ccwgdev)
 		goto netdev_out;
 	}
 	switch (card->lan_type) {
-#ifdef CONFIG_ETHERNET
+#ifdef CONFIG_NET_ETHERNET
 	case LCS_FRAME_TYPE_ENET:
 		card->lan_type_trans = eth_type_trans;
 		dev = alloc_etherdev(0);
@@ -2225,10 +2210,8 @@ netdev_out:
 	return 0;
 out:
 
-	ccw_device_set_offline(card->write.ccwdev);
-out_werr:
 	ccw_device_set_offline(card->read.ccwdev);
-out_err:
+	ccw_device_set_offline(card->write.ccwdev);
 	return -ENODEV;
 }
 
@@ -2240,7 +2223,7 @@ __lcs_shutdown_device(struct ccwgroup_device *ccwgdev, int recovery_mode)
 {
 	struct lcs_card *card;
 	enum lcs_dev_states recover_state;
-	int ret = 0, ret2 = 0, ret3 = 0;
+	int ret;
 
 	LCS_DBF_TEXT(3, setup, "shtdndev");
 	card = dev_get_drvdata(&ccwgdev->dev);
@@ -2255,15 +2238,13 @@ __lcs_shutdown_device(struct ccwgroup_device *ccwgdev, int recovery_mode)
 	recover_state = card->state;
 
 	ret = lcs_stop_device(card->dev);
-	ret2 = ccw_device_set_offline(card->read.ccwdev);
-	ret3 = ccw_device_set_offline(card->write.ccwdev);
-	if (!ret)
-		ret = (ret2) ? ret2 : ret3;
-	if (ret)
-		LCS_DBF_TEXT_(3, setup, "1err:%d", ret);
+	ret = ccw_device_set_offline(card->read.ccwdev);
+	ret = ccw_device_set_offline(card->write.ccwdev);
 	if (recover_state == DEV_STATE_UP) {
 		card->state = DEV_STATE_RECOVER;
 	}
+	if (ret)
+		return ret;
 	return 0;
 }
 
@@ -2383,33 +2364,12 @@ static int lcs_restore(struct ccwgroup_device *gdev)
 	return lcs_pm_resume(card);
 }
 
-static struct ccw_device_id lcs_ids[] = {
-	{CCW_DEVICE(0x3088, 0x08), .driver_info = lcs_channel_type_parallel},
-	{CCW_DEVICE(0x3088, 0x1f), .driver_info = lcs_channel_type_2216},
-	{CCW_DEVICE(0x3088, 0x60), .driver_info = lcs_channel_type_osa2},
-	{},
-};
-MODULE_DEVICE_TABLE(ccw, lcs_ids);
-
-static struct ccw_driver lcs_ccw_driver = {
-	.driver = {
-		.owner	= THIS_MODULE,
-		.name	= "lcs",
-	},
-	.ids	= lcs_ids,
-	.probe	= ccwgroup_probe_ccwdev,
-	.remove	= ccwgroup_remove_ccwdev,
-	.int_class = IOINT_LCS,
-};
-
 /**
  * LCS ccwgroup driver registration
  */
 static struct ccwgroup_driver lcs_group_driver = {
-	.driver = {
-		.owner	= THIS_MODULE,
-		.name	= "lcs",
-	},
+	.owner       = THIS_MODULE,
+	.name        = "lcs",
 	.max_slaves  = 2,
 	.driver_id   = 0xD3C3E2,
 	.probe       = lcs_probe_device,
@@ -2423,33 +2383,6 @@ static struct ccwgroup_driver lcs_group_driver = {
 	.restore     = lcs_restore,
 };
 
-static ssize_t
-lcs_driver_group_store(struct device_driver *ddrv, const char *buf,
-		       size_t count)
-{
-	int err;
-	err = ccwgroup_create_from_string(lcs_root_dev,
-					  lcs_group_driver.driver_id,
-					  &lcs_ccw_driver, 2, buf);
-	return err ? err : count;
-}
-
-static DRIVER_ATTR(group, 0200, NULL, lcs_driver_group_store);
-
-static struct attribute *lcs_group_attrs[] = {
-	&driver_attr_group.attr,
-	NULL,
-};
-
-static struct attribute_group lcs_group_attr_group = {
-	.attrs = lcs_group_attrs,
-};
-
-static const struct attribute_group *lcs_group_attr_groups[] = {
-	&lcs_group_attr_group,
-	NULL,
-};
-
 /**
  *  LCS Module/Kernel initialization function
  */
@@ -2461,30 +2394,17 @@ __init lcs_init_module(void)
 	pr_info("Loading %s\n", version);
 	rc = lcs_register_debug_facility();
 	LCS_DBF_TEXT(0, setup, "lcsinit");
-	if (rc)
-		goto out_err;
-	lcs_root_dev = root_device_register("lcs");
-	rc = IS_ERR(lcs_root_dev) ? PTR_ERR(lcs_root_dev) : 0;
-	if (rc)
-		goto register_err;
-	rc = ccw_driver_register(&lcs_ccw_driver);
-	if (rc)
-		goto ccw_err;
-	lcs_group_driver.driver.groups = lcs_group_attr_groups;
-	rc = ccwgroup_driver_register(&lcs_group_driver);
-	if (rc)
-		goto ccwgroup_err;
-	return 0;
+	if (rc) {
+		pr_err("Initialization failed\n");
+		return rc;
+	}
 
-ccwgroup_err:
-	ccw_driver_unregister(&lcs_ccw_driver);
-ccw_err:
-	root_device_unregister(lcs_root_dev);
-register_err:
-	lcs_unregister_debug_facility();
-out_err:
-	pr_err("Initializing the lcs device driver failed\n");
-	return rc;
+	rc = register_cu3088_discipline(&lcs_group_driver);
+	if (rc) {
+		pr_err("Initialization failed\n");
+		return rc;
+	}
+	return 0;
 }
 
 
@@ -2496,11 +2416,7 @@ __exit lcs_cleanup_module(void)
 {
 	pr_info("Terminating lcs module.\n");
 	LCS_DBF_TEXT(0, trace, "cleanup");
-	driver_remove_file(&lcs_group_driver.driver,
-			   &driver_attr_group);
-	ccwgroup_driver_unregister(&lcs_group_driver);
-	ccw_driver_unregister(&lcs_ccw_driver);
-	root_device_unregister(lcs_root_dev);
+	unregister_cu3088_discipline(&lcs_group_driver);
 	lcs_unregister_debug_facility();
 }
 

@@ -78,12 +78,12 @@
 /*  argument to the ioctl system call when issuing a request to */
 /*  the p80211 module. */
 
-struct p80211ioctl_req {
+typedef struct p80211ioctl_req {
 	char name[WLAN_DEVNAMELEN_MAX];
 	caddr_t data;
 	u32 magic;
 	u16 len;
 	u32 result;
-} __packed;
+} __attribute__ ((packed)) p80211ioctl_req_t;
 
 #endif /* _P80211IOCTL_H */

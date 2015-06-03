@@ -33,11 +33,11 @@
 #include <linux/ioctl.h>
 #include <linux/delay.h>
 #include <linux/i2c.h>
+#include <linux/i2c-id.h>
 #include <linux/videodev2.h>
-#include <linux/slab.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-chip-ident.h>
-#include <media/v4l2-ctrls.h>
+#include <media/v4l2-i2c-drv.h>
 #include <media/bt819.h>
 
 MODULE_DESCRIPTION("Brooktree-819 video decoder driver");
@@ -53,23 +53,21 @@ MODULE_PARM_DESC(debug, "Debug level (0-1)");
 
 struct bt819 {
 	struct v4l2_subdev sd;
-	struct v4l2_ctrl_handler hdl;
 	unsigned char reg[32];
 
 	v4l2_std_id norm;
 	int ident;
 	int input;
 	int enable;
+	int bright;
+	int contrast;
+	int hue;
+	int sat;
 };
 
 static inline struct bt819 *to_bt819(struct v4l2_subdev *sd)
 {
 	return container_of(sd, struct bt819, sd);
-}
-
-static inline struct v4l2_subdev *to_sd(struct v4l2_ctrl *ctrl)
-{
-	return &container_of(ctrl->handler, struct bt819, hdl)->sd;
 }
 
 struct timing {
@@ -229,7 +227,7 @@ static int bt819_status(struct v4l2_subdev *sd, u32 *pstatus, v4l2_std_id *pstd)
 	if (pstd)
 		*pstd = std;
 	if (pstatus)
-		*pstatus = res;
+		*pstatus = status;
 
 	v4l2_dbg(1, debug, sd, "get status %x\n", status);
 	return 0;
@@ -256,7 +254,7 @@ static int bt819_s_std(struct v4l2_subdev *sd, v4l2_std_id std)
 		v4l2_err(sd, "no notify found!\n");
 
 	if (std & V4L2_STD_NTSC) {
-		v4l2_subdev_notify(sd, BT819_FIFO_RESET_LOW, NULL);
+		v4l2_subdev_notify(sd, BT819_FIFO_RESET_LOW, 0);
 		bt819_setbit(decoder, 0x01, 0, 1);
 		bt819_setbit(decoder, 0x01, 1, 0);
 		bt819_setbit(decoder, 0x01, 5, 0);
@@ -265,7 +263,7 @@ static int bt819_s_std(struct v4l2_subdev *sd, v4l2_std_id std)
 		/* bt819_setbit(decoder, 0x1a,  5, 1); */
 		timing = &timing_data[1];
 	} else if (std & V4L2_STD_PAL) {
-		v4l2_subdev_notify(sd, BT819_FIFO_RESET_LOW, NULL);
+		v4l2_subdev_notify(sd, BT819_FIFO_RESET_LOW, 0);
 		bt819_setbit(decoder, 0x01, 0, 1);
 		bt819_setbit(decoder, 0x01, 1, 1);
 		bt819_setbit(decoder, 0x01, 5, 1);
@@ -290,7 +288,7 @@ static int bt819_s_std(struct v4l2_subdev *sd, v4l2_std_id std)
 	bt819_write(decoder, 0x08, (timing->hscale >> 8) & 0xff);
 	bt819_write(decoder, 0x09, timing->hscale & 0xff);
 	decoder->norm = std;
-	v4l2_subdev_notify(sd, BT819_FIFO_RESET_HIGH, NULL);
+	v4l2_subdev_notify(sd, BT819_FIFO_RESET_HIGH, 0);
 	return 0;
 }
 
@@ -301,14 +299,14 @@ static int bt819_s_routing(struct v4l2_subdev *sd,
 
 	v4l2_dbg(1, debug, sd, "set input %x\n", input);
 
-	if (input > 7)
+	if (input < 0 || input > 7)
 		return -EINVAL;
 
 	if (sd->v4l2_dev == NULL || sd->v4l2_dev->notify == NULL)
 		v4l2_err(sd, "no notify found!\n");
 
 	if (decoder->input != input) {
-		v4l2_subdev_notify(sd, BT819_FIFO_RESET_LOW, NULL);
+		v4l2_subdev_notify(sd, BT819_FIFO_RESET_LOW, 0);
 		decoder->input = input;
 		/* select mode */
 		if (decoder->input == 0) {
@@ -318,7 +316,7 @@ static int bt819_s_routing(struct v4l2_subdev *sd,
 			bt819_setbit(decoder, 0x0b, 6, 1);
 			bt819_setbit(decoder, 0x1a, 1, 0);
 		}
-		v4l2_subdev_notify(sd, BT819_FIFO_RESET_HIGH, NULL);
+		v4l2_subdev_notify(sd, BT819_FIFO_RESET_HIGH, 0);
 	}
 	return 0;
 }
@@ -336,37 +334,96 @@ static int bt819_s_stream(struct v4l2_subdev *sd, int enable)
 	return 0;
 }
 
-static int bt819_s_ctrl(struct v4l2_ctrl *ctrl)
+static int bt819_queryctrl(struct v4l2_subdev *sd, struct v4l2_queryctrl *qc)
 {
-	struct v4l2_subdev *sd = to_sd(ctrl);
+	switch (qc->id) {
+	case V4L2_CID_BRIGHTNESS:
+		v4l2_ctrl_query_fill(qc, -128, 127, 1, 0);
+		break;
+
+	case V4L2_CID_CONTRAST:
+		v4l2_ctrl_query_fill(qc, 0, 511, 1, 256);
+		break;
+
+	case V4L2_CID_SATURATION:
+		v4l2_ctrl_query_fill(qc, 0, 511, 1, 256);
+		break;
+
+	case V4L2_CID_HUE:
+		v4l2_ctrl_query_fill(qc, -128, 127, 1, 0);
+		break;
+
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static int bt819_s_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
+{
 	struct bt819 *decoder = to_bt819(sd);
 	int temp;
 
 	switch (ctrl->id) {
 	case V4L2_CID_BRIGHTNESS:
-		bt819_write(decoder, 0x0a, ctrl->val);
+		if (decoder->bright == ctrl->value)
+			break;
+		decoder->bright = ctrl->value;
+		bt819_write(decoder, 0x0a, decoder->bright);
 		break;
 
 	case V4L2_CID_CONTRAST:
-		bt819_write(decoder, 0x0c, ctrl->val & 0xff);
-		bt819_setbit(decoder, 0x0b, 2, ((ctrl->val >> 8) & 0x01));
+		if (decoder->contrast == ctrl->value)
+			break;
+		decoder->contrast = ctrl->value;
+		bt819_write(decoder, 0x0c, decoder->contrast & 0xff);
+		bt819_setbit(decoder, 0x0b, 2, ((decoder->contrast >> 8) & 0x01));
 		break;
 
 	case V4L2_CID_SATURATION:
-		bt819_write(decoder, 0x0d, (ctrl->val >> 7) & 0xff);
-		bt819_setbit(decoder, 0x0b, 1, ((ctrl->val >> 15) & 0x01));
+		if (decoder->sat == ctrl->value)
+			break;
+		decoder->sat = ctrl->value;
+		bt819_write(decoder, 0x0d, (decoder->sat >> 7) & 0xff);
+		bt819_setbit(decoder, 0x0b, 1, ((decoder->sat >> 15) & 0x01));
 
 		/* Ratio between U gain and V gain must stay the same as
 		   the ratio between the default U and V gain values. */
-		temp = (ctrl->val * 180) / 254;
+		temp = (decoder->sat * 180) / 254;
 		bt819_write(decoder, 0x0e, (temp >> 7) & 0xff);
 		bt819_setbit(decoder, 0x0b, 0, (temp >> 15) & 0x01);
 		break;
 
 	case V4L2_CID_HUE:
-		bt819_write(decoder, 0x0f, ctrl->val);
+		if (decoder->hue == ctrl->value)
+			break;
+		decoder->hue = ctrl->value;
+		bt819_write(decoder, 0x0f, decoder->hue);
 		break;
 
+	default:
+		return -EINVAL;
+	}
+	return 0;
+}
+
+static int bt819_g_ctrl(struct v4l2_subdev *sd, struct v4l2_control *ctrl)
+{
+	struct bt819 *decoder = to_bt819(sd);
+
+	switch (ctrl->id) {
+	case V4L2_CID_BRIGHTNESS:
+		ctrl->value = decoder->bright;
+		break;
+	case V4L2_CID_CONTRAST:
+		ctrl->value = decoder->contrast;
+		break;
+	case V4L2_CID_SATURATION:
+		ctrl->value = decoder->sat;
+		break;
+	case V4L2_CID_HUE:
+		ctrl->value = decoder->hue;
+		break;
 	default:
 		return -EINVAL;
 	}
@@ -383,19 +440,11 @@ static int bt819_g_chip_ident(struct v4l2_subdev *sd, struct v4l2_dbg_chip_ident
 
 /* ----------------------------------------------------------------------- */
 
-static const struct v4l2_ctrl_ops bt819_ctrl_ops = {
-	.s_ctrl = bt819_s_ctrl,
-};
-
 static const struct v4l2_subdev_core_ops bt819_core_ops = {
 	.g_chip_ident = bt819_g_chip_ident,
-	.g_ext_ctrls = v4l2_subdev_g_ext_ctrls,
-	.try_ext_ctrls = v4l2_subdev_try_ext_ctrls,
-	.s_ext_ctrls = v4l2_subdev_s_ext_ctrls,
-	.g_ctrl = v4l2_subdev_g_ctrl,
-	.s_ctrl = v4l2_subdev_s_ctrl,
-	.queryctrl = v4l2_subdev_queryctrl,
-	.querymenu = v4l2_subdev_querymenu,
+	.g_ctrl = bt819_g_ctrl,
+	.s_ctrl = bt819_s_ctrl,
+	.queryctrl = bt819_queryctrl,
 	.s_std = bt819_s_std,
 };
 
@@ -457,40 +506,23 @@ static int bt819_probe(struct i2c_client *client,
 	decoder->norm = V4L2_STD_NTSC;
 	decoder->input = 0;
 	decoder->enable = 1;
+	decoder->bright = 0;
+	decoder->contrast = 0xd8;	/* 100% of original signal */
+	decoder->hue = 0;
+	decoder->sat = 0xfe;		/* 100% of original signal */
 
 	i = bt819_init(sd);
 	if (i < 0)
 		v4l2_dbg(1, debug, sd, "init status %d\n", i);
-
-	v4l2_ctrl_handler_init(&decoder->hdl, 4);
-	v4l2_ctrl_new_std(&decoder->hdl, &bt819_ctrl_ops,
-			V4L2_CID_BRIGHTNESS, -128, 127, 1, 0);
-	v4l2_ctrl_new_std(&decoder->hdl, &bt819_ctrl_ops,
-			V4L2_CID_CONTRAST, 0, 511, 1, 0xd8);
-	v4l2_ctrl_new_std(&decoder->hdl, &bt819_ctrl_ops,
-			V4L2_CID_SATURATION, 0, 511, 1, 0xfe);
-	v4l2_ctrl_new_std(&decoder->hdl, &bt819_ctrl_ops,
-			V4L2_CID_HUE, -128, 127, 1, 0);
-	sd->ctrl_handler = &decoder->hdl;
-	if (decoder->hdl.error) {
-		int err = decoder->hdl.error;
-
-		v4l2_ctrl_handler_free(&decoder->hdl);
-		kfree(decoder);
-		return err;
-	}
-	v4l2_ctrl_handler_setup(&decoder->hdl);
 	return 0;
 }
 
 static int bt819_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
-	struct bt819 *decoder = to_bt819(sd);
 
 	v4l2_device_unregister_subdev(sd);
-	v4l2_ctrl_handler_free(&decoder->hdl);
-	kfree(decoder);
+	kfree(to_bt819(sd));
 	return 0;
 }
 
@@ -504,14 +536,9 @@ static const struct i2c_device_id bt819_id[] = {
 };
 MODULE_DEVICE_TABLE(i2c, bt819_id);
 
-static struct i2c_driver bt819_driver = {
-	.driver = {
-		.owner	= THIS_MODULE,
-		.name	= "bt819",
-	},
-	.probe		= bt819_probe,
-	.remove		= bt819_remove,
-	.id_table	= bt819_id,
+static struct v4l2_i2c_driver_data v4l2_i2c_data = {
+	.name = "bt819",
+	.probe = bt819_probe,
+	.remove = bt819_remove,
+	.id_table = bt819_id,
 };
-
-module_i2c_driver(bt819_driver);

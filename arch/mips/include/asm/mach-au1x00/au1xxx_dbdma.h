@@ -37,6 +37,14 @@
 
 #ifndef _LANGUAGE_ASSEMBLY
 
+/*
+ * The DMA base addresses.
+ * The channels are every 256 bytes (0x0100) from the channel 0 base.
+ * Interrupt status/enable is bits 15:0 for channels 15 to zero.
+ */
+#define DDMA_GLOBAL_BASE	0xb4003000
+#define DDMA_CHANNEL_BASE	0xb4002000
+
 typedef volatile struct dbdma_global {
 	u32	ddma_config;
 	u32	ddma_intstat;
@@ -126,93 +134,66 @@ typedef volatile struct au1xxx_ddma_desc {
 #define SW_STATUS_INUSE 	(1 << 0)
 
 /* Command 0 device IDs. */
-#define AU1550_DSCR_CMD0_UART0_TX	0
-#define AU1550_DSCR_CMD0_UART0_RX	1
-#define AU1550_DSCR_CMD0_UART3_TX	2
-#define AU1550_DSCR_CMD0_UART3_RX	3
-#define AU1550_DSCR_CMD0_DMA_REQ0	4
-#define AU1550_DSCR_CMD0_DMA_REQ1	5
-#define AU1550_DSCR_CMD0_DMA_REQ2	6
-#define AU1550_DSCR_CMD0_DMA_REQ3	7
-#define AU1550_DSCR_CMD0_USBDEV_RX0	8
-#define AU1550_DSCR_CMD0_USBDEV_TX0	9
-#define AU1550_DSCR_CMD0_USBDEV_TX1	10
-#define AU1550_DSCR_CMD0_USBDEV_TX2	11
-#define AU1550_DSCR_CMD0_USBDEV_RX3	12
-#define AU1550_DSCR_CMD0_USBDEV_RX4	13
-#define AU1550_DSCR_CMD0_PSC0_TX	14
-#define AU1550_DSCR_CMD0_PSC0_RX	15
-#define AU1550_DSCR_CMD0_PSC1_TX	16
-#define AU1550_DSCR_CMD0_PSC1_RX	17
-#define AU1550_DSCR_CMD0_PSC2_TX	18
-#define AU1550_DSCR_CMD0_PSC2_RX	19
-#define AU1550_DSCR_CMD0_PSC3_TX	20
-#define AU1550_DSCR_CMD0_PSC3_RX	21
-#define AU1550_DSCR_CMD0_PCI_WRITE	22
-#define AU1550_DSCR_CMD0_NAND_FLASH	23
-#define AU1550_DSCR_CMD0_MAC0_RX	24
-#define AU1550_DSCR_CMD0_MAC0_TX	25
-#define AU1550_DSCR_CMD0_MAC1_RX	26
-#define AU1550_DSCR_CMD0_MAC1_TX	27
+#ifdef CONFIG_SOC_AU1550
+#define DSCR_CMD0_UART0_TX	0
+#define DSCR_CMD0_UART0_RX	1
+#define DSCR_CMD0_UART3_TX	2
+#define DSCR_CMD0_UART3_RX	3
+#define DSCR_CMD0_DMA_REQ0	4
+#define DSCR_CMD0_DMA_REQ1	5
+#define DSCR_CMD0_DMA_REQ2	6
+#define DSCR_CMD0_DMA_REQ3	7
+#define DSCR_CMD0_USBDEV_RX0	8
+#define DSCR_CMD0_USBDEV_TX0	9
+#define DSCR_CMD0_USBDEV_TX1	10
+#define DSCR_CMD0_USBDEV_TX2	11
+#define DSCR_CMD0_USBDEV_RX3	12
+#define DSCR_CMD0_USBDEV_RX4	13
+#define DSCR_CMD0_PSC0_TX	14
+#define DSCR_CMD0_PSC0_RX	15
+#define DSCR_CMD0_PSC1_TX	16
+#define DSCR_CMD0_PSC1_RX	17
+#define DSCR_CMD0_PSC2_TX	18
+#define DSCR_CMD0_PSC2_RX	19
+#define DSCR_CMD0_PSC3_TX	20
+#define DSCR_CMD0_PSC3_RX	21
+#define DSCR_CMD0_PCI_WRITE	22
+#define DSCR_CMD0_NAND_FLASH	23
+#define DSCR_CMD0_MAC0_RX	24
+#define DSCR_CMD0_MAC0_TX	25
+#define DSCR_CMD0_MAC1_RX	26
+#define DSCR_CMD0_MAC1_TX	27
+#endif /* CONFIG_SOC_AU1550 */
 
-#define AU1200_DSCR_CMD0_UART0_TX	0
-#define AU1200_DSCR_CMD0_UART0_RX	1
-#define AU1200_DSCR_CMD0_UART1_TX	2
-#define AU1200_DSCR_CMD0_UART1_RX	3
-#define AU1200_DSCR_CMD0_DMA_REQ0	4
-#define AU1200_DSCR_CMD0_DMA_REQ1	5
-#define AU1200_DSCR_CMD0_MAE_BE		6
-#define AU1200_DSCR_CMD0_MAE_FE		7
-#define AU1200_DSCR_CMD0_SDMS_TX0	8
-#define AU1200_DSCR_CMD0_SDMS_RX0	9
-#define AU1200_DSCR_CMD0_SDMS_TX1	10
-#define AU1200_DSCR_CMD0_SDMS_RX1	11
-#define AU1200_DSCR_CMD0_AES_TX		13
-#define AU1200_DSCR_CMD0_AES_RX		12
-#define AU1200_DSCR_CMD0_PSC0_TX	14
-#define AU1200_DSCR_CMD0_PSC0_RX	15
-#define AU1200_DSCR_CMD0_PSC1_TX	16
-#define AU1200_DSCR_CMD0_PSC1_RX	17
-#define AU1200_DSCR_CMD0_CIM_RXA	18
-#define AU1200_DSCR_CMD0_CIM_RXB	19
-#define AU1200_DSCR_CMD0_CIM_RXC	20
-#define AU1200_DSCR_CMD0_MAE_BOTH	21
-#define AU1200_DSCR_CMD0_LCD		22
-#define AU1200_DSCR_CMD0_NAND_FLASH	23
-#define AU1200_DSCR_CMD0_PSC0_SYNC	24
-#define AU1200_DSCR_CMD0_PSC1_SYNC	25
-#define AU1200_DSCR_CMD0_CIM_SYNC	26
-
-#define AU1300_DSCR_CMD0_UART0_TX      0
-#define AU1300_DSCR_CMD0_UART0_RX      1
-#define AU1300_DSCR_CMD0_UART1_TX      2
-#define AU1300_DSCR_CMD0_UART1_RX      3
-#define AU1300_DSCR_CMD0_UART2_TX      4
-#define AU1300_DSCR_CMD0_UART2_RX      5
-#define AU1300_DSCR_CMD0_UART3_TX      6
-#define AU1300_DSCR_CMD0_UART3_RX      7
-#define AU1300_DSCR_CMD0_SDMS_TX0      8
-#define AU1300_DSCR_CMD0_SDMS_RX0      9
-#define AU1300_DSCR_CMD0_SDMS_TX1      10
-#define AU1300_DSCR_CMD0_SDMS_RX1      11
-#define AU1300_DSCR_CMD0_AES_TX        12
-#define AU1300_DSCR_CMD0_AES_RX        13
-#define AU1300_DSCR_CMD0_PSC0_TX       14
-#define AU1300_DSCR_CMD0_PSC0_RX       15
-#define AU1300_DSCR_CMD0_PSC1_TX       16
-#define AU1300_DSCR_CMD0_PSC1_RX       17
-#define AU1300_DSCR_CMD0_PSC2_TX       18
-#define AU1300_DSCR_CMD0_PSC2_RX       19
-#define AU1300_DSCR_CMD0_PSC3_TX       20
-#define AU1300_DSCR_CMD0_PSC3_RX       21
-#define AU1300_DSCR_CMD0_LCD           22
-#define AU1300_DSCR_CMD0_NAND_FLASH    23
-#define AU1300_DSCR_CMD0_SDMS_TX2      24
-#define AU1300_DSCR_CMD0_SDMS_RX2      25
-#define AU1300_DSCR_CMD0_CIM_SYNC      26
-#define AU1300_DSCR_CMD0_UDMA          27
-#define AU1300_DSCR_CMD0_DMA_REQ0      28
-#define AU1300_DSCR_CMD0_DMA_REQ1      29
+#ifdef CONFIG_SOC_AU1200
+#define DSCR_CMD0_UART0_TX	0
+#define DSCR_CMD0_UART0_RX	1
+#define DSCR_CMD0_UART1_TX	2
+#define DSCR_CMD0_UART1_RX	3
+#define DSCR_CMD0_DMA_REQ0	4
+#define DSCR_CMD0_DMA_REQ1	5
+#define DSCR_CMD0_MAE_BE	6
+#define DSCR_CMD0_MAE_FE	7
+#define DSCR_CMD0_SDMS_TX0	8
+#define DSCR_CMD0_SDMS_RX0	9
+#define DSCR_CMD0_SDMS_TX1	10
+#define DSCR_CMD0_SDMS_RX1	11
+#define DSCR_CMD0_AES_TX	13
+#define DSCR_CMD0_AES_RX	12
+#define DSCR_CMD0_PSC0_TX	14
+#define DSCR_CMD0_PSC0_RX	15
+#define DSCR_CMD0_PSC1_TX	16
+#define DSCR_CMD0_PSC1_RX	17
+#define DSCR_CMD0_CIM_RXA	18
+#define DSCR_CMD0_CIM_RXB	19
+#define DSCR_CMD0_CIM_RXC	20
+#define DSCR_CMD0_MAE_BOTH	21
+#define DSCR_CMD0_LCD		22
+#define DSCR_CMD0_NAND_FLASH	23
+#define DSCR_CMD0_PSC0_SYNC	24
+#define DSCR_CMD0_PSC1_SYNC	25
+#define DSCR_CMD0_CIM_SYNC	26
+#endif /* CONFIG_SOC_AU1200 */
 
 #define DSCR_CMD0_THROTTLE	30
 #define DSCR_CMD0_ALWAYS	31
@@ -324,7 +305,6 @@ typedef struct dbdma_chan_config {
 	dbdev_tab_t		*chan_dest;
 	au1x_dma_chan_t		*chan_ptr;
 	au1x_ddma_desc_t	*chan_desc_base;
-	u32			cdb_membase; /* kmalloc base of above */
 	au1x_ddma_desc_t	*get_ptr, *put_ptr, *cur_ptr;
 	void			*chan_callparam;
 	void			(*chan_callback)(int, void *);
@@ -358,8 +338,8 @@ u32 au1xxx_dbdma_set_devwidth(u32 chanid, int bits);
 u32 au1xxx_dbdma_ring_alloc(u32 chanid, int entries);
 
 /* Put buffers on source/destination descriptors. */
-u32 au1xxx_dbdma_put_source(u32 chanid, dma_addr_t buf, int nbytes, u32 flags);
-u32 au1xxx_dbdma_put_dest(u32 chanid, dma_addr_t buf, int nbytes, u32 flags);
+u32 _au1xxx_dbdma_put_source(u32 chanid, void *buf, int nbytes, u32 flags);
+u32 _au1xxx_dbdma_put_dest(u32 chanid, void *buf, int nbytes, u32 flags);
 
 /* Get a buffer from the destination descriptor. */
 u32 au1xxx_dbdma_get_dest(u32 chanid, void **buf, int *nbytes);
@@ -377,6 +357,29 @@ u32 au1xxx_dbdma_put_dscr(u32 chanid, au1x_ddma_desc_t *dscr);
 u32 au1xxx_ddma_add_device(dbdev_tab_t *dev);
 extern void au1xxx_ddma_del_device(u32 devid);
 void *au1xxx_ddma_get_nextptr_virt(au1x_ddma_desc_t *dp);
+#ifdef CONFIG_PM
+void au1xxx_dbdma_suspend(void);
+void au1xxx_dbdma_resume(void);
+#endif
+
+
+/*
+ * Some compatibilty macros -- needed to make changes to API
+ * without breaking existing drivers.
+ */
+#define au1xxx_dbdma_put_source(chanid, buf, nbytes)			\
+	_au1xxx_dbdma_put_source(chanid, buf, nbytes, DDMA_FLAGS_IE)
+#define au1xxx_dbdma_put_source_flags(chanid, buf, nbytes, flags)	\
+	_au1xxx_dbdma_put_source(chanid, buf, nbytes, flags)
+#define put_source_flags(chanid, buf, nbytes, flags)			\
+	au1xxx_dbdma_put_source_flags(chanid, buf, nbytes, flags)
+
+#define au1xxx_dbdma_put_dest(chanid, buf, nbytes)			\
+	_au1xxx_dbdma_put_dest(chanid, buf, nbytes, DDMA_FLAGS_IE)
+#define au1xxx_dbdma_put_dest_flags(chanid, buf, nbytes, flags) 	\
+	_au1xxx_dbdma_put_dest(chanid, buf, nbytes, flags)
+#define put_dest_flags(chanid, buf, nbytes, flags)			\
+	au1xxx_dbdma_put_dest_flags(chanid, buf, nbytes, flags)
 
 /*
  *	Flags for the put_source/put_dest functions.

@@ -17,8 +17,6 @@
 
 #define KVM_HC_VAPIC_POLL_IRQ		1
 #define KVM_HC_MMU_OP			2
-#define KVM_HC_FEATURES			3
-#define KVM_HC_PPC_MAP_MAGIC_PAGE	4
 
 /*
  * hypercalls use architecture specific
@@ -26,6 +24,11 @@
 #include <asm/kvm_para.h>
 
 #ifdef __KERNEL__
+#ifdef CONFIG_KVM_GUEST
+void __init kvm_guest_init(void);
+#else
+#define kvm_guest_init() do { } while (0)
+#endif
 
 static inline int kvm_para_has_feature(unsigned int feature)
 {
@@ -35,3 +38,4 @@ static inline int kvm_para_has_feature(unsigned int feature)
 }
 #endif /* __KERNEL__ */
 #endif /* __LINUX_KVM_PARA_H */
+

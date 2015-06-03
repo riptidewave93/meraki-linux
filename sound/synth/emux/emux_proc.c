@@ -19,6 +19,7 @@
  */
 
 #include <linux/wait.h>
+#include <linux/slab.h>
 #include <sound/core.h>
 #include <sound/emux_synth.h>
 #include <sound/info.h>

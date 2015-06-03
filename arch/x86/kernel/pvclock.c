@@ -31,14 +31,44 @@ struct pvclock_shadow_time {
 	u32 tsc_to_nsec_mul;
 	int tsc_shift;
 	u32 version;
-	u8  flags;
 };
 
-static u8 valid_flags __read_mostly = 0;
-
-void pvclock_set_flags(u8 flags)
+/*
+ * Scale a 64-bit delta by scaling and multiplying by a 32-bit fraction,
+ * yielding a 64-bit result.
+ */
+static inline u64 scale_delta(u64 delta, u32 mul_frac, int shift)
 {
-	valid_flags = flags;
+	u64 product;
+#ifdef __i386__
+	u32 tmp1, tmp2;
+#endif
+
+	if (shift < 0)
+		delta >>= -shift;
+	else
+		delta <<= shift;
+
+#ifdef __i386__
+	__asm__ (
+		"mul  %5       ; "
+		"mov  %4,%%eax ; "
+		"mov  %%edx,%4 ; "
+		"mul  %5       ; "
+		"xor  %5,%5    ; "
+		"add  %4,%%eax ; "
+		"adc  %5,%%edx ; "
+		: "=A" (product), "=r" (tmp1), "=r" (tmp2)
+		: "a" ((u32)delta), "1" ((u32)(delta >> 32)), "2" (mul_frac) );
+#elif defined(__x86_64__)
+	__asm__ (
+		"mul %%rdx ; shrd $32,%%rdx,%%rax"
+		: "=a" (product) : "0" (delta), "d" ((u64)mul_frac) );
+#else
+#error implement me!
+#endif
+
+	return product;
 }
 
 static u64 pvclock_get_nsec_offset(struct pvclock_shadow_time *shadow)
@@ -62,7 +92,6 @@ static unsigned pvclock_get_time_values(struct pvclock_shadow_time *dst,
 		dst->system_timestamp  = src->system_time;
 		dst->tsc_to_nsec_mul   = src->tsc_to_system_mul;
 		dst->tsc_shift         = src->tsc_shift;
-		dst->flags             = src->flags;
 		rmb();		/* test version after fetching data */
 	} while ((src->version & 1) || (dst->version != src->version));
 
@@ -102,10 +131,6 @@ cycle_t pvclock_clocksource_read(struct pvclock_vcpu_time_info *src)
 		ret = shadow.system_timestamp + offset;
 		barrier();
 	} while (version != src->version);
-
-	if ((valid_flags & PVCLOCK_TSC_STABLE_BIT) &&
-		(shadow.flags & PVCLOCK_TSC_STABLE_BIT))
-		return ret;
 
 	/*
 	 * Assumption here is that last_value, a global accumulator, always goes

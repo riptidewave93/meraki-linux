@@ -11,7 +11,6 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/sched.h>
 #include "internal.h"
@@ -507,8 +506,8 @@ void afs_put_vlocation(struct afs_vlocation *vl)
 		_debug("buried");
 		list_move_tail(&vl->grave, &afs_vlocation_graveyard);
 		vl->time_of_death = get_seconds();
-		queue_delayed_work(afs_wq, &afs_vlocation_reap,
-				   afs_vlocation_timeout * HZ);
+		schedule_delayed_work(&afs_vlocation_reap,
+				      afs_vlocation_timeout * HZ);
 
 		/* suspend updates on this record */
 		if (!list_empty(&vl->update)) {
@@ -561,11 +560,11 @@ static void afs_vlocation_reaper(struct work_struct *work)
 		if (expiry > now) {
 			delay = (expiry - now) * HZ;
 			_debug("delay %lu", delay);
-			if (!queue_delayed_work(afs_wq, &afs_vlocation_reap,
-						delay)) {
+			if (!schedule_delayed_work(&afs_vlocation_reap,
+						   delay)) {
 				cancel_delayed_work(&afs_vlocation_reap);
-				queue_delayed_work(afs_wq, &afs_vlocation_reap,
-						   delay);
+				schedule_delayed_work(&afs_vlocation_reap,
+						      delay);
 			}
 			break;
 		}
@@ -620,7 +619,7 @@ void afs_vlocation_purge(void)
 	destroy_workqueue(afs_vlocation_update_worker);
 
 	cancel_delayed_work(&afs_vlocation_reap);
-	queue_delayed_work(afs_wq, &afs_vlocation_reap, 0);
+	schedule_delayed_work(&afs_vlocation_reap, 0);
 }
 
 /*

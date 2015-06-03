@@ -116,6 +116,9 @@ skpinv:	addi	r6,r6,1				/* Increment */
 
 	xori	r6,r4,1
 	slwi	r6,r6,5		/* setup new context with other address space */
+#if defined(CONFIG_DEBUG_CW)
+	ori	r6, r6, 0x200	/* enable DE bit for MSR */
+#endif
 	bl	1f		/* Find our address */
 1:	mflr	r9
 	rlwimi	r7,r9,0,20,31

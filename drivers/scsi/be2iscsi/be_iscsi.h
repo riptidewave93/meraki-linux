@@ -1,5 +1,5 @@
 /**
- * Copyright (C) 2005 - 2011 Emulex
+ * Copyright (C) 2005 - 2009 ServerEngines
  * All rights reserved.
  *
  * This program is free software; you can redistribute it and/or
@@ -7,14 +7,15 @@
  * as published by the Free Software Foundation.  The full GNU General
  * Public License is included in this distribution in the file called COPYING.
  *
- * Written by: Jayamohan Kallickal (jayamohan.kallickal@emulex.com)
+ * Written by: Jayamohan Kallickal (jayamohank@serverengines.com)
  *
  * Contact Information:
- * linux-drivers@emulex.com
+ * linux-drivers@serverengines.com
  *
- * Emulex
- * 3333 Susan Street
- * Costa Mesa, CA 92626
+ * ServerEngines
+ * 209 N. Fair Oaks Ave
+ * Sunnyvale, CA 94085
+ *
  */
 
 #ifndef _BE_ISCSI_
@@ -25,8 +26,6 @@
 
 #define BE2_IPV4  0x1
 #define BE2_IPV6  0x10
-
-umode_t be2iscsi_attr_is_visible(int param_type, int param);
 
 void beiscsi_offload_connection(struct beiscsi_conn *beiscsi_conn,
 				struct beiscsi_offload_params *params);
@@ -49,18 +48,18 @@ int beiscsi_conn_bind(struct iscsi_cls_session *cls_session,
 		      struct iscsi_cls_conn *cls_conn,
 		      uint64_t transport_fd, int is_leading);
 
-int beiscsi_ep_get_param(struct iscsi_endpoint *ep, enum iscsi_param param,
-			 char *buf);
+int beiscsi_conn_get_param(struct iscsi_cls_conn *cls_conn,
+			   enum iscsi_param param, char *buf);
 
 int beiscsi_get_host_param(struct Scsi_Host *shost,
 			   enum iscsi_host_param param, char *buf);
-
-int beiscsi_get_macaddr(char *buf, struct beiscsi_hba *phba);
 
 int beiscsi_set_param(struct iscsi_cls_conn *cls_conn,
 		      enum iscsi_param param, char *buf, int buflen);
 
 int beiscsi_conn_start(struct iscsi_cls_conn *cls_conn);
+
+void beiscsi_conn_stop(struct iscsi_cls_conn *cls_conn, int flag);
 
 struct iscsi_endpoint *beiscsi_ep_connect(struct Scsi_Host *shost,
 					  struct sockaddr *dst_addr,

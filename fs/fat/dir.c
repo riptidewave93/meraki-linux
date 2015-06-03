@@ -19,7 +19,6 @@
 #include <linux/buffer_head.h>
 #include <linux/compat.h>
 #include <asm/uaccess.h>
-#include <linux/kernel.h>
 #include "fat.h"
 
 /*
@@ -98,7 +97,7 @@ next:
 
 	*bh = sb_bread(sb, phys);
 	if (*bh == NULL) {
-		fat_msg(sb, KERN_ERR, "Directory bread(block %llu) failed",
+		printk(KERN_ERR "FAT: Directory bread(block %llu) failed\n",
 		       (llu)phys);
 		/* skip this block */
 		*pos = (iblock + 1) << sb->s_blocksize_bits;
@@ -136,28 +135,33 @@ static inline int fat_get_entry(struct inode *dir, loff_t *pos,
  * but ignore that right now.
  * Ahem... Stack smashing in ring 0 isn't fun. Fixed.
  */
-static int uni16_to_x8(struct super_block *sb, unsigned char *ascii,
-		       const wchar_t *uni, int len, struct nls_table *nls)
+static int uni16_to_x8(unsigned char *ascii, const wchar_t *uni, int len,
+		       int uni_xlate, struct nls_table *nls)
 {
-	int uni_xlate = MSDOS_SB(sb)->options.unicode_xlate;
 	const wchar_t *ip;
 	wchar_t ec;
-	unsigned char *op;
+	unsigned char *op, nc;
 	int charlen;
+	int k;
 
 	ip = uni;
 	op = ascii;
 
 	while (*ip && ((len - NLS_MAX_CHARSET_SIZE) > 0)) {
 		ec = *ip++;
-		if ((charlen = nls->uni2char(ec, op, NLS_MAX_CHARSET_SIZE)) > 0) {
+		if ( (charlen = nls->uni2char(ec, op, NLS_MAX_CHARSET_SIZE)) > 0) {
 			op += charlen;
 			len -= charlen;
 		} else {
 			if (uni_xlate == 1) {
-				*op++ = ':';
-				op = hex_byte_pack(op, ec >> 8);
-				op = hex_byte_pack(op, ec);
+				*op = ':';
+				for (k = 4; k > 0; k--) {
+					nc = ec & 0xF;
+					op[k] = nc > 9	? nc + ('a' - 10)
+							: nc + '0';
+					ec >>= 4;
+				}
+				op += 5;
 				len -= 5;
 			} else {
 				*op++ = '?';
@@ -167,23 +171,23 @@ static int uni16_to_x8(struct super_block *sb, unsigned char *ascii,
 	}
 
 	if (unlikely(*ip)) {
-		fat_msg(sb, KERN_WARNING, "filename was truncated while "
-			"converting.");
+		printk(KERN_WARNING "FAT: filename was truncated while "
+		       "converting.");
 	}
 
 	*op = 0;
 	return (op - ascii);
 }
 
-static inline int fat_uni_to_x8(struct super_block *sb, const wchar_t *uni,
+static inline int fat_uni_to_x8(struct msdos_sb_info *sbi, const wchar_t *uni,
 				unsigned char *buf, int size)
 {
-	struct msdos_sb_info *sbi = MSDOS_SB(sb);
 	if (sbi->options.utf8)
 		return utf16s_to_utf8s(uni, FAT_MAX_UNI_CHARS,
 				UTF16_HOST_ENDIAN, buf, size);
 	else
-		return uni16_to_x8(sb, buf, uni, size, sbi->nls_io);
+		return uni16_to_x8(buf, uni, size, sbi->options.unicode_xlate,
+				   sbi->nls_io);
 }
 
 static inline int
@@ -420,7 +424,7 @@ parse_record:
 
 		/* Compare shortname */
 		bufuname[last_u] = 0x0000;
-		len = fat_uni_to_x8(sb, bufuname, bufname, sizeof(bufname));
+		len = fat_uni_to_x8(sbi, bufuname, bufname, sizeof(bufname));
 		if (fat_name_match(sbi, name, name_len, bufname, len))
 			goto found;
 
@@ -429,7 +433,7 @@ parse_record:
 			int size = PATH_MAX - FAT_MAX_UNI_SIZE;
 
 			/* Compare longname */
-			len = fat_uni_to_x8(sb, unicode, longname, size);
+			len = fat_uni_to_x8(sbi, unicode, longname, size);
 			if (fat_name_match(sbi, name, name_len, longname, len))
 				goto found;
 		}
@@ -546,7 +550,7 @@ parse_record:
 		if (nr_slots) {
 			void *longname = unicode + FAT_MAX_UNI_CHARS;
 			int size = PATH_MAX - FAT_MAX_UNI_SIZE;
-			int len = fat_uni_to_x8(sb, unicode, longname, size);
+			int len = fat_uni_to_x8(sbi, unicode, longname, size);
 
 			fill_name = longname;
 			fill_len = len;
@@ -622,7 +626,7 @@ parse_record:
 
 	if (isvfat) {
 		bufuname[j] = 0x0000;
-		i = fat_uni_to_x8(sb, bufuname, bufname, sizeof(bufname));
+		i = fat_uni_to_x8(sbi, bufuname, bufname, sizeof(bufname));
 	}
 	if (nr_slots) {
 		/* hack for fat_ioctl_filldir() */
@@ -754,10 +758,9 @@ static int fat_ioctl_readdir(struct inode *inode, struct file *filp,
 	return ret;
 }
 
-static long fat_dir_ioctl(struct file *filp, unsigned int cmd,
-			  unsigned long arg)
+static int fat_dir_ioctl(struct inode *inode, struct file *filp,
+			 unsigned int cmd, unsigned long arg)
 {
-	struct inode *inode = filp->f_path.dentry->d_inode;
 	struct __fat_dirent __user *d1 = (struct __fat_dirent __user *)arg;
 	int short_only, both;
 
@@ -771,7 +774,7 @@ static long fat_dir_ioctl(struct file *filp, unsigned int cmd,
 		both = 1;
 		break;
 	default:
-		return fat_generic_ioctl(filp, cmd, arg);
+		return fat_generic_ioctl(inode, filp, cmd, arg);
 	}
 
 	if (!access_ok(VERIFY_WRITE, d1, sizeof(struct __fat_dirent[2])))
@@ -811,7 +814,7 @@ static long fat_compat_dir_ioctl(struct file *filp, unsigned cmd,
 		both = 1;
 		break;
 	default:
-		return fat_generic_ioctl(filp, cmd, (unsigned long)arg);
+		return -ENOIOCTLCMD;
 	}
 
 	if (!access_ok(VERIFY_WRITE, d1, sizeof(struct compat_dirent[2])))
@@ -833,7 +836,7 @@ const struct file_operations fat_dir_operations = {
 	.llseek		= generic_file_llseek,
 	.read		= generic_read_dir,
 	.readdir	= fat_readdir,
-	.unlocked_ioctl	= fat_dir_ioctl,
+	.ioctl		= fat_dir_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= fat_compat_dir_ioctl,
 #endif
@@ -980,7 +983,6 @@ static int __fat_remove_entries(struct inode *dir, loff_t pos, int nr_slots)
 
 int fat_remove_entries(struct inode *dir, struct fat_slot_info *sinfo)
 {
-	struct super_block *sb = dir->i_sb;
 	struct msdos_dir_entry *de;
 	struct buffer_head *bh;
 	int err = 0, nr_slots;
@@ -1015,8 +1017,8 @@ int fat_remove_entries(struct inode *dir, struct fat_slot_info *sinfo)
 		 */
 		err = __fat_remove_entries(dir, sinfo->slot_off, nr_slots);
 		if (err) {
-			fat_msg(sb, KERN_WARNING,
-			       "Couldn't remove the long name slots");
+			printk(KERN_WARNING
+			       "FAT: Couldn't remove the long name slots\n");
 		}
 	}
 
@@ -1231,7 +1233,7 @@ int fat_add_entries(struct inode *dir, void *slots, int nr_slots,
 	struct super_block *sb = dir->i_sb;
 	struct msdos_sb_info *sbi = MSDOS_SB(sb);
 	struct buffer_head *bh, *prev, *bhs[3]; /* 32*slots (672bytes) */
-	struct msdos_dir_entry *uninitialized_var(de);
+	struct msdos_dir_entry *de;
 	int err, free_slots, i, nr_bhs;
 	loff_t pos, i_pos;
 
@@ -1267,7 +1269,7 @@ int fat_add_entries(struct inode *dir, void *slots, int nr_slots,
 		if (sbi->fat_bits != 32)
 			goto error;
 	} else if (MSDOS_I(dir)->i_start == 0) {
-		fat_msg(sb, KERN_ERR, "Corrupted directory (i_pos %lld)",
+		printk(KERN_ERR "FAT: Corrupted directory (i_pos %lld)\n",
 		       MSDOS_I(dir)->i_pos);
 		err = -EIO;
 		goto error;

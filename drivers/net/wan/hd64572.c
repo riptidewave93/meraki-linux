@@ -37,9 +37,11 @@
 #include <linux/module.h>
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
+#include <linux/slab.h>
 #include <linux/string.h>
 #include <linux/types.h>
 #include <asm/io.h>
+#include <asm/system.h>
 #include <asm/uaccess.h>
 #include "hd64572.h"
 
@@ -292,7 +294,6 @@ static inline void sca_tx_done(port_t *port)
 	struct net_device *dev = port->netdev;
 	card_t* card = port->card;
 	u8 stat;
-	unsigned count = 0;
 
 	spin_lock(&port->lock);
 
@@ -316,12 +317,10 @@ static inline void sca_tx_done(port_t *port)
 			dev->stats.tx_bytes += readw(&desc->len);
 		}
 		writeb(0, &desc->stat);	/* Free descriptor */
-		count++;
 		port->txlast = (port->txlast + 1) % card->tx_ring_buffers;
 	}
 
-	if (count)
-		netif_wake_queue(dev);
+	netif_wake_queue(dev);
 	spin_unlock(&port->lock);
 }
 
@@ -529,8 +528,8 @@ static void sca_dump_rings(struct net_device *dev)
 	       sca_in(DSR_RX(port->chan), card), port->rxin,
 	       sca_in(DSR_RX(port->chan), card) & DSR_DE ? "" : "in");
 	for (cnt = 0; cnt < port->card->rx_ring_buffers; cnt++)
-		pr_cont(" %02X", readb(&(desc_address(port, cnt, 0)->stat)));
-	pr_cont("\n");
+		printk(" %02X", readb(&(desc_address(port, cnt, 0)->stat)));
+	printk(KERN_CONT "\n");
 
 	printk(KERN_DEBUG "TX ring: CDA=%u EDA=%u DSR=%02X in=%u "
 	       "last=%u %sactive",
@@ -540,8 +539,8 @@ static void sca_dump_rings(struct net_device *dev)
 	       sca_in(DSR_TX(port->chan), card) & DSR_DE ? "" : "in");
 
 	for (cnt = 0; cnt < port->card->tx_ring_buffers; cnt++)
-		pr_cont(" %02X", readb(&(desc_address(port, cnt, 1)->stat)));
-	pr_cont("\n");
+		printk(" %02X", readb(&(desc_address(port, cnt, 1)->stat)));
+	printk("\n");
 
 	printk(KERN_DEBUG "MSCI: MD: %02x %02x %02x,"
 	       " ST: %02x %02x %02x %02x %02x, FST: %02x CST: %02x %02x\n",
@@ -587,6 +586,7 @@ static netdev_tx_t sca_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	writew(len, &desc->len);
 	writeb(ST_TX_EOM, &desc->stat);
+	dev->trans_start = jiffies;
 
 	port->txin = (port->txin + 1) % card->tx_ring_buffers;
 	sca_outl(desc_offset(port, port->txin, 1),

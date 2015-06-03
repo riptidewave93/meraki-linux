@@ -11,8 +11,6 @@
 #include <linux/platform_device.h>
 #include <linux/uio_driver.h>
 #include <linux/stringify.h>
-#include <linux/module.h>
-#include <linux/slab.h>
 
 #define DRIVER_NAME "uio_pdrv"
 
@@ -59,7 +57,7 @@ static int uio_pdrv_probe(struct platform_device *pdev)
 
 		uiomem->memtype = UIO_MEM_PHYS;
 		uiomem->addr = r->start;
-		uiomem->size = resource_size(r);
+		uiomem->size = r->end - r->start + 1;
 		++uiomem;
 	}
 
@@ -104,7 +102,17 @@ static struct platform_driver uio_pdrv = {
 	},
 };
 
-module_platform_driver(uio_pdrv);
+static int __init uio_pdrv_init(void)
+{
+	return platform_driver_register(&uio_pdrv);
+}
+
+static void __exit uio_pdrv_exit(void)
+{
+	platform_driver_unregister(&uio_pdrv);
+}
+module_init(uio_pdrv_init);
+module_exit(uio_pdrv_exit);
 
 MODULE_AUTHOR("Uwe Kleine-Koenig");
 MODULE_DESCRIPTION("Userspace I/O platform driver");

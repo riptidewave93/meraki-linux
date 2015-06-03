@@ -2509,7 +2509,7 @@ static void FPT_ssel(unsigned long port, unsigned char p_card)
 				WR_HARPOON(port + hp_autostart_3,
 					   (SELECT + SELCHK_STRT));
 
-				/* Setup our STATE so we know what happened when
+				/* Setup our STATE so we know what happend when
 				   the wheels fall off. */
 				currSCCB->Sccb_scsistat = SELECT_ST;
 
@@ -2900,7 +2900,7 @@ static void FPT_SendMsg(unsigned long port, unsigned char message)
  *
  * Function: FPT_sdecm
  *
- * Description: Determine the proper response to the message from the
+ * Description: Determine the proper responce to the message from the
  *              target device.
  *
  *---------------------------------------------------------------------*/
@@ -3924,7 +3924,7 @@ static void FPT_sinits(struct sccb *p_sccb, unsigned char p_card)
 {
 	struct sccb_mgr_tar_info *currTar_Info;
 
-	if ((p_sccb->TargID >= MAX_SCSI_TAR) || (p_sccb->Lun >= MAX_LUN)) {
+	if ((p_sccb->TargID > MAX_SCSI_TAR) || (p_sccb->Lun > MAX_LUN)) {
 		return;
 	}
 	currTar_Info = &FPT_sccbMgrTbl[p_card][p_sccb->TargID];

@@ -15,7 +15,6 @@
 #include <linux/kref.h>
 #include <linux/notifier.h>
 #include <linux/proc_fs.h>
-#include <linux/slab.h>
 
 #include <asm/prom.h>
 #include <asm/machdep.h>
@@ -109,14 +108,6 @@ void pSeries_reconfig_notifier_unregister(struct notifier_block *nb)
 	blocking_notifier_chain_unregister(&pSeries_reconfig_chain, nb);
 }
 
-int pSeries_reconfig_notify(unsigned long action, void *p)
-{
-	int err = blocking_notifier_call_chain(&pSeries_reconfig_chain,
-						action, p);
-
-	return notifier_to_errno(err);
-}
-
 static int pSeries_reconfig_add_node(const char *path, struct property *proplist)
 {
 	struct device_node *np;
@@ -126,9 +117,11 @@ static int pSeries_reconfig_add_node(const char *path, struct property *proplist
 	if (!np)
 		goto out_err;
 
-	np->full_name = kstrdup(path, GFP_KERNEL);
+	np->full_name = kmalloc(strlen(path) + 1, GFP_KERNEL);
 	if (!np->full_name)
 		goto out_err;
+
+	strcpy(np->full_name, path);
 
 	np->properties = proplist;
 	of_node_set_flag(np, OF_DYNAMIC);
@@ -140,9 +133,11 @@ static int pSeries_reconfig_add_node(const char *path, struct property *proplist
 		goto out_err;
 	}
 
-	err = pSeries_reconfig_notify(PSERIES_RECONFIG_ADD, np);
-	if (err) {
+	err = blocking_notifier_call_chain(&pSeries_reconfig_chain,
+				  PSERIES_RECONFIG_ADD, np);
+	if (err == NOTIFY_BAD) {
 		printk(KERN_ERR "Failed to add device node %s\n", path);
+		err = -ENOMEM; /* For now, safe to assume kmalloc failure */
 		goto out_err;
 	}
 
@@ -179,7 +174,8 @@ static int pSeries_reconfig_remove_node(struct device_node *np)
 
 	remove_node_proc_entries(np);
 
-	pSeries_reconfig_notify(PSERIES_RECONFIG_REMOVE, np);
+	blocking_notifier_call_chain(&pSeries_reconfig_chain,
+			    PSERIES_RECONFIG_REMOVE, np);
 	of_detach_node(np);
 
 	of_node_put(parent);
@@ -188,7 +184,7 @@ static int pSeries_reconfig_remove_node(struct device_node *np)
 }
 
 /*
- * /proc/powerpc/ofdt - yucky binary interface for adding and removing
+ * /proc/ppc64/ofdt - yucky binary interface for adding and removing
  * OF device nodes.  Should be deprecated as soon as we get an
  * in-kernel wrapper for the RTAS ibm,configure-connector call.
  */
@@ -477,10 +473,11 @@ static int do_update_property(char *buf, size_t bufsize)
 		else
 			action = PSERIES_DRCONF_MEM_REMOVE;
 
-		rc = pSeries_reconfig_notify(action, value);
-		if (rc) {
-			prom_update_property(np, oldprop, newprop);
-			return rc;
+		rc = blocking_notifier_call_chain(&pSeries_reconfig_chain,
+						  action, value);
+		if (rc == NOTIFY_BAD) {
+			rc = prom_update_property(np, oldprop, newprop);
+			return -ENOMEM;
 		}
 	}
 
@@ -543,11 +540,10 @@ out:
 }
 
 static const struct file_operations ofdt_fops = {
-	.write = ofdt_write,
-	.llseek = noop_llseek,
+	.write = ofdt_write
 };
 
-/* create /proc/powerpc/ofdt write-only by root */
+/* create /proc/ppc64/ofdt write-only by root */
 static int proc_ppc64_create_ofdt(void)
 {
 	struct proc_dir_entry *ent;
@@ -555,7 +551,7 @@ static int proc_ppc64_create_ofdt(void)
 	if (!machine_is(pseries))
 		return 0;
 
-	ent = proc_create("powerpc/ofdt", S_IWUSR, NULL, &ofdt_fops);
+	ent = proc_create("ppc64/ofdt", S_IWUSR, NULL, &ofdt_fops);
 	if (ent)
 		ent->size = 0;
 

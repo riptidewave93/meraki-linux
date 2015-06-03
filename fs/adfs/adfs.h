@@ -50,7 +50,6 @@ struct adfs_sb_info {
 	gid_t		s_gid;		/* owner gid				 */
 	umode_t		s_owner_mask;	/* ADFS owner perm -> unix perm		 */
 	umode_t		s_other_mask;	/* ADFS other perm -> unix perm		 */
-	int		s_ftsuffix;	/* ,xyz hex filetype suffix option */
 
 	__u32		s_ids_per_zone;	/* max. no ids in one zone		 */
 	__u32		s_idlen;	/* length of ID in map			 */
@@ -80,10 +79,6 @@ struct adfs_dir {
 
 	int			nr_buffers;
 	struct buffer_head	*bh[4];
-
-	/* big directories need allocated buffers */
-	struct buffer_head	**bh_fplus;
-
 	unsigned int		pos;
 	unsigned int		parent_id;
 
@@ -94,7 +89,7 @@ struct adfs_dir {
 /*
  * This is the overall maximum name length
  */
-#define ADFS_MAX_NAME_LEN	(256 + 4) /* +4 for ,xyz hex filetype suffix */
+#define ADFS_MAX_NAME_LEN	256
 struct object_info {
 	__u32		parent_id;		/* parent object id	*/
 	__u32		file_id;		/* object id		*/
@@ -102,25 +97,9 @@ struct object_info {
 	__u32		execaddr;		/* execution address	*/
 	__u32		size;			/* size			*/
 	__u8		attr;			/* RISC OS attributes	*/
-	unsigned int	name_len;		/* name length		*/
+	unsigned char	name_len;		/* name length		*/
 	char		name[ADFS_MAX_NAME_LEN];/* file name		*/
-
-	/* RISC OS file type (12-bit: derived from loadaddr) */
-	__u16		filetype;
 };
-
-/* RISC OS 12-bit filetype converts to ,xyz hex filename suffix */
-static inline int append_filetype_suffix(char *buf, __u16 filetype)
-{
-	if (filetype == 0xffff)	/* no explicit 12-bit file type was set */
-		return 0;
-
-	*buf++ = ',';
-	*buf++ = hex_asc_lo(filetype >> 8);
-	*buf++ = hex_asc_lo(filetype >> 4);
-	*buf++ = hex_asc_lo(filetype >> 0);
-	return 4;
-}
 
 struct adfs_dir_ops {
 	int	(*read)(struct super_block *sb, unsigned int id, unsigned int sz, struct adfs_dir *dir);
@@ -142,7 +121,7 @@ struct adfs_discmap {
 
 /* Inode stuff */
 struct inode *adfs_iget(struct super_block *sb, struct object_info *obj);
-int adfs_write_inode(struct inode *inode, struct writeback_control *wbc);
+int adfs_write_inode(struct inode *inode,int unused);
 int adfs_notify_change(struct dentry *dentry, struct iattr *attr);
 
 /* map.c */

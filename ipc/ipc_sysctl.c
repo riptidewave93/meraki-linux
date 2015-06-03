@@ -31,35 +31,10 @@ static int proc_ipc_dointvec(ctl_table *table, int write,
 	void __user *buffer, size_t *lenp, loff_t *ppos)
 {
 	struct ctl_table ipc_table;
-
 	memcpy(&ipc_table, table, sizeof(ipc_table));
 	ipc_table.data = get_ipc(table);
 
 	return proc_dointvec(&ipc_table, write, buffer, lenp, ppos);
-}
-
-static int proc_ipc_dointvec_minmax(ctl_table *table, int write,
-	void __user *buffer, size_t *lenp, loff_t *ppos)
-{
-	struct ctl_table ipc_table;
-
-	memcpy(&ipc_table, table, sizeof(ipc_table));
-	ipc_table.data = get_ipc(table);
-
-	return proc_dointvec_minmax(&ipc_table, write, buffer, lenp, ppos);
-}
-
-static int proc_ipc_dointvec_minmax_orphans(ctl_table *table, int write,
-	void __user *buffer, size_t *lenp, loff_t *ppos)
-{
-	struct ipc_namespace *ns = current->nsproxy->ipc_ns;
-	int err = proc_ipc_dointvec_minmax(table, write, buffer, lenp, ppos);
-
-	if (err < 0)
-		return err;
-	if (ns->shm_rmid_forced)
-		shm_destroy_orphaned(ns);
-	return err;
 }
 
 static int proc_ipc_callback_dointvec(ctl_table *table, int write,
@@ -150,10 +125,69 @@ static int proc_ipcauto_dointvec_minmax(ctl_table *table, int write,
 #else
 #define proc_ipc_doulongvec_minmax NULL
 #define proc_ipc_dointvec	   NULL
-#define proc_ipc_dointvec_minmax   NULL
-#define proc_ipc_dointvec_minmax_orphans   NULL
 #define proc_ipc_callback_dointvec NULL
 #define proc_ipcauto_dointvec_minmax NULL
+#endif
+
+#ifdef CONFIG_SYSCTL_SYSCALL
+/* The generic sysctl ipc data routine. */
+static int sysctl_ipc_data(ctl_table *table,
+		void __user *oldval, size_t __user *oldlenp,
+		void __user *newval, size_t newlen)
+{
+	size_t len;
+	void *data;
+
+	/* Get out of I don't have a variable */
+	if (!table->data || !table->maxlen)
+		return -ENOTDIR;
+
+	data = get_ipc(table);
+	if (!data)
+		return -ENOTDIR;
+
+	if (oldval && oldlenp) {
+		if (get_user(len, oldlenp))
+			return -EFAULT;
+		if (len) {
+			if (len > table->maxlen)
+				len = table->maxlen;
+			if (copy_to_user(oldval, data, len))
+				return -EFAULT;
+			if (put_user(len, oldlenp))
+				return -EFAULT;
+		}
+	}
+
+	if (newval && newlen) {
+		if (newlen > table->maxlen)
+			newlen = table->maxlen;
+
+		if (copy_from_user(data, newval, newlen))
+			return -EFAULT;
+	}
+	return 1;
+}
+
+static int sysctl_ipc_registered_data(ctl_table *table,
+		void __user *oldval, size_t __user *oldlenp,
+		void __user *newval, size_t newlen)
+{
+	int rc;
+
+	rc = sysctl_ipc_data(table, oldval, oldlenp, newval, newlen);
+
+	if (newval && newlen && rc > 0)
+		/*
+		 * Tunable has successfully been changed from userland
+		 */
+		unregister_ipcns_notifier(current->nsproxy->ipc_ns);
+
+	return rc;
+}
+#else
+#define sysctl_ipc_data NULL
+#define sysctl_ipc_registered_data NULL
 #endif
 
 static int zero;
@@ -161,64 +195,70 @@ static int one = 1;
 
 static struct ctl_table ipc_kern_table[] = {
 	{
+		.ctl_name	= KERN_SHMMAX,
 		.procname	= "shmmax",
 		.data		= &init_ipc_ns.shm_ctlmax,
 		.maxlen		= sizeof (init_ipc_ns.shm_ctlmax),
 		.mode		= 0644,
 		.proc_handler	= proc_ipc_doulongvec_minmax,
+		.strategy	= sysctl_ipc_data,
 	},
 	{
+		.ctl_name	= KERN_SHMALL,
 		.procname	= "shmall",
 		.data		= &init_ipc_ns.shm_ctlall,
 		.maxlen		= sizeof (init_ipc_ns.shm_ctlall),
 		.mode		= 0644,
 		.proc_handler	= proc_ipc_doulongvec_minmax,
+		.strategy	= sysctl_ipc_data,
 	},
 	{
+		.ctl_name	= KERN_SHMMNI,
 		.procname	= "shmmni",
 		.data		= &init_ipc_ns.shm_ctlmni,
 		.maxlen		= sizeof (init_ipc_ns.shm_ctlmni),
 		.mode		= 0644,
 		.proc_handler	= proc_ipc_dointvec,
+		.strategy	= sysctl_ipc_data,
 	},
 	{
-		.procname	= "shm_rmid_forced",
-		.data		= &init_ipc_ns.shm_rmid_forced,
-		.maxlen		= sizeof(init_ipc_ns.shm_rmid_forced),
-		.mode		= 0644,
-		.proc_handler	= proc_ipc_dointvec_minmax_orphans,
-		.extra1		= &zero,
-		.extra2		= &one,
-	},
-	{
+		.ctl_name	= KERN_MSGMAX,
 		.procname	= "msgmax",
 		.data		= &init_ipc_ns.msg_ctlmax,
 		.maxlen		= sizeof (init_ipc_ns.msg_ctlmax),
 		.mode		= 0644,
 		.proc_handler	= proc_ipc_dointvec,
+		.strategy	= sysctl_ipc_data,
 	},
 	{
+		.ctl_name	= KERN_MSGMNI,
 		.procname	= "msgmni",
 		.data		= &init_ipc_ns.msg_ctlmni,
 		.maxlen		= sizeof (init_ipc_ns.msg_ctlmni),
 		.mode		= 0644,
 		.proc_handler	= proc_ipc_callback_dointvec,
+		.strategy	= sysctl_ipc_registered_data,
 	},
 	{
+		.ctl_name	= KERN_MSGMNB,
 		.procname	=  "msgmnb",
 		.data		= &init_ipc_ns.msg_ctlmnb,
 		.maxlen		= sizeof (init_ipc_ns.msg_ctlmnb),
 		.mode		= 0644,
 		.proc_handler	= proc_ipc_dointvec,
+		.strategy	= sysctl_ipc_data,
 	},
 	{
+		.ctl_name	= KERN_SEM,
 		.procname	= "sem",
 		.data		= &init_ipc_ns.sem_ctls,
 		.maxlen		= 4*sizeof (int),
 		.mode		= 0644,
 		.proc_handler	= proc_ipc_dointvec,
+		.strategy	= sysctl_ipc_data,
 	},
 	{
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "auto_msgmni",
 		.data		= &init_ipc_ns.auto_msgmni,
 		.maxlen		= sizeof(int),
@@ -232,6 +272,7 @@ static struct ctl_table ipc_kern_table[] = {
 
 static struct ctl_table ipc_root_table[] = {
 	{
+		.ctl_name	= CTL_KERN,
 		.procname	= "kernel",
 		.mode		= 0555,
 		.child		= ipc_kern_table,

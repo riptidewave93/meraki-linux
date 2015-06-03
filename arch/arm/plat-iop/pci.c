@@ -20,6 +20,7 @@
 #include <linux/io.h>
 #include <asm/irq.h>
 #include <asm/signal.h>
+#include <asm/system.h>
 #include <mach/hardware.h>
 #include <asm/mach/pci.h>
 #include <asm/hardware/iop3xx.h>
@@ -214,16 +215,16 @@ int iop3xx_pci_setup(int nr, struct pci_sys_data *sys)
 	sys->mem_offset = IOP3XX_PCI_LOWER_MEM_PA - *IOP3XX_OMWTVR0;
 	sys->io_offset  = IOP3XX_PCI_LOWER_IO_PA - *IOP3XX_OIOWTVR;
 
-	pci_add_resource_offset(&sys->resources, &res[0], sys->io_offset);
-	pci_add_resource_offset(&sys->resources, &res[1], sys->mem_offset);
+	sys->resource[0] = &res[0];
+	sys->resource[1] = &res[1];
+	sys->resource[2] = NULL;
 
 	return 1;
 }
 
 struct pci_bus *iop3xx_pci_scan_bus(int nr, struct pci_sys_data *sys)
 {
-	return pci_scan_root_bus(NULL, sys->busnr, &iop3xx_ops, sys,
-				 &sys->resources);
+	return pci_scan_bus(sys->busnr, &iop3xx_ops, sys);
 }
 
 void __init iop3xx_atu_setup(void)
@@ -358,7 +359,7 @@ static void __init iop3xx_atu_debug(void)
 	DBG("ATU: IOP3XX_ATUCMD=0x%04x\n", *IOP3XX_ATUCMD);
 	DBG("ATU: IOP3XX_ATUCR=0x%08x\n", *IOP3XX_ATUCR);
 
-	hook_fault_code(16+6, iop3xx_pci_abort, SIGBUS, 0, "imprecise external abort");
+	hook_fault_code(16+6, iop3xx_pci_abort, SIGBUS, "imprecise external abort");
 }
 
 /* for platforms that might be host-bus-adapters */
@@ -373,9 +374,6 @@ void __init iop3xx_pci_preinit_cond(void)
 
 void __init iop3xx_pci_preinit(void)
 {
-	pcibios_min_io = 0;
-	pcibios_min_mem = 0;
-
 	iop3xx_atu_disable();
 	iop3xx_atu_setup();
 	iop3xx_atu_debug();

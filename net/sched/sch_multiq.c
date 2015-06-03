@@ -18,7 +18,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -83,6 +82,8 @@ multiq_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 
 	ret = qdisc_enqueue(skb, qdisc);
 	if (ret == NET_XMIT_SUCCESS) {
+		sch->bstats.bytes += qdisc_pkt_len(skb);
+		sch->bstats.packets++;
 		sch->q.qlen++;
 		return NET_XMIT_SUCCESS;
 	}
@@ -107,12 +108,10 @@ static struct sk_buff *multiq_dequeue(struct Qdisc *sch)
 		/* Check that target subqueue is available before
 		 * pulling an skb to avoid head-of-line blocking.
 		 */
-		if (!netif_xmit_stopped(
-		    netdev_get_tx_queue(qdisc_dev(sch), q->curband))) {
+		if (!__netif_subqueue_stopped(qdisc_dev(sch), q->curband)) {
 			qdisc = q->queues[q->curband];
 			skb = qdisc->dequeue(qdisc);
 			if (skb) {
-				qdisc_bstats_update(sch, skb);
 				sch->q.qlen--;
 				return skb;
 			}
@@ -139,8 +138,7 @@ static struct sk_buff *multiq_peek(struct Qdisc *sch)
 		/* Check that target subqueue is available before
 		 * pulling an skb to avoid head-of-line blocking.
 		 */
-		if (!netif_xmit_stopped(
-		    netdev_get_tx_queue(qdisc_dev(sch), curband))) {
+		if (!__netif_subqueue_stopped(qdisc_dev(sch), curband)) {
 			qdisc = q->queues[curband];
 			skb = qdisc->ops->peek(qdisc);
 			if (skb)
@@ -158,7 +156,7 @@ static unsigned int multiq_drop(struct Qdisc *sch)
 	unsigned int len;
 	struct Qdisc *qdisc;
 
-	for (band = q->bands - 1; band >= 0; band--) {
+	for (band = q->bands-1; band >= 0; band--) {
 		qdisc = q->queues[band];
 		if (qdisc->ops->drop) {
 			len = qdisc->ops->drop(qdisc);
@@ -228,7 +226,8 @@ static int multiq_tune(struct Qdisc *sch, struct nlattr *opt)
 	for (i = 0; i < q->bands; i++) {
 		if (q->queues[i] == &noop_qdisc) {
 			struct Qdisc *child, *old;
-			child = qdisc_create_dflt(sch->dev_queue,
+			child = qdisc_create_dflt(qdisc_dev(sch),
+						  sch->dev_queue,
 						  &pfifo_qdisc_ops,
 						  TC_H_MAKE(sch->handle,
 							    i + 1));
@@ -267,7 +266,7 @@ static int multiq_init(struct Qdisc *sch, struct nlattr *opt)
 	for (i = 0; i < q->max_bands; i++)
 		q->queues[i] = &noop_qdisc;
 
-	err = multiq_tune(sch, opt);
+	err = multiq_tune(sch,opt);
 
 	if (err)
 		kfree(q->queues);
@@ -340,6 +339,7 @@ static unsigned long multiq_bind(struct Qdisc *sch, unsigned long parent,
 
 static void multiq_put(struct Qdisc *q, unsigned long cl)
 {
+	return;
 }
 
 static int multiq_dump_class(struct Qdisc *sch, unsigned long cl,
@@ -348,7 +348,7 @@ static int multiq_dump_class(struct Qdisc *sch, unsigned long cl,
 	struct multiq_sched_data *q = qdisc_priv(sch);
 
 	tcm->tcm_handle |= TC_H_MIN(cl);
-	tcm->tcm_info = q->queues[cl - 1]->handle;
+	tcm->tcm_info = q->queues[cl-1]->handle;
 	return 0;
 }
 
@@ -380,7 +380,7 @@ static void multiq_walk(struct Qdisc *sch, struct qdisc_walker *arg)
 			arg->count++;
 			continue;
 		}
-		if (arg->fn(sch, band + 1, arg) < 0) {
+		if (arg->fn(sch, band+1, arg) < 0) {
 			arg->stop = 1;
 			break;
 		}

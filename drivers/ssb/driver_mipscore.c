@@ -3,7 +3,7 @@
  * Broadcom MIPS core driver
  *
  * Copyright 2005, Broadcom Corporation
- * Copyright 2006, 2007, Michael Buesch <m@bues.ch>
+ * Copyright 2006, 2007, Michael Buesch <mb@bu3sch.de>
  *
  * Licensed under the GNU/GPL. See COPYING for details.
  */
@@ -208,9 +208,6 @@ u32 ssb_cpu_clock(struct ssb_mipscore *mcore)
 	struct ssb_bus *bus = mcore->dev->bus;
 	u32 pll_type, n, m, rate = 0;
 
-	if (bus->chipco.capabilities & SSB_CHIPCO_CAP_PMU)
-		return ssb_pmu_get_cpu_clock(&bus->chipco);
-
 	if (bus->extif.dev) {
 		ssb_extif_get_clockcontrol(&bus->extif, &pll_type, &n, &m);
 	} else if (bus->chipco.dev) {
@@ -273,6 +270,7 @@ void ssb_mipscore_init(struct ssb_mipscore *mcore)
 				set_irq(dev, irq++);
 			}
 			break;
+			/* fallthrough */
 		case SSB_DEV_PCI:
 		case SSB_DEV_ETHERNET:
 		case SSB_DEV_ETHERNET_GBIT:
@@ -283,10 +281,6 @@ void ssb_mipscore_init(struct ssb_mipscore *mcore)
 				set_irq(dev, irq++);
 				break;
 			}
-			/* fallthrough */
-		case SSB_DEV_EXTIF:
-			set_irq(dev, 0);
-			break;
 		}
 	}
 	ssb_dprintk(KERN_INFO PFX "after irq reconfiguration\n");

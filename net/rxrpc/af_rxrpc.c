@@ -11,7 +11,6 @@
 
 #include <linux/module.h>
 #include <linux/net.h>
-#include <linux/slab.h>
 #include <linux/skbuff.h>
 #include <linux/poll.h>
 #include <linux/proc_fs.h>
@@ -62,15 +61,13 @@ static inline int rxrpc_writable(struct sock *sk)
 static void rxrpc_write_space(struct sock *sk)
 {
 	_enter("%p", sk);
-	rcu_read_lock();
+	read_lock(&sk->sk_callback_lock);
 	if (rxrpc_writable(sk)) {
-		struct socket_wq *wq = rcu_dereference(sk->sk_wq);
-
-		if (wq_has_sleeper(wq))
-			wake_up_interruptible(&wq->wait);
+		if (sk_has_sleeper(sk))
+			wake_up_interruptible(sk->sk_sleep);
 		sk_wake_async(sk, SOCK_WAKE_SPACE, POLL_OUT);
 	}
-	rcu_read_unlock();
+	read_unlock(&sk->sk_callback_lock);
 }
 
 /*
@@ -591,7 +588,7 @@ static unsigned int rxrpc_poll(struct file *file, struct socket *sock,
 	unsigned int mask;
 	struct sock *sk = sock->sk;
 
-	sock_poll_wait(file, sk_sleep(sk), wait);
+	sock_poll_wait(file, sk->sk_sleep, wait);
 	mask = 0;
 
 	/* the socket is readable if there are any messages waiting on the Rx
@@ -611,15 +608,14 @@ static unsigned int rxrpc_poll(struct file *file, struct socket *sock,
 /*
  * create an RxRPC socket
  */
-static int rxrpc_create(struct net *net, struct socket *sock, int protocol,
-			int kern)
+static int rxrpc_create(struct net *net, struct socket *sock, int protocol)
 {
 	struct rxrpc_sock *rx;
 	struct sock *sk;
 
 	_enter("%p,%d", sock, protocol);
 
-	if (!net_eq(net, &init_net))
+	if (net != &init_net)
 		return -EAFNOSUPPORT;
 
 	/* we support transport protocol UDP only */
@@ -781,7 +777,7 @@ static struct proto rxrpc_proto = {
 	.max_header	= sizeof(struct rxrpc_header),
 };
 
-static const struct net_proto_family rxrpc_family_ops = {
+static struct net_proto_family rxrpc_family_ops = {
 	.family	= PF_RXRPC,
 	.create = rxrpc_create,
 	.owner	= THIS_MODULE,
@@ -808,7 +804,7 @@ static int __init af_rxrpc_init(void)
 		goto error_call_jar;
 	}
 
-	rxrpc_workqueue = alloc_workqueue("krxrpcd", 0, 1);
+	rxrpc_workqueue = create_workqueue("krxrpcd");
 	if (!rxrpc_workqueue) {
 		printk(KERN_NOTICE "RxRPC: Failed to allocate work queue\n");
 		goto error_work_queue;

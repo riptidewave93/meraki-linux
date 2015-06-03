@@ -19,7 +19,6 @@
 #include <linux/leds.h>
 #include <linux/workqueue.h>
 #include <linux/mfd/da903x.h>
-#include <linux/slab.h>
 
 #define DA9030_LED1_CONTROL	0x20
 #define DA9030_LED2_CONTROL	0x21
@@ -158,7 +157,17 @@ static struct platform_driver da903x_led_driver = {
 	.remove		= __devexit_p(da903x_led_remove),
 };
 
-module_platform_driver(da903x_led_driver);
+static int __init da903x_led_init(void)
+{
+	return platform_driver_register(&da903x_led_driver);
+}
+module_init(da903x_led_init);
+
+static void __exit da903x_led_exit(void)
+{
+	platform_driver_unregister(&da903x_led_driver);
+}
+module_exit(da903x_led_exit);
 
 MODULE_DESCRIPTION("LEDs driver for Dialog Semiconductor DA9030/DA9034");
 MODULE_AUTHOR("Eric Miao <eric.miao@marvell.com>"

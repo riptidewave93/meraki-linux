@@ -43,7 +43,6 @@
 #include <linux/log2.h>
 #include <linux/kthread.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include "ubi.h"
 
 /* Maximum length of the 'mtd=' parameter */
@@ -95,8 +94,7 @@ DEFINE_MUTEX(ubi_devices_mutex);
 static DEFINE_SPINLOCK(ubi_devices_lock);
 
 /* "Show" method for files in '/<sysfs>/class/ubi/' */
-static ssize_t ubi_version_show(struct class *class,
-				struct class_attribute *attr, char *buf)
+static ssize_t ubi_version_show(struct class *class, char *buf)
 {
 	return sprintf(buf, "%d\n", UBI_VERSION);
 }
@@ -638,6 +636,12 @@ out_si:
  */
 static int io_init(struct ubi_device *ubi)
 {
+	struct ubi_ec_hdr ec_hdr;
+	int ret;
+	loff_t offset;
+	size_t retlen;
+	uint64_t sz, sz_temp;
+
 	if (ubi->mtd->numeraseregions != 0) {
 		/*
 		 * Some flashes have several erase regions. Different regions
@@ -656,15 +660,58 @@ static int io_init(struct ubi_device *ubi)
 		return -EINVAL;
 
 	/*
+	 * Attempt to determine the PEB size of this volume. The
+	 * default is the erase size. If the volume does not have a
+	 * size written, then it is an old volume, and it must be the
+	 * erase size. If the volume reads back FF, then it has not
+	 * been initialized, so use the erase size. Otherwise, if there
+	 * is a non-zero value, use that.
+	 */
+
+	ubi->peb_size = ubi->mtd->erasesize;
+	for (offset = 0; offset < ubi->mtd->size;
+	     offset += ubi->mtd->erasesize) {
+		if (ubi->mtd->block_isbad &&
+		    (*ubi->mtd->block_isbad)(ubi->mtd, offset))
+			continue;
+		ret = ubi->mtd->read(ubi->mtd, offset, sizeof(ec_hdr), &retlen,
+				     (uint8_t *)&ec_hdr);
+		if (ret)
+			continue;
+		if (retlen != sizeof(ec_hdr))
+			continue;
+		if (be32_to_cpu(ec_hdr.magic) != UBI_EC_HDR_MAGIC)
+			break;
+		if (ec_hdr.version > UBI_VERSION)
+			break;
+		if (!ec_hdr.peb_size)
+			break;
+		ubi->peb_size = be32_to_cpu(ec_hdr.peb_size);
+		if (ubi->peb_size % ubi->mtd->erasesize) {
+			ubi_err("peb_size %d is not a multiple of erasesize %d",
+				ubi->peb_size, ubi->mtd->erasesize);
+			return -EINVAL;
+		}
+		sz_temp = offset;
+		if (do_div(sz_temp, ubi->peb_size)) {
+			ubi_err("peb_size %d is not a multiple of offset %llu",
+				ubi->peb_size, offset);
+			return -EINVAL;
+		}
+		break;
+	}
+
+	/*
 	 * Note, in this implementation we support MTD devices with 0x7FFFFFFF
 	 * physical eraseblocks maximum.
 	 */
 
-	ubi->peb_size   = ubi->mtd->erasesize;
-	ubi->peb_count  = mtd_div_by_eb(ubi->mtd->size, ubi->mtd);
-	ubi->flash_size = ubi->mtd->size;
+	sz = ubi->mtd->size;
+	ubi->flash_size = sz;
+	do_div(sz, ubi->peb_size);
+	ubi->peb_count  = sz;
 
-	if (mtd_can_have_bb(ubi->mtd))
+	if (ubi->mtd->block_isbad && ubi->mtd->block_markbad)
 		ubi->bad_allowed = 1;
 
 	if (ubi->mtd->type == MTD_NORFLASH) {
@@ -816,11 +863,6 @@ static int autoresize(struct ubi_device *ubi, int vol_id)
 	struct ubi_volume *vol = ubi->volumes[vol_id];
 	int err, old_reserved_pebs = vol->reserved_pebs;
 
-	if (ubi->ro_mode) {
-		ubi_warn("skip auto-resize because of R/O mode");
-		return 0;
-	}
-
 	/*
 	 * Clear the auto-resize flag in the volume in-memory copy of the
 	 * volume table, and 'ubi_resize_volume()' will propagate this change
@@ -950,18 +992,18 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num, int vid_hdr_offset)
 		goto out_free;
 
 	err = -ENOMEM;
-	ubi->peb_buf = vmalloc(ubi->peb_size);
-	if (!ubi->peb_buf)
+	ubi->peb_buf1 = vmalloc(ubi->peb_size);
+	if (!ubi->peb_buf1)
 		goto out_free;
 
-	err = ubi_debugging_init_dev(ubi);
-	if (err)
+	ubi->peb_buf2 = vmalloc(ubi->peb_size);
+	if (!ubi->peb_buf2)
 		goto out_free;
 
 	err = attach_by_scanning(ubi);
 	if (err) {
 		dbg_err("failed to attach by scanning, error %d", err);
-		goto out_debugging;
+		goto out_free;
 	}
 
 	if (ubi->autoresize_vol_id != -1) {
@@ -974,16 +1016,12 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num, int vid_hdr_offset)
 	if (err)
 		goto out_detach;
 
-	err = ubi_debugfs_init_dev(ubi);
-	if (err)
-		goto out_uif;
-
 	ubi->bgt_thread = kthread_create(ubi_thread, ubi, ubi->bgt_name);
 	if (IS_ERR(ubi->bgt_thread)) {
 		err = PTR_ERR(ubi->bgt_thread);
 		ubi_err("cannot spawn \"%s\", error %d", ubi->bgt_name,
 			err);
-		goto out_debugfs;
+		goto out_uif;
 	}
 
 	ubi_msg("attached mtd%d to ubi%d", mtd->index, ubi_num);
@@ -1017,20 +1055,15 @@ int ubi_attach_mtd_dev(struct mtd_info *mtd, int ubi_num, int vid_hdr_offset)
 	ubi_notify_all(ubi, UBI_VOLUME_ADDED, NULL);
 	return ubi_num;
 
-out_debugfs:
-	ubi_debugfs_exit_dev(ubi);
 out_uif:
-	get_device(&ubi->dev);
-	ubi_assert(ref);
 	uif_close(ubi);
 out_detach:
 	ubi_wl_close(ubi);
 	free_internal_volumes(ubi);
 	vfree(ubi->vtbl);
-out_debugging:
-	ubi_debugging_exit_dev(ubi);
 out_free:
-	vfree(ubi->peb_buf);
+	vfree(ubi->peb_buf1);
+	vfree(ubi->peb_buf2);
 	if (ref)
 		put_device(&ubi->dev);
 	else
@@ -1094,14 +1127,13 @@ int ubi_detach_mtd_dev(int ubi_num, int anyway)
 	 */
 	get_device(&ubi->dev);
 
-	ubi_debugfs_exit_dev(ubi);
 	uif_close(ubi);
 	ubi_wl_close(ubi);
 	free_internal_volumes(ubi);
 	vfree(ubi->vtbl);
 	put_mtd_device(ubi->mtd);
-	ubi_debugging_exit_dev(ubi);
-	vfree(ubi->peb_buf);
+	vfree(ubi->peb_buf1);
+	vfree(ubi->peb_buf2);
 	ubi_msg("mtd%d is detached from ubi%d", ubi->mtd->index, ubi->ubi_num);
 	put_device(&ubi->dev);
 	return 0;
@@ -1214,11 +1246,6 @@ static int __init ubi_init(void)
 	if (!ubi_wl_entry_slab)
 		goto out_dev_unreg;
 
-	err = ubi_debugfs_init();
-	if (err)
-		goto out_slab;
-
-
 	/* Attach MTD devices */
 	for (i = 0; i < mtd_devs; i++) {
 		struct mtd_dev_param *p = &mtd_dev_param[i];
@@ -1228,6 +1255,10 @@ static int __init ubi_init(void)
 
 		mtd = open_mtd_device(p->name);
 		if (IS_ERR(mtd)) {
+			if (!ubi_is_module()) {
+				ubi_err("can not open mtd device %s", p->name);
+				continue;
+			}
 			err = PTR_ERR(mtd);
 			goto out_detach;
 		}
@@ -1267,8 +1298,6 @@ out_detach:
 			ubi_detach_mtd_dev(ubi_devices[k]->ubi_num, 1);
 			mutex_unlock(&ubi_devices_mutex);
 		}
-	ubi_debugfs_exit();
-out_slab:
 	kmem_cache_destroy(ubi_wl_entry_slab);
 out_dev_unreg:
 	misc_deregister(&ubi_ctrl_cdev);
@@ -1292,7 +1321,6 @@ static void __exit ubi_exit(void)
 			ubi_detach_mtd_dev(ubi_devices[i]->ubi_num, 1);
 			mutex_unlock(&ubi_devices_mutex);
 		}
-	ubi_debugfs_exit();
 	kmem_cache_destroy(ubi_wl_entry_slab);
 	misc_deregister(&ubi_ctrl_cdev);
 	class_remove_file(ubi_class, &ubi_version);

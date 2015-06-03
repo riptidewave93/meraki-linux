@@ -21,14 +21,14 @@ struct ocfs2_refcount_tree {
 	struct rb_node rf_node;
 	u64 rf_blkno;
 	u32 rf_generation;
-	struct kref rf_getcnt;
 	struct rw_semaphore rf_sem;
 	struct ocfs2_lock_res rf_lockres;
+	struct kref rf_getcnt;
 	int rf_removed;
 
 	/* the following 4 fields are used by caching_info. */
-	spinlock_t rf_lock;
 	struct ocfs2_caching_info rf_ci;
+	spinlock_t rf_lock;
 	struct mutex rf_io_mutex;
 	struct super_block *rf_sb;
 };
@@ -47,13 +47,12 @@ int ocfs2_decrease_refcount(struct inode *inode,
 			    struct ocfs2_cached_dealloc_ctxt *dealloc,
 			    int delete);
 int ocfs2_prepare_refcount_change_for_del(struct inode *inode,
-					  u64 refcount_loc,
+					  struct buffer_head *di_bh,
 					  u64 phys_blkno,
 					  u32 clusters,
 					  int *credits,
-					  int *ref_blocks);
-int ocfs2_refcount_cow(struct inode *inode,
-		       struct file *filep, struct buffer_head *di_bh,
+					  struct ocfs2_alloc_context **meta_ac);
+int ocfs2_refcount_cow(struct inode *inode, struct buffer_head *di_bh,
 		       u32 cpos, u32 write_len, u32 max_cpos);
 
 typedef int (ocfs2_post_refcount_func)(struct inode *inode,
@@ -84,17 +83,6 @@ int ocfs2_refcount_cow_xattr(struct inode *inode,
 			     struct buffer_head *ref_root_bh,
 			     u32 cpos, u32 write_len,
 			     struct ocfs2_post_refcount *post);
-int ocfs2_duplicate_clusters_by_page(handle_t *handle,
-				     struct file *file,
-				     u32 cpos, u32 old_cluster,
-				     u32 new_cluster, u32 new_len);
-int ocfs2_duplicate_clusters_by_jbd(handle_t *handle,
-				    struct file *file,
-				    u32 cpos, u32 old_cluster,
-				    u32 new_cluster, u32 new_len);
-int ocfs2_cow_sync_writeback(struct super_block *sb,
-			     struct inode *inode,
-			     u32 cpos, u32 num_clusters);
 int ocfs2_add_refcount_flag(struct inode *inode,
 			    struct ocfs2_extent_tree *data_et,
 			    struct ocfs2_caching_info *ref_ci,

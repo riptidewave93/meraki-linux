@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2006-2010 Freescale Semicondutor, Inc. All rights reserved.
+ * Copyright (C) 2006 Freescale Semicondutor, Inc. All rights reserved.
  *
  * Authors: 	Shlomi Gridish <gridish@freescale.com>
  * 		Li Yang <leoli@freescale.com>
@@ -27,8 +27,6 @@
 #include <linux/delay.h>
 #include <linux/ioport.h>
 #include <linux/crc32.h>
-#include <linux/mod_devicetable.h>
-#include <linux/of_platform.h>
 #include <asm/irq.h>
 #include <asm/page.h>
 #include <asm/pgtable.h>
@@ -67,6 +65,19 @@ static unsigned int qe_num_of_snum;
 
 static phys_addr_t qebase = -1;
 
+int qe_alive_during_sleep(void)
+{
+	static int ret = -1;
+
+	if (ret != -1)
+		return ret;
+
+	ret = !of_find_compatible_node(NULL, NULL, "fsl,mpc8569-pmc");
+
+	return ret;
+}
+EXPORT_SYMBOL(qe_alive_during_sleep);
+
 phys_addr_t get_qe_base(void)
 {
 	struct device_node *qe;
@@ -93,7 +104,7 @@ phys_addr_t get_qe_base(void)
 
 EXPORT_SYMBOL(get_qe_base);
 
-void qe_reset(void)
+void __init qe_reset(void)
 {
 	if (qe_immr == NULL)
 		qe_immr = ioremap(get_qe_base(), QE_IMMAP_SIZE);
@@ -216,7 +227,7 @@ int qe_setbrg(enum qe_clock brg, unsigned int rate, unsigned int multiplier)
 	/* Errata QE_General4, which affects some MPC832x and MPC836x SOCs, says
 	   that the BRG divisor must be even if you're not using divide-by-16
 	   mode. */
-	if (!div16 && (divisor & 1) && (divisor > 3))
+	if (!div16 && (divisor & 1))
 		divisor++;
 
 	tempval = ((divisor - 1) << QE_BRGC_DIVISOR_SHIFT) |
@@ -266,19 +277,7 @@ EXPORT_SYMBOL(qe_clock_source);
 static void qe_snums_init(void)
 {
 	int i;
-	static const u8 snum_init_76[] = {
-		0x04, 0x05, 0x0C, 0x0D, 0x14, 0x15, 0x1C, 0x1D,
-		0x24, 0x25, 0x2C, 0x2D, 0x34, 0x35, 0x88, 0x89,
-		0x98, 0x99, 0xA8, 0xA9, 0xB8, 0xB9, 0xC8, 0xC9,
-		0xD8, 0xD9, 0xE8, 0xE9, 0x44, 0x45, 0x4C, 0x4D,
-		0x54, 0x55, 0x5C, 0x5D, 0x64, 0x65, 0x6C, 0x6D,
-		0x74, 0x75, 0x7C, 0x7D, 0x84, 0x85, 0x8C, 0x8D,
-		0x94, 0x95, 0x9C, 0x9D, 0xA4, 0xA5, 0xAC, 0xAD,
-		0xB4, 0xB5, 0xBC, 0xBD, 0xC4, 0xC5, 0xCC, 0xCD,
-		0xD4, 0xD5, 0xDC, 0xDD, 0xE4, 0xE5, 0xEC, 0xED,
-		0xF4, 0xF5, 0xFC, 0xFD,
-	};
-	static const u8 snum_init_46[] = {
+	static const u8 snum_init[] = {
 		0x04, 0x05, 0x0C, 0x0D, 0x14, 0x15, 0x1C, 0x1D,
 		0x24, 0x25, 0x2C, 0x2D, 0x34, 0x35, 0x88, 0x89,
 		0x98, 0x99, 0xA8, 0xA9, 0xB8, 0xB9, 0xC8, 0xC9,
@@ -286,14 +285,8 @@ static void qe_snums_init(void)
 		0x28, 0x29, 0x38, 0x39, 0x48, 0x49, 0x58, 0x59,
 		0x68, 0x69, 0x78, 0x79, 0x80, 0x81,
 	};
-	static const u8 *snum_init;
 
 	qe_num_of_snum = qe_get_num_of_snums();
-
-	if (qe_num_of_snum == 76)
-		snum_init = snum_init_76;
-	else
-		snum_init = snum_init_46;
 
 	for (i = 0; i < qe_num_of_snum; i++) {
 		snums[i].num = snum_init[i];
@@ -337,18 +330,16 @@ EXPORT_SYMBOL(qe_put_snum);
 static int qe_sdma_init(void)
 {
 	struct sdma __iomem *sdma = &qe_immr->sdma;
-	static unsigned long sdma_buf_offset = (unsigned long)-ENOMEM;
+	unsigned long sdma_buf_offset;
 
 	if (!sdma)
 		return -ENODEV;
 
 	/* allocate 2 internal temporary buffers (512 bytes size each) for
 	 * the SDMA */
-	if (IS_ERR_VALUE(sdma_buf_offset)) {
-		sdma_buf_offset = qe_muram_alloc(512 * 2, 4096);
-		if (IS_ERR_VALUE(sdma_buf_offset))
-			return -ENOMEM;
-	}
+ 	sdma_buf_offset = qe_muram_alloc(512 * 2, 4096);
+	if (IS_ERR_VALUE(sdma_buf_offset))
+		return -ENOMEM;
 
 	out_be32(&sdma->sdebcr, (u32) sdma_buf_offset & QE_SDEBCR_BA_MASK);
  	out_be32(&sdma->sdmr, (QE_SDMR_GLB_1_MSK |
@@ -358,7 +349,7 @@ static int qe_sdma_init(void)
 }
 
 /* The maximum number of RISCs we support */
-#define MAX_QE_RISC     4
+#define MAX_QE_RISC     2
 
 /* Firmware information stored here for qe_get_firmware_info() */
 static struct qe_firmware_info qe_firmware_info;
@@ -400,7 +391,7 @@ static void qe_upload_microcode(const void *base,
 /*
  * Upload a microcode to the I-RAM at a specific address.
  *
- * See Documentation/powerpc/qe_firmware.txt for information on QE microcode
+ * See Documentation/powerpc/qe-firmware.txt for information on QE microcode
  * uploading.
  *
  * Currently, only version 1 is supported, so the 'version' field must be
@@ -658,7 +649,6 @@ unsigned int qe_get_num_of_snums(void)
 		if ((num_of_snums < 28) || (num_of_snums > QE_NUM_OF_SNUM)) {
 			/* No QE ever has fewer than 28 SNUMs */
 			pr_err("QE: number of snum is invalid\n");
-			of_node_put(qe);
 			return -EINVAL;
 		}
 	}
@@ -668,38 +658,3 @@ unsigned int qe_get_num_of_snums(void)
 	return num_of_snums;
 }
 EXPORT_SYMBOL(qe_get_num_of_snums);
-
-#if defined(CONFIG_SUSPEND) && defined(CONFIG_PPC_85xx)
-static int qe_resume(struct platform_device *ofdev)
-{
-	if (!qe_alive_during_sleep())
-		qe_reset();
-	return 0;
-}
-
-static int qe_probe(struct platform_device *ofdev)
-{
-	return 0;
-}
-
-static const struct of_device_id qe_ids[] = {
-	{ .compatible = "fsl,qe", },
-	{ },
-};
-
-static struct platform_driver qe_driver = {
-	.driver = {
-		.name = "fsl-qe",
-		.owner = THIS_MODULE,
-		.of_match_table = qe_ids,
-	},
-	.probe = qe_probe,
-	.resume = qe_resume,
-};
-
-static int __init qe_drv_init(void)
-{
-	return platform_driver_register(&qe_driver);
-}
-device_initcall(qe_drv_init);
-#endif /* defined(CONFIG_SUSPEND) && defined(CONFIG_PPC_85xx) */

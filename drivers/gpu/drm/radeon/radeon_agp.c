@@ -70,12 +70,9 @@ static struct radeon_agpmode_quirk radeon_agpmode_quirk_list[] = {
 	/* Intel 82830 830 Chipset Host Bridge / Mobility M6 LY Needs AGPMode 2 (fdo #17360)*/
 	{ PCI_VENDOR_ID_INTEL, 0x3575, PCI_VENDOR_ID_ATI, 0x4c59,
 		PCI_VENDOR_ID_DELL, 0x00e3, 2},
-	/* Intel 82852/82855 host bridge / Mobility FireGL 9000 RV250 Needs AGPMode 1 (lp #296617) */
+	/* Intel 82852/82855 host bridge / Mobility FireGL 9000 R250 Needs AGPMode 1 (lp #296617) */
 	{ PCI_VENDOR_ID_INTEL, 0x3580, PCI_VENDOR_ID_ATI, 0x4c66,
 		PCI_VENDOR_ID_DELL, 0x0149, 1},
-	/* Intel 82855PM host bridge / Mobility FireGL 9000 RV250 Needs AGPMode 1 for suspend/resume */
-	{ PCI_VENDOR_ID_INTEL, 0x3340, PCI_VENDOR_ID_ATI, 0x4c66,
-		PCI_VENDOR_ID_IBM, 0x0531, 1},
 	/* Intel 82852/82855 host bridge / Mobility 9600 M10 RV350 Needs AGPMode 1 (deb #467460) */
 	{ PCI_VENDOR_ID_INTEL, 0x3580, PCI_VENDOR_ID_ATI, 0x4e50,
 		0x1025, 0x0061, 1},
@@ -137,35 +134,21 @@ int radeon_agp_init(struct radeon_device *rdev)
 	int ret;
 
 	/* Acquire AGP. */
-	ret = drm_agp_acquire(rdev->ddev);
-	if (ret) {
-		DRM_ERROR("Unable to acquire AGP: %d\n", ret);
-		return ret;
+	if (!rdev->ddev->agp->acquired) {
+		ret = drm_agp_acquire(rdev->ddev);
+		if (ret) {
+			DRM_ERROR("Unable to acquire AGP: %d\n", ret);
+			return ret;
+		}
 	}
 
 	ret = drm_agp_info(rdev->ddev, &info);
 	if (ret) {
-		drm_agp_release(rdev->ddev);
 		DRM_ERROR("Unable to get AGP info: %d\n", ret);
 		return ret;
 	}
-
-	if (rdev->ddev->agp->agp_info.aper_size < 32) {
-		drm_agp_release(rdev->ddev);
-		dev_warn(rdev->dev, "AGP aperture too small (%zuM) "
-			"need at least 32M, disabling AGP\n",
-			rdev->ddev->agp->agp_info.aper_size);
-		return -EINVAL;
-	}
-
 	mode.mode = info.mode;
-	/* chips with the agp to pcie bridge don't have the AGP_STATUS register
-	 * Just use the whatever mode the host sets up.
-	 */
-	if (rdev->family <= CHIP_RV350)
-		agp_status = (RREG32(RADEON_AGP_STATUS) | RADEON_AGPv3_MODE) & mode.mode;
-	else
-		agp_status = mode.mode;
+	agp_status = (RREG32(RADEON_AGP_STATUS) | RADEON_AGPv3_MODE) & mode.mode;
 	is_v3 = !!(agp_status & RADEON_AGPv3_MODE);
 
 	if (is_v3) {
@@ -238,16 +221,11 @@ int radeon_agp_init(struct radeon_device *rdev)
 	ret = drm_agp_enable(rdev->ddev, mode);
 	if (ret) {
 		DRM_ERROR("Unable to enable AGP (mode = 0x%lx)\n", mode.mode);
-		drm_agp_release(rdev->ddev);
 		return ret;
 	}
 
 	rdev->mc.agp_base = rdev->ddev->agp->agp_info.aper_base;
 	rdev->mc.gtt_size = rdev->ddev->agp->agp_info.aper_size << 20;
-	rdev->mc.gtt_start = rdev->mc.agp_base;
-	rdev->mc.gtt_end = rdev->mc.gtt_start + rdev->mc.gtt_size - 1;
-	dev_info(rdev->dev, "GTT: %lluM 0x%08llX - 0x%08llX\n",
-		rdev->mc.gtt_size >> 20, rdev->mc.gtt_start, rdev->mc.gtt_end);
 
 	/* workaround some hw issues */
 	if (rdev->family < CHIP_R200) {
@@ -274,13 +252,10 @@ void radeon_agp_resume(struct radeon_device *rdev)
 void radeon_agp_fini(struct radeon_device *rdev)
 {
 #if __OS_HAS_AGP
-	if (rdev->ddev->agp && rdev->ddev->agp->acquired) {
-		drm_agp_release(rdev->ddev);
+	if (rdev->flags & RADEON_IS_AGP) {
+		if (rdev->ddev->agp && rdev->ddev->agp->acquired) {
+			drm_agp_release(rdev->ddev);
+		}
 	}
 #endif
-}
-
-void radeon_agp_suspend(struct radeon_device *rdev)
-{
-	radeon_agp_fini(rdev);
 }

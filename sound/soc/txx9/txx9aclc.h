@@ -65,10 +65,19 @@ struct txx9aclc_plat_drvdata {
 	u64 physbase;
 };
 
+struct txx9aclc_soc_device {
+	struct snd_soc_device soc_dev;
+	struct platform_device *aclc_pdev;	/* for ioresources, drvdata */
+	struct txx9aclc_dmadata dmadata[2];
+};
+
 static inline struct txx9aclc_plat_drvdata *txx9aclc_get_plat_drvdata(
-	struct snd_soc_dai *dai)
+	struct txx9aclc_soc_device *sdev)
 {
-	return dev_get_drvdata(dai->dev);
+	return platform_get_drvdata(sdev->aclc_pdev);
 }
+
+extern struct snd_soc_platform txx9aclc_soc_platform;
+extern struct snd_soc_dai txx9aclc_ac97_dai;
 
 #endif /* __TXX9ACLC_H */

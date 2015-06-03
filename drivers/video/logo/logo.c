@@ -21,7 +21,7 @@
 #include <asm/bootinfo.h>
 #endif
 
-static bool nologo;
+static int nologo;
 module_param(nologo, bool, 0);
 MODULE_PARM_DESC(nologo, "Disables startup logo");
 

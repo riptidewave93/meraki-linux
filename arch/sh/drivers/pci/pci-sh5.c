@@ -89,13 +89,14 @@ static irqreturn_t pcish5_serr_irq(int irq, void *dev_id)
 	return IRQ_NONE;
 }
 
-static struct resource sh5_pci_resources[2];
+static struct resource sh5_io_resource = { /* place holder */ };
+static struct resource sh5_mem_resource = { /* place holder */ };
 
 static struct pci_channel sh5pci_controller = {
 	.pci_ops		= &sh5_pci_ops,
-	.resources		= sh5_pci_resources,
-	.nr_resources		= ARRAY_SIZE(sh5_pci_resources),
+	.mem_resource		= &sh5_mem_resource,
 	.mem_offset		= 0x00000000,
+	.io_resource		= &sh5_io_resource,
 	.io_offset		= 0x00000000,
 };
 
@@ -107,13 +108,13 @@ static int __init sh5pci_init(void)
 	u32 uval;
 
         if (request_irq(IRQ_ERR, pcish5_err_irq,
-                        0, "PCI Error",NULL) < 0) {
+                        IRQF_DISABLED, "PCI Error",NULL) < 0) {
                 printk(KERN_ERR "PCISH5: Cannot hook PCI_PERR interrupt\n");
                 return -EINVAL;
         }
 
         if (request_irq(IRQ_SERR, pcish5_serr_irq,
-                        0, "PCI SERR interrupt", NULL) < 0) {
+                        IRQF_DISABLED, "PCI SERR interrupt", NULL) < 0) {
                 printk(KERN_ERR "PCISH5: Cannot hook PCI_SERR interrupt\n");
                 return -EINVAL;
         }
@@ -209,12 +210,14 @@ static int __init sh5pci_init(void)
         SH5PCI_WRITE(AINTM, ~0);
         SH5PCI_WRITE(PINTM, ~0);
 
-	sh5_pci_resources[0].start = PCI_IO_AREA;
-	sh5_pci_resources[0].end = PCI_IO_AREA + 0x10000;
+	sh5_io_resource.start = PCI_IO_AREA;
+	sh5_io_resource.end = PCI_IO_AREA + 0x10000;
 
-	sh5_pci_resources[1].start = memStart;
-	sh5_pci_resources[1].end = memStart + memSize;
+	sh5_mem_resource.start = memStart;
+	sh5_mem_resource.end = memStart + memSize;
 
-	return register_pci_controller(&sh5pci_controller);
+	register_pci_controller(&sh5pci_controller);
+
+	return 0;
 }
 arch_initcall(sh5pci_init);

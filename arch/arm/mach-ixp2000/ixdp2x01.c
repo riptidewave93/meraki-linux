@@ -23,6 +23,7 @@
 #include <linux/bitops.h>
 #include <linux/pci.h>
 #include <linux/ioport.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/serial.h>
 #include <linux/tty.h>
@@ -34,6 +35,7 @@
 #include <asm/irq.h>
 #include <asm/pgtable.h>
 #include <asm/page.h>
+#include <asm/system.h>
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
 
@@ -47,16 +49,16 @@
 /*************************************************************************
  * IXDP2x01 IRQ Handling
  *************************************************************************/
-static void ixdp2x01_irq_mask(struct irq_data *d)
+static void ixdp2x01_irq_mask(unsigned int irq)
 {
 	ixp2000_reg_wrb(IXDP2X01_INT_MASK_SET_REG,
-				IXP2000_BOARD_IRQ_MASK(d->irq));
+				IXP2000_BOARD_IRQ_MASK(irq));
 }
 
-static void ixdp2x01_irq_unmask(struct irq_data *d)
+static void ixdp2x01_irq_unmask(unsigned int irq)
 {
 	ixp2000_reg_write(IXDP2X01_INT_MASK_CLR_REG,
-				IXP2000_BOARD_IRQ_MASK(d->irq));
+				IXP2000_BOARD_IRQ_MASK(irq));
 }
 
 static u32 valid_irq_mask;
@@ -66,7 +68,7 @@ static void ixdp2x01_irq_handler(unsigned int irq, struct irq_desc *desc)
 	u32 ex_interrupt;
 	int i;
 
-	desc->irq_data.chip->irq_mask(&desc->irq_data);
+	desc->chip->mask(irq);
 
 	ex_interrupt = *IXDP2X01_INT_STAT_REG & valid_irq_mask;
 
@@ -82,13 +84,13 @@ static void ixdp2x01_irq_handler(unsigned int irq, struct irq_desc *desc)
 		}
 	}
 
-	desc->irq_data.chip->irq_unmask(&desc->irq_data);
+	desc->chip->unmask(irq);
 }
 
 static struct irq_chip ixdp2x01_irq_chip = {
-	.irq_mask	= ixdp2x01_irq_mask,
-	.irq_ack	= ixdp2x01_irq_mask,
-	.irq_unmask	= ixdp2x01_irq_unmask
+	.mask	= ixdp2x01_irq_mask,
+	.ack	= ixdp2x01_irq_mask,
+	.unmask	= ixdp2x01_irq_unmask
 };
 
 /*
@@ -114,8 +116,8 @@ void __init ixdp2x01_init_irq(void)
 
 	for (irq = NR_IXP2000_IRQS; irq < NR_IXDP2X01_IRQS; irq++) {
 		if (irq & valid_irq_mask) {
-			irq_set_chip_and_handler(irq, &ixdp2x01_irq_chip,
-						 handle_level_irq);
+			set_irq_chip(irq, &ixdp2x01_irq_chip);
+			set_irq_handler(irq, handle_level_irq);
 			set_irq_flags(irq, IRQF_VALID);
 		} else {
 			set_irq_flags(irq, 0);
@@ -123,7 +125,7 @@ void __init ixdp2x01_init_irq(void)
 	}
 
 	/* Hook into PCI interrupts */
-	irq_set_chained_handler(IRQ_IXP2000_PCIB, ixdp2x01_irq_handler);
+	set_irq_chained_handler(IRQ_IXP2000_PCIB, ixdp2x01_irq_handler);
 }
 
 
@@ -251,8 +253,7 @@ void __init ixdp2x01_pci_preinit(void)
 
 #define DEVPIN(dev, pin) ((pin) | ((dev) << 3))
 
-static int __init ixdp2x01_pci_map_irq(const struct pci_dev *dev, u8 slot,
-	u8 pin)
+static int __init ixdp2x01_pci_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	u8 bus = dev->bus->number;
 	u32 devpin = DEVPIN(PCI_SLOT(dev->devfn), pin);
@@ -412,57 +413,30 @@ static void __init ixdp2x01_init_machine(void)
 	ixdp2x01_uart_init();
 }
 
-static void ixdp2401_restart(char mode, const char *cmd)
-{
-	/*
-	 * Reset flash banking register so that we are pointing at
-	 * RedBoot bank.
-	 */
-	ixp2000_reg_write(IXDP2X01_CPLD_FLASH_REG,
-				((0 >> IXDP2X01_FLASH_WINDOW_BITS)
-					| IXDP2X01_CPLD_FLASH_INTERN));
-	ixp2000_reg_wrb(IXDP2X01_CPLD_RESET_REG, 0xffffffff);
-
-	ixp2000_restart(mode, cmd);
-}
-
-static void ixdp280x_restart(char mode, const char *cmd)
-{
-	/*
-	 * On IXDP2801 we need to write this magic sequence to the CPLD
-	 * to cause a complete reset of the CPU and all external devices
-	 * and move the flash bank register back to 0.
-	 */
-	unsigned long reset_reg = *IXDP2X01_CPLD_RESET_REG;
-
-	reset_reg = 0x55AA0000 | (reset_reg & 0x0000FFFF);
-	ixp2000_reg_write(IXDP2X01_CPLD_RESET_REG, reset_reg);
-	ixp2000_reg_wrb(IXDP2X01_CPLD_RESET_REG, 0x80000000);
-
-	ixp2000_restart(mode, cmd);
-}
 
 #ifdef CONFIG_ARCH_IXDP2401
 MACHINE_START(IXDP2401, "Intel IXDP2401 Development Platform")
 	/* Maintainer: MontaVista Software, Inc. */
-	.atag_offset	= 0x100,
+	.phys_io	= IXP2000_UART_PHYS_BASE,
+	.io_pg_offst	= ((IXP2000_UART_VIRT_BASE) >> 18) & 0xfffc,
+	.boot_params	= 0x00000100,
 	.map_io		= ixdp2x01_map_io,
 	.init_irq	= ixdp2x01_init_irq,
 	.timer		= &ixdp2x01_timer,
 	.init_machine	= ixdp2x01_init_machine,
-	.restart	= ixdp2401_restart,
 MACHINE_END
 #endif
 
 #ifdef CONFIG_ARCH_IXDP2801
 MACHINE_START(IXDP2801, "Intel IXDP2801 Development Platform")
 	/* Maintainer: MontaVista Software, Inc. */
-	.atag_offset	= 0x100,
+	.phys_io	= IXP2000_UART_PHYS_BASE,
+	.io_pg_offst	= ((IXP2000_UART_VIRT_BASE) >> 18) & 0xfffc,
+	.boot_params	= 0x00000100,
 	.map_io		= ixdp2x01_map_io,
 	.init_irq	= ixdp2x01_init_irq,
 	.timer		= &ixdp2x01_timer,
 	.init_machine	= ixdp2x01_init_machine,
-	.restart	= ixdp280x_restart,
 MACHINE_END
 
 /*
@@ -471,12 +445,13 @@ MACHINE_END
  */
 MACHINE_START(IXDP28X5, "Intel IXDP2805/2855 Development Platform")
 	/* Maintainer: MontaVista Software, Inc. */
-	.atag_offset	= 0x100,
+	.phys_io	= IXP2000_UART_PHYS_BASE,
+	.io_pg_offst	= ((IXP2000_UART_VIRT_BASE) >> 18) & 0xfffc,
+	.boot_params	= 0x00000100,
 	.map_io		= ixdp2x01_map_io,
 	.init_irq	= ixdp2x01_init_irq,
 	.timer		= &ixdp2x01_timer,
 	.init_machine	= ixdp2x01_init_machine,
-	.restart	= ixdp280x_restart,
 MACHINE_END
 #endif
 

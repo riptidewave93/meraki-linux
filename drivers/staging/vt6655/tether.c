@@ -61,14 +61,14 @@
  * Return Value: Hash value
  *
  */
-unsigned char ETHbyGetHashIndexByCrc32 (unsigned char *pbyMultiAddr)
+BYTE ETHbyGetHashIndexByCrc32 (PBYTE pbyMultiAddr)
 {
     int     ii;
-    unsigned char byTmpHash;
-    unsigned char byHash = 0;
+    BYTE    byTmpHash;
+    BYTE    byHash = 0;
 
     // get the least 6-bits from CRC generator
-    byTmpHash = (unsigned char)(CRCdwCrc32(pbyMultiAddr, ETH_ALEN,
+    byTmpHash = (BYTE)(CRCdwCrc32(pbyMultiAddr, U_ETHER_ADDR_LEN,
             0xFFFFFFFFL) & 0x3F);
     // reverse most bit to least bit
     for (ii = 0; ii < (sizeof(byTmpHash) * 8); ii++) {
@@ -93,17 +93,17 @@ unsigned char ETHbyGetHashIndexByCrc32 (unsigned char *pbyMultiAddr)
  *  Out:
  *      none
  *
- * Return Value: true if ok; false if error.
+ * Return Value: TRUE if ok; FALSE if error.
  *
  */
-bool ETHbIsBufferCrc32Ok (unsigned char *pbyBuffer, unsigned int cbFrameLength)
+BOOL ETHbIsBufferCrc32Ok (PBYTE pbyBuffer, UINT cbFrameLength)
 {
-    unsigned long dwCRC;
+    DWORD dwCRC;
 
     dwCRC = CRCdwGetCrc32(pbyBuffer, cbFrameLength - 4);
-    if (cpu_to_le32(*((unsigned long *)(pbyBuffer + cbFrameLength - 4))) != dwCRC) {
-        return false;
+    if (cpu_to_le32(*((PDWORD)(pbyBuffer + cbFrameLength - 4))) != dwCRC) {
+        return FALSE;
     }
-    return true;
+    return TRUE;
 }
 

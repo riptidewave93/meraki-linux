@@ -15,4 +15,6 @@
 
 #define __io(a)                 ((void __iomem *)(0xe0000000 + (a)))
 
+#define __mem_pci(addr) (addr)
+
 #endif

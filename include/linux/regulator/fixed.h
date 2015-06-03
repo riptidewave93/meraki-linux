@@ -25,7 +25,6 @@ struct regulator_init_data;
  * @microvolts:		Output voltage of regulator
  * @gpio:		GPIO to use for enable control
  * 			set to -EINVAL if not used
- * @startup_delay:	Start-up time in microseconds
  * @enable_high:	Polarity of enable GPIO
  *			1 = Active high, 0 = Active low
  * @enabled_at_boot:	Whether regulator has been enabled at
@@ -42,23 +41,9 @@ struct fixed_voltage_config {
 	const char *supply_name;
 	int microvolts;
 	int gpio;
-	unsigned startup_delay;
 	unsigned enable_high:1;
 	unsigned enabled_at_boot:1;
 	struct regulator_init_data *init_data;
 };
-
-struct regulator_consumer_supply;
-
-#if IS_ENABLED(CONFIG_REGULATOR)
-struct platform_device *regulator_register_fixed(int id,
-		struct regulator_consumer_supply *supplies, int num_supplies);
-#else
-static inline struct platform_device *regulator_register_fixed(int id,
-		struct regulator_consumer_supply *supplies, int num_supplies)
-{
-	return NULL;
-}
-#endif
 
 #endif

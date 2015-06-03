@@ -28,7 +28,6 @@
 #include <linux/proc_fs.h>
 #include <linux/pfn.h>
 #include <linux/hardirq.h>
-#include <linux/gfp.h>
 
 #include <asm/asm-offsets.h>
 #include <asm/bootinfo.h>
@@ -63,6 +62,8 @@
 #define EXIT_CRITICAL(flags) local_irq_restore(flags)
 
 #endif /* CONFIG_MIPS_MT_SMTC */
+
+DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
 
 /*
  * We have up to 8 empty zeroed pages so we can map one of the right colour
@@ -142,7 +143,7 @@ void *kmap_coherent(struct page *page, unsigned long addr)
 #if defined(CONFIG_64BIT_PHYS_ADDR) && defined(CONFIG_CPU_MIPS32)
 	entrylo = pte.pte_high;
 #else
-	entrylo = pte_to_entrylo(pte_val(pte));
+	entrylo = pte_val(pte) >> 6;
 #endif
 
 	ENTER_CRITICAL(flags);
@@ -207,21 +208,21 @@ void copy_user_highpage(struct page *to, struct page *from,
 {
 	void *vfrom, *vto;
 
-	vto = kmap_atomic(to);
+	vto = kmap_atomic(to, KM_USER1);
 	if (cpu_has_dc_aliases &&
 	    page_mapped(from) && !Page_dcache_dirty(from)) {
 		vfrom = kmap_coherent(from, vaddr);
 		copy_page(vto, vfrom);
 		kunmap_coherent();
 	} else {
-		vfrom = kmap_atomic(from);
+		vfrom = kmap_atomic(from, KM_USER0);
 		copy_page(vto, vfrom);
-		kunmap_atomic(vfrom);
+		kunmap_atomic(vfrom, KM_USER0);
 	}
 	if ((!cpu_has_ic_fills_f_dc) ||
 	    pages_do_alias((unsigned long)vto, vaddr & PAGE_MASK))
 		flush_data_cache_page((unsigned long)vto);
-	kunmap_atomic(vto);
+	kunmap_atomic(vto, KM_USER1);
 	/* Make sure this page is cleared on other CPU's too before using it */
 	smp_wmb();
 }
@@ -277,11 +278,11 @@ void __init fixrange_init(unsigned long start, unsigned long end,
 	k = __pmd_offset(vaddr);
 	pgd = pgd_base + i;
 
-	for ( ; (i < PTRS_PER_PGD) && (vaddr < end); pgd++, i++) {
+	for ( ; (i < PTRS_PER_PGD) && (vaddr != end); pgd++, i++) {
 		pud = (pud_t *)pgd;
-		for ( ; (j < PTRS_PER_PUD) && (vaddr < end); pud++, j++) {
+		for ( ; (j < PTRS_PER_PUD) && (vaddr != end); pud++, j++) {
 			pmd = (pmd_t *)pud;
-			for (; (k < PTRS_PER_PMD) && (vaddr < end); pmd++, k++) {
+			for (; (k < PTRS_PER_PMD) && (vaddr != end); pmd++, k++) {
 				if (pmd_none(*pmd)) {
 					pte = (pte_t *) alloc_bootmem_low_pages(PAGE_SIZE);
 					set_pmd(pmd, __pmd((unsigned long)pte));
@@ -297,21 +298,16 @@ void __init fixrange_init(unsigned long start, unsigned long end,
 }
 
 #ifndef CONFIG_NEED_MULTIPLE_NODES
-int page_is_ram(unsigned long pagenr)
+static int __init page_is_ram(unsigned long pagenr)
 {
 	int i;
 
 	for (i = 0; i < boot_mem_map.nr_map; i++) {
 		unsigned long addr, end;
 
-		switch (boot_mem_map.map[i].type) {
-		case BOOT_MEM_RAM:
-		case BOOT_MEM_INIT_RAM:
-			break;
-		default:
+		if (boot_mem_map.map[i].type != BOOT_MEM_RAM)
 			/* not usable memory */
 			continue;
-		}
 
 		addr = PFN_UP(boot_mem_map.map[i].addr);
 		end = PFN_DOWN(boot_mem_map.map[i].addr +
@@ -373,7 +369,7 @@ void __init mem_init(void)
 #ifdef CONFIG_DISCONTIGMEM
 #error "CONFIG_HIGHMEM and CONFIG_DISCONTIGMEM dont work together yet"
 #endif
-	max_mapnr = highend_pfn ? highend_pfn : max_low_pfn;
+	max_mapnr = highend_pfn;
 #else
 	max_mapnr = max_low_pfn;
 #endif
@@ -384,7 +380,7 @@ void __init mem_init(void)
 
 	reservedpages = ram = 0;
 	for (tmp = 0; tmp < max_low_pfn; tmp++)
-		if (page_is_ram(tmp) && pfn_valid(tmp)) {
+		if (page_is_ram(tmp)) {
 			ram++;
 			if (PageReserved(pfn_to_page(tmp)))
 				reservedpages++;
@@ -428,7 +424,7 @@ void __init mem_init(void)
 	       reservedpages << (PAGE_SHIFT-10),
 	       datasize >> 10,
 	       initsize >> 10,
-	       totalhigh_pages << (PAGE_SHIFT-10));
+	       (unsigned long) (totalhigh_pages << (PAGE_SHIFT-10)));
 }
 #endif /* !CONFIG_NEED_MULTIPLE_NODES */
 
@@ -466,9 +462,7 @@ void __init_refok free_initmem(void)
 			__pa_symbol(&__init_end));
 }
 
-#ifndef CONFIG_MIPS_PGD_C0_CONTEXT
 unsigned long pgd_current[NR_CPUS];
-#endif
 /*
  * On 64-bit we've got three-level pagetables with a slightly
  * different layout ...
@@ -481,7 +475,7 @@ unsigned long pgd_current[NR_CPUS];
  * will officially be retired.
  */
 pgd_t swapper_pg_dir[_PTRS_PER_PGD] __page_aligned(_PGD_ORDER);
-#ifndef __PAGETABLE_PMD_FOLDED
+#ifdef CONFIG_64BIT
 pmd_t invalid_pmd_table[PTRS_PER_PMD] __page_aligned(PMD_ORDER);
 #endif
 pte_t invalid_pte_table[PTRS_PER_PTE] __page_aligned(PTE_ORDER);

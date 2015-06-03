@@ -4,7 +4,7 @@
  * Epson Research S1D13505 Embedded RAMDAC LCD/CRT Controller
  *   (previously known as SED1355)
  *
- * Cf. http://vdc.epson.com/
+ * Cf. http://www.erd.epson.com/vdc/html/S1D13505.html
  *
  *
  * Copyright (C) Hewlett-Packard Company.  All rights reserved.
@@ -48,6 +48,7 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/fb.h>
 #include <linux/init.h>
@@ -601,7 +602,7 @@ static int epson1355fb_remove(struct platform_device *dev)
 	return 0;
 }
 
-int __devinit epson1355fb_probe(struct platform_device *dev)
+int __init epson1355fb_probe(struct platform_device *dev)
 {
 	struct epson1355_par *default_par;
 	struct fb_info *info;

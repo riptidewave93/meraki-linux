@@ -1,7 +1,7 @@
 /*
  * pata_atiixp.c 	- ATI PATA for new ATA layer
  *			  (C) 2005 Red Hat Inc
- *			  (C) 2009-2010 Bartlomiej Zolnierkiewicz
+ *			  (C) 2009 Bartlomiej Zolnierkiewicz
  *
  * Based on
  *
@@ -46,33 +46,6 @@ static int atiixp_cable_detect(struct ata_port *ap)
 	return ATA_CBL_PATA40;
 }
 
-static DEFINE_SPINLOCK(atiixp_lock);
-
-/**
- *	atiixp_prereset	-	perform reset handling
- *	@link: ATA link
- *	@deadline: deadline jiffies for the operation
- *
- *	Reset sequence checking enable bits to see which ports are
- *	active.
- */
-
-static int atiixp_prereset(struct ata_link *link, unsigned long deadline)
-{
-	static const struct pci_bits atiixp_enable_bits[] = {
-		{ 0x48, 1, 0x01, 0x00 },
-		{ 0x48, 1, 0x08, 0x00 }
-	};
-
-	struct ata_port *ap = link->ap;
-	struct pci_dev *pdev = to_pci_dev(ap->host->dev);
-
-	if (!pci_test_config_bits(pdev, &atiixp_enable_bits[ap->port_no]))
-		return -ENOENT;
-
-	return ata_sff_prereset(link, deadline);
-}
-
 /**
  *	atiixp_set_pio_timing	-	set initial PIO mode data
  *	@ap: ATA interface
@@ -115,10 +88,7 @@ static void atiixp_set_pio_timing(struct ata_port *ap, struct ata_device *adev, 
 
 static void atiixp_set_piomode(struct ata_port *ap, struct ata_device *adev)
 {
-	unsigned long flags;
-	spin_lock_irqsave(&atiixp_lock, flags);
 	atiixp_set_pio_timing(ap, adev, adev->pio_mode - XFER_PIO_0);
-	spin_unlock_irqrestore(&atiixp_lock, flags);
 }
 
 /**
@@ -138,9 +108,6 @@ static void atiixp_set_dmamode(struct ata_port *ap, struct ata_device *adev)
 	int dma = adev->dma_mode;
 	int dn = 2 * ap->port_no + adev->devno;
 	int wanted_pio;
-	unsigned long flags;
-
-	spin_lock_irqsave(&atiixp_lock, flags);
 
 	if (adev->dma_mode >= XFER_UDMA_0) {
 		u16 udma_mode_data;
@@ -178,7 +145,6 @@ static void atiixp_set_dmamode(struct ata_port *ap, struct ata_device *adev)
 
 	if (adev->pio_mode != wanted_pio)
 		atiixp_set_pio_timing(ap, adev, wanted_pio);
-	spin_unlock_irqrestore(&atiixp_lock, flags);
 }
 
 /**
@@ -242,11 +208,10 @@ static struct scsi_host_template atiixp_sht = {
 static struct ata_port_operations atiixp_port_ops = {
 	.inherits	= &ata_bmdma_port_ops,
 
-	.qc_prep 	= ata_bmdma_dumb_qc_prep,
+	.qc_prep 	= ata_sff_dumb_qc_prep,
 	.bmdma_start 	= atiixp_bmdma_start,
 	.bmdma_stop	= atiixp_bmdma_stop,
 
-	.prereset	= atiixp_prereset,
 	.cable_detect	= atiixp_cable_detect,
 	.set_piomode	= atiixp_set_piomode,
 	.set_dmamode	= atiixp_set_dmamode,
@@ -261,10 +226,18 @@ static int atiixp_init_one(struct pci_dev *pdev, const struct pci_device_id *id)
 		.udma_mask = ATA_UDMA5,
 		.port_ops = &atiixp_port_ops
 	};
+	static const struct pci_bits atiixp_enable_bits[] = {
+		{ 0x48, 1, 0x01, 0x00 },
+		{ 0x48, 1, 0x08, 0x00 }
+	};
 	const struct ata_port_info *ppi[] = { &info, &info };
+	int i;
 
-	return ata_pci_bmdma_init_one(pdev, ppi, &atiixp_sht, NULL,
-				      ATA_HOST_PARALLEL_SCAN);
+	for (i = 0; i < 2; i++)
+		if (!pci_test_config_bits(pdev, &atiixp_enable_bits[i]))
+			ppi[i] = &ata_dummy_port_info;
+
+	return ata_pci_sff_init_one(pdev, ppi, &atiixp_sht, NULL);
 }
 
 static const struct pci_device_id atiixp[] = {

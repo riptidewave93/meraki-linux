@@ -48,14 +48,13 @@
 #include <linux/netdevice.h>
 #include <linux/ioport.h>
 #include <linux/delay.h>
+#include <linux/slab.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/rtnetlink.h>
 #include <linux/serial_reg.h>
 #include <linux/dma-mapping.h>
 #include <linux/pnp.h>
 #include <linux/platform_device.h>
-#include <linux/gfp.h>
 
 #include <asm/io.h>
 #include <asm/dma.h>
@@ -79,7 +78,7 @@ MODULE_AUTHOR("Daniele Peri <peri@csai.unipa.it>");
 MODULE_DESCRIPTION("SMC IrCC SIR/FIR controller driver");
 MODULE_LICENSE("GPL");
 
-static bool smsc_nopnp = true;
+static int smsc_nopnp = 1;
 module_param_named(nopnp, smsc_nopnp, bool, 0);
 MODULE_PARM_DESC(nopnp, "Do not use PNP to detect controller settings, defaults to true");
 
@@ -116,7 +115,7 @@ struct smsc_ircc_subsystem_configuration {
 	unsigned short vendor; /* PCI vendor ID */
 	unsigned short device; /* PCI vendor ID */
 	unsigned short subvendor; /* PCI subsystem vendor ID */
-	unsigned short subdevice; /* PCI subsystem device ID */
+	unsigned short subdevice; /* PCI sybsystem device ID */
 	unsigned short sir_io; /* I/O port for SIR */
 	unsigned short fir_io; /* I/O port for FIR */
 	unsigned char  fir_irq; /* FIR IRQ */
@@ -377,7 +376,7 @@ MODULE_DEVICE_TABLE(pnp, smsc_ircc_pnp_table);
 static int pnp_driver_registered;
 
 #ifdef CONFIG_PNP
-static int __devinit smsc_ircc_pnp_probe(struct pnp_dev *dev,
+static int __init smsc_ircc_pnp_probe(struct pnp_dev *dev,
 				      const struct pnp_device_id *dev_id)
 {
 	unsigned int firbase, sirbase;
@@ -869,7 +868,7 @@ static void smsc_ircc_timeout(struct net_device *dev)
 	spin_lock_irqsave(&self->lock, flags);
 	smsc_ircc_sir_start(self);
 	smsc_ircc_change_speed(self, self->io.speed);
-	dev->trans_start = jiffies; /* prevent tx timeout */
+	dev->trans_start = jiffies;
 	netif_wake_queue(dev);
 	spin_unlock_irqrestore(&self->lock, flags);
 }
@@ -1583,7 +1582,7 @@ static irqreturn_t smsc_ircc_interrupt_sir(struct net_device *dev)
 	int iobase;
 	int iir, lsr;
 
-	/* Already locked coming here in smsc_ircc_interrupt() */
+	/* Already locked comming here in smsc_ircc_interrupt() */
 	/*spin_lock(&self->lock);*/
 
 	iobase = self->io.sir_base;
@@ -2052,7 +2051,7 @@ static int smsc_ircc_sir_write(int iobase, int fifo_size, __u8 *buf, int len)
  */
 static int smsc_ircc_is_receiving(struct smsc_ircc_cb *self)
 {
-	return self->rx_buff.state != OUTSIDE_FRAME;
+	return (self->rx_buff.state != OUTSIDE_FRAME);
 }
 
 
@@ -2405,6 +2404,8 @@ static int __init smsc_superio_lpc(unsigned short cfg_base)
  * addresses making a subsystem device table necessary.
  */
 #ifdef CONFIG_PCI
+#define PCIID_VENDOR_INTEL 0x8086
+#define PCIID_VENDOR_ALI 0x10b9
 static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __initdata = {
 	/*
 	 * Subsystems needing entries:
@@ -2414,7 +2415,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 	 */
 	{
 		/* Guessed entry */
-		.vendor = PCI_VENDOR_ID_INTEL, /* Intel 82801DBM LPC bridge */
+		.vendor = PCIID_VENDOR_INTEL, /* Intel 82801DBM LPC bridge */
 		.device = 0x24cc,
 		.subvendor = 0x103c,
 		.subdevice = 0x08bc,
@@ -2427,7 +2428,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 		.name = "HP nx5000 family",
 	},
 	{
-		.vendor = PCI_VENDOR_ID_INTEL, /* Intel 82801DBM LPC bridge */
+		.vendor = PCIID_VENDOR_INTEL, /* Intel 82801DBM LPC bridge */
 		.device = 0x24cc,
 		.subvendor = 0x103c,
 		.subdevice = 0x088c,
@@ -2441,7 +2442,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 		.name = "HP nc8000 family",
 	},
 	{
-		.vendor = PCI_VENDOR_ID_INTEL, /* Intel 82801DBM LPC bridge */
+		.vendor = PCIID_VENDOR_INTEL, /* Intel 82801DBM LPC bridge */
 		.device = 0x24cc,
 		.subvendor = 0x103c,
 		.subdevice = 0x0890,
@@ -2454,7 +2455,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 		.name = "HP nc6000 family",
 	},
 	{
-		.vendor = PCI_VENDOR_ID_INTEL, /* Intel 82801DBM LPC bridge */
+		.vendor = PCIID_VENDOR_INTEL, /* Intel 82801DBM LPC bridge */
 		.device = 0x24cc,
 		.subvendor = 0x0e11,
 		.subdevice = 0x0860,
@@ -2469,7 +2470,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 	},
 	{
 		/* Intel 82801DB/DBL (ICH4/ICH4-L) LPC Interface Bridge */
-		.vendor = PCI_VENDOR_ID_INTEL,
+		.vendor = PCIID_VENDOR_INTEL,
 		.device = 0x24c0,
 		.subvendor = 0x1179,
 		.subdevice = 0xffff, /* 0xffff is "any" */
@@ -2482,7 +2483,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 		.name = "Toshiba laptop with Intel 82801DB/DBL LPC bridge",
 	},
 	{
-		.vendor = PCI_VENDOR_ID_INTEL, /* Intel 82801CAM ISA bridge */
+		.vendor = PCIID_VENDOR_INTEL, /* Intel 82801CAM ISA bridge */
 		.device = 0x248c,
 		.subvendor = 0x1179,
 		.subdevice = 0xffff, /* 0xffff is "any" */
@@ -2496,7 +2497,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 	},
 	{
 		/* 82801DBM (ICH4-M) LPC Interface Bridge */
-		.vendor = PCI_VENDOR_ID_INTEL,
+		.vendor = PCIID_VENDOR_INTEL,
 		.device = 0x24cc,
 		.subvendor = 0x1179,
 		.subdevice = 0xffff, /* 0xffff is "any" */
@@ -2510,7 +2511,7 @@ static struct smsc_ircc_subsystem_configuration subsystem_configurations[] __ini
 	},
 	{
 		/* ALi M1533/M1535 PCI to ISA Bridge [Aladdin IV/V/V+] */
-		.vendor = PCI_VENDOR_ID_AL,
+		.vendor = PCIID_VENDOR_ALI,
 		.device = 0x1533,
 		.subvendor = 0x1179,
 		.subdevice = 0xffff, /* 0xffff is "any" */
@@ -2821,6 +2822,7 @@ static void __init preconfigure_ali_port(struct pci_dev *dev,
 	tmpbyte |= mask;
 	pci_write_config_byte(dev, reg, tmpbyte);
 	IRDA_MESSAGE("Activated ALi 1533 ISA bridge port 0x%04x.\n", port);
+	return;
 }
 
 static int __init preconfigure_through_ali(struct pci_dev *dev,
@@ -2847,7 +2849,9 @@ static int __init smsc_ircc_preconfigure_subsystems(unsigned short ircc_cfg,
 	unsigned short ss_device = 0x0000;
 	int ret = 0;
 
-	for_each_pci_dev(dev) {
+	dev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, dev);
+
+	while (dev != NULL) {
 		struct smsc_ircc_subsystem_configuration *conf;
 
 		/*
@@ -2896,6 +2900,7 @@ static int __init smsc_ircc_preconfigure_subsystems(unsigned short ircc_cfg,
 					ret = -ENODEV;
 			}
 		}
+		dev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, dev);
 	}
 
 	return ret;

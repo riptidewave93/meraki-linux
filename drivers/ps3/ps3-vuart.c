@@ -19,7 +19,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/interrupt.h>
 #include <linux/workqueue.h>
@@ -952,7 +951,7 @@ static int ps3_vuart_bus_interrupt_get(void)
 	}
 
 	result = request_irq(vuart_bus_priv.virq, ps3_vuart_irq_handler,
-		0, "vuart", &vuart_bus_priv);
+		IRQF_DISABLED, "vuart", &vuart_bus_priv);
 
 	if (result) {
 		pr_debug("%s:%d: request_irq failed (%d)\n",

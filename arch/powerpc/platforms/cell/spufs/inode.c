@@ -71,15 +71,10 @@ spufs_alloc_inode(struct super_block *sb)
 	return &ei->vfs_inode;
 }
 
-static void spufs_i_callback(struct rcu_head *head)
+static void
+spufs_destroy_inode(struct inode *inode)
 {
-	struct inode *inode = container_of(head, struct inode, i_rcu);
 	kmem_cache_free(spufs_inode_cache, SPUFS_I(inode));
-}
-
-static void spufs_destroy_inode(struct inode *inode)
-{
-	call_rcu(&inode->i_rcu, spufs_i_callback);
 }
 
 static void
@@ -91,7 +86,7 @@ spufs_init_once(void *p)
 }
 
 static struct inode *
-spufs_new_inode(struct super_block *sb, umode_t mode)
+spufs_new_inode(struct super_block *sb, int mode)
 {
 	struct inode *inode;
 
@@ -99,7 +94,6 @@ spufs_new_inode(struct super_block *sb, umode_t mode)
 	if (!inode)
 		goto out;
 
-	inode->i_ino = get_next_ino();
 	inode->i_mode = mode;
 	inode->i_uid = current_fsuid();
 	inode->i_gid = current_fsgid();
@@ -116,15 +110,13 @@ spufs_setattr(struct dentry *dentry, struct iattr *attr)
 	if ((attr->ia_valid & ATTR_SIZE) &&
 	    (attr->ia_size != inode->i_size))
 		return -EINVAL;
-	setattr_copy(inode, attr);
-	mark_inode_dirty(inode);
-	return 0;
+	return inode_setattr(inode, attr);
 }
 
 
 static int
 spufs_new_file(struct super_block *sb, struct dentry *dentry,
-		const struct file_operations *fops, umode_t mode,
+		const struct file_operations *fops, int mode,
 		size_t size, struct spu_context *ctx)
 {
 	static const struct inode_operations spufs_file_iops = {
@@ -149,14 +141,15 @@ out:
 }
 
 static void
-spufs_evict_inode(struct inode *inode)
+spufs_delete_inode(struct inode *inode)
 {
 	struct spufs_inode_info *ei = SPUFS_I(inode);
-	end_writeback(inode);
+
 	if (ei->i_ctx)
 		put_spu_context(ei->i_ctx);
 	if (ei->i_gang)
 		put_spu_gang(ei->i_gang);
+	clear_inode(inode);
 }
 
 static void spufs_prune_dir(struct dentry *dir)
@@ -165,18 +158,18 @@ static void spufs_prune_dir(struct dentry *dir)
 
 	mutex_lock(&dir->d_inode->i_mutex);
 	list_for_each_entry_safe(dentry, tmp, &dir->d_subdirs, d_u.d_child) {
+		spin_lock(&dcache_lock);
 		spin_lock(&dentry->d_lock);
 		if (!(d_unhashed(dentry)) && dentry->d_inode) {
-			dget_dlock(dentry);
+			dget_locked(dentry);
 			__d_drop(dentry);
 			spin_unlock(&dentry->d_lock);
 			simple_unlink(dir->d_inode, dentry);
-			/* XXX: what was dcache_lock protecting here? Other
-			 * filesystems (IB, configfs) release dcache_lock
-			 * before unlink */
+			spin_unlock(&dcache_lock);
 			dput(dentry);
 		} else {
 			spin_unlock(&dentry->d_lock);
+			spin_unlock(&dcache_lock);
 		}
 	}
 	shrink_dcache_parent(dir);
@@ -194,7 +187,7 @@ static int spufs_rmdir(struct inode *parent, struct dentry *dir)
 }
 
 static int spufs_fill_dir(struct dentry *dir,
-		const struct spufs_tree_descr *files, umode_t mode,
+		const struct spufs_tree_descr *files, int mode,
 		struct spu_context *ctx)
 {
 	struct dentry *dentry, *tmp;
@@ -258,13 +251,13 @@ const struct file_operations spufs_context_fops = {
 	.llseek		= dcache_dir_lseek,
 	.read		= generic_read_dir,
 	.readdir	= dcache_readdir,
-	.fsync		= noop_fsync,
+	.fsync		= simple_sync_file,
 };
 EXPORT_SYMBOL_GPL(spufs_context_fops);
 
 static int
 spufs_mkdir(struct inode *dir, struct dentry *dentry, unsigned int flags,
-		umode_t mode)
+		int mode)
 {
 	int ret;
 	struct inode *inode;
@@ -447,7 +440,7 @@ spufs_set_affinity(unsigned int flags, struct spu_context *ctx,
 
 static int
 spufs_create_context(struct inode *inode, struct dentry *dentry,
-			struct vfsmount *mnt, int flags, umode_t mode,
+			struct vfsmount *mnt, int flags, int mode,
 			struct file *aff_filp)
 {
 	int ret;
@@ -521,7 +514,7 @@ out:
 }
 
 static int
-spufs_mkgang(struct inode *dir, struct dentry *dentry, umode_t mode)
+spufs_mkgang(struct inode *dir, struct dentry *dentry, int mode)
 {
 	int ret;
 	struct inode *inode;
@@ -584,7 +577,7 @@ out:
 
 static int spufs_create_gang(struct inode *inode,
 			struct dentry *dentry,
-			struct vfsmount *mnt, umode_t mode)
+			struct vfsmount *mnt, int mode)
 {
 	int ret;
 
@@ -611,14 +604,15 @@ out:
 
 static struct file_system_type spufs_type;
 
-long spufs_create(struct path *path, struct dentry *dentry,
-		unsigned int flags, umode_t mode, struct file *filp)
+long spufs_create(struct nameidata *nd, unsigned int flags, mode_t mode,
+							struct file *filp)
 {
+	struct dentry *dentry;
 	int ret;
 
 	ret = -EINVAL;
 	/* check if we are on spufs */
-	if (path->dentry->d_sb->s_type != &spufs_type)
+	if (nd->path.dentry->d_sb->s_type != &spufs_type)
 		goto out;
 
 	/* don't accept undefined flags */
@@ -626,28 +620,33 @@ long spufs_create(struct path *path, struct dentry *dentry,
 		goto out;
 
 	/* only threads can be underneath a gang */
-	if (path->dentry != path->dentry->d_sb->s_root) {
+	if (nd->path.dentry != nd->path.dentry->d_sb->s_root) {
 		if ((flags & SPU_CREATE_GANG) ||
-		    !SPUFS_I(path->dentry->d_inode)->i_gang)
+		    !SPUFS_I(nd->path.dentry->d_inode)->i_gang)
 			goto out;
 	}
+
+	dentry = lookup_create(nd, 1);
+	ret = PTR_ERR(dentry);
+	if (IS_ERR(dentry))
+		goto out_dir;
 
 	mode &= ~current_umask();
 
 	if (flags & SPU_CREATE_GANG)
-		ret = spufs_create_gang(path->dentry->d_inode,
-					 dentry, path->mnt, mode);
+		ret = spufs_create_gang(nd->path.dentry->d_inode,
+					 dentry, nd->path.mnt, mode);
 	else
-		ret = spufs_create_context(path->dentry->d_inode,
-					    dentry, path->mnt, flags, mode,
+		ret = spufs_create_context(nd->path.dentry->d_inode,
+					    dentry, nd->path.mnt, flags, mode,
 					    filp);
 	if (ret >= 0)
-		fsnotify_mkdir(path->dentry->d_inode, dentry);
+		fsnotify_mkdir(nd->path.dentry->d_inode, dentry);
 	return ret;
 
+out_dir:
+	mutex_unlock(&nd->path.dentry->d_inode->i_mutex);
 out:
-	mutex_unlock(&path->dentry->d_inode->i_mutex);
-	dput(dentry);
 	return ret;
 }
 
@@ -759,9 +758,9 @@ spufs_create_root(struct super_block *sb, void *data)
 		goto out_iput;
 
 	ret = -ENOMEM;
-	sb->s_root = d_make_root(inode);
+	sb->s_root = d_alloc_root(inode);
 	if (!sb->s_root)
-		goto out;
+		goto out_iput;
 
 	return 0;
 out_iput:
@@ -778,7 +777,8 @@ spufs_fill_super(struct super_block *sb, void *data, int silent)
 		.alloc_inode = spufs_alloc_inode,
 		.destroy_inode = spufs_destroy_inode,
 		.statfs = simple_statfs,
-		.evict_inode = spufs_evict_inode,
+		.delete_inode = spufs_delete_inode,
+		.drop_inode = generic_delete_inode,
 		.show_options = generic_show_options,
 	};
 
@@ -798,17 +798,17 @@ spufs_fill_super(struct super_block *sb, void *data, int silent)
 	return spufs_create_root(sb, data);
 }
 
-static struct dentry *
-spufs_mount(struct file_system_type *fstype, int flags,
-		const char *name, void *data)
+static int
+spufs_get_sb(struct file_system_type *fstype, int flags,
+		const char *name, void *data, struct vfsmount *mnt)
 {
-	return mount_single(fstype, flags, data, spufs_fill_super);
+	return get_sb_single(fstype, flags, data, spufs_fill_super, mnt);
 }
 
 static struct file_system_type spufs_type = {
 	.owner = THIS_MODULE,
 	.name = "spufs",
-	.mount = spufs_mount,
+	.get_sb = spufs_get_sb,
 	.kill_sb = kill_litter_super,
 };
 
@@ -830,19 +830,19 @@ static int __init spufs_init(void)
 	ret = spu_sched_init();
 	if (ret)
 		goto out_cache;
-	ret = register_spu_syscalls(&spufs_calls);
-	if (ret)
-		goto out_sched;
 	ret = register_filesystem(&spufs_type);
 	if (ret)
-		goto out_syscalls;
+		goto out_sched;
+	ret = register_spu_syscalls(&spufs_calls);
+	if (ret)
+		goto out_fs;
 
 	spufs_init_isolated_loader();
 
 	return 0;
 
-out_syscalls:
-	unregister_spu_syscalls(&spufs_calls);
+out_fs:
+	unregister_filesystem(&spufs_type);
 out_sched:
 	spu_sched_exit();
 out_cache:

@@ -12,12 +12,9 @@
 #include <linux/init.h>
 #include <linux/platform_device.h>
 #include <linux/dma-mapping.h>
-#include <linux/slab.h>
 #include <linux/gpio.h>
 #include <linux/spi/spi.h>
 #include <linux/usb/atmel_usba_udc.h>
-
-#include <mach/atmel-mci.h>
 #include <linux/atmel-mci.h>
 
 #include <asm/io.h>
@@ -1014,7 +1011,6 @@ static struct platform_device *__initdata at32_usarts[4];
 void __init at32_map_usart(unsigned int hw_id, unsigned int line, int flags)
 {
 	struct platform_device *pdev;
-	struct atmel_uart_data *pdata;
 
 	switch (hw_id) {
 	case 0:
@@ -1044,8 +1040,6 @@ void __init at32_map_usart(unsigned int hw_id, unsigned int line, int flags)
 	}
 
 	pdev->id = line;
-	pdata = pdev->dev.platform_data;
-	pdata->num = line;
 	at32_usarts[line] = pdev;
 }
 
@@ -1054,6 +1048,8 @@ struct platform_device *__init at32_add_device_usart(unsigned int id)
 	platform_device_register(at32_usarts[id]);
 	return at32_usarts[id];
 }
+
+struct platform_device *atmel_default_console_device;
 
 void __init at32_setup_serial_console(unsigned int usart_id)
 {
@@ -1065,7 +1061,7 @@ void __init at32_setup_serial_console(unsigned int usart_id)
  * -------------------------------------------------------------------- */
 
 #ifdef CONFIG_CPU_AT32AP7000
-static struct macb_platform_data macb0_data;
+static struct eth_platform_data macb0_data;
 static struct resource macb0_resource[] = {
 	PBMEM(0xfff01800),
 	IRQ(25),
@@ -1074,7 +1070,7 @@ DEFINE_DEV_DATA(macb, 0);
 DEV_CLK(hclk, macb0, hsb, 8);
 DEV_CLK(pclk, macb0, pbb, 6);
 
-static struct macb_platform_data macb1_data;
+static struct eth_platform_data macb1_data;
 static struct resource macb1_resource[] = {
 	PBMEM(0xfff01c00),
 	IRQ(26),
@@ -1084,7 +1080,7 @@ DEV_CLK(hclk, macb1, hsb, 9);
 DEV_CLK(pclk, macb1, pbb, 7);
 
 struct platform_device *__init
-at32_add_device_eth(unsigned int id, struct macb_platform_data *data)
+at32_add_device_eth(unsigned int id, struct eth_platform_data *data)
 {
 	struct platform_device *pdev;
 	u32 pin_mask;
@@ -1161,7 +1157,7 @@ at32_add_device_eth(unsigned int id, struct macb_platform_data *data)
 		return NULL;
 	}
 
-	memcpy(pdev->dev.platform_data, data, sizeof(struct macb_platform_data));
+	memcpy(pdev->dev.platform_data, data, sizeof(struct eth_platform_data));
 	platform_device_register(pdev);
 
 	return pdev;
@@ -1185,24 +1181,11 @@ static struct resource atmel_spi1_resource[] = {
 DEFINE_DEV(atmel_spi, 1);
 DEV_CLK(spi_clk, atmel_spi1, pba, 1);
 
-void __init
-at32_spi_setup_slaves(unsigned int bus_num, struct spi_board_info *b, unsigned int n)
+static void __init
+at32_spi_setup_slaves(unsigned int bus_num, struct spi_board_info *b,
+		      unsigned int n, const u8 *pins)
 {
-	/*
-	 * Manage the chipselects as GPIOs, normally using the same pins
-	 * the SPI controller expects; but boards can use other pins.
-	 */
-	static u8 __initdata spi_pins[][4] = {
-		{ GPIO_PIN_PA(3), GPIO_PIN_PA(4),
-		  GPIO_PIN_PA(5), GPIO_PIN_PA(20) },
-		{ GPIO_PIN_PB(2), GPIO_PIN_PB(3),
-		  GPIO_PIN_PB(4), GPIO_PIN_PA(27) },
-	};
 	unsigned int pin, mode;
-
-	/* There are only 2 SPI controllers */
-	if (bus_num > 1)
-		return;
 
 	for (; n; n--, b++) {
 		b->bus_num = bus_num;
@@ -1210,7 +1193,7 @@ at32_spi_setup_slaves(unsigned int bus_num, struct spi_board_info *b, unsigned i
 			continue;
 		pin = (unsigned)b->controller_data;
 		if (!pin) {
-			pin = spi_pins[bus_num][b->chip_select];
+			pin = pins[b->chip_select];
 			b->controller_data = (void *)pin;
 		}
 		mode = AT32_GPIOF_OUTPUT;
@@ -1223,6 +1206,16 @@ at32_spi_setup_slaves(unsigned int bus_num, struct spi_board_info *b, unsigned i
 struct platform_device *__init
 at32_add_device_spi(unsigned int id, struct spi_board_info *b, unsigned int n)
 {
+	/*
+	 * Manage the chipselects as GPIOs, normally using the same pins
+	 * the SPI controller expects; but boards can use other pins.
+	 */
+	static u8 __initdata spi0_pins[] =
+		{ GPIO_PIN_PA(3), GPIO_PIN_PA(4),
+		  GPIO_PIN_PA(5), GPIO_PIN_PA(20), };
+	static u8 __initdata spi1_pins[] =
+		{ GPIO_PIN_PB(2), GPIO_PIN_PB(3),
+		  GPIO_PIN_PB(4), GPIO_PIN_PA(27), };
 	struct platform_device *pdev;
 	u32 pin_mask;
 
@@ -1235,7 +1228,7 @@ at32_add_device_spi(unsigned int id, struct spi_board_info *b, unsigned int n)
 		select_peripheral(PIOA, (1 << 0), PERIPH_A, AT32_GPIOF_PULLUP);
 		select_peripheral(PIOA, pin_mask, PERIPH_A, 0);
 
-		at32_spi_setup_slaves(0, b, n);
+		at32_spi_setup_slaves(0, b, n, spi0_pins);
 		break;
 
 	case 1:
@@ -1246,7 +1239,7 @@ at32_add_device_spi(unsigned int id, struct spi_board_info *b, unsigned int n)
 		select_peripheral(PIOB, (1 << 0), PERIPH_B, AT32_GPIOF_PULLUP);
 		select_peripheral(PIOB, pin_mask, PERIPH_B, 0);
 
-		at32_spi_setup_slaves(1, b, n);
+		at32_spi_setup_slaves(1, b, n, spi1_pins);
 		break;
 
 	default:
@@ -1327,7 +1320,7 @@ struct platform_device *__init
 at32_add_device_mci(unsigned int id, struct mci_platform_data *data)
 {
 	struct platform_device		*pdev;
-	struct mci_dma_data	        *slave;
+	struct dw_dma_slave		*dws = &data->dma_slave;
 	u32				pioa_mask;
 	u32				piob_mask;
 
@@ -1346,21 +1339,16 @@ at32_add_device_mci(unsigned int id, struct mci_platform_data *data)
 				ARRAY_SIZE(atmel_mci0_resource)))
 		goto fail;
 
-	slave = kzalloc(sizeof(struct mci_dma_data), GFP_KERNEL);
-	if (!slave)
-		goto fail;
-
-	slave->sdata.dma_dev = &dw_dmac0_device.dev;
-	slave->sdata.cfg_hi = (DWC_CFGH_SRC_PER(0)
+	dws->dma_dev = &dw_dmac0_device.dev;
+	dws->reg_width = DW_DMA_SLAVE_WIDTH_32BIT;
+	dws->cfg_hi = (DWC_CFGH_SRC_PER(0)
 				| DWC_CFGH_DST_PER(1));
-	slave->sdata.cfg_lo &= ~(DWC_CFGL_HS_DST_POL
+	dws->cfg_lo &= ~(DWC_CFGL_HS_DST_POL
 				| DWC_CFGL_HS_SRC_POL);
-
-	data->dma_slave = slave;
 
 	if (platform_device_add_data(pdev, data,
 				sizeof(struct mci_platform_data)))
-		goto fail_free;
+		goto fail;
 
 	/* CLK line is common to both slots */
 	pioa_mask = 1 << 10;
@@ -1384,7 +1372,7 @@ at32_add_device_mci(unsigned int id, struct mci_platform_data *data)
 		/* Slot is unused */
 		break;
 	default:
-		goto fail_free;
+		goto fail;
 	}
 
 	select_peripheral(PIOA, pioa_mask, PERIPH_A, 0);
@@ -1411,7 +1399,7 @@ at32_add_device_mci(unsigned int id, struct mci_platform_data *data)
 		break;
 	default:
 		if (!data->slot[0].bus_width)
-			goto fail_free;
+			goto fail;
 
 		data->slot[1].bus_width = 0;
 		break;
@@ -1422,10 +1410,7 @@ at32_add_device_mci(unsigned int id, struct mci_platform_data *data)
 	platform_device_add(pdev);
 	return pdev;
 
-fail_free:
-	kfree(slave);
 fail:
-	data->dma_slave = NULL;
 	platform_device_put(pdev);
 	return NULL;
 }
@@ -1771,13 +1756,10 @@ at32_add_device_usba(unsigned int id, struct usba_platform_data *data)
 					  ARRAY_SIZE(usba0_resource)))
 		goto out_free_pdev;
 
-	if (data) {
+	if (data)
 		usba_data.pdata.vbus_pin = data->vbus_pin;
-		usba_data.pdata.vbus_pin_inverted = data->vbus_pin_inverted;
-	} else {
+	else
 		usba_data.pdata.vbus_pin = -EINVAL;
-		usba_data.pdata.vbus_pin_inverted = -EINVAL;
-	}
 
 	data = &usba_data.pdata;
 	data->num_ep = ARRAY_SIZE(at32_usba_ep);
@@ -2045,19 +2027,17 @@ at32_add_device_ac97c(unsigned int id, struct ac97c_platform_data *data,
 	/* Check if DMA slave interface for capture should be configured. */
 	if (flags & AC97C_CAPTURE) {
 		rx_dws->dma_dev = &dw_dmac0_device.dev;
+		rx_dws->reg_width = DW_DMA_SLAVE_WIDTH_16BIT;
 		rx_dws->cfg_hi = DWC_CFGH_SRC_PER(3);
 		rx_dws->cfg_lo &= ~(DWC_CFGL_HS_DST_POL | DWC_CFGL_HS_SRC_POL);
-		rx_dws->src_master = 0;
-		rx_dws->dst_master = 1;
 	}
 
 	/* Check if DMA slave interface for playback should be configured. */
 	if (flags & AC97C_PLAYBACK) {
 		tx_dws->dma_dev = &dw_dmac0_device.dev;
+		tx_dws->reg_width = DW_DMA_SLAVE_WIDTH_16BIT;
 		tx_dws->cfg_hi = DWC_CFGH_DST_PER(4);
 		tx_dws->cfg_lo &= ~(DWC_CFGL_HS_DST_POL | DWC_CFGL_HS_SRC_POL);
-		tx_dws->src_master = 0;
-		tx_dws->dst_master = 1;
 	}
 
 	if (platform_device_add_data(pdev, data,
@@ -2127,10 +2107,9 @@ at32_add_device_abdac(unsigned int id, struct atmel_abdac_pdata *data)
 	dws = &data->dws;
 
 	dws->dma_dev = &dw_dmac0_device.dev;
+	dws->reg_width = DW_DMA_SLAVE_WIDTH_32BIT;
 	dws->cfg_hi = DWC_CFGH_DST_PER(2);
 	dws->cfg_lo &= ~(DWC_CFGL_HS_DST_POL | DWC_CFGL_HS_SRC_POL);
-	dws->src_master = 0;
-	dws->dst_master = 1;
 
 	if (platform_device_add_data(pdev, data,
 				sizeof(struct atmel_abdac_pdata)))

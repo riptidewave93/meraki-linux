@@ -3,8 +3,6 @@
 
 #include <asm/chpid.h>
 #include <asm/schid.h>
-#include "orb.h"
-#include "cio.h"
 
 /*
  * TPI info structure
@@ -24,6 +22,21 @@ struct tpi_info {
 /*
  * Some S390 specific IO instructions as inline
  */
+
+static inline int stsch(struct subchannel_id schid, struct schib *addr)
+{
+	register struct subchannel_id reg1 asm ("1") = schid;
+	int ccode;
+
+	asm volatile(
+		"	stsch	0(%3)\n"
+		"	ipm	%0\n"
+		"	srl	%0,28"
+		: "=d" (ccode), "=m" (*addr)
+		: "d" (reg1), "a" (addr)
+		: "cc");
+	return ccode;
+}
 
 static inline int stsch_err(struct subchannel_id schid, struct schib *addr)
 {
@@ -85,38 +98,6 @@ static inline int tsch(struct subchannel_id schid, struct irb *addr)
 		"	srl	%0,28"
 		: "=d" (ccode), "=m" (*addr)
 		: "d" (reg1), "a" (addr)
-		: "cc");
-	return ccode;
-}
-
-static inline int ssch(struct subchannel_id schid, union orb *addr)
-{
-	register struct subchannel_id reg1 asm("1") = schid;
-	int ccode = -EIO;
-
-	asm volatile(
-		"	ssch	0(%2)\n"
-		"0:	ipm	%0\n"
-		"	srl	%0,28\n"
-		"1:\n"
-		EX_TABLE(0b, 1b)
-		: "+d" (ccode)
-		: "d" (reg1), "a" (addr), "m" (*addr)
-		: "cc", "memory");
-	return ccode;
-}
-
-static inline int csch(struct subchannel_id schid)
-{
-	register struct subchannel_id reg1 asm("1") = schid;
-	int ccode;
-
-	asm volatile(
-		"	csch\n"
-		"	ipm	%0\n"
-		"	srl	%0,28"
-		: "=d" (ccode)
-		: "d" (reg1)
 		: "cc");
 	return ccode;
 }

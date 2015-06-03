@@ -53,13 +53,13 @@ urb_print(struct urb * urb, char * str, int small, int status)
 		int i, len;
 
 		if (usb_pipecontrol (pipe)) {
-			printk (KERN_DEBUG "%s: setup(8):", __FILE__);
+			printk (KERN_DEBUG __FILE__ ": setup(8):");
 			for (i = 0; i < 8 ; i++)
 				printk (" %02x", ((__u8 *) urb->setup_packet) [i]);
 			printk ("\n");
 		}
 		if (urb->transfer_buffer_length > 0 && urb->transfer_buffer) {
-			printk (KERN_DEBUG "%s: data(%d/%d):", __FILE__,
+			printk (KERN_DEBUG __FILE__ ": data(%d/%d):",
 				urb->actual_length,
 				urb->transfer_buffer_length);
 			len = usb_pipeout (pipe)?
@@ -80,14 +80,6 @@ urb_print(struct urb * urb, char * str, int small, int status)
 		*size -= s_len; *next += s_len; \
 	} else \
 		ohci_dbg(ohci,format, ## arg ); \
-	} while (0);
-
-/* Version for use where "next" is the address of a local variable */
-#define ohci_dbg_nosw(ohci, next, size, format, arg...) \
-	do { \
-		unsigned s_len; \
-		s_len = scnprintf(*next, *size, format, ## arg); \
-		*size -= s_len; *next += s_len; \
 	} while (0);
 
 
@@ -135,19 +127,6 @@ static char *hcfs2string (int state)
 	return "?";
 }
 
-static const char *rh_state_string(struct ohci_hcd *ohci)
-{
-	switch (ohci->rh_state) {
-	case OHCI_RH_HALTED:
-		return "halted";
-	case OHCI_RH_SUSPENDED:
-		return "suspended";
-	case OHCI_RH_RUNNING:
-		return "running";
-	}
-	return "?";
-}
-
 // dump control and status registers
 static void
 ohci_dump_status (struct ohci_hcd *controller, char **next, unsigned *size)
@@ -157,10 +136,9 @@ ohci_dump_status (struct ohci_hcd *controller, char **next, unsigned *size)
 
 	temp = ohci_readl (controller, &regs->revision) & 0xff;
 	ohci_dbg_sw (controller, next, size,
-		"OHCI %d.%d, %s legacy support registers, rh state %s\n",
+		"OHCI %d.%d, %s legacy support registers\n",
 		0x03 & (temp >> 4), (temp & 0x0f),
-		(temp & 0x0100) ? "with" : "NO",
-		rh_state_string(controller));
+		(temp & 0x0100) ? "with" : "NO");
 
 	temp = ohci_readl (controller, &regs->control);
 	ohci_dbg_sw (controller, next, size,
@@ -435,21 +413,18 @@ static const struct file_operations debug_async_fops = {
 	.open		= debug_async_open,
 	.read		= debug_output,
 	.release	= debug_close,
-	.llseek		= default_llseek,
 };
 static const struct file_operations debug_periodic_fops = {
 	.owner		= THIS_MODULE,
 	.open		= debug_periodic_open,
 	.read		= debug_output,
 	.release	= debug_close,
-	.llseek		= default_llseek,
 };
 static const struct file_operations debug_registers_fops = {
 	.owner		= THIS_MODULE,
 	.open		= debug_registers_open,
 	.read		= debug_output,
 	.release	= debug_close,
-	.llseek		= default_llseek,
 };
 
 static struct dentry *ohci_debug_root;
@@ -661,7 +636,7 @@ static ssize_t fill_registers_buffer(struct debug_buffer *buf)
 
 	/* dump driver info, then registers in spec order */
 
-	ohci_dbg_nosw(ohci, &next, &size,
+	ohci_dbg_sw (ohci, &next, &size,
 		"bus %s, device %s\n"
 		"%s\n"
 		"%s\n",
@@ -670,7 +645,7 @@ static ssize_t fill_registers_buffer(struct debug_buffer *buf)
 		hcd->product_desc,
 		hcd_name);
 
-	if (!HCD_HW_ACCESSIBLE(hcd)) {
+	if (!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags)) {
 		size -= scnprintf (next, size,
 			"SUSPENDED (no register access)\n");
 		goto done;
@@ -680,7 +655,7 @@ static ssize_t fill_registers_buffer(struct debug_buffer *buf)
 
 	/* hcca */
 	if (ohci->hcca)
-		ohci_dbg_nosw(ohci, &next, &size,
+		ohci_dbg_sw (ohci, &next, &size,
 			"hcca frame 0x%04x\n", ohci_frame_no(ohci));
 
 	/* other registers mostly affect frame timings */
@@ -712,7 +687,7 @@ static ssize_t fill_registers_buffer(struct debug_buffer *buf)
 	next += temp;
 
 	temp = scnprintf (next, size, "hub poll timer %s\n",
-			HCD_POLL_RH(ohci_to_hcd(ohci)) ? "ON" : "off");
+			ohci_to_hcd(ohci)->poll_rh ? "ON" : "off");
 	size -= temp;
 	next += temp;
 

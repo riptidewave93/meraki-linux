@@ -68,7 +68,7 @@
 		_EMIT_BUG_ENTRY					\
 		: : "i" (__FILE__), "i" (__LINE__),		\
 		    "i" (0), "i"  (sizeof(struct bug_entry)));	\
-	unreachable();						\
+	for(;;) ;						\
 } while (0)
 
 #define BUG_ON(x) do {						\
@@ -85,12 +85,12 @@
 	}							\
 } while (0)
 
-#define __WARN_TAINT(taint) do {				\
+#define __WARN() do {						\
 	__asm__ __volatile__(					\
 		"1:	twi 31,0,0\n"				\
 		_EMIT_BUG_ENTRY					\
 		: : "i" (__FILE__), "i" (__LINE__),		\
-		  "i" (BUGFLAG_TAINT(taint)),			\
+		  "i" (BUGFLAG_WARNING),			\
 		  "i" (sizeof(struct bug_entry)));		\
 } while (0)
 
@@ -104,7 +104,7 @@
 		"1:	"PPC_TLNEI"	%4,0\n"			\
 		_EMIT_BUG_ENTRY					\
 		: : "i" (__FILE__), "i" (__LINE__),		\
-		  "i" (BUGFLAG_TAINT(TAINT_WARN)),		\
+		  "i" (BUGFLAG_WARNING),			\
 		  "i" (sizeof(struct bug_entry)),		\
 		  "r" (__ret_warn_on));				\
 	}							\
@@ -125,17 +125,6 @@
 #endif /* CONFIG_BUG */
 
 #include <asm-generic/bug.h>
-
-#ifndef __ASSEMBLY__
-
-struct pt_regs;
-extern int do_page_fault(struct pt_regs *, unsigned long, unsigned long);
-extern void bad_page_fault(struct pt_regs *, unsigned long, int);
-extern void _exception(int, struct pt_regs *, int, unsigned long);
-extern void die(const char *, struct pt_regs *, long);
-extern void print_backtrace(unsigned long *);
-
-#endif /* !__ASSEMBLY__ */
 
 #endif /* __KERNEL__ */
 #endif /* _ASM_POWERPC_BUG_H */

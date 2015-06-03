@@ -53,7 +53,7 @@ static void hp6x0_apm_get_power_status(struct apm_power_info *info)
 	info->ac_line_status = (battery > HP680_BATTERY_AC_ON) ?
 			 APM_AC_ONLINE : APM_AC_OFFLINE;
 
-	pgdr = __raw_readb(PGDR);
+	pgdr = ctrl_inb(PGDR);
 	if (pgdr & PGDR_MAIN_BATTERY_OUT) {
 		info->battery_status	= APM_BATTERY_STATUS_NOT_PRESENT;
 		info->battery_flag	= 0x80;
@@ -86,7 +86,7 @@ static int __init hp6x0_apm_init(void)
 	int ret;
 
 	ret = request_irq(HP680_BTN_IRQ, hp6x0_apm_interrupt,
-			  0, MODNAME, NULL);
+			  IRQF_DISABLED, MODNAME, NULL);
 	if (unlikely(ret < 0)) {
 		printk(KERN_ERR MODNAME ": IRQ %d request failed\n",
 		       HP680_BTN_IRQ);

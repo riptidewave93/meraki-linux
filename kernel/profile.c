@@ -13,7 +13,7 @@
  *	to resolve timer interrupt livelocks, William Irwin, Oracle, 2004
  */
 
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/profile.h>
 #include <linux/bootmem.h>
 #include <linux/notifier.h>
@@ -24,9 +24,15 @@
 #include <linux/mutex.h>
 #include <linux/slab.h>
 #include <linux/vmalloc.h>
+#include <linux/module.h>
+#include <linux/seq_file.h>
+#include <linux/kallsyms.h>
 #include <asm/sections.h>
 #include <asm/irq_regs.h>
 #include <asm/ptrace.h>
+#include <asm/current.h>
+#include <asm/thread_info.h>
+#include <linux/sched.h>
 
 struct profile_hit {
 	u32 pc, hits;
@@ -38,15 +44,23 @@ struct profile_hit {
 
 /* Oprofile timer tick hook */
 static int (*timer_hook)(struct pt_regs *) __read_mostly;
+static int user_hits = 0;
+static atomic_t unknown_kernel_hits = ATOMIC_INIT(0);
+static atomic_t known_kernel_hits = ATOMIC_INIT(0);
+static int nopid_hits = 0;
+int profiler_enabled = 0;
+static volatile int profiling_is_on = 1;
 
+extern struct list_head modules;
 static atomic_t *prof_buffer;
-static unsigned long prof_len, prof_shift;
+static unsigned long prof_len;
+unsigned prof_shift;
 
 int prof_on __read_mostly;
 EXPORT_SYMBOL_GPL(prof_on);
 
 static cpumask_var_t prof_cpu_mask;
-#ifdef CONFIG_SMP
+#ifdef CONFIG_SMP_NOTREALLY
 static DEFINE_PER_CPU(struct profile_hit *[2], cpu_profile_hits);
 static DEFINE_PER_CPU(int, cpu_profile_flip);
 static DEFINE_MUTEX(profile_flip_mutex);
@@ -80,7 +94,7 @@ int profile_setup(char *str)
 		if (get_option(&str, &par))
 			prof_shift = par;
 		printk(KERN_INFO
-			"kernel schedule profiling enabled (shift: %ld)\n",
+			"kernel schedule profiling enabled (shift: %d)\n",
 			prof_shift);
 	} else if (!strncmp(str, kvmstr, strlen(kvmstr))) {
 		prof_on = KVM_PROFILING;
@@ -89,12 +103,12 @@ int profile_setup(char *str)
 		if (get_option(&str, &par))
 			prof_shift = par;
 		printk(KERN_INFO
-			"kernel KVM profiling enabled (shift: %ld)\n",
+			"kernel KVM profiling enabled (shift: %d)\n",
 			prof_shift);
 	} else if (get_option(&str, &par)) {
 		prof_shift = par;
 		prof_on = CPU_PROFILING;
-		printk(KERN_INFO "kernel profiling enabled (shift: %ld)\n",
+		printk(KERN_INFO "kernel profiling enabled (shift: %d)\n",
 			prof_shift);
 	}
 	return 1;
@@ -105,6 +119,11 @@ __setup("profile=", profile_setup);
 int __ref profile_init(void)
 {
 	int buffer_bytes;
+
+	// XXX turn on profiling
+	prof_shift = 4;
+	prof_on = CPU_PROFILING;
+
 	if (!prof_on)
 		return 0;
 
@@ -126,9 +145,11 @@ int __ref profile_init(void)
 	if (prof_buffer)
 		return 0;
 
-	prof_buffer = vzalloc(buffer_bytes);
-	if (prof_buffer)
+	prof_buffer = vmalloc(buffer_bytes);
+	if (prof_buffer) {
+		memset(prof_buffer, 0, buffer_bytes);
 		return 0;
+	}
 
 	free_cpumask_var(prof_cpu_mask);
 	return -ENOMEM;
@@ -214,7 +235,7 @@ int register_timer_hook(int (*hook)(struct pt_regs *))
 	timer_hook = hook;
 	return 0;
 }
-EXPORT_SYMBOL(register_timer_hook);
+EXPORT_SYMBOL_GPL(register_timer_hook);
 
 void unregister_timer_hook(int (*hook)(struct pt_regs *))
 {
@@ -223,10 +244,15 @@ void unregister_timer_hook(int (*hook)(struct pt_regs *))
 	/* make sure all CPUs see the NULL hook */
 	synchronize_sched();  /* Allow ongoing interrupts to complete. */
 }
-EXPORT_SYMBOL(unregister_timer_hook);
+EXPORT_SYMBOL_GPL(unregister_timer_hook);
 
+static inline int within(unsigned long addr, void *start, unsigned long size)
+{
+	return ((void *)addr >= start && (void *)addr < start + size);
+}
 
-#ifdef CONFIG_SMP
+#ifdef CONFIG_SMP_NOTREALLY
+#error "Meraki has not added SMP profiling support yet"
 /*
  * Each cpu has a pair of open-addressed hashtables for pending
  * profile hits. read_profile() IPI's all cpus to request them
@@ -303,12 +329,14 @@ static void profile_discard_flip_buffers(void)
 	mutex_unlock(&profile_flip_mutex);
 }
 
-static void do_profile_hits(int type, void *__pc, unsigned int nr_hits)
+void profile_hits(int type, void *__pc, unsigned int nr_hits)
 {
 	unsigned long primary, secondary, flags, pc = (unsigned long)__pc;
 	int i, j, cpu;
 	struct profile_hit *hits;
 
+	if (prof_on != type || !prof_buffer)
+		return;
 	pc = min((pc - (unsigned long)_stext) >> prof_shift, prof_len - 1);
 	i = primary = (pc & (NR_PROFILE_GRP - 1)) << PROFILE_GRPSHIFT;
 	secondary = (~(pc << 1) & (NR_PROFILE_GRP - 1)) << PROFILE_GRPSHIFT;
@@ -361,14 +389,14 @@ static int __cpuinit profile_cpu_callback(struct notifier_block *info,
 	switch (action) {
 	case CPU_UP_PREPARE:
 	case CPU_UP_PREPARE_FROZEN:
-		node = cpu_to_mem(cpu);
+		node = cpu_to_node(cpu);
 		per_cpu(cpu_profile_flip, cpu) = 0;
 		if (!per_cpu(cpu_profile_hits, cpu)[1]) {
 			page = alloc_pages_exact_node(node,
 					GFP_KERNEL | __GFP_ZERO,
 					0);
 			if (!page)
-				return notifier_from_errno(-ENOMEM);
+				return NOTIFY_BAD;
 			per_cpu(cpu_profile_hits, cpu)[1] = page_address(page);
 		}
 		if (!per_cpu(cpu_profile_hits, cpu)[0]) {
@@ -384,7 +412,7 @@ out_free:
 		page = virt_to_page(per_cpu(cpu_profile_hits, cpu)[1]);
 		per_cpu(cpu_profile_hits, cpu)[1] = NULL;
 		__free_page(page);
-		return notifier_from_errno(-ENOMEM);
+		return NOTIFY_BAD;
 	case CPU_ONLINE:
 	case CPU_ONLINE_FROZEN:
 		if (prof_cpu_mask != NULL)
@@ -415,30 +443,56 @@ out_free:
 #define profile_discard_flip_buffers()	do { } while (0)
 #define profile_cpu_callback		NULL
 
-static void do_profile_hits(int type, void *__pc, unsigned int nr_hits)
-{
-	unsigned long pc;
-	pc = ((unsigned long)__pc - (unsigned long)_stext) >> prof_shift;
-	atomic_add(nr_hits, &prof_buffer[min(pc, prof_len - 1)]);
-}
-#endif /* !CONFIG_SMP */
-
 void profile_hits(int type, void *__pc, unsigned int nr_hits)
 {
+	unsigned long pc;
+	unsigned long pc_kernel_offset;
+	struct module *mod = NULL;
+
+	pc = (unsigned long) __pc;
 	if (prof_on != type || !prof_buffer)
 		return;
-	do_profile_hits(type, __pc, nr_hits);
+	pc_kernel_offset = (pc - (unsigned long)_stext) >> prof_shift;
+	if (pc_kernel_offset < prof_len) {
+		atomic_add(nr_hits, &prof_buffer[pc_kernel_offset]);
+		atomic_add(nr_hits, &known_kernel_hits);
+		return;
+	}
+
+	list_for_each_entry(mod, &modules, list)
+		if (mod->prof_buffer &&
+		    within(pc, mod->module_core, mod->core_text_size)) {
+			int mod_offset = (pc - (unsigned long)mod->module_core) >> prof_shift;
+			atomic_add(nr_hits, &mod->ticks);
+			atomic_add(nr_hits, &mod->prof_buffer[mod_offset]);
+			return;
+		}
+
+	atomic_add(nr_hits, &unknown_kernel_hits);
 }
+#endif /* !CONFIG_SMP */
 EXPORT_SYMBOL_GPL(profile_hits);
 
 void profile_tick(int type)
 {
-	struct pt_regs *regs = get_irq_regs();
+	struct pt_regs *regs;
+	if (!profiler_enabled)
+		return;
+
+	regs = get_irq_regs();
 
 	if (type == CPU_PROFILING && timer_hook)
 		timer_hook(regs);
-	if (!user_mode(regs) && prof_cpu_mask != NULL &&
-	    cpumask_test_cpu(smp_processor_id(), prof_cpu_mask))
+
+	if (!profiling_is_on)
+		return;
+
+	if (!current || !task_pid_nr(current))
+		nopid_hits++;
+
+	if (user_mode(regs))
+		user_hits++;
+	else if (prof_cpu_mask != NULL && cpumask_test_cpu(smp_processor_id(), prof_cpu_mask))
 		profile_hit(type, (void *)profile_pc(regs));
 }
 
@@ -491,38 +545,116 @@ void create_prof_cpu_mask(struct proc_dir_entry *root_irq_dir)
 	proc_create("prof_cpu_mask", 0600, root_irq_dir, &prof_cpu_mask_proc_fops);
 }
 
-/*
- * This function accesses profiling information. The returned data is
- * binary: the sampling step and the actual contents of the profile
- * buffer. Use of the program readprofile is recommended in order to
- * get meaningful info out of these data.
- */
-static ssize_t
-read_profile(struct file *file, char __user *buf, size_t count, loff_t *ppos)
+static void
+do_seq_profile(struct seq_file *m, unsigned long base_pc, atomic_t *buf, int count, const char *profname)
 {
-	unsigned long p = *ppos;
-	ssize_t read;
-	char *pnt;
-	unsigned int sample_step = 1 << prof_shift;
+	int i;
+	int lastcount = 0;
+	int misc_counts = 0;
+	int nosym_counts = 0;
+	unsigned long pc = 0;
+	char namebuf[KSYM_NAME_LEN+1];
+	const char *last_sym_name = 0;
+	unsigned long last_sym_pc = 0;
+	unsigned long last_sym_size = 0;
 
+	for (i = 0; i < count; i++)
+		if (atomic_read(&buf[i])) {
+			char *modname;
+			unsigned long offset;
+			pc = base_pc + (i << prof_shift);
+			if (within(pc, (void *)last_sym_pc, last_sym_size)) {
+				lastcount += atomic_read(&buf[i]);
+			} else {
+				if (lastcount > 5)
+					seq_printf(m, "%08lx % 6d %s\n", pc, lastcount, last_sym_name);
+				else
+					misc_counts += lastcount;
+
+				lastcount = 0;
+				last_sym_name = kallsyms_lookup(pc, &last_sym_size, &offset, &modname, namebuf);
+				if (!last_sym_name || last_sym_name[0] == '\0') {
+					nosym_counts += atomic_read(&buf[i]);
+					last_sym_pc = last_sym_size = 0;
+				} else {
+					last_sym_pc = pc - offset;
+					lastcount = atomic_read(&buf[i]);
+				}
+			}
+		}
+
+	if (lastcount)
+		seq_printf(m, "%08lx % 6d %s\n", pc, lastcount, last_sym_name);
+	if (misc_counts)
+		seq_printf(m, "00000000 % 6d misc_small_samples_%s\n", misc_counts, profname);
+	if (nosym_counts)
+		seq_printf(m, "00000000 % 6d nosym_samples_%s\n", nosym_counts, profname);
+}
+
+static int
+show_profile(struct seq_file *m, void *v)
+{
+	struct module *mod;
+	(void) v;
+	if (!prof_buffer)
+		return 1;
 	profile_flip_buffers();
-	if (p >= (prof_len+1)*sizeof(unsigned int))
-		return 0;
-	if (count > (prof_len+1)*sizeof(unsigned int) - p)
-		count = (prof_len+1)*sizeof(unsigned int) - p;
-	read = 0;
 
-	while (p < sizeof(unsigned int) && count > 0) {
-		if (put_user(*((char *)(&sample_step)+p), buf))
-			return -EFAULT;
-		buf++; p++; count--; read++;
+	profiling_is_on = 0;
+	do_seq_profile(m, (unsigned long)_stext, prof_buffer, prof_len, "vmlinux");
+
+	mutex_lock(&module_mutex);
+	list_for_each_entry(mod, &modules, list) {
+		if (mod->state == MODULE_STATE_LIVE && mod->prof_buffer) {
+			do_seq_profile(m, (unsigned long)mod->module_core,
+				       mod->prof_buffer, mod->core_text_size >> prof_shift, mod->name);
+		}
 	}
-	pnt = (char *)prof_buffer + p - sizeof(atomic_t);
-	if (copy_to_user(buf, (void *)pnt, count))
-		return -EFAULT;
-	read += count;
-	*ppos += read;
-	return read;
+
+	mutex_unlock(&module_mutex);
+
+	profiling_is_on = 1;
+
+	return 0;
+}
+
+static int
+show_profile_m(struct seq_file *m, void *v)
+{
+	struct module *mod;
+	unsigned long total = 0;
+	(void) v;
+
+	seq_printf(m, "%d idle?\n\n", nopid_hits);
+	seq_printf(m, "below should add up to 100%%\n");
+	seq_printf(m, "%d userlevel\n", user_hits);
+	seq_printf(m, "%d unknown_kernel_hits\n", atomic_read(&unknown_kernel_hits));
+	seq_printf(m, "%d vmlinux\n", atomic_read(&known_kernel_hits));
+	total = user_hits + atomic_read(&unknown_kernel_hits) + atomic_read(&known_kernel_hits);
+	mutex_lock(&module_mutex);
+	list_for_each_entry(mod, &modules, list) {
+		if (mod->state != MODULE_STATE_LIVE) {
+			continue;
+		}
+		total += atomic_read(&mod->ticks);
+		seq_printf(m, "%d %s\n", atomic_read(&mod->ticks), mod->name);
+	}
+
+	seq_printf(m, "\n%lu total\n", total);
+	mutex_unlock(&module_mutex);
+
+	return 0;
+}
+
+static int open_profile(struct inode *inode, struct file *file)
+{
+	return single_open(file, show_profile, NULL);
+}
+
+static int open_profile_m(struct inode *inode, struct file *file)
+{
+	struct proc_dir_entry *dp = PDE(inode);
+	return single_open(file, show_profile_m, dp->data);
 }
 
 /*
@@ -534,7 +666,9 @@ read_profile(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 static ssize_t write_profile(struct file *file, const char __user *buf,
 			     size_t count, loff_t *ppos)
 {
-#ifdef CONFIG_SMP
+	struct module *mod = NULL;
+	profiling_is_on = 0;
+#ifdef CONFIG_SMP_NOTREALLY
 	extern int setup_profiling_timer(unsigned int multiplier);
 
 	if (count == sizeof(int)) {
@@ -549,16 +683,40 @@ static ssize_t write_profile(struct file *file, const char __user *buf,
 #endif
 	profile_discard_flip_buffers();
 	memset(prof_buffer, 0, prof_len * sizeof(atomic_t));
+
+	mutex_lock(&module_mutex);
+	list_for_each_entry(mod, &modules, list) {
+		atomic_set(&mod->ticks, 0);
+		if (mod->prof_buffer)
+			memset(mod->prof_buffer, 0,
+			       (mod->core_text_size >> prof_shift) * sizeof(atomic_t));
+	}
+	mutex_unlock(&module_mutex);
+	user_hits = nopid_hits = 0;
+	atomic_set(&unknown_kernel_hits, 0);
+	atomic_set(&known_kernel_hits, 0);
+
+	profiling_is_on = 1;
 	return count;
 }
 
 static const struct file_operations proc_profile_operations = {
-	.read		= read_profile,
+	.open		= open_profile,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
 	.write		= write_profile,
-	.llseek		= default_llseek,
 };
 
-#ifdef CONFIG_SMP
+static const struct file_operations proc_profile_m_operations = {
+	.open		= open_profile_m,
+	.read		= seq_read,
+	.llseek		= seq_lseek,
+	.release	= single_release,
+	.write		= write_profile,
+};
+
+#ifdef CONFIG_SMP_NOTREALLY
 static void profile_nop(void *unused)
 {
 }
@@ -568,7 +726,7 @@ static int create_hash_tables(void)
 	int cpu;
 
 	for_each_online_cpu(cpu) {
-		int node = cpu_to_mem(cpu);
+		int node = cpu_to_node(cpu);
 		struct page *page;
 
 		page = alloc_pages_exact_node(node,
@@ -623,7 +781,12 @@ int __ref create_proc_profile(void) /* false positive from hotcpu_notifier */
 			    NULL, &proc_profile_operations);
 	if (!entry)
 		return 0;
-	entry->size = (1+prof_len) * sizeof(atomic_t);
+
+	entry = proc_create("profile_m", S_IWUSR | S_IRUGO,
+			    NULL, &proc_profile_m_operations);
+	if (!entry)
+		return 0;
+
 	hotcpu_notifier(profile_cpu_callback, 0);
 	return 0;
 }

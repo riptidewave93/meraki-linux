@@ -33,8 +33,6 @@
 #include <mach/map.h>
 #include <mach/regs-timer.h>
 
-#include "nuc9xx.h"
-
 #define RESETINT	0x1f
 #define PERIOD		(0x01 << 27)
 #define ONESHOT		(0x00 << 27)
@@ -44,9 +42,7 @@
 #define TICKS_PER_SEC	100
 #define PRESCALE	0x63 /* Divider = prescale + 1 */
 
-#define	TDR_SHIFT	24
-
-static unsigned int timer0_load;
+unsigned int timer0_load;
 
 static void nuc900_clockevent_setmode(enum clock_event_mode mode,
 		struct clock_event_device *clk)
@@ -92,7 +88,7 @@ static int nuc900_clockevent_setnextevent(unsigned long evt,
 static struct clock_event_device nuc900_clockevent_device = {
 	.name		= "nuc900-timer0",
 	.shift		= 32,
-	.features	= CLOCK_EVT_FEAT_PERIODIC | CLOCK_EVT_FEAT_ONESHOT,
+	.features	= CLOCK_EVT_MODE_PERIODIC | CLOCK_EVT_FEAT_ONESHOT,
 	.set_mode	= nuc900_clockevent_setmode,
 	.set_next_event	= nuc900_clockevent_setnextevent,
 	.rating		= 300,
@@ -116,23 +112,8 @@ static struct irqaction nuc900_timer0_irq = {
 	.handler	= nuc900_timer0_interrupt,
 };
 
-static void __init nuc900_clockevents_init(void)
+static void __init nuc900_clockevents_init(unsigned int rate)
 {
-	unsigned int rate;
-	struct clk *clk = clk_get(NULL, "timer0");
-
-	BUG_ON(IS_ERR(clk));
-
-	__raw_writel(0x00, REG_TCSR0);
-
-	clk_enable(clk);
-	rate = clk_get_rate(clk) / (PRESCALE + 1);
-
-	timer0_load = (rate / TICKS_PER_SEC);
-
-	__raw_writel(RESETINT, REG_TISR);
-	setup_irq(IRQ_TIMER0, &nuc900_timer0_irq);
-
 	nuc900_clockevent_device.mult = div_sc(rate, NSEC_PER_SEC,
 					nuc900_clockevent_device.shift);
 	nuc900_clockevent_device.max_delta_ns = clockevent_delta2ns(0xffffffff,
@@ -144,33 +125,56 @@ static void __init nuc900_clockevents_init(void)
 	clockevents_register_device(&nuc900_clockevent_device);
 }
 
-static void __init nuc900_clocksource_init(void)
+static cycle_t nuc900_get_cycles(struct clocksource *cs)
+{
+	return ~__raw_readl(REG_TDR1);
+}
+
+static struct clocksource clocksource_nuc900 = {
+	.name	= "nuc900-timer1",
+	.rating	= 200,
+	.read	= nuc900_get_cycles,
+	.mask	= CLOCKSOURCE_MASK(32),
+	.shift	= 20,
+	.flags	= CLOCK_SOURCE_IS_CONTINUOUS,
+};
+
+static void __init nuc900_clocksource_init(unsigned int rate)
 {
 	unsigned int val;
-	unsigned int rate;
-	struct clk *clk = clk_get(NULL, "timer1");
-
-	BUG_ON(IS_ERR(clk));
-
-	__raw_writel(0x00, REG_TCSR1);
-
-	clk_enable(clk);
-	rate = clk_get_rate(clk) / (PRESCALE + 1);
 
 	__raw_writel(0xffffffff, REG_TICR1);
 
 	val = __raw_readl(REG_TCSR1);
-	val |= (COUNTEN | PERIOD | PRESCALE);
+	val |= (COUNTEN | PERIOD);
 	__raw_writel(val, REG_TCSR1);
 
-	clocksource_mmio_init(REG_TDR1, "nuc900-timer1", rate, 200,
-		TDR_SHIFT, clocksource_mmio_readl_down);
+	clocksource_nuc900.mult =
+		clocksource_khz2mult((rate / 1000), clocksource_nuc900.shift);
+	clocksource_register(&clocksource_nuc900);
 }
 
 static void __init nuc900_timer_init(void)
 {
-	nuc900_clocksource_init();
-	nuc900_clockevents_init();
+	struct clk *ck_ext = clk_get(NULL, "ext");
+	unsigned int	rate;
+
+	BUG_ON(IS_ERR(ck_ext));
+
+	rate = clk_get_rate(ck_ext);
+	clk_put(ck_ext);
+	rate = rate / (PRESCALE + 0x01);
+
+	 /* set a known state */
+	__raw_writel(0x00, REG_TCSR0);
+	__raw_writel(0x00, REG_TCSR1);
+	__raw_writel(RESETINT, REG_TISR);
+	timer0_load = (rate / TICKS_PER_SEC);
+
+	setup_irq(IRQ_TIMER0, &nuc900_timer0_irq);
+
+	nuc900_clocksource_init(rate);
+	nuc900_clockevents_init(rate);
 }
 
 struct sys_timer nuc900_timer = {

@@ -115,10 +115,6 @@ config SPARSEMEM_EXTREME
 config SPARSEMEM_VMEMMAP_ENABLE
 	bool
 
-config SPARSEMEM_ALLOC_MEM_MAP_TOGETHER
-	def_bool y
-	depends on SPARSEMEM && X86_64
-
 config SPARSEMEM_VMEMMAP
 	bool "Sparse Memory virtual memmap"
 	depends on SPARSEMEM && SPARSEMEM_VMEMMAP_ENABLE
@@ -127,18 +123,6 @@ config SPARSEMEM_VMEMMAP
 	 SPARSEMEM_VMEMMAP uses a virtually mapped memmap to optimise
 	 pfn_to_page and page_to_pfn operations.  This is the most
 	 efficient option when sufficient kernel resources are available.
-
-config HAVE_MEMBLOCK
-	boolean
-
-config HAVE_MEMBLOCK_NODE_MAP
-	boolean
-
-config ARCH_DISCARD_MEMBLOCK
-	boolean
-
-config NO_BOOTMEM
-	boolean
 
 # eventually, we can have this option just 'select SPARSEMEM'
 config MEMORY_HOTPLUG
@@ -174,23 +158,12 @@ config PAGEFLAGS_EXTENDED
 # Default to 4 for wider testing, though 8 might be more appropriate.
 # ARM's adjust_pte (unused if VIPT) depends on mm-wide page_table_lock.
 # PA-RISC 7xxx's spinlock_t would enlarge struct page from 32 to 44 bytes.
-# DEBUG_SPINLOCK and DEBUG_LOCK_ALLOC spinlock_t also enlarge struct page.
 #
 config SPLIT_PTLOCK_CPUS
 	int
-	default "999999" if ARM && !CPU_CACHE_VIPT
-	default "999999" if PARISC && !PA20
-	default "999999" if DEBUG_SPINLOCK || DEBUG_LOCK_ALLOC
+	default "4096" if ARM && !CPU_CACHE_VIPT
+	default "4096" if PARISC && !PA20
 	default "4"
-
-#
-# support for memory compaction
-config COMPACTION
-	bool "Allow for memory compaction"
-	select MIGRATION
-	depends on MMU
-	help
-	  Allows the compaction of memory for the allocation of huge pages.
 
 #
 # support for page migration
@@ -198,14 +171,12 @@ config COMPACTION
 config MIGRATION
 	bool "Page migration"
 	def_bool y
-	depends on NUMA || ARCH_ENABLE_MEMORY_HOTREMOVE || COMPACTION
+	depends on NUMA || ARCH_ENABLE_MEMORY_HOTREMOVE
 	help
 	  Allows the migration of the physical location of pages of processes
-	  while the virtual addresses are not changed. This is useful in
-	  two situations. The first is on NUMA systems to put pages nearer
-	  to the processors accessing. The second is when allocating huge
-	  pages as migration can relocate pages to satisfy a huge page
-	  allocation instead of reclaiming.
+	  while the virtual addresses are not changed. This is useful for
+	  example on NUMA systems to put pages nearer to the processors accessing
+	  the page.
 
 config PHYS_ADDR_T_64BIT
 	def_bool 64BIT || ARCH_PHYS_ADDR_T_64BIT
@@ -222,12 +193,20 @@ config BOUNCE
 config NR_QUICK
 	int
 	depends on QUICKLIST
-	default "2" if AVR32
+	default "2" if SUPERH || AVR32
 	default "1"
 
 config VIRT_TO_BUS
 	def_bool y
 	depends on !ARCH_NO_VIRT_TO_BUS
+
+config HAVE_MLOCK
+	bool
+	default y if MMU=y
+
+config HAVE_MLOCKED_PAGE_BIT
+	bool
+	default y if HAVE_MLOCK=y
 
 config MMU_NOTIFIER
 	bool
@@ -239,7 +218,7 @@ config KSM
 	  Enable Kernel Samepage Merging: KSM periodically scans those areas
 	  of an application's address space that an app has advised may be
 	  mergeable.  When it finds pages of identical content, it replaces
-	  the many instances by a single page with that content, so
+	  the many instances by a single resident page with that content, so
 	  saving memory until one or another app needs to modify the content.
 	  Recommended for use with KVM, or with other duplicative applications.
 	  See Documentation/vm/ksm.txt for more information: KSM is inactive
@@ -279,9 +258,8 @@ config MEMORY_FAILURE
 	  special hardware support and typically ECC memory.
 
 config HWPOISON_INJECT
-	tristate "HWPoison pages injector"
-	depends on MEMORY_FAILURE && DEBUG_KERNEL && PROC_FS
-	select PROC_PAGE_MONITOR
+	tristate "Poison pages injector"
+	depends on MEMORY_FAILURE && DEBUG_KERNEL
 
 config NOMMU_INITIAL_TRIM_EXCESS
 	int "Turn on mmap() excess space trimming before booting"
@@ -310,72 +288,3 @@ config NOMMU_INITIAL_TRIM_EXCESS
 	  of 1 says that all excess pages should be trimmed.
 
 	  See Documentation/nommu-mmap.txt for more information.
-
-config TRANSPARENT_HUGEPAGE
-	bool "Transparent Hugepage Support"
-	depends on X86 && MMU
-	select COMPACTION
-	help
-	  Transparent Hugepages allows the kernel to use huge pages and
-	  huge tlb transparently to the applications whenever possible.
-	  This feature can improve computing performance to certain
-	  applications by speeding up page faults during memory
-	  allocation, by reducing the number of tlb misses and by speeding
-	  up the pagetable walking.
-
-	  If memory constrained on embedded, you may want to say N.
-
-choice
-	prompt "Transparent Hugepage Support sysfs defaults"
-	depends on TRANSPARENT_HUGEPAGE
-	default TRANSPARENT_HUGEPAGE_ALWAYS
-	help
-	  Selects the sysfs defaults for Transparent Hugepage Support.
-
-	config TRANSPARENT_HUGEPAGE_ALWAYS
-		bool "always"
-	help
-	  Enabling Transparent Hugepage always, can increase the
-	  memory footprint of applications without a guaranteed
-	  benefit but it will work automatically for all applications.
-
-	config TRANSPARENT_HUGEPAGE_MADVISE
-		bool "madvise"
-	help
-	  Enabling Transparent Hugepage madvise, will only provide a
-	  performance improvement benefit to the applications using
-	  madvise(MADV_HUGEPAGE) but it won't risk to increase the
-	  memory footprint of applications without a guaranteed
-	  benefit.
-endchoice
-
-#
-# UP and nommu archs use km based percpu allocator
-#
-config NEED_PER_CPU_KM
-	depends on !SMP
-	bool
-	default y
-
-config CLEANCACHE
-	bool "Enable cleancache driver to cache clean pages if tmem is present"
-	default n
-	help
-	  Cleancache can be thought of as a page-granularity victim cache
-	  for clean pages that the kernel's pageframe replacement algorithm
-	  (PFRA) would like to keep around, but can't since there isn't enough
-	  memory.  So when the PFRA "evicts" a page, it first attempts to use
-	  cleancache code to put the data contained in that page into
-	  "transcendent memory", memory that is not directly accessible or
-	  addressable by the kernel and is of unknown and possibly
-	  time-varying size.  And when a cleancache-enabled
-	  filesystem wishes to access a page in a file on disk, it first
-	  checks cleancache to see if it already contains it; if it does,
-	  the page is copied into the kernel and a disk access is avoided.
-	  When a transcendent memory driver is available (such as zcache or
-	  Xen transcendent memory), a significant I/O reduction
-	  may be achieved.  When none is available, all cleancache calls
-	  are reduced to a single pointer-compare-against-NULL resulting
-	  in a negligible performance hit.
-
-	  If unsure, say Y to enable cleancache

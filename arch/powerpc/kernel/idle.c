@@ -26,11 +26,11 @@
 #include <linux/sysctl.h>
 #include <linux/tick.h>
 
+#include <asm/system.h>
 #include <asm/processor.h>
 #include <asm/cputable.h>
 #include <asm/time.h>
 #include <asm/machdep.h>
-#include <asm/runlatch.h>
 #include <asm/smp.h>
 
 #ifdef CONFIG_HOTPLUG_CPU
@@ -39,13 +39,9 @@
 #define cpu_should_die()	0
 #endif
 
-unsigned long cpuidle_disable = IDLE_NO_OVERRIDE;
-EXPORT_SYMBOL(cpuidle_disable);
-
 static int __init powersave_off(char *arg)
 {
 	ppc_md.power_save = NULL;
-	cpuidle_disable = IDLE_POWERSAVE_OFF;
 	return 0;
 }
 __setup("powersave=off", powersave_off);
@@ -60,9 +56,7 @@ void cpu_idle(void)
 
 	set_thread_flag(TIF_POLLING_NRFLAG);
 	while (1) {
-		tick_nohz_idle_enter();
-		rcu_idle_enter();
-
+		tick_nohz_stop_sched_tick(1);
 		while (!need_resched() && !cpu_should_die()) {
 			ppc64_runlatch_off();
 
@@ -84,11 +78,7 @@ void cpu_idle(void)
 
 				start_critical_timings();
 
-				/* Some power_save functions return with
-				 * interrupts enabled, some don't.
-				 */
-				if (irqs_disabled())
-					local_irq_enable();
+				local_irq_enable();
 				set_thread_flag(TIF_POLLING_NRFLAG);
 
 			} else {
@@ -103,13 +93,12 @@ void cpu_idle(void)
 
 		HMT_medium();
 		ppc64_runlatch_on();
-		rcu_idle_exit();
-		tick_nohz_idle_exit();
-		if (cpu_should_die()) {
-			sched_preempt_enable_no_resched();
+		tick_nohz_restart_sched_tick();
+		if (cpu_should_die())
 			cpu_die();
-		}
-		schedule_preempt_disabled();
+		preempt_enable_no_resched();
+		schedule();
+		preempt_disable();
 	}
 }
 
@@ -121,16 +110,18 @@ int powersave_nap;
  */
 static ctl_table powersave_nap_ctl_table[]={
 	{
+		.ctl_name	= KERN_PPC_POWERSAVE_NAP,
 		.procname	= "powersave-nap",
 		.data		= &powersave_nap,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= &proc_dointvec,
 	},
 	{}
 };
 static ctl_table powersave_nap_sysctl_root[] = {
 	{
+		.ctl_name	= CTL_KERN,
 		.procname	= "kernel",
 		.mode		= 0555,
 		.child		= powersave_nap_ctl_table,

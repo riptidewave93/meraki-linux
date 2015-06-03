@@ -17,6 +17,7 @@
 #include <linux/kernel.h>
 #include <linux/ptrace.h>
 
+#include <asm/system.h>
 #include <asm/pgtable.h>
 
 /*

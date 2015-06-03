@@ -23,12 +23,10 @@
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/of_platform.h>
-#include <linux/fs.h>
 #include <linux/module.h>
 #include <linux/cdev.h>
 #include <linux/list.h>
 #include <linux/mm.h>
-#include <linux/slab.h>
 #include <asm/pgtable.h>
 #include <asm/io.h>
 
@@ -155,7 +153,6 @@ static const struct file_operations bsr_fops = {
 	.owner = THIS_MODULE,
 	.mmap  = bsr_mmap,
 	.open  = bsr_open,
-	.llseek = noop_llseek,
 };
 
 static void bsr_cleanup_devs(void)
@@ -212,7 +209,7 @@ static int bsr_add_node(struct device_node *bn)
 
 		cur->bsr_minor  = i + total_bsr_devs;
 		cur->bsr_addr   = res.start;
-		cur->bsr_len    = resource_size(&res);
+		cur->bsr_len    = res.end - res.start + 1;
 		cur->bsr_bytes  = bsr_bytes[i];
 		cur->bsr_stride = bsr_stride[i];
 		cur->bsr_dev    = MKDEV(bsr_major, i + total_bsr_devs);
@@ -255,7 +252,7 @@ static int bsr_add_node(struct device_node *bn)
 
 		cur->bsr_device = device_create(bsr_class, NULL, cur->bsr_dev,
 						cur, cur->bsr_name);
-		if (IS_ERR(cur->bsr_device)) {
+		if (!cur->bsr_device) {
 			printk(KERN_ERR "device_create failed for %s\n",
 			       cur->bsr_name);
 			cdev_del(&cur->bsr_cdev);
@@ -295,7 +292,7 @@ static int bsr_create_devs(struct device_node *bn)
 static int __init bsr_init(void)
 {
 	struct device_node *np;
-	dev_t bsr_dev;
+	dev_t bsr_dev = MKDEV(bsr_major, 0);
 	int ret = -ENODEV;
 	int result;
 

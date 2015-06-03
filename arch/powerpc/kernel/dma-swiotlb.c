@@ -1,8 +1,7 @@
 /*
  * Contains routines needed to support swiotlb for ppc.
  *
- * Copyright (C) 2009-2010 Freescale Semiconductor, Inc.
- * Author: Becky Bruce
+ * Copyright (C) 2009 Becky Bruce, Freescale Semiconductor
  *
  * This program is free software; you can redistribute  it and/or modify it
  * under  the terms of  the GNU General  Public License as published by the
@@ -22,22 +21,8 @@
 #include <asm/dma.h>
 #include <asm/abs_addr.h>
 
+int swiotlb __read_mostly;
 unsigned int ppc_swiotlb_enable;
-
-static u64 swiotlb_powerpc_get_required(struct device *dev)
-{
-	u64 end, mask, max_direct_dma_addr = dev->archdata.max_direct_dma_addr;
-
-	end = memblock_end_of_DRAM();
-	if (max_direct_dma_addr && end > max_direct_dma_addr)
-		end = max_direct_dma_addr;
-	end += get_dma_offset(dev);
-
-	mask = 1ULL << (fls64(end) - 1);
-	mask += mask - 1;
-
-	return mask;
-}
 
 /*
  * At the moment, all platforms that use this code only require
@@ -47,19 +32,18 @@ static u64 swiotlb_powerpc_get_required(struct device *dev)
  * for everything else.
  */
 struct dma_map_ops swiotlb_dma_ops = {
-	.alloc = dma_direct_alloc_coherent,
-	.free = dma_direct_free_coherent,
+	.alloc_coherent = dma_direct_alloc_coherent,
+	.free_coherent = dma_direct_free_coherent,
 	.map_sg = swiotlb_map_sg_attrs,
 	.unmap_sg = swiotlb_unmap_sg_attrs,
 	.dma_supported = swiotlb_dma_supported,
 	.map_page = swiotlb_map_page,
 	.unmap_page = swiotlb_unmap_page,
-	.sync_single_for_cpu = swiotlb_sync_single_for_cpu,
-	.sync_single_for_device = swiotlb_sync_single_for_device,
+	.sync_single_range_for_cpu = swiotlb_sync_single_range_for_cpu,
+	.sync_single_range_for_device = swiotlb_sync_single_range_for_device,
 	.sync_sg_for_cpu = swiotlb_sync_sg_for_cpu,
 	.sync_sg_for_device = swiotlb_sync_sg_for_device,
 	.mapping_error = swiotlb_dma_mapping_error,
-	.get_required_mask = swiotlb_powerpc_get_required,
 };
 
 void pci_dma_dev_setup_swiotlb(struct pci_dev *pdev)
@@ -87,7 +71,7 @@ static int ppc_swiotlb_bus_notify(struct notifier_block *nb,
 	sd->max_direct_dma_addr = 0;
 
 	/* May need to bounce if the device can't address all of DRAM */
-	if ((dma_get_mask(dev) + 1) < memblock_end_of_DRAM())
+	if (dma_get_mask(dev) < lmb_end_of_DRAM())
 		set_dma_ops(dev, &swiotlb_dma_ops);
 
 	return NOTIFY_DONE;
@@ -98,9 +82,17 @@ static struct notifier_block ppc_swiotlb_plat_bus_notifier = {
 	.priority = 0,
 };
 
+static struct notifier_block ppc_swiotlb_of_bus_notifier = {
+	.notifier_call = ppc_swiotlb_bus_notify,
+	.priority = 0,
+};
+
 int __init swiotlb_setup_bus_notifier(void)
 {
 	bus_register_notifier(&platform_bus_type,
 			      &ppc_swiotlb_plat_bus_notifier);
+	bus_register_notifier(&of_platform_bus_type,
+			      &ppc_swiotlb_of_bus_notifier);
+
 	return 0;
 }

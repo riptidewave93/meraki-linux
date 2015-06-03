@@ -1,4 +1,6 @@
 /*
+ * eeh_event.c
+ *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
@@ -19,9 +21,7 @@
 #include <linux/delay.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
-#include <linux/sched.h>
 #include <linux/pci.h>
-#include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <asm/eeh_event.h>
 #include <asm/ppc-pci.h>
@@ -44,7 +44,7 @@ DECLARE_WORK(eeh_event_wq, eeh_thread_launcher);
 DEFINE_MUTEX(eeh_event_mutex);
 
 /**
- * eeh_event_handler - Dispatch EEH events.
+ * eeh_event_handler - dispatch EEH events.
  * @dummy - unused
  *
  * The detection of a frozen slot can occur inside an interrupt,
@@ -56,10 +56,11 @@ DEFINE_MUTEX(eeh_event_mutex);
 static int eeh_event_handler(void * dummy)
 {
 	unsigned long flags;
-	struct eeh_event *event;
-	struct eeh_dev *edev;
+	struct eeh_event	*event;
+	struct pci_dn *pdn;
 
-	set_task_comm(current, "eehd");
+	daemonize ("eehd");
+	set_current_state(TASK_INTERRUPTIBLE);
 
 	spin_lock_irqsave(&eeh_eventlist_lock, flags);
 	event = NULL;
@@ -76,40 +77,31 @@ static int eeh_event_handler(void * dummy)
 
 	/* Serialize processing of EEH events */
 	mutex_lock(&eeh_event_mutex);
-	edev = event->edev;
-	eeh_mark_slot(eeh_dev_to_of_node(edev), EEH_MODE_RECOVERING);
+	eeh_mark_slot(event->dn, EEH_MODE_RECOVERING);
 
 	printk(KERN_INFO "EEH: Detected PCI bus error on device %s\n",
-	       eeh_pci_name(edev->pdev));
+	       eeh_pci_name(event->dev));
 
-	set_current_state(TASK_INTERRUPTIBLE);	/* Don't add to load average */
-	edev = handle_eeh_events(event);
+	pdn = handle_eeh_events(event);
 
-	if (edev) {
-		eeh_clear_slot(eeh_dev_to_of_node(edev), EEH_MODE_RECOVERING);
-		pci_dev_put(edev->pdev);
-	}
-
+	eeh_clear_slot(event->dn, EEH_MODE_RECOVERING);
+	pci_dev_put(event->dev);
 	kfree(event);
 	mutex_unlock(&eeh_event_mutex);
 
 	/* If there are no new errors after an hour, clear the counter. */
-	if (edev && edev->freeze_count>0) {
-		msleep_interruptible(3600*1000);
-		if (edev->freeze_count>0)
-			edev->freeze_count--;
-
+	if (pdn && pdn->eeh_freeze_count>0) {
+		msleep_interruptible (3600*1000);
+		if (pdn->eeh_freeze_count>0)
+			pdn->eeh_freeze_count--;
 	}
 
 	return 0;
 }
 
 /**
- * eeh_thread_launcher - Start kernel thread to handle EEH events
+ * eeh_thread_launcher
  * @dummy - unused
- *
- * This routine is called to start the kernel thread for processing
- * EEH event.
  */
 static void eeh_thread_launcher(struct work_struct *dummy)
 {
@@ -118,18 +110,18 @@ static void eeh_thread_launcher(struct work_struct *dummy)
 }
 
 /**
- * eeh_send_failure_event - Generate a PCI error event
- * @edev: EEH device
+ * eeh_send_failure_event - generate a PCI error event
+ * @dev pci device
  *
  * This routine can be called within an interrupt context;
  * the actual event will be delivered in a normal context
  * (from a workqueue).
  */
-int eeh_send_failure_event(struct eeh_dev *edev)
+int eeh_send_failure_event (struct device_node *dn,
+                            struct pci_dev *dev)
 {
 	unsigned long flags;
 	struct eeh_event *event;
-	struct device_node *dn = eeh_dev_to_of_node(edev);
 	const char *location;
 
 	if (!mem_init_done) {
@@ -141,14 +133,15 @@ int eeh_send_failure_event(struct eeh_dev *edev)
 	}
 	event = kmalloc(sizeof(*event), GFP_ATOMIC);
 	if (event == NULL) {
-		printk(KERN_ERR "EEH: out of memory, event not handled\n");
+		printk (KERN_ERR "EEH: out of memory, event not handled\n");
 		return 1;
  	}
 
-	if (edev->pdev)
-		pci_dev_get(edev->pdev);
+	if (dev)
+		pci_dev_get(dev);
 
-	event->edev = edev;
+	event->dn = dn;
+	event->dev = dev;
 
 	/* We may or may not be called in an interrupt context */
 	spin_lock_irqsave(&eeh_eventlist_lock, flags);
@@ -159,3 +152,5 @@ int eeh_send_failure_event(struct eeh_dev *edev)
 
 	return 0;
 }
+
+/********************** END OF FILE ******************************/

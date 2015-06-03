@@ -5,10 +5,8 @@
 #include <linux/kernel.h>
 #include <linux/cdrom.h>
 #include <linux/delay.h>
-#include <linux/export.h>
 #include <linux/ide.h>
 #include <linux/scatterlist.h>
-#include <linux/gfp.h>
 
 #include <scsi/scsi.h>
 
@@ -191,7 +189,7 @@ void ide_prep_sense(ide_drive_t *drive, struct request *rq)
 
 	BUG_ON(sense_len > sizeof(*sense));
 
-	if (rq->cmd_type == REQ_TYPE_SENSE || drive->sense_rq_armed)
+	if (blk_sense_request(rq) || drive->sense_rq_armed)
 		return;
 
 	memset(sense, 0, sizeof(*sense));
@@ -234,7 +232,8 @@ int ide_queue_sense_rq(ide_drive_t *drive, void *special)
 
 	drive->hwif->rq = NULL;
 
-	elv_add_request(drive->queue, &drive->sense_rq, ELEVATOR_INSERT_FRONT);
+	elv_add_request(drive->queue, &drive->sense_rq,
+			ELEVATOR_INSERT_FRONT, 0);
 	return 0;
 }
 EXPORT_SYMBOL_GPL(ide_queue_sense_rq);
@@ -264,8 +263,8 @@ void ide_retry_pc(ide_drive_t *drive)
 	 * of it.  The failed command will be retried after sense data
 	 * is acquired.
 	 */
+	blk_requeue_request(failed_rq->q, failed_rq);
 	drive->hwif->rq = NULL;
-	ide_requeue_and_plug(drive, failed_rq);
 	if (ide_queue_sense_rq(drive, pc)) {
 		blk_start_request(failed_rq);
 		ide_complete_rq(drive, -EIO, blk_rq_bytes(failed_rq));
@@ -307,16 +306,13 @@ EXPORT_SYMBOL_GPL(ide_cd_expiry);
 
 int ide_cd_get_xferlen(struct request *rq)
 {
-	switch (rq->cmd_type) {
-	case REQ_TYPE_FS:
+	if (blk_fs_request(rq))
 		return 32768;
-	case REQ_TYPE_SENSE:
-	case REQ_TYPE_BLOCK_PC:
-	case REQ_TYPE_ATA_PC:
+	else if (blk_sense_request(rq) || blk_pc_request(rq) ||
+			 rq->cmd_type == REQ_TYPE_ATA_PC)
 		return blk_rq_bytes(rq);
-	default:
+	else
 		return 0;
-	}
 }
 EXPORT_SYMBOL_GPL(ide_cd_get_xferlen);
 
@@ -477,12 +473,12 @@ static ide_startstop_t ide_pc_intr(ide_drive_t *drive)
 		if (uptodate == 0)
 			drive->failed_pc = NULL;
 
-		if (rq->cmd_type == REQ_TYPE_SPECIAL) {
+		if (blk_special_request(rq)) {
 			rq->errors = 0;
 			error = 0;
 		} else {
 
-			if (rq->cmd_type != REQ_TYPE_FS && uptodate <= 0) {
+			if (blk_fs_request(rq) == 0 && uptodate <= 0) {
 				if (rq->errors == 0)
 					rq->errors = -EIO;
 			}

@@ -204,13 +204,13 @@ static int __init bcm1480_pcibios_init(void)
 	uint64_t reg;
 
 	/* CFE will assign PCI resources */
-	pci_set_flags(PCI_PROBE_ONLY);
+	pci_probe_only = 1;
 
 	/* Avoid ISA compat ranges.  */
 	PCIBIOS_MIN_IO = 0x00008000UL;
 	PCIBIOS_MIN_MEM = 0x01000000UL;
 
-	/* Set I/O resource limits. - unlimited for now to accommodate HT */
+	/* Set I/O resource limits. - unlimited for now to accomodate HT */
 	ioport_resource.end = 0xffffffffUL;
 	iomem_resource.end = 0xffffffffUL;
 

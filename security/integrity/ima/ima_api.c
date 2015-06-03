@@ -13,7 +13,6 @@
  *	and store_template.
  */
 #include <linux/module.h>
-#include <linux/slab.h>
 
 #include "ima.h"
 static const char *IMA_TEMPLATE_NAME = "ima";
@@ -96,21 +95,28 @@ err_out:
  * ima_must_measure - measure decision based on policy.
  * @inode: pointer to inode to measure
  * @mask: contains the permission mask (MAY_READ, MAY_WRITE, MAY_EXECUTE)
- * @function: calling function (FILE_CHECK, BPRM_CHECK, FILE_MMAP)
+ * @function: calling function (PATH_CHECK, BPRM_CHECK, FILE_MMAP)
  *
  * The policy is defined in terms of keypairs:
  * 		subj=, obj=, type=, func=, mask=, fsmagic=
  *	subj,obj, and type: are LSM specific.
- * 	func: FILE_CHECK | BPRM_CHECK | FILE_MMAP
+ * 	func: PATH_CHECK | BPRM_CHECK | FILE_MMAP
  * 	mask: contains the permission mask
  *	fsmagic: hex value
  *
- * Return 0 to measure. For matching a DONT_MEASURE policy, no policy,
- * or other error, return an error code.
+ * Must be called with iint->mutex held.
+ *
+ * Return 0 to measure. Return 1 if already measured.
+ * For matching a DONT_MEASURE policy, no policy, or other
+ * error, return an error code.
 */
-int ima_must_measure(struct inode *inode, int mask, int function)
+int ima_must_measure(struct ima_iint_cache *iint, struct inode *inode,
+		     int mask, int function)
 {
 	int must_measure;
+
+	if (iint->flags & IMA_MEASURED)
+		return 1;
 
 	must_measure = ima_match_policy(inode, function, mask);
 	return must_measure ? 0 : -EACCES;
@@ -126,8 +132,7 @@ int ima_must_measure(struct inode *inode, int mask, int function)
  *
  * Return 0 on success, error code otherwise
  */
-int ima_collect_measurement(struct integrity_iint_cache *iint,
-			    struct file *file)
+int ima_collect_measurement(struct ima_iint_cache *iint, struct file *file)
 {
 	int result = -EEXIST;
 
@@ -157,8 +162,8 @@ int ima_collect_measurement(struct integrity_iint_cache *iint,
  *
  * Must be called with iint->mutex held.
  */
-void ima_store_measurement(struct integrity_iint_cache *iint,
-			   struct file *file, const unsigned char *filename)
+void ima_store_measurement(struct ima_iint_cache *iint, struct file *file,
+			   const unsigned char *filename)
 {
 	const char *op = "add_template_measure";
 	const char *audit_cause = "ENOMEM";

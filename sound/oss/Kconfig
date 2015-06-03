@@ -1,3 +1,5 @@
+# drivers/sound/Config.in
+#
 # 18 Apr 1998, Michael Elizabeth Chastain, <mailto:mec@shout.net>
 # More hacking for modularisation.
 #
@@ -21,6 +23,10 @@ config SOUND_VWSND
 	  able to use its on-board audio.  Read
 	  <file:Documentation/sound/oss/vwsnd> for more info on this driver's
 	  capabilities.
+
+config SOUND_AU1550_AC97
+	tristate "Au1550/Au1200 AC97 Sound"
+	depends on SOC_AU1550 || SOC_AU1200
 
 config SOUND_MSNDCLAS
 	tristate "Support for Turtle Beach MultiSound Classic, Tahiti, Monterey"
@@ -250,7 +256,6 @@ config MSND_FIFOSIZE
 menuconfig SOUND_OSS
 	tristate "OSS sound modules"
 	depends on ISA_DMA_API && VIRT_TO_BUS
-	depends on !GENERIC_ISA_DMA_SUPPORT_BROKEN
 	help
 	  OSS is the Open Sound System suite of sound card drivers.  They make
 	  sound programming easier since they provide a common API.  Say Y or
@@ -281,6 +286,18 @@ config SOUND_DMAP
 	  the command-line argument "dmabuf=1" to the sound module.
 
 	  Say Y unless you have 16MB or more RAM or a PCI sound card.
+
+config SOUND_SSCAPE
+	tristate "Ensoniq SoundScape support"
+	help
+	  Answer Y if you have a sound card based on the Ensoniq SoundScape
+	  chipset. Such cards are being manufactured at least by Ensoniq, Spea
+	  and Reveal (Reveal makes also other cards).
+
+	  If you compile the driver into the kernel, you have to add
+	  "sscape=<io>,<irq>,<dma>,<mpuio>,<mpuirq>" to the kernel command
+	  line.
+
 
 config SOUND_VMIDI
 	tristate "Loopback MIDI device support"
@@ -433,7 +450,9 @@ config SOUND_SB
 	  ALS-007 and ALS-1X0 chips (read <file:Documentation/sound/oss/ALS>) and
 	  for cards based on ESS chips (read
 	  <file:Documentation/sound/oss/ESS1868> and
-	  <file:Documentation/sound/oss/ESS>). If you have an IBM Mwave
+	  <file:Documentation/sound/oss/ESS>). If you have an SB AWE 32 or SB AWE
+	  64, say Y here and also to "AWE32 synth" below and read
+	  <file:Documentation/sound/oss/INSTALL.awe>. If you have an IBM Mwave
 	  card, say Y here and read <file:Documentation/sound/oss/mwave>.
 
 	  If you compile the driver into the kernel and don't want to use
@@ -522,7 +541,7 @@ config SC6600_CDROMBASE
 
 config SOUND_VIDC
 	tristate "VIDC 16-bit sound"
-	depends on ARM && ARCH_ACORN
+	depends on ARM && (ARCH_ACORN || ARCH_CLPS7500)
 	help
 	  16-bit support for the VIDC onboard sound hardware found on Acorn
 	  machines.
@@ -540,3 +559,11 @@ config SOUND_KAHLUA
 
 endif	# SOUND_OSS
 
+config SOUND_SH_DAC_AUDIO
+	tristate "SuperH DAC audio support"
+	depends on CPU_SH3 && HIGH_RES_TIMERS
+
+config SOUND_SH_DAC_AUDIO_CHANNEL
+	int "DAC channel"
+	default "1"
+	depends on SOUND_SH_DAC_AUDIO

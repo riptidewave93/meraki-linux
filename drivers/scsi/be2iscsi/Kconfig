@@ -1,8 +1,7 @@
 config BE2ISCSI
 	tristate "ServerEngines' 10Gbps iSCSI - BladeEngine 2"
-	depends on PCI && SCSI && NET
+	depends on PCI && SCSI
 	select SCSI_ISCSI_ATTRS
-	select ISCSI_BOOT_SYSFS
 
 	help
 	This driver implements the iSCSI functionality for ServerEngines'

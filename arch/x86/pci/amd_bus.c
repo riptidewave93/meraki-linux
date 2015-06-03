@@ -2,19 +2,180 @@
 #include <linux/pci.h>
 #include <linux/topology.h>
 #include <linux/cpu.h>
-#include <linux/range.h>
-
-#include <asm/amd_nb.h>
 #include <asm/pci_x86.h>
+#include <asm/k8.h>
 
+#ifdef CONFIG_X86_64
 #include <asm/pci-direct.h>
-
-#include "bus_numa.h"
+#include <asm/mpspec.h>
+#include <linux/cpumask.h>
+#endif
 
 /*
  * This discovers the pcibus <-> node mapping on AMD K8.
  * also get peer root bus resource for io,mmio
  */
+
+#ifdef CONFIG_X86_64
+
+/*
+ * sub bus (transparent) will use entres from 3 to store extra from root,
+ * so need to make sure have enought slot there, increase PCI_BUS_NUM_RESOURCES?
+ */
+#define RES_NUM 16
+struct pci_root_info {
+	char name[12];
+	unsigned int res_num;
+	struct resource res[RES_NUM];
+	int bus_min;
+	int bus_max;
+	int node;
+	int link;
+};
+
+/* 4 at this time, it may become to 32 */
+#define PCI_ROOT_NR 4
+static int pci_root_num;
+static struct pci_root_info pci_root_info[PCI_ROOT_NR];
+
+void x86_pci_root_bus_res_quirks(struct pci_bus *b)
+{
+	int i;
+	int j;
+	struct pci_root_info *info;
+
+	/* don't go for it if _CRS is used already */
+	if (b->resource[0] != &ioport_resource ||
+	    b->resource[1] != &iomem_resource)
+		return;
+
+	/* if only one root bus, don't need to anything */
+	if (pci_root_num < 2)
+		return;
+
+	for (i = 0; i < pci_root_num; i++) {
+		if (pci_root_info[i].bus_min == b->number)
+			break;
+	}
+
+	if (i == pci_root_num)
+		return;
+
+	printk(KERN_DEBUG "PCI: peer root bus %02x res updated from pci conf\n",
+			b->number);
+
+	info = &pci_root_info[i];
+	for (j = 0; j < info->res_num; j++) {
+		struct resource *res;
+		struct resource *root;
+
+		res = &info->res[j];
+		b->resource[j] = res;
+		if (res->flags & IORESOURCE_IO)
+			root = &ioport_resource;
+		else
+			root = &iomem_resource;
+		insert_resource(root, res);
+	}
+}
+
+#define RANGE_NUM 16
+
+struct res_range {
+	size_t start;
+	size_t end;
+};
+
+static void __init update_range(struct res_range *range, size_t start,
+				size_t end)
+{
+	int i;
+	int j;
+
+	for (j = 0; j < RANGE_NUM; j++) {
+		if (!range[j].end)
+			continue;
+
+		if (start <= range[j].start && end >= range[j].end) {
+			range[j].start = 0;
+			range[j].end = 0;
+			continue;
+		}
+
+		if (start <= range[j].start && end < range[j].end && range[j].start < end + 1) {
+			range[j].start = end + 1;
+			continue;
+		}
+
+
+		if (start > range[j].start && end >= range[j].end && range[j].end > start - 1) {
+			range[j].end = start - 1;
+			continue;
+		}
+
+		if (start > range[j].start && end < range[j].end) {
+			/* find the new spare */
+			for (i = 0; i < RANGE_NUM; i++) {
+				if (range[i].end == 0)
+					break;
+			}
+			if (i < RANGE_NUM) {
+				range[i].end = range[j].end;
+				range[i].start = end + 1;
+			} else {
+				printk(KERN_ERR "run of slot in ranges\n");
+			}
+			range[j].end = start - 1;
+			continue;
+		}
+	}
+}
+
+static void __init update_res(struct pci_root_info *info, size_t start,
+			      size_t end, unsigned long flags, int merge)
+{
+	int i;
+	struct resource *res;
+
+	if (!merge)
+		goto addit;
+
+	/* try to merge it with old one */
+	for (i = 0; i < info->res_num; i++) {
+		size_t final_start, final_end;
+		size_t common_start, common_end;
+
+		res = &info->res[i];
+		if (res->flags != flags)
+			continue;
+
+		common_start = max((size_t)res->start, start);
+		common_end = min((size_t)res->end, end);
+		if (common_start > common_end + 1)
+			continue;
+
+		final_start = min((size_t)res->start, start);
+		final_end = max((size_t)res->end, end);
+
+		res->start = final_start;
+		res->end = final_end;
+		return;
+	}
+
+addit:
+
+	/* need to add that */
+	if (info->res_num >= RES_NUM)
+		return;
+
+	res = &info->res[info->res_num];
+	res->name = info->name;
+	res->flags = flags;
+	res->start = start;
+	res->end = end;
+	res->child = NULL;
+	info->res_num++;
+}
 
 struct pci_hostbridge_probe {
 	u32 bus;
@@ -30,8 +191,6 @@ static struct pci_hostbridge_probe pci_probes[] __initdata = {
 	{ 0, 0x18, PCI_VENDOR_ID_AMD, 0x1300 },
 };
 
-#define RANGE_NUM 16
-
 /**
  * early_fill_mp_bus_to_node()
  * called before pcibios_scan_root and pci_scan_bus
@@ -44,6 +203,7 @@ static int __init early_fill_mp_bus_info(void)
 	int j;
 	unsigned bus;
 	unsigned slot;
+	int found;
 	int node;
 	int link;
 	int def_node;
@@ -51,12 +211,11 @@ static int __init early_fill_mp_bus_info(void)
 	struct pci_root_info *info;
 	u32 reg;
 	struct resource *res;
-	u64 start;
-	u64 end;
-	struct range range[RANGE_NUM];
+	size_t start;
+	size_t end;
+	struct res_range range[RANGE_NUM];
 	u64 val;
 	u32 address;
-	bool found;
 	struct resource fam10h_mmconf_res, *fam10h_mmconf;
 	u64 fam10h_mmconf_start;
 	u64 fam10h_mmconf_end;
@@ -64,7 +223,7 @@ static int __init early_fill_mp_bus_info(void)
 	if (!early_pci_allowed())
 		return -1;
 
-	found = false;
+	found = 0;
 	for (i = 0; i < ARRAY_SIZE(pci_probes); i++) {
 		u32 id;
 		u16 device;
@@ -78,7 +237,7 @@ static int __init early_fill_mp_bus_info(void)
 		device = (id>>16) & 0xffff;
 		if (pci_probes[i].vendor == vendor &&
 		    pci_probes[i].device == device) {
-			found = true;
+			found = 1;
 			break;
 		}
 	}
@@ -121,7 +280,7 @@ static int __init early_fill_mp_bus_info(void)
 	def_link = (reg >> 8) & 0x03;
 
 	memset(range, 0, sizeof(range));
-	add_range(range, RANGE_NUM, 0, 0, 0xffff + 1);
+	range[0].end = 0xffff;
 	/* io port resource */
 	for (i = 0; i < 4; i++) {
 		reg = read_pci_config(bus, slot, 1, 0xc0 + (i << 3));
@@ -145,13 +304,13 @@ static int __init early_fill_mp_bus_info(void)
 
 		info = &pci_root_info[j];
 		printk(KERN_DEBUG "node %d link %d: io port [%llx, %llx]\n",
-		       node, link, start, end);
+		       node, link, (u64)start, (u64)end);
 
 		/* kernel only handle 16 bit only */
 		if (end > 0xffff)
 			end = 0xffff;
 		update_res(info, start, end, IORESOURCE_IO, 1);
-		subtract_range(range, RANGE_NUM, start, end + 1);
+		update_range(range, start, end);
 	}
 	/* add left over io port range to def node/link, [0, 0xffff] */
 	/* find the position */
@@ -166,24 +325,22 @@ static int __init early_fill_mp_bus_info(void)
 			if (!range[i].end)
 				continue;
 
-			update_res(info, range[i].start, range[i].end - 1,
+			update_res(info, range[i].start, range[i].end,
 				   IORESOURCE_IO, 1);
 		}
 	}
 
 	memset(range, 0, sizeof(range));
 	/* 0xfd00000000-0xffffffffff for HT */
-	end = cap_resource((0xfdULL<<32) - 1);
-	end++;
-	add_range(range, RANGE_NUM, 0, 0, end);
+	range[0].end = (0xfdULL<<32) - 1;
 
 	/* need to take out [0, TOM) for RAM*/
 	address = MSR_K8_TOP_MEM1;
 	rdmsrl(address, val);
 	end = (val & 0xffffff800000ULL);
-	printk(KERN_INFO "TOM: %016llx aka %lldM\n", end, end>>20);
+	printk(KERN_INFO "TOM: %016lx aka %ldM\n", end, end>>20);
 	if (end < (1ULL<<32))
-		subtract_range(range, RANGE_NUM, 0, end);
+		update_range(range, 0, end - 1);
 
 	/* get mmconfig */
 	fam10h_mmconf = amd_get_mmconfig_range(&fam10h_mmconf_res);
@@ -192,8 +349,7 @@ static int __init early_fill_mp_bus_info(void)
 		printk(KERN_DEBUG "Fam 10h mmconf %pR\n", fam10h_mmconf);
 		fam10h_mmconf_start = fam10h_mmconf->start;
 		fam10h_mmconf_end = fam10h_mmconf->end;
-		subtract_range(range, RANGE_NUM, fam10h_mmconf_start,
-				 fam10h_mmconf_end + 1);
+		update_range(range, fam10h_mmconf_start, fam10h_mmconf_end);
 	} else {
 		fam10h_mmconf_start = 0;
 		fam10h_mmconf_end = 0;
@@ -226,7 +382,7 @@ static int __init early_fill_mp_bus_info(void)
 		info = &pci_root_info[j];
 
 		printk(KERN_DEBUG "node %d link %d: mmio [%llx, %llx]",
-		       node, link, start, end);
+		       node, link, (u64)start, (u64)end);
 		/*
 		 * some sick allocation would have range overlap with fam10h
 		 * mmconf range, so need to update start and end.
@@ -251,15 +407,14 @@ static int __init early_fill_mp_bus_info(void)
 				/* we got a hole */
 				endx = fam10h_mmconf_start - 1;
 				update_res(info, start, endx, IORESOURCE_MEM, 0);
-				subtract_range(range, RANGE_NUM, start,
-						 endx + 1);
-				printk(KERN_CONT " ==> [%llx, %llx]", start, endx);
+				update_range(range, start, endx);
+				printk(KERN_CONT " ==> [%llx, %llx]", (u64)start, endx);
 				start = fam10h_mmconf_end + 1;
 				changed = 1;
 			}
 			if (changed) {
 				if (start <= end) {
-					printk(KERN_CONT " %s [%llx, %llx]", endx ? "and" : "==>", start, end);
+					printk(KERN_CONT " %s [%llx, %llx]", endx?"and":"==>", (u64)start, (u64)end);
 				} else {
 					printk(KERN_CONT "%s\n", endx?"":" ==> none");
 					continue;
@@ -267,9 +422,8 @@ static int __init early_fill_mp_bus_info(void)
 			}
 		}
 
-		update_res(info, cap_resource(start), cap_resource(end),
-				 IORESOURCE_MEM, 1);
-		subtract_range(range, RANGE_NUM, start, end + 1);
+		update_res(info, start, end, IORESOURCE_MEM, 1);
+		update_range(range, start, end);
 		printk(KERN_CONT "\n");
 	}
 
@@ -283,8 +437,8 @@ static int __init early_fill_mp_bus_info(void)
 		address = MSR_K8_TOP_MEM2;
 		rdmsrl(address, val);
 		end = (val & 0xffffff800000ULL);
-		printk(KERN_INFO "TOM2: %016llx aka %lldM\n", end, end>>20);
-		subtract_range(range, RANGE_NUM, 1ULL<<32, end);
+		printk(KERN_INFO "TOM2: %016lx aka %ldM\n", end, end>>20);
+		update_range(range, 1ULL<<32, end - 1);
 	}
 
 	/*
@@ -303,8 +457,7 @@ static int __init early_fill_mp_bus_info(void)
 			if (!range[i].end)
 				continue;
 
-			update_res(info, cap_resource(range[i].start),
-				   cap_resource(range[i].end - 1),
+			update_res(info, range[i].start, range[i].end,
 				   IORESOURCE_MEM, 1);
 		}
 	}
@@ -316,21 +469,31 @@ static int __init early_fill_mp_bus_info(void)
 		info = &pci_root_info[i];
 		res_num = info->res_num;
 		busnum = info->bus_min;
-		printk(KERN_DEBUG "bus: [%02x, %02x] on node %x link %x\n",
+		printk(KERN_DEBUG "bus: [%02x,%02x] on node %x link %x\n",
 		       info->bus_min, info->bus_max, info->node, info->link);
 		for (j = 0; j < res_num; j++) {
 			res = &info->res[j];
-			printk(KERN_DEBUG "bus: %02x index %x %pR\n",
-				       busnum, j, res);
+			printk(KERN_DEBUG "bus: %02x index %x %s: [%llx, %llx]\n",
+			       busnum, j,
+			       (res->flags & IORESOURCE_IO)?"io port":"mmio",
+			       res->start, res->end);
 		}
 	}
 
 	return 0;
 }
 
+#else  /* !CONFIG_X86_64 */
+
+static int __init early_fill_mp_bus_info(void) { return 0; }
+
+#endif /* !CONFIG_X86_64 */
+
+/* common 32/64 bit code */
+
 #define ENABLE_CF8_EXT_CFG      (1ULL << 46)
 
-static void __cpuinit enable_pci_io_ecs(void *unused)
+static void enable_pci_io_ecs(void *unused)
 {
 	u64 reg;
 	rdmsrl(MSR_AMD64_NB_CFG, reg);
@@ -359,33 +522,6 @@ static struct notifier_block __cpuinitdata amd_cpu_notifier = {
 	.notifier_call	= amd_cpu_notify,
 };
 
-static void __init pci_enable_pci_io_ecs(void)
-{
-#ifdef CONFIG_AMD_NB
-	unsigned int i, n;
-
-	for (n = i = 0; !n && amd_nb_bus_dev_ranges[i].dev_limit; ++i) {
-		u8 bus = amd_nb_bus_dev_ranges[i].bus;
-		u8 slot = amd_nb_bus_dev_ranges[i].dev_base;
-		u8 limit = amd_nb_bus_dev_ranges[i].dev_limit;
-
-		for (; slot < limit; ++slot) {
-			u32 val = read_pci_config(bus, slot, 3, 0);
-
-			if (!early_is_amd_nb(val))
-				continue;
-
-			val = read_pci_config(bus, slot, 3, 0x8c);
-			if (!(val & (ENABLE_CF8_EXT_CFG >> 32))) {
-				val |= ENABLE_CF8_EXT_CFG >> 32;
-				write_pci_config(bus, slot, 3, 0x8c, val);
-			}
-			++n;
-		}
-	}
-#endif
-}
-
 static int __init pci_io_ecs_init(void)
 {
 	int cpu;
@@ -393,10 +529,6 @@ static int __init pci_io_ecs_init(void)
 	/* assume all cpus from fam10h have IO ECS */
         if (boot_cpu_data.x86 < 0x10)
 		return 0;
-
-	/* Try the PCI method first. */
-	if (early_pci_allowed())
-		pci_enable_pci_io_ecs();
 
 	register_cpu_notifier(&amd_cpu_notifier);
 	for_each_online_cpu(cpu)

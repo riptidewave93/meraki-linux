@@ -6,7 +6,6 @@
 #include <linux/spinlock.h>
 #include <linux/debugfs.h>
 #include <linux/log2.h>
-#include <linux/gfp.h>
 
 #include <asm/paravirt.h>
 
@@ -116,36 +115,19 @@ static inline void spin_time_accum_blocked(u64 start)
 }
 #endif  /* CONFIG_XEN_DEBUG_FS */
 
-/*
- * Size struct xen_spinlock so it's the same as arch_spinlock_t.
- */
-#if NR_CPUS < 256
-typedef u8 xen_spinners_t;
-# define inc_spinners(xl) \
-	asm(LOCK_PREFIX " incb %0" : "+m" ((xl)->spinners) : : "memory");
-# define dec_spinners(xl) \
-	asm(LOCK_PREFIX " decb %0" : "+m" ((xl)->spinners) : : "memory");
-#else
-typedef u16 xen_spinners_t;
-# define inc_spinners(xl) \
-	asm(LOCK_PREFIX " incw %0" : "+m" ((xl)->spinners) : : "memory");
-# define dec_spinners(xl) \
-	asm(LOCK_PREFIX " decw %0" : "+m" ((xl)->spinners) : : "memory");
-#endif
-
 struct xen_spinlock {
 	unsigned char lock;		/* 0 -> free; 1 -> locked */
-	xen_spinners_t spinners;	/* count of waiting cpus */
+	unsigned short spinners;	/* count of waiting cpus */
 };
 
-static int xen_spin_is_locked(struct arch_spinlock *lock)
+static int xen_spin_is_locked(struct raw_spinlock *lock)
 {
 	struct xen_spinlock *xl = (struct xen_spinlock *)lock;
 
 	return xl->lock != 0;
 }
 
-static int xen_spin_is_contended(struct arch_spinlock *lock)
+static int xen_spin_is_contended(struct raw_spinlock *lock)
 {
 	struct xen_spinlock *xl = (struct xen_spinlock *)lock;
 
@@ -154,7 +136,7 @@ static int xen_spin_is_contended(struct arch_spinlock *lock)
 	return xl->spinners != 0;
 }
 
-static int xen_spin_trylock(struct arch_spinlock *lock)
+static int xen_spin_trylock(struct raw_spinlock *lock)
 {
 	struct xen_spinlock *xl = (struct xen_spinlock *)lock;
 	u8 old = 1;
@@ -176,12 +158,13 @@ static inline struct xen_spinlock *spinning_lock(struct xen_spinlock *xl)
 {
 	struct xen_spinlock *prev;
 
-	prev = __this_cpu_read(lock_spinners);
-	__this_cpu_write(lock_spinners, xl);
+	prev = __get_cpu_var(lock_spinners);
+	__get_cpu_var(lock_spinners) = xl;
 
 	wmb();			/* set lock of interest before count */
 
-	inc_spinners(xl);
+	asm(LOCK_PREFIX " incw %0"
+	    : "+m" (xl->spinners) : : "memory");
 
 	return prev;
 }
@@ -192,16 +175,17 @@ static inline struct xen_spinlock *spinning_lock(struct xen_spinlock *xl)
  */
 static inline void unspinning_lock(struct xen_spinlock *xl, struct xen_spinlock *prev)
 {
-	dec_spinners(xl);
+	asm(LOCK_PREFIX " decw %0"
+	    : "+m" (xl->spinners) : : "memory");
 	wmb();			/* decrement count before restoring lock */
-	__this_cpu_write(lock_spinners, prev);
+	__get_cpu_var(lock_spinners) = prev;
 }
 
-static noinline int xen_spin_lock_slow(struct arch_spinlock *lock, bool irq_enable)
+static noinline int xen_spin_lock_slow(struct raw_spinlock *lock, bool irq_enable)
 {
 	struct xen_spinlock *xl = (struct xen_spinlock *)lock;
 	struct xen_spinlock *prev;
-	int irq = __this_cpu_read(lock_kicker_irq);
+	int irq = __get_cpu_var(lock_kicker_irq);
 	int ret;
 	u64 start;
 
@@ -239,7 +223,7 @@ static noinline int xen_spin_lock_slow(struct arch_spinlock *lock, bool irq_enab
 			goto out;
 		}
 
-		flags = arch_local_save_flags();
+		flags = __raw_local_save_flags();
 		if (irq_enable) {
 			ADD_STATS(taken_slow_irqenable, 1);
 			raw_local_irq_enable();
@@ -270,7 +254,7 @@ out:
 	return ret;
 }
 
-static inline void __xen_spin_lock(struct arch_spinlock *lock, bool irq_enable)
+static inline void __xen_spin_lock(struct raw_spinlock *lock, bool irq_enable)
 {
 	struct xen_spinlock *xl = (struct xen_spinlock *)lock;
 	unsigned timeout;
@@ -307,12 +291,12 @@ static inline void __xen_spin_lock(struct arch_spinlock *lock, bool irq_enable)
 	spin_time_accum_total(start_spin);
 }
 
-static void xen_spin_lock(struct arch_spinlock *lock)
+static void xen_spin_lock(struct raw_spinlock *lock)
 {
 	__xen_spin_lock(lock, false);
 }
 
-static void xen_spin_lock_flags(struct arch_spinlock *lock, unsigned long flags)
+static void xen_spin_lock_flags(struct raw_spinlock *lock, unsigned long flags)
 {
 	__xen_spin_lock(lock, !raw_irqs_disabled_flags(flags));
 }
@@ -328,11 +312,12 @@ static noinline void xen_spin_unlock_slow(struct xen_spinlock *xl)
 		if (per_cpu(lock_spinners, cpu) == xl) {
 			ADD_STATS(released_slow_kicked, 1);
 			xen_send_IPI_one(cpu, XEN_SPIN_UNLOCK_VECTOR);
+			break;
 		}
 	}
 }
 
-static void xen_spin_unlock(struct arch_spinlock *lock)
+static void xen_spin_unlock(struct raw_spinlock *lock)
 {
 	struct xen_spinlock *xl = (struct xen_spinlock *)lock;
 
@@ -387,8 +372,6 @@ void xen_uninit_lock_cpu(int cpu)
 
 void __init xen_init_spinlocks(void)
 {
-	BUILD_BUG_ON(sizeof(struct xen_spinlock) > sizeof(arch_spinlock_t));
-
 	pv_lock_ops.spin_is_locked = xen_spin_is_locked;
 	pv_lock_ops.spin_is_contended = xen_spin_is_contended;
 	pv_lock_ops.spin_lock = xen_spin_lock;

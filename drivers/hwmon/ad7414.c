@@ -27,7 +27,6 @@
 #include <linux/err.h>
 #include <linux/mutex.h>
 #include <linux/sysfs.h>
-#include <linux/slab.h>
 
 
 /* AD7414 registers */
@@ -50,8 +49,7 @@ struct ad7414_data {
 /* REG: (0.25C/bit, two's complement) << 6 */
 static inline int ad7414_temp_from_reg(s16 reg)
 {
-	/*
-	 * use integer division instead of equivalent right shift to
+	/* use integer division instead of equivalent right shift to
 	 * guarantee arithmetic shift and preserve the sign
 	 */
 	return ((int)reg / 64) * 250;
@@ -59,9 +57,10 @@ static inline int ad7414_temp_from_reg(s16 reg)
 
 static inline int ad7414_read(struct i2c_client *client, u8 reg)
 {
-	if (reg == AD7414_REG_TEMP)
-		return i2c_smbus_read_word_swapped(client, reg);
-	else
+	if (reg == AD7414_REG_TEMP) {
+		int value = i2c_smbus_read_word_data(client, reg);
+		return (value < 0) ? value : swab16(value);
+	} else
 		return i2c_smbus_read_byte_data(client, reg);
 }
 
@@ -131,11 +130,7 @@ static ssize_t set_max_min(struct device *dev,
 	struct ad7414_data *data = i2c_get_clientdata(client);
 	int index = to_sensor_dev_attr(attr)->index;
 	u8 reg = AD7414_REG_LIMIT[index];
-	long temp;
-	int ret = kstrtol(buf, 10, &temp);
-
-	if (ret < 0)
-		return ret;
+	long temp = simple_strtol(buf, NULL, 10);
 
 	temp = SENSORS_LIMIT(temp, -40000, 85000);
 	temp = (temp + (temp < 0 ? -500 : 500)) / 1000;
@@ -182,13 +177,11 @@ static int ad7414_probe(struct i2c_client *client,
 {
 	struct ad7414_data *data;
 	int conf;
-	int err;
+	int err = 0;
 
 	if (!i2c_check_functionality(client->adapter, I2C_FUNC_SMBUS_BYTE_DATA |
-				     I2C_FUNC_SMBUS_READ_WORD_DATA)) {
-		err = -EOPNOTSUPP;
+				     I2C_FUNC_SMBUS_READ_WORD_DATA))
 		goto exit;
-	}
 
 	data = kzalloc(sizeof(struct ad7414_data), GFP_KERNEL);
 	if (!data) {
@@ -246,7 +239,6 @@ static const struct i2c_device_id ad7414_id[] = {
 	{ "ad7414", 0 },
 	{}
 };
-MODULE_DEVICE_TABLE(i2c, ad7414_id);
 
 static struct i2c_driver ad7414_driver = {
 	.driver = {
@@ -257,7 +249,17 @@ static struct i2c_driver ad7414_driver = {
 	.id_table = ad7414_id,
 };
 
-module_i2c_driver(ad7414_driver);
+static int __init ad7414_init(void)
+{
+	return i2c_add_driver(&ad7414_driver);
+}
+module_init(ad7414_init);
+
+static void __exit ad7414_exit(void)
+{
+	i2c_del_driver(&ad7414_driver);
+}
+module_exit(ad7414_exit);
 
 MODULE_AUTHOR("Stefan Roese <sr at denx.de>, "
 	      "Frank Edelhaeuser <frank.edelhaeuser at spansion.com>");

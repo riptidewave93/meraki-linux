@@ -6,6 +6,7 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <asm/compiler.h>
+#include <asm/system.h>
 #include <asm/pgtable.h>
 #include <asm/machvec.h>
 #include <asm/hwrpb.h>
@@ -36,9 +37,8 @@
  */
 extern inline void __set_hae(unsigned long new_hae)
 {
-	unsigned long flags = swpipl(IPL_MAX);
-
-	barrier();
+	unsigned long flags;
+	local_irq_save(flags);
 
 	alpha_mv.hae_cache = new_hae;
 	*alpha_mv.hae_register = new_hae;
@@ -46,8 +46,7 @@ extern inline void __set_hae(unsigned long new_hae)
 	/* Re-read to make sure it was written.  */
 	new_hae = *alpha_mv.hae_register;
 
-	setipl(flags);
-	barrier();
+	local_irq_restore(flags);
 }
 
 extern inline void set_hae(unsigned long new_hae)
@@ -488,11 +487,6 @@ extern inline void writeq(u64 b, volatile void __iomem *addr)
 	mb();
 }
 #endif
-
-#define ioread16be(p) be16_to_cpu(ioread16(p))
-#define ioread32be(p) be32_to_cpu(ioread32(p))
-#define iowrite16be(v,p) iowrite16(cpu_to_be16(v), (p))
-#define iowrite32be(v,p) iowrite32(cpu_to_be32(v), (p))
 
 #define inb_p		inb
 #define inw_p		inw

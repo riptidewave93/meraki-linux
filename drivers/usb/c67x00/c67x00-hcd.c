@@ -264,13 +264,14 @@ static void c67x00_hcd_irq(struct c67x00_sie *sie, u16 int_status, u16 msg)
 	if (unlikely(hcd->state == HC_STATE_HALT))
 		return;
 
-	if (!HCD_HW_ACCESSIBLE(hcd))
+	if (!test_bit(HCD_FLAG_HW_ACCESSIBLE, &hcd->flags))
 		return;
 
 	/* Handle Start of frame events */
 	if (int_status & SOFEOP_FLG(sie->sie_num)) {
 		c67x00_ll_usb_clear_status(sie, SOF_EOP_IRQ_FLG);
 		c67x00_sched_kick(c67x00);
+		set_bit(HCD_FLAG_SAW_IRQ, &hcd->flags);
 	}
 }
 
@@ -281,7 +282,7 @@ static int c67x00_hcd_start(struct usb_hcd *hcd)
 {
 	hcd->uses_new_polling = 1;
 	hcd->state = HC_STATE_RUNNING;
-	set_bit(HCD_FLAG_POLL_RH, &hcd->flags);
+	hcd->poll_rh = 1;
 
 	return 0;
 }

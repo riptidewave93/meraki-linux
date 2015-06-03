@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -67,11 +67,6 @@ acpi_status acpi_tb_resize_root_table_list(void);
 
 acpi_status acpi_tb_verify_table(struct acpi_table_desc *table_desc);
 
-struct acpi_table_header *acpi_tb_table_override(struct acpi_table_header
-						 *table_header,
-						 struct acpi_table_desc
-						 *table_desc);
-
 acpi_status
 acpi_tb_add_table(struct acpi_table_desc *table_desc, u32 *table_index);
 
@@ -111,10 +106,6 @@ u8 acpi_tb_checksum(u8 *buffer, u32 length);
 
 acpi_status
 acpi_tb_verify_checksum(struct acpi_table_header *table, u32 length);
-
-void acpi_tb_check_dsdt_header(void);
-
-struct acpi_table_header *acpi_tb_copy_dsdt(u32 table_index);
 
 void
 acpi_tb_install_table(acpi_physical_address address,

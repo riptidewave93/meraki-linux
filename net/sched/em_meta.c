@@ -47,7 +47,7 @@
  * 	on the meta type. Obviously, the length of the data must also
  * 	be provided for non-numeric types.
  *
- * 	Additionally, type dependent modifiers such as shift operators
+ * 	Additionaly, type dependant modifiers such as shift operators
  * 	or mask may be applied to extend the functionaliy. As of now,
  * 	the variable length type supports shifting the byte string to
  * 	the right, eating up any number of octets and thus supporting
@@ -58,7 +58,6 @@
  * 	      only available if that subsystem is enabled in the kernel.
  */
 
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
@@ -73,18 +72,21 @@
 #include <net/pkt_cls.h>
 #include <net/sock.h>
 
-struct meta_obj {
+struct meta_obj
+{
 	unsigned long		value;
 	unsigned int		len;
 };
 
-struct meta_value {
+struct meta_value
+{
 	struct tcf_meta_val	hdr;
 	unsigned long		val;
 	unsigned int		len;
 };
 
-struct meta_match {
+struct meta_match
+{
 	struct meta_value	lvalue;
 	struct meta_value	rvalue;
 };
@@ -220,11 +222,6 @@ META_COLLECTOR(int_maclen)
 	dst->value = skb->mac_len;
 }
 
-META_COLLECTOR(int_rxhash)
-{
-	dst->value = skb_get_rxhash(skb);
-}
-
 /**************************************************************************
  * Netfilter
  **************************************************************************/
@@ -252,7 +249,7 @@ META_COLLECTOR(int_rtclassid)
 	if (unlikely(skb_dst(skb) == NULL))
 		*err = -1;
 	else
-#ifdef CONFIG_IP_ROUTE_CLASSID
+#ifdef CONFIG_NET_CLS_ROUTE
 		dst->value = skb_dst(skb)->tclassid;
 #else
 		dst->value = 0;
@@ -264,7 +261,7 @@ META_COLLECTOR(int_rtiif)
 	if (unlikely(skb_rtable(skb) == NULL))
 		*err = -1;
 	else
-		dst->value = skb_rtable(skb)->rt_iif;
+		dst->value = skb_rtable(skb)->fl.iif;
 }
 
 /**************************************************************************
@@ -306,18 +303,17 @@ META_COLLECTOR(var_sk_bound_if)
 {
 	SKIP_NONLOCAL(skb);
 
-	if (skb->sk->sk_bound_dev_if == 0) {
+	 if (skb->sk->sk_bound_dev_if == 0) {
 		dst->value = (unsigned long) "any";
 		dst->len = 3;
-	} else {
+	 } else  {
 		struct net_device *dev;
 
-		rcu_read_lock();
-		dev = dev_get_by_index_rcu(sock_net(skb->sk),
-					   skb->sk->sk_bound_dev_if);
+		dev = dev_get_by_index(&init_net, skb->sk->sk_bound_dev_if);
 		*err = var_dev(dev, dst);
-		rcu_read_unlock();
-	}
+		if (dev)
+			dev_put(dev);
+	 }
 }
 
 META_COLLECTOR(int_sk_refcnt)
@@ -401,7 +397,13 @@ META_COLLECTOR(int_sk_sndbuf)
 META_COLLECTOR(int_sk_alloc)
 {
 	SKIP_NONLOCAL(skb);
-	dst->value = (__force int) skb->sk->sk_allocation;
+	dst->value = skb->sk->sk_allocation;
+}
+
+META_COLLECTOR(int_sk_route_caps)
+{
+	SKIP_NONLOCAL(skb);
+	dst->value = skb->sk->sk_route_caps;
 }
 
 META_COLLECTOR(int_sk_hash)
@@ -474,7 +476,8 @@ META_COLLECTOR(int_sk_write_pend)
  * Meta value collectors assignment table
  **************************************************************************/
 
-struct meta_ops {
+struct meta_ops
+{
 	void		(*get)(struct sk_buff *, struct tcf_pkt_info *,
 			       struct meta_value *, struct meta_obj *, int *);
 };
@@ -484,7 +487,7 @@ struct meta_ops {
 
 /* Meta value operations table listing all meta value collectors and
  * assigns them to a type and meta id. */
-static struct meta_ops __meta_ops[TCF_META_TYPE_MAX + 1][TCF_META_ID_MAX + 1] = {
+static struct meta_ops __meta_ops[TCF_META_TYPE_MAX+1][TCF_META_ID_MAX+1] = {
 	[TCF_META_TYPE_VAR] = {
 		[META_ID(DEV)]			= META_FUNC(var_dev),
 		[META_ID(SK_BOUND_IF)] 		= META_FUNC(var_sk_bound_if),
@@ -524,6 +527,7 @@ static struct meta_ops __meta_ops[TCF_META_TYPE_MAX + 1][TCF_META_ID_MAX + 1] = 
 		[META_ID(SK_ERR_QLEN)]		= META_FUNC(int_sk_err_qlen),
 		[META_ID(SK_FORWARD_ALLOCS)]	= META_FUNC(int_sk_fwd_alloc),
 		[META_ID(SK_ALLOCS)]		= META_FUNC(int_sk_alloc),
+		[META_ID(SK_ROUTE_CAPS)]	= META_FUNC(int_sk_route_caps),
 		[META_ID(SK_HASH)]		= META_FUNC(int_sk_hash),
 		[META_ID(SK_LINGERTIME)]	= META_FUNC(int_sk_lingertime),
 		[META_ID(SK_ACK_BACKLOG)]	= META_FUNC(int_sk_ack_bl),
@@ -535,11 +539,10 @@ static struct meta_ops __meta_ops[TCF_META_TYPE_MAX + 1][TCF_META_ID_MAX + 1] = 
 		[META_ID(SK_SENDMSG_OFF)]	= META_FUNC(int_sk_sendmsg_off),
 		[META_ID(SK_WRITE_PENDING)]	= META_FUNC(int_sk_write_pend),
 		[META_ID(VLAN_TAG)]		= META_FUNC(int_vlan_tag),
-		[META_ID(RXHASH)]		= META_FUNC(int_rxhash),
 	}
 };
 
-static inline struct meta_ops *meta_ops(struct meta_value *val)
+static inline struct meta_ops * meta_ops(struct meta_value *val)
 {
 	return &__meta_ops[meta_type(val)][meta_id(val)];
 }
@@ -638,8 +641,9 @@ static int meta_int_dump(struct sk_buff *skb, struct meta_value *v, int tlv)
 {
 	if (v->len == sizeof(unsigned long))
 		NLA_PUT(skb, tlv, sizeof(unsigned long), &v->val);
-	else if (v->len == sizeof(u32))
+	else if (v->len == sizeof(u32)) {
 		NLA_PUT_U32(skb, tlv, v->val);
+	}
 
 	return 0;
 
@@ -651,7 +655,8 @@ nla_put_failure:
  * Type specific operations table
  **************************************************************************/
 
-struct meta_type_ops {
+struct meta_type_ops
+{
 	void	(*destroy)(struct meta_value *);
 	int	(*compare)(struct meta_obj *, struct meta_obj *);
 	int	(*change)(struct meta_value *, struct nlattr *);
@@ -659,7 +664,7 @@ struct meta_type_ops {
 	int	(*dump)(struct sk_buff *, struct meta_value *, int);
 };
 
-static struct meta_type_ops __meta_type_ops[TCF_META_TYPE_MAX + 1] = {
+static struct meta_type_ops __meta_type_ops[TCF_META_TYPE_MAX+1] = {
 	[TCF_META_TYPE_VAR] = {
 		.destroy = meta_var_destroy,
 		.compare = meta_var_compare,
@@ -675,7 +680,7 @@ static struct meta_type_ops __meta_type_ops[TCF_META_TYPE_MAX + 1] = {
 	}
 };
 
-static inline struct meta_type_ops *meta_type_ops(struct meta_value *v)
+static inline struct meta_type_ops * meta_type_ops(struct meta_value *v)
 {
 	return &__meta_type_ops[meta_type(v)];
 }
@@ -700,7 +705,7 @@ static int meta_get(struct sk_buff *skb, struct tcf_pkt_info *info,
 		return err;
 
 	if (meta_type_ops(v)->apply_extras)
-		meta_type_ops(v)->apply_extras(v, dst);
+	    meta_type_ops(v)->apply_extras(v, dst);
 
 	return 0;
 }
@@ -719,12 +724,12 @@ static int em_meta_match(struct sk_buff *skb, struct tcf_ematch *m,
 	r = meta_type_ops(&meta->lvalue)->compare(&l_value, &r_value);
 
 	switch (meta->lvalue.hdr.op) {
-	case TCF_EM_OPND_EQ:
-		return !r;
-	case TCF_EM_OPND_LT:
-		return r < 0;
-	case TCF_EM_OPND_GT:
-		return r > 0;
+		case TCF_EM_OPND_EQ:
+			return !r;
+		case TCF_EM_OPND_LT:
+			return r < 0;
+		case TCF_EM_OPND_GT:
+			return r > 0;
 	}
 
 	return 0;
@@ -758,7 +763,7 @@ static inline int meta_change_data(struct meta_value *dst, struct nlattr *nla)
 
 static inline int meta_is_supported(struct meta_value *val)
 {
-	return !meta_id(val) || meta_ops(val)->get;
+	return (!meta_id(val) || meta_ops(val)->get);
 }
 
 static const struct nla_policy meta_policy[TCA_EM_META_MAX + 1] = {

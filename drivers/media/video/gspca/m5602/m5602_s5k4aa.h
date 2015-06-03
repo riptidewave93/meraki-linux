@@ -65,7 +65,7 @@
 
 /* Kernel module parameters */
 extern int force_sensor;
-extern bool dump_sensor;
+extern int dump_sensor;
 
 int s5k4aa_probe(struct sd *sd);
 int s5k4aa_init(struct sd *sd);
@@ -83,7 +83,8 @@ static const struct m5602_sensor s5k4aa = {
 	.disconnect = s5k4aa_disconnect,
 };
 
-static const unsigned char preinit_s5k4aa[][4] = {
+static const unsigned char preinit_s5k4aa[][4] =
+{
 	{BRIDGE, M5602_XB_MCU_CLK_DIV, 0x02, 0x00},
 	{BRIDGE, M5602_XB_MCU_CLK_CTRL, 0xb0, 0x00},
 	{BRIDGE, M5602_XB_SEN_CLK_DIV, 0x00, 0x00},
@@ -126,7 +127,8 @@ static const unsigned char preinit_s5k4aa[][4] = {
 	{SENSOR, S5K4AA_PAGE_MAP, 0x00, 0x00}
 };
 
-static const unsigned char init_s5k4aa[][4] = {
+static const unsigned char init_s5k4aa[][4] =
+{
 	{BRIDGE, M5602_XB_MCU_CLK_DIV, 0x02, 0x00},
 	{BRIDGE, M5602_XB_MCU_CLK_CTRL, 0xb0, 0x00},
 	{BRIDGE, M5602_XB_SEN_CLK_DIV, 0x00, 0x00},
@@ -177,7 +179,8 @@ static const unsigned char init_s5k4aa[][4] = {
 	{SENSOR, 0x37, 0x00, 0x00},
 };
 
-static const unsigned char VGA_s5k4aa[][4] = {
+static const unsigned char VGA_s5k4aa[][4] =
+{
 	{BRIDGE, M5602_XB_SEN_CLK_DIV, 0x06, 0x00},
 	{BRIDGE, M5602_XB_SEN_CLK_CTRL, 0xb0, 0x00},
 	{BRIDGE, M5602_XB_ADC_CTRL, 0xc0, 0x00},
@@ -232,7 +235,8 @@ static const unsigned char VGA_s5k4aa[][4] = {
 	{SENSOR, 0x02, 0x0e, 0x00},
 };
 
-static const unsigned char SXGA_s5k4aa[][4] = {
+static const unsigned char SXGA_s5k4aa[][4] =
+{
 	{BRIDGE, M5602_XB_SEN_CLK_DIV, 0x06, 0x00},
 	{BRIDGE, M5602_XB_SEN_CLK_CTRL, 0xb0, 0x00},
 	{BRIDGE, M5602_XB_ADC_CTRL, 0xc0, 0x00},
@@ -280,4 +284,6 @@ static const unsigned char SXGA_s5k4aa[][4] = {
 	{SENSOR, S5K4AA_PAGE_MAP, 0x02, 0x00},
 	{SENSOR, 0x02, 0x0e, 0x00},
 };
+
+
 #endif

@@ -2,7 +2,7 @@
 # Makefile for the Linux SuperH-specific parts of the memory manager.
 #
 
-obj-y			:= alignment.o cache.o init.o consistent.o mmap.o
+obj-y			:= cache.o init.o consistent.o mmap.o
 
 cacheops-$(CONFIG_CPU_SH2)		:= cache-sh2.o
 cacheops-$(CONFIG_CPU_SH2A)		:= cache-sh2a.o
@@ -10,39 +10,32 @@ cacheops-$(CONFIG_CPU_SH3)		:= cache-sh3.o
 cacheops-$(CONFIG_CPU_SH4)		:= cache-sh4.o flush-sh4.o
 cacheops-$(CONFIG_CPU_SH5)		:= cache-sh5.o flush-sh4.o
 cacheops-$(CONFIG_SH7705_CACHE_32KB)	+= cache-sh7705.o
-cacheops-$(CONFIG_CPU_SHX3)		+= cache-shx3.o
 
 obj-y			+= $(cacheops-y)
 
 mmu-y			:= nommu.o extable_32.o
-mmu-$(CONFIG_MMU)	:= extable_$(BITS).o fault_$(BITS).o gup.o \
-			   ioremap.o kmap.o pgtable.o tlbflush_$(BITS).o
+mmu-$(CONFIG_MMU)	:= extable_$(BITS).o fault_$(BITS).o \
+			   ioremap_$(BITS).o kmap.o tlbflush_$(BITS).o
 
 obj-y			+= $(mmu-y)
+obj-$(CONFIG_DEBUG_FS)	+= asids-debugfs.o
 
-debugfs-y			:= asids-debugfs.o
-ifndef CONFIG_CACHE_OFF
-debugfs-$(CONFIG_CPU_SH4)	+= cache-debugfs.o
+ifdef CONFIG_DEBUG_FS
+obj-$(CONFIG_CPU_SH4)	+= cache-debugfs.o
 endif
 
 ifdef CONFIG_MMU
-debugfs-$(CONFIG_CPU_SH4)	+= tlb-debugfs.o
 tlb-$(CONFIG_CPU_SH3)		:= tlb-sh3.o
-tlb-$(CONFIG_CPU_SH4)		:= tlb-sh4.o tlb-urb.o
+tlb-$(CONFIG_CPU_SH4)		:= tlb-sh4.o
 tlb-$(CONFIG_CPU_SH5)		:= tlb-sh5.o
-tlb-$(CONFIG_CPU_HAS_PTEAEX)	:= tlb-pteaex.o tlb-urb.o
+tlb-$(CONFIG_CPU_HAS_PTEAEX)	:= tlb-pteaex.o
 obj-y				+= $(tlb-y)
 endif
 
-obj-$(CONFIG_DEBUG_FS)		+= $(debugfs-y)
 obj-$(CONFIG_HUGETLB_PAGE)	+= hugetlbpage.o
 obj-$(CONFIG_PMB)		+= pmb.o
+obj-$(CONFIG_PMB_FIXED)		+= pmb-fixed.o
 obj-$(CONFIG_NUMA)		+= numa.o
-obj-$(CONFIG_IOREMAP_FIXED)	+= ioremap_fixed.o
-obj-$(CONFIG_UNCACHED_MAPPING)	+= uncached.o
-obj-$(CONFIG_HAVE_SRAM_POOL)	+= sram.o
-
-GCOV_PROFILE_pmb.o := n
 
 # Special flags for fault_64.o.  This puts restrictions on the number of
 # caller-save registers that the compiler can target when building this file.
@@ -69,4 +62,4 @@ CFLAGS_fault_64.o += -ffixed-r7 \
 	-ffixed-r60 -ffixed-r61 -ffixed-r62 \
 	-fomit-frame-pointer
 
-ccflags-y := -Werror
+EXTRA_CFLAGS += -Werror

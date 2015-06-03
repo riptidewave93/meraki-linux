@@ -10,7 +10,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
@@ -19,71 +18,58 @@
 
 /* 1 band FIFO pseudo-"scheduler" */
 
-static int bfifo_enqueue(struct sk_buff *skb, struct Qdisc *sch)
+struct fifo_sched_data
 {
-	if (likely(sch->qstats.backlog + qdisc_pkt_len(skb) <= sch->limit))
+	u32 limit;
+};
+
+static int bfifo_enqueue(struct sk_buff *skb, struct Qdisc* sch)
+{
+	struct fifo_sched_data *q = qdisc_priv(sch);
+
+	if (likely(sch->qstats.backlog + qdisc_pkt_len(skb) <= q->limit))
 		return qdisc_enqueue_tail(skb, sch);
 
 	return qdisc_reshape_fail(skb, sch);
 }
 
-static int pfifo_enqueue(struct sk_buff *skb, struct Qdisc *sch)
+static int pfifo_enqueue(struct sk_buff *skb, struct Qdisc* sch)
 {
-	if (likely(skb_queue_len(&sch->q) < sch->limit))
+	struct fifo_sched_data *q = qdisc_priv(sch);
+
+	if (likely(skb_queue_len(&sch->q) < q->limit))
 		return qdisc_enqueue_tail(skb, sch);
 
 	return qdisc_reshape_fail(skb, sch);
-}
-
-static int pfifo_tail_enqueue(struct sk_buff *skb, struct Qdisc *sch)
-{
-	if (likely(skb_queue_len(&sch->q) < sch->limit))
-		return qdisc_enqueue_tail(skb, sch);
-
-	/* queue full, remove one skb to fulfill the limit */
-	__qdisc_queue_drop_head(sch, &sch->q);
-	sch->qstats.drops++;
-	qdisc_enqueue_tail(skb, sch);
-
-	return NET_XMIT_CN;
 }
 
 static int fifo_init(struct Qdisc *sch, struct nlattr *opt)
 {
-	bool bypass;
-	bool is_bfifo = sch->ops == &bfifo_qdisc_ops;
+	struct fifo_sched_data *q = qdisc_priv(sch);
 
 	if (opt == NULL) {
 		u32 limit = qdisc_dev(sch)->tx_queue_len ? : 1;
 
-		if (is_bfifo)
+		if (sch->ops == &bfifo_qdisc_ops)
 			limit *= psched_mtu(qdisc_dev(sch));
 
-		sch->limit = limit;
+		q->limit = limit;
 	} else {
 		struct tc_fifo_qopt *ctl = nla_data(opt);
 
 		if (nla_len(opt) < sizeof(*ctl))
 			return -EINVAL;
 
-		sch->limit = ctl->limit;
+		q->limit = ctl->limit;
 	}
 
-	if (is_bfifo)
-		bypass = sch->limit >= psched_mtu(qdisc_dev(sch));
-	else
-		bypass = sch->limit >= 1;
-
-	if (bypass)
-		sch->flags |= TCQ_F_CAN_BYPASS;
-	else
-		sch->flags &= ~TCQ_F_CAN_BYPASS;
 	return 0;
 }
 
 static int fifo_dump(struct Qdisc *sch, struct sk_buff *skb)
 {
-	struct tc_fifo_qopt opt = { .limit = sch->limit };
+	struct fifo_sched_data *q = qdisc_priv(sch);
+	struct tc_fifo_qopt opt = { .limit = q->limit };
 
 	NLA_PUT(skb, TCA_OPTIONS, sizeof(opt), &opt);
 	return skb->len;
@@ -94,7 +80,7 @@ nla_put_failure:
 
 struct Qdisc_ops pfifo_qdisc_ops __read_mostly = {
 	.id		=	"pfifo",
-	.priv_size	=	0,
+	.priv_size	=	sizeof(struct fifo_sched_data),
 	.enqueue	=	pfifo_enqueue,
 	.dequeue	=	qdisc_dequeue_head,
 	.peek		=	qdisc_peek_head,
@@ -109,7 +95,7 @@ EXPORT_SYMBOL(pfifo_qdisc_ops);
 
 struct Qdisc_ops bfifo_qdisc_ops __read_mostly = {
 	.id		=	"bfifo",
-	.priv_size	=	0,
+	.priv_size	=	sizeof(struct fifo_sched_data),
 	.enqueue	=	bfifo_enqueue,
 	.dequeue	=	qdisc_dequeue_head,
 	.peek		=	qdisc_peek_head,
@@ -121,20 +107,6 @@ struct Qdisc_ops bfifo_qdisc_ops __read_mostly = {
 	.owner		=	THIS_MODULE,
 };
 EXPORT_SYMBOL(bfifo_qdisc_ops);
-
-struct Qdisc_ops pfifo_head_drop_qdisc_ops __read_mostly = {
-	.id		=	"pfifo_head_drop",
-	.priv_size	=	0,
-	.enqueue	=	pfifo_tail_enqueue,
-	.dequeue	=	qdisc_dequeue_head,
-	.peek		=	qdisc_peek_head,
-	.drop		=	qdisc_queue_drop_head,
-	.init		=	fifo_init,
-	.reset		=	qdisc_reset_queue,
-	.change		=	fifo_init,
-	.dump		=	fifo_dump,
-	.owner		=	THIS_MODULE,
-};
 
 /* Pass size change message down to embedded FIFO */
 int fifo_set_limit(struct Qdisc *q, unsigned int limit)
@@ -165,7 +137,8 @@ struct Qdisc *fifo_create_dflt(struct Qdisc *sch, struct Qdisc_ops *ops,
 	struct Qdisc *q;
 	int err = -ENOMEM;
 
-	q = qdisc_create_dflt(sch->dev_queue, ops, TC_H_MAKE(sch->handle, 1));
+	q = qdisc_create_dflt(qdisc_dev(sch), sch->dev_queue,
+			      ops, TC_H_MAKE(sch->handle, 1));
 	if (q) {
 		err = fifo_set_limit(q, limit);
 		if (err < 0) {

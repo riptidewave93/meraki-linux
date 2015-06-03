@@ -170,10 +170,6 @@ extern int ptep_set_access_flags(struct vm_area_struct *vma, unsigned long addre
 #define pgprot_cached_wthru(prot) (__pgprot((pgprot_val(prot) & ~_PAGE_CACHE_CTL) | \
 				            _PAGE_COHERENT | _PAGE_WRITETHRU))
 
-#define pgprot_cached_noncoherent(prot) \
-		(__pgprot(pgprot_val(prot) & ~_PAGE_CACHE_CTL))
-
-#define pgprot_writecombine pgprot_noncached_wc
 
 struct file;
 extern pgprot_t phys_mem_access_prot(struct file *file, unsigned long pfn,
@@ -188,6 +184,10 @@ extern unsigned long empty_zero_page[];
 #define ZERO_PAGE(vaddr) (virt_to_page(empty_zero_page))
 
 extern pgd_t swapper_pg_dir[];
+#ifdef CONFIG_PPC_TLB_DEBUG
+extern u32 inst_tlb_miss_count;
+extern u32 data_tlb_miss_count;
+#endif
 
 extern void paging_init(void);
 
@@ -213,10 +213,7 @@ extern void paging_init(void);
  * corresponding HPTE into the hash table ahead of time, instead of
  * waiting for the inevitable extra hash-table miss exception.
  */
-extern void update_mmu_cache(struct vm_area_struct *, unsigned long, pte_t *);
-
-extern int gup_hugepd(hugepd_t *hugepd, unsigned pdshift, unsigned long addr,
-		      unsigned long end, int write, struct page **pages, int *nr);
+extern void update_mmu_cache(struct vm_area_struct *, unsigned long, pte_t);
 
 #endif /* __ASSEMBLY__ */
 

@@ -74,7 +74,7 @@ static int is_setting_trap_flag(struct task_struct *child, struct pt_regs *regs)
 
 #ifdef CONFIG_X86_64
 		case 0x40 ... 0x4f:
-			if (!user_64bit_mode(regs))
+			if (regs->cs != __USER_CS)
 				/* 32-bit mode: register increment */
 				return 0;
 			/* 64-bit mode: REX prefix */
@@ -157,31 +157,20 @@ static int enable_single_step(struct task_struct *child)
 	return 1;
 }
 
-static void set_task_blockstep(struct task_struct *task, bool on)
+/*
+ * Install this value in MSR_IA32_DEBUGCTLMSR whenever child is running.
+ */
+static void write_debugctlmsr(struct task_struct *child, unsigned long val)
 {
-	unsigned long debugctl;
+	if (child->thread.debugctlmsr == val)
+		return;
 
-	/*
-	 * Ensure irq/preemption can't change debugctl in between.
-	 * Note also that both TIF_BLOCKSTEP and debugctl should
-	 * be changed atomically wrt preemption.
-	 * FIXME: this means that set/clear TIF_BLOCKSTEP is simply
-	 * wrong if task != current, SIGKILL can wakeup the stopped
-	 * tracee and set/clear can play with the running task, this
-	 * can confuse the next __switch_to_xtra().
-	 */
-	local_irq_disable();
-	debugctl = get_debugctlmsr();
-	if (on) {
-		debugctl |= DEBUGCTLMSR_BTF;
-		set_tsk_thread_flag(task, TIF_BLOCKSTEP);
-	} else {
-		debugctl &= ~DEBUGCTLMSR_BTF;
-		clear_tsk_thread_flag(task, TIF_BLOCKSTEP);
-	}
-	if (task == current)
-		update_debugctlmsr(debugctl);
-	local_irq_enable();
+	child->thread.debugctlmsr = val;
+
+	if (child != current)
+		return;
+
+	update_debugctlmsr(val);
 }
 
 /*
@@ -193,13 +182,20 @@ static void enable_step(struct task_struct *child, bool block)
 	 * Make sure block stepping (BTF) is not enabled unless it should be.
 	 * Note that we don't try to worry about any is_setting_trap_flag()
 	 * instructions after the first when using block stepping.
-	 * So no one should try to use debugger block stepping in a program
+	 * So noone should try to use debugger block stepping in a program
 	 * that uses user-mode single stepping itself.
 	 */
-	if (enable_single_step(child) && block)
-		set_task_blockstep(child, true);
-	else if (test_tsk_thread_flag(child, TIF_BLOCKSTEP))
-		set_task_blockstep(child, false);
+	if (enable_single_step(child) && block) {
+		set_tsk_thread_flag(child, TIF_DEBUGCTLMSR);
+		write_debugctlmsr(child,
+				  child->thread.debugctlmsr | DEBUGCTLMSR_BTF);
+	} else {
+		write_debugctlmsr(child,
+				  child->thread.debugctlmsr & ~DEBUGCTLMSR_BTF);
+
+		if (!child->thread.debugctlmsr)
+			clear_tsk_thread_flag(child, TIF_DEBUGCTLMSR);
+	}
 }
 
 void user_enable_single_step(struct task_struct *child)
@@ -217,8 +213,11 @@ void user_disable_single_step(struct task_struct *child)
 	/*
 	 * Make sure block stepping (BTF) is disabled.
 	 */
-	if (test_tsk_thread_flag(child, TIF_BLOCKSTEP))
-		set_task_blockstep(child, false);
+	write_debugctlmsr(child,
+			  child->thread.debugctlmsr & ~DEBUGCTLMSR_BTF);
+
+	if (!child->thread.debugctlmsr)
+		clear_tsk_thread_flag(child, TIF_DEBUGCTLMSR);
 
 	/* Always clear TIF_SINGLESTEP... */
 	clear_tsk_thread_flag(child, TIF_SINGLESTEP);

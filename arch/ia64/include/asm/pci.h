@@ -11,14 +11,6 @@
 #include <asm/scatterlist.h>
 #include <asm/hw_irq.h>
 
-struct pci_vector_struct {
-	__u16 segment;	/* PCI Segment number */
-	__u16 bus;	/* PCI Bus number */
-	__u32 pci_id;	/* ACPI split 16 bits device, 16 bits function (see section 6.1.1) */
-	__u8 pin;	/* PCI PIN (0 = A, 1 = B, 2 = C, 3 = D) */
-	__u32 irq;	/* IRQ assigned */
-};
-
 /*
  * Can be used to override the logic in pci_scan_bus for skipping already-configured bus
  * numbers - to be used for buggy BIOSes or architectures with incomplete PCI setup by the
@@ -51,12 +43,32 @@ extern unsigned long ia64_max_iommu_merge_mask;
 #define PCI_DMA_BUS_IS_PHYS	(ia64_max_iommu_merge_mask == ~0UL)
 
 static inline void
+pcibios_set_master (struct pci_dev *dev)
+{
+	/* No special bus mastering setup handling */
+}
+
+static inline void
 pcibios_penalize_isa_irq (int irq, int active)
 {
 	/* We don't do dynamic PCI IRQ allocation */
 }
 
 #include <asm-generic/pci-dma-compat.h>
+
+/* pci_unmap_{single,page} is not a nop, thus... */
+#define DECLARE_PCI_UNMAP_ADDR(ADDR_NAME)	\
+	dma_addr_t ADDR_NAME;
+#define DECLARE_PCI_UNMAP_LEN(LEN_NAME)		\
+	__u32 LEN_NAME;
+#define pci_unmap_addr(PTR, ADDR_NAME)			\
+	((PTR)->ADDR_NAME)
+#define pci_unmap_addr_set(PTR, ADDR_NAME, VAL)		\
+	(((PTR)->ADDR_NAME) = (VAL))
+#define pci_unmap_len(PTR, LEN_NAME)			\
+	((PTR)->LEN_NAME)
+#define pci_unmap_len_set(PTR, LEN_NAME, VAL)		\
+	(((PTR)->LEN_NAME) = (VAL))
 
 #ifdef CONFIG_PCI
 static inline void pci_dma_burst_advice(struct pci_dev *pdev,
@@ -116,6 +128,12 @@ static inline int pci_proc_domain(struct pci_bus *bus)
 	return (pci_domain_nr(bus) != 0);
 }
 
+extern void pcibios_resource_to_bus(struct pci_dev *dev,
+		struct pci_bus_region *region, struct resource *res);
+
+extern void pcibios_bus_to_resource(struct pci_dev *dev,
+		struct resource *res, struct pci_bus_region *region);
+
 static inline struct resource *
 pcibios_select_root(struct pci_dev *pdev, struct resource *res)
 {
@@ -135,7 +153,7 @@ static inline int pci_get_legacy_ide_irq(struct pci_dev *dev, int channel)
 	return channel ? isa_irq_to_vector(15) : isa_irq_to_vector(14);
 }
 
-#ifdef CONFIG_INTEL_IOMMU
+#ifdef CONFIG_DMAR
 extern void pci_iommu_alloc(void);
 #endif
 #endif /* _ASM_IA64_PCI_H */

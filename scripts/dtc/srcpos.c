@@ -17,236 +17,100 @@
  *                                                                   USA
  */
 
-#define _GNU_SOURCE
-
-#include <stdio.h>
-
 #include "dtc.h"
 #include "srcpos.h"
 
-
-static char *dirname(const char *path)
-{
-	const char *slash = strrchr(path, '/');
-
-	if (slash) {
-		int len = slash - path;
-		char *dir = xmalloc(len + 1);
-
-		memcpy(dir, path, len);
-		dir[len] = '\0';
-		return dir;
-	}
-	return NULL;
-}
-
-FILE *depfile; /* = NULL */
-struct srcfile_state *current_srcfile; /* = NULL */
-
-/* Detect infinite include recursion. */
-#define MAX_SRCFILE_DEPTH     (100)
-static int srcfile_depth; /* = 0 */
-
-FILE *srcfile_relative_open(const char *fname, char **fullnamep)
-{
-	FILE *f;
-	char *fullname;
-
-	if (streq(fname, "-")) {
-		f = stdin;
-		fullname = xstrdup("<stdin>");
-	} else {
-		if (!current_srcfile || !current_srcfile->dir
-		    || (fname[0] == '/'))
-			fullname = xstrdup(fname);
-		else
-			fullname = join_path(current_srcfile->dir, fname);
-
-		f = fopen(fullname, "r");
-		if (!f)
-			die("Couldn't open \"%s\": %s\n", fname,
-			    strerror(errno));
-	}
-
-	if (depfile)
-		fprintf(depfile, " %s", fullname);
-
-	if (fullnamep)
-		*fullnamep = fullname;
-	else
-		free(fullname);
-
-	return f;
-}
-
-void srcfile_push(const char *fname)
-{
-	struct srcfile_state *srcfile;
-
-	if (srcfile_depth++ >= MAX_SRCFILE_DEPTH)
-		die("Includes nested too deeply");
-
-	srcfile = xmalloc(sizeof(*srcfile));
-
-	srcfile->f = srcfile_relative_open(fname, &srcfile->name);
-	srcfile->dir = dirname(srcfile->name);
-	srcfile->prev = current_srcfile;
-
-	srcfile->lineno = 1;
-	srcfile->colno = 1;
-
-	current_srcfile = srcfile;
-}
-
-int srcfile_pop(void)
-{
-	struct srcfile_state *srcfile = current_srcfile;
-
-	assert(srcfile);
-
-	current_srcfile = srcfile->prev;
-
-	if (fclose(srcfile->f))
-		die("Error closing \"%s\": %s\n", srcfile->name,
-		    strerror(errno));
-
-	/* FIXME: We allow the srcfile_state structure to leak,
-	 * because it could still be referenced from a location
-	 * variable being carried through the parser somewhere.  To
-	 * fix this we could either allocate all the files from a
-	 * table, or use a pool allocator. */
-
-	return current_srcfile ? 1 : 0;
-}
-
 /*
- * The empty source position.
+ * Like yylineno, this is the current open file pos.
  */
 
-struct srcpos srcpos_empty = {
-	.first_line = 0,
-	.first_column = 0,
-	.last_line = 0,
-	.last_column = 0,
-	.file = NULL,
-};
+struct dtc_file *srcpos_file;
 
-#define TAB_SIZE      8
-
-void srcpos_update(struct srcpos *pos, const char *text, int len)
+static int dtc_open_one(struct dtc_file *file,
+                        const char *search,
+                        const char *fname)
 {
-	int i;
+	char *fullname;
 
-	pos->file = current_srcfile;
+	if (search) {
+		fullname = xmalloc(strlen(search) + strlen(fname) + 2);
 
-	pos->first_line = current_srcfile->lineno;
-	pos->first_column = current_srcfile->colno;
+		strcpy(fullname, search);
+		strcat(fullname, "/");
+		strcat(fullname, fname);
+	} else {
+		fullname = strdup(fname);
+	}
 
-	for (i = 0; i < len; i++)
-		if (text[i] == '\n') {
-			current_srcfile->lineno++;
-			current_srcfile->colno = 1;
-		} else if (text[i] == '\t') {
-			current_srcfile->colno =
-				ALIGN(current_srcfile->colno, TAB_SIZE);
-		} else {
-			current_srcfile->colno++;
-		}
+	file->file = fopen(fullname, "r");
+	if (!file->file) {
+		free(fullname);
+		return 0;
+	}
 
-	pos->last_line = current_srcfile->lineno;
-	pos->last_column = current_srcfile->colno;
-}
-
-struct srcpos *
-srcpos_copy(struct srcpos *pos)
-{
-	struct srcpos *pos_new;
-
-	pos_new = xmalloc(sizeof(struct srcpos));
-	memcpy(pos_new, pos, sizeof(struct srcpos));
-
-	return pos_new;
+	file->name = fullname;
+	return 1;
 }
 
 
-
-void
-srcpos_dump(struct srcpos *pos)
+struct dtc_file *dtc_open_file(const char *fname,
+                               const struct search_path *search)
 {
-	printf("file        : \"%s\"\n",
-	       pos->file ? (char *) pos->file : "<no file>");
-	printf("first_line  : %d\n", pos->first_line);
-	printf("first_column: %d\n", pos->first_column);
-	printf("last_line   : %d\n", pos->last_line);
-	printf("last_column : %d\n", pos->last_column);
-	printf("file        : %s\n", pos->file->name);
+	static const struct search_path default_search = { NULL, NULL, NULL };
+
+	struct dtc_file *file;
+	const char *slash;
+
+	file = xmalloc(sizeof(struct dtc_file));
+
+	slash = strrchr(fname, '/');
+	if (slash) {
+		char *dir = xmalloc(slash - fname + 1);
+
+		memcpy(dir, fname, slash - fname);
+		dir[slash - fname] = 0;
+		file->dir = dir;
+	} else {
+		file->dir = NULL;
+	}
+
+	if (streq(fname, "-")) {
+		file->name = "stdin";
+		file->file = stdin;
+		return file;
+	}
+
+	if (fname[0] == '/') {
+		file->file = fopen(fname, "r");
+		if (!file->file)
+			goto fail;
+
+		file->name = strdup(fname);
+		return file;
+	}
+
+	if (!search)
+		search = &default_search;
+
+	while (search) {
+		if (dtc_open_one(file, search->dir, fname))
+			return file;
+
+		if (errno != ENOENT)
+			goto fail;
+
+		search = search->next;
+	}
+
+fail:
+	die("Couldn't open \"%s\": %s\n", fname, strerror(errno));
 }
 
-
-char *
-srcpos_string(struct srcpos *pos)
+void dtc_close_file(struct dtc_file *file)
 {
-	const char *fname = "<no-file>";
-	char *pos_str;
-	int rc;
+	if (fclose(file->file))
+		die("Error closing \"%s\": %s\n", file->name, strerror(errno));
 
-	if (pos)
-		fname = pos->file->name;
-
-
-	if (pos->first_line != pos->last_line)
-		rc = asprintf(&pos_str, "%s:%d.%d-%d.%d", fname,
-			      pos->first_line, pos->first_column,
-			      pos->last_line, pos->last_column);
-	else if (pos->first_column != pos->last_column)
-		rc = asprintf(&pos_str, "%s:%d.%d-%d", fname,
-			      pos->first_line, pos->first_column,
-			      pos->last_column);
-	else
-		rc = asprintf(&pos_str, "%s:%d.%d", fname,
-			      pos->first_line, pos->first_column);
-
-	if (rc == -1)
-		die("Couldn't allocate in srcpos string");
-
-	return pos_str;
-}
-
-void
-srcpos_verror(struct srcpos *pos, char const *fmt, va_list va)
-{
-       const char *srcstr;
-
-       srcstr = srcpos_string(pos);
-
-       fprintf(stdout, "Error: %s ", srcstr);
-       vfprintf(stdout, fmt, va);
-       fprintf(stdout, "\n");
-}
-
-void
-srcpos_error(struct srcpos *pos, char const *fmt, ...)
-{
-	va_list va;
-
-	va_start(va, fmt);
-	srcpos_verror(pos, fmt, va);
-	va_end(va);
-}
-
-
-void
-srcpos_warn(struct srcpos *pos, char const *fmt, ...)
-{
-	const char *srcstr;
-	va_list va;
-	va_start(va, fmt);
-
-	srcstr = srcpos_string(pos);
-
-	fprintf(stderr, "Warning: %s ", srcstr);
-	vfprintf(stderr, fmt, va);
-	fprintf(stderr, "\n");
-
-	va_end(va);
+	free(file->dir);
+	free(file);
 }

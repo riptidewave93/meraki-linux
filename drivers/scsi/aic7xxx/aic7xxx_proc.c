@@ -248,13 +248,13 @@ ahc_proc_write_seeprom(struct ahc_softc *ahc, char *buffer, int length)
 		ahc_pause(ahc);
 
 	if (length != sizeof(struct seeprom_config)) {
-		printk("ahc_proc_write_seeprom: incorrect buffer size\n");
+		printf("ahc_proc_write_seeprom: incorrect buffer size\n");
 		goto done;
 	}
 
 	have_seeprom = ahc_verify_cksum((struct seeprom_config*)buffer);
 	if (have_seeprom == 0) {
-		printk("ahc_proc_write_seeprom: cksum verification failed\n");
+		printf("ahc_proc_write_seeprom: cksum verification failed\n");
 		goto done;
 	}
 
@@ -290,25 +290,26 @@ ahc_proc_write_seeprom(struct ahc_softc *ahc, char *buffer, int length)
 		sd.sd_DI = DI_2840;
 		have_seeprom = TRUE;
 	} else {
-		printk("ahc_proc_write_seeprom: unsupported adapter type\n");
+		printf("ahc_proc_write_seeprom: unsupported adapter type\n");
 		goto done;
 	}
 
 	if (!have_seeprom) {
-		printk("ahc_proc_write_seeprom: No Serial EEPROM\n");
+		printf("ahc_proc_write_seeprom: No Serial EEPROM\n");
 		goto done;
 	} else {
 		u_int start_addr;
 
 		if (ahc->seep_config == NULL) {
-			ahc->seep_config = kmalloc(sizeof(*ahc->seep_config), GFP_ATOMIC);
+			ahc->seep_config = malloc(sizeof(*ahc->seep_config),
+						  M_DEVBUF, M_NOWAIT);
 			if (ahc->seep_config == NULL) {
-				printk("aic7xxx: Unable to allocate serial "
+				printf("aic7xxx: Unable to allocate serial "
 				       "eeprom buffer.  Write failing\n");
 				goto done;
 			}
 		}
-		printk("aic7xxx: Writing Serial EEPROM\n");
+		printf("aic7xxx: Writing Serial EEPROM\n");
 		start_addr = 32 * (ahc->channel - 'A');
 		ahc_write_seeprom(&sd, (u_int16_t *)buffer, start_addr,
 				  sizeof(struct seeprom_config)/2);

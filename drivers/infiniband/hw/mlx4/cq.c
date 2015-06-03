@@ -33,7 +33,6 @@
 
 #include <linux/mlx4/cq.h>
 #include <linux/mlx4/qp.h>
-#include <linux/slab.h>
 
 #include "mlx4_ib.h"
 #include "user.h"
@@ -397,14 +396,10 @@ int mlx4_ib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata)
 		cq->resize_buf = NULL;
 		cq->resize_umem = NULL;
 	} else {
-		struct mlx4_ib_cq_buf tmp_buf;
-		int tmp_cqe = 0;
-
 		spin_lock_irq(&cq->lock);
 		if (cq->resize_buf) {
 			mlx4_ib_cq_resize_copy_cqes(cq);
-			tmp_buf = cq->buf;
-			tmp_cqe = cq->ibcq.cqe;
+			mlx4_ib_free_cq_buf(dev, &cq->buf, cq->ibcq.cqe);
 			cq->buf      = cq->resize_buf->buf;
 			cq->ibcq.cqe = cq->resize_buf->cqe;
 
@@ -412,9 +407,6 @@ int mlx4_ib_resize_cq(struct ib_cq *ibcq, int entries, struct ib_udata *udata)
 			cq->resize_buf = NULL;
 		}
 		spin_unlock_irq(&cq->lock);
-
-		if (tmp_cqe)
-			mlx4_ib_free_cq_buf(dev, &tmp_buf, tmp_cqe);
 	}
 
 	goto out;
@@ -668,14 +660,6 @@ repoll:
 			wc->opcode    = IB_WC_FETCH_ADD;
 			wc->byte_len  = 8;
 			break;
-		case MLX4_OPCODE_MASKED_ATOMIC_CS:
-			wc->opcode    = IB_WC_MASKED_COMP_SWAP;
-			wc->byte_len  = 8;
-			break;
-		case MLX4_OPCODE_MASKED_ATOMIC_FA:
-			wc->opcode    = IB_WC_MASKED_FETCH_ADD;
-			wc->byte_len  = 8;
-			break;
 		case MLX4_OPCODE_BIND_MW:
 			wc->opcode    = IB_WC_BIND_MW;
 			break;
@@ -715,18 +699,13 @@ repoll:
 		}
 
 		wc->slid	   = be16_to_cpu(cqe->rlid);
+		wc->sl		   = be16_to_cpu(cqe->sl_vid) >> 12;
 		g_mlpath_rqpn	   = be32_to_cpu(cqe->g_mlpath_rqpn);
 		wc->src_qp	   = g_mlpath_rqpn & 0xffffff;
 		wc->dlid_path_bits = (g_mlpath_rqpn >> 24) & 0x7f;
 		wc->wc_flags	  |= g_mlpath_rqpn & 0x80000000 ? IB_WC_GRH : 0;
 		wc->pkey_index     = be32_to_cpu(cqe->immed_rss_invalid) & 0x7f;
-		wc->wc_flags	  |= mlx4_ib_ipoib_csum_ok(cqe->status,
-					cqe->checksum) ? IB_WC_IP_CSUM_OK : 0;
-		if (rdma_port_get_link_layer(wc->qp->device,
-				(*cur_qp)->port) == IB_LINK_LAYER_ETHERNET)
-			wc->sl  = be16_to_cpu(cqe->sl_vid) >> 13;
-		else
-			wc->sl  = be16_to_cpu(cqe->sl_vid) >> 12;
+		wc->csum_ok	   = mlx4_ib_ipoib_csum_ok(cqe->status, cqe->checksum);
 	}
 
 	return 0;
@@ -748,7 +727,8 @@ int mlx4_ib_poll_cq(struct ib_cq *ibcq, int num_entries, struct ib_wc *wc)
 			break;
 	}
 
-	mlx4_cq_set_ci(&cq->mcq);
+	if (npolled)
+		mlx4_cq_set_ci(&cq->mcq);
 
 	spin_unlock_irqrestore(&cq->lock, flags);
 

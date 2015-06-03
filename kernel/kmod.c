@@ -25,7 +25,6 @@
 #include <linux/kmod.h>
 #include <linux/slab.h>
 #include <linux/completion.h>
-#include <linux/cred.h>
 #include <linux/file.h>
 #include <linux/fdtable.h>
 #include <linux/workqueue.h>
@@ -45,12 +44,6 @@ extern int max_threads;
 
 static struct workqueue_struct *khelper_wq;
 
-#define CAP_BSET	(void *)1
-#define CAP_PI		(void *)2
-
-static kernel_cap_t usermodehelper_bset = CAP_FULL_SET;
-static kernel_cap_t usermodehelper_inheritable = CAP_FULL_SET;
-static DEFINE_SPINLOCK(umh_sysctl_lock);
 static DECLARE_RWSEM(umhelper_sem);
 
 #ifdef CONFIG_MODULES
@@ -60,20 +53,19 @@ static DECLARE_RWSEM(umhelper_sem);
 */
 char modprobe_path[KMOD_PATH_LEN] = "/sbin/modprobe";
 
-static void free_modprobe_argv(struct subprocess_info *info)
+static void free_modprobe_argv(char **argv, char **envp)
 {
-	kfree(info->argv[3]); /* check call_modprobe() */
-	kfree(info->argv);
+	kfree(argv[3]); /* check call_modprobe() */
+	kfree(argv);
 }
 
 static int call_modprobe(char *module_name, int wait)
 {
-	static char *envp[] = {
-		"HOME=/",
-		"TERM=linux",
-		"PATH=/sbin:/usr/sbin:/bin:/usr/bin",
-		NULL
-	};
+	static char *envp[] = { "HOME=/",
+				"TERM=linux",
+				"PATH=/sbin:/usr/sbin:/bin:/usr/bin",
+				NULL };
+	struct subprocess_info *info;
 
 	char **argv = kmalloc(sizeof(char *[5]), GFP_KERNEL);
 	if (!argv)
@@ -89,8 +81,16 @@ static int call_modprobe(char *module_name, int wait)
 	argv[3] = module_name;	/* check free_modprobe_argv() */
 	argv[4] = NULL;
 
-	return call_usermodehelper_fns(modprobe_path, argv, envp,
-		wait | UMH_KILLABLE, NULL, free_modprobe_argv, NULL);
+	info = call_usermodehelper_setup(argv[0], argv, envp, GFP_ATOMIC);
+	if (!info)
+		goto free_module_name;
+
+	call_usermodehelper_setcleanup(info, free_modprobe_argv);
+
+	return call_usermodehelper_exec(info, wait | UMH_KILLABLE);
+
+free_module_name:
+	kfree(module_name);
 free_argv:
 	kfree(argv);
 out:
@@ -122,15 +122,15 @@ int __request_module(bool wait, const char *fmt, ...)
 #define MAX_KMOD_CONCURRENT 50	/* Completely arbitrary value - KAO */
 	static int kmod_loop_msg;
 
+	ret = security_kernel_module_request();
+	if (ret)
+		return ret;
+
 	va_start(args, fmt);
 	ret = vsnprintf(module_name, MODULE_NAME_LEN, fmt, args);
 	va_end(args);
 	if (ret >= MODULE_NAME_LEN)
 		return -ENAMETOOLONG;
-
-	ret = security_kernel_module_request(module_name);
-	if (ret)
-		return ret;
 
 	/* If modprobe needs a service that is in a module, we get a recursive
 	 * loop.  Limit the number of running kmod threads to max_threads/2 or
@@ -168,18 +168,56 @@ int __request_module(bool wait, const char *fmt, ...)
 EXPORT_SYMBOL(__request_module);
 #endif /* CONFIG_MODULES */
 
+struct subprocess_info {
+	struct work_struct work;
+	struct completion *complete;
+	struct cred *cred;
+	char *path;
+	char **argv;
+	char **envp;
+	enum umh_wait wait;
+	int retval;
+	struct file *stdin;
+	void (*cleanup)(char **argv, char **envp);
+};
+
 /*
  * This is the task which runs the usermode application
  */
 static int ____call_usermodehelper(void *data)
 {
 	struct subprocess_info *sub_info = data;
-	struct cred *new;
 	int retval;
 
+	BUG_ON(atomic_read(&sub_info->cred->usage) != 1);
+
+	/* Unblock all signals */
 	spin_lock_irq(&current->sighand->siglock);
 	flush_signal_handlers(current, 1);
+	sigemptyset(&current->blocked);
+	recalc_sigpending();
 	spin_unlock_irq(&current->sighand->siglock);
+
+	/* Install the credentials */
+	commit_creds(sub_info->cred);
+	sub_info->cred = NULL;
+
+	/* Install input pipe when needed */
+	if (sub_info->stdin) {
+		struct files_struct *f = current->files;
+		struct fdtable *fdt;
+		/* no races because files should be private here */
+		sys_close(0);
+		fd_install(0, sub_info->stdin);
+		spin_lock(&f->file_lock);
+		fdt = files_fdtable(f);
+		FD_SET(0, fdt->open_fds);
+		FD_CLR(0, fdt->close_on_exec);
+		spin_unlock(&f->file_lock);
+
+		/* and disallow core files too */
+		current->signal->rlim[RLIMIT_CORE] = (struct rlimit){0, 0};
+	}
 
 	/* We can run anywhere, unlike our parent keventd(). */
 	set_cpus_allowed_ptr(current, cpu_all_mask);
@@ -190,33 +228,9 @@ static int ____call_usermodehelper(void *data)
 	 */
 	set_user_nice(current, 0);
 
-	retval = -ENOMEM;
-	new = prepare_kernel_cred(current);
-	if (!new)
-		goto fail;
-
-	spin_lock(&umh_sysctl_lock);
-	new->cap_bset = cap_intersect(usermodehelper_bset, new->cap_bset);
-	new->cap_inheritable = cap_intersect(usermodehelper_inheritable,
-					     new->cap_inheritable);
-	spin_unlock(&umh_sysctl_lock);
-
-	if (sub_info->init) {
-		retval = sub_info->init(sub_info, new);
-		if (retval) {
-			abort_creds(new);
-			goto fail;
-		}
-	}
-
-	commit_creds(new);
-
-	retval = kernel_execve(sub_info->path,
-			       (const char *const *)sub_info->argv,
-			       (const char *const *)sub_info->envp);
+	retval = kernel_execve(sub_info->path, sub_info->argv, sub_info->envp);
 
 	/* Exec failed? */
-fail:
 	sub_info->retval = retval;
 	return 0;
 }
@@ -224,7 +238,9 @@ fail:
 void call_usermodehelper_freeinfo(struct subprocess_info *info)
 {
 	if (info->cleanup)
-		(*info->cleanup)(info);
+		(*info->cleanup)(info->argv, info->envp);
+	if (info->cred)
+		put_cred(info->cred);
 	kfree(info);
 }
 EXPORT_SYMBOL(call_usermodehelper_freeinfo);
@@ -248,16 +264,16 @@ static int wait_for_helper(void *data)
 	struct subprocess_info *sub_info = data;
 	pid_t pid;
 
-	/* If SIGCLD is ignored sys_wait4 won't populate the status. */
-	spin_lock_irq(&current->sighand->siglock);
-	current->sighand->action[SIGCHLD-1].sa.sa_handler = SIG_DFL;
-	spin_unlock_irq(&current->sighand->siglock);
+	/* Install a handler: if SIGCLD isn't handled sys_wait4 won't
+	 * populate the status, but will return -ECHILD. */
+	allow_signal(SIGCHLD);
 
 	pid = kernel_thread(____call_usermodehelper, sub_info, SIGCHLD);
 	if (pid < 0) {
 		sub_info->retval = pid;
 	} else {
-		int ret = -ECHILD;
+		int ret;
+
 		/*
 		 * Normally it is bogus to call wait4() from in-kernel because
 		 * wait4() wants to write the exit code to a userspace address.
@@ -278,7 +294,10 @@ static int wait_for_helper(void *data)
 			sub_info->retval = ret;
 	}
 
-	umh_complete(sub_info);
+	if (sub_info->wait == UMH_NO_WAIT)
+		call_usermodehelper_freeinfo(sub_info);
+	else
+		umh_complete(sub_info);
 	return 0;
 }
 
@@ -287,13 +306,18 @@ static void __call_usermodehelper(struct work_struct *work)
 {
 	struct subprocess_info *sub_info =
 		container_of(work, struct subprocess_info, work);
-	int wait = sub_info->wait & ~UMH_KILLABLE;
 	pid_t pid;
+	enum umh_wait wait = sub_info->wait;
+
+	BUG_ON(atomic_read(&sub_info->cred->usage) != 1);
+
+	if (wait != UMH_NO_WAIT)
+		wait &= ~UMH_KILLABLE;
 
 	/* CLONE_VFORK: wait until the usermode helper has execve'd
 	 * successfully We need the data structures to stay around
 	 * until that is done.  */
-	if (wait == UMH_WAIT_PROC)
+	if (wait == UMH_WAIT_PROC || wait == UMH_NO_WAIT)
 		pid = kernel_thread(wait_for_helper, sub_info,
 				    CLONE_FS | CLONE_FILES | SIGCHLD);
 	else
@@ -302,142 +326,64 @@ static void __call_usermodehelper(struct work_struct *work)
 
 	switch (wait) {
 	case UMH_NO_WAIT:
-		call_usermodehelper_freeinfo(sub_info);
 		break;
 
 	case UMH_WAIT_PROC:
 		if (pid > 0)
 			break;
+		sub_info->retval = pid;
 		/* FALLTHROUGH */
+
 	case UMH_WAIT_EXEC:
-		if (pid < 0)
-			sub_info->retval = pid;
 		umh_complete(sub_info);
 	}
 }
 
+#ifdef CONFIG_PM_SLEEP
 /*
  * If set, call_usermodehelper_exec() will exit immediately returning -EBUSY
  * (used for preventing user land processes from being created after the user
  * land has been frozen during a system-wide hibernation or suspend operation).
  * Should always be manipulated under umhelper_sem acquired for write.
  */
-static enum umh_disable_depth usermodehelper_disabled = UMH_DISABLED;
+static int usermodehelper_disabled;
 
 /* Number of helpers running */
 static atomic_t running_helpers = ATOMIC_INIT(0);
 
 /*
- * Wait queue head used by usermodehelper_disable() to wait for all running
+ * Wait queue head used by usermodehelper_pm_callback() to wait for all running
  * helpers to finish.
  */
 static DECLARE_WAIT_QUEUE_HEAD(running_helpers_waitq);
 
 /*
- * Used by usermodehelper_read_lock_wait() to wait for usermodehelper_disabled
- * to become 'false'.
- */
-static DECLARE_WAIT_QUEUE_HEAD(usermodehelper_disabled_waitq);
-
-/*
  * Time to wait for running_helpers to become zero before the setting of
- * usermodehelper_disabled in usermodehelper_disable() fails
+ * usermodehelper_disabled in usermodehelper_pm_callback() fails
  */
 #define RUNNING_HELPERS_TIMEOUT	(5 * HZ)
 
-int usermodehelper_read_trylock(void)
+void read_lock_usermodehelper(void)
 {
-	DEFINE_WAIT(wait);
-	int ret = 0;
-
 	down_read(&umhelper_sem);
-	for (;;) {
-		prepare_to_wait(&usermodehelper_disabled_waitq, &wait,
-				TASK_INTERRUPTIBLE);
-		if (!usermodehelper_disabled)
-			break;
-
-		if (usermodehelper_disabled == UMH_DISABLED)
-			ret = -EAGAIN;
-
-		up_read(&umhelper_sem);
-
-		if (ret)
-			break;
-
-		schedule();
-		try_to_freeze();
-
-		down_read(&umhelper_sem);
-	}
-	finish_wait(&usermodehelper_disabled_waitq, &wait);
-	return ret;
 }
-EXPORT_SYMBOL_GPL(usermodehelper_read_trylock);
+EXPORT_SYMBOL_GPL(read_lock_usermodehelper);
 
-long usermodehelper_read_lock_wait(long timeout)
-{
-	DEFINE_WAIT(wait);
-
-	if (timeout < 0)
-		return -EINVAL;
-
-	down_read(&umhelper_sem);
-	for (;;) {
-		prepare_to_wait(&usermodehelper_disabled_waitq, &wait,
-				TASK_UNINTERRUPTIBLE);
-		if (!usermodehelper_disabled)
-			break;
-
-		up_read(&umhelper_sem);
-
-		timeout = schedule_timeout(timeout);
-		if (!timeout)
-			break;
-
-		down_read(&umhelper_sem);
-	}
-	finish_wait(&usermodehelper_disabled_waitq, &wait);
-	return timeout;
-}
-EXPORT_SYMBOL_GPL(usermodehelper_read_lock_wait);
-
-void usermodehelper_read_unlock(void)
+void read_unlock_usermodehelper(void)
 {
 	up_read(&umhelper_sem);
 }
-EXPORT_SYMBOL_GPL(usermodehelper_read_unlock);
+EXPORT_SYMBOL_GPL(read_unlock_usermodehelper);
 
 /**
- * __usermodehelper_set_disable_depth - Modify usermodehelper_disabled.
- * depth: New value to assign to usermodehelper_disabled.
- *
- * Change the value of usermodehelper_disabled (under umhelper_sem locked for
- * writing) and wakeup tasks waiting for it to change.
+ * usermodehelper_disable - prevent new helpers from being started
  */
-void __usermodehelper_set_disable_depth(enum umh_disable_depth depth)
-{
-	down_write(&umhelper_sem);
-	usermodehelper_disabled = depth;
-	wake_up(&usermodehelper_disabled_waitq);
-	up_write(&umhelper_sem);
-}
-
-/**
- * __usermodehelper_disable - Prevent new helpers from being started.
- * @depth: New value to assign to usermodehelper_disabled.
- *
- * Set usermodehelper_disabled to @depth and wait for running helpers to exit.
- */
-int __usermodehelper_disable(enum umh_disable_depth depth)
+int usermodehelper_disable(void)
 {
 	long retval;
 
-	if (!depth)
-		return -EINVAL;
-
 	down_write(&umhelper_sem);
-	usermodehelper_disabled = depth;
+	usermodehelper_disabled = 1;
 	up_write(&umhelper_sem);
 
 	/*
@@ -452,9 +398,30 @@ int __usermodehelper_disable(enum umh_disable_depth depth)
 	if (retval)
 		return 0;
 
-	__usermodehelper_set_disable_depth(UMH_ENABLED);
+	down_write(&umhelper_sem);
+	usermodehelper_disabled = 0;
+	up_write(&umhelper_sem);
 	return -EAGAIN;
 }
+
+/**
+ * usermodehelper_enable - allow new helpers to be started again
+ */
+void usermodehelper_enable(void)
+{
+	down_write(&umhelper_sem);
+	usermodehelper_disabled = 0;
+	up_write(&umhelper_sem);
+}
+
+/**
+ * usermodehelper_is_disabled - check if new helpers are allowed to be started
+ */
+bool usermodehelper_is_disabled(void)
+{
+	return usermodehelper_disabled;
+}
+EXPORT_SYMBOL_GPL(usermodehelper_is_disabled);
 
 static void helper_lock(void)
 {
@@ -467,6 +434,12 @@ static void helper_unlock(void)
 	if (atomic_dec_and_test(&running_helpers))
 		wake_up(&running_helpers_waitq);
 }
+#else /* CONFIG_PM_SLEEP */
+#define usermodehelper_disabled	0
+
+static inline void helper_lock(void) {}
+static inline void helper_unlock(void) {}
+#endif /* CONFIG_PM_SLEEP */
 
 /**
  * call_usermodehelper_setup - prepare to call a usermode helper
@@ -491,37 +464,80 @@ struct subprocess_info *call_usermodehelper_setup(char *path, char **argv,
 	sub_info->path = path;
 	sub_info->argv = argv;
 	sub_info->envp = envp;
+	sub_info->cred = prepare_usermodehelper_creds();
+	if (!sub_info->cred) {
+		kfree(sub_info);
+		return NULL;
+	}
+
   out:
 	return sub_info;
 }
 EXPORT_SYMBOL(call_usermodehelper_setup);
 
 /**
- * call_usermodehelper_setfns - set a cleanup/init function
+ * call_usermodehelper_setkeys - set the session keys for usermode helper
+ * @info: a subprocess_info returned by call_usermodehelper_setup
+ * @session_keyring: the session keyring for the process
+ */
+void call_usermodehelper_setkeys(struct subprocess_info *info,
+				 struct key *session_keyring)
+{
+#ifdef CONFIG_KEYS
+	struct thread_group_cred *tgcred = info->cred->tgcred;
+	key_put(tgcred->session_keyring);
+	tgcred->session_keyring = key_get(session_keyring);
+#else
+	BUG();
+#endif
+}
+EXPORT_SYMBOL(call_usermodehelper_setkeys);
+
+/**
+ * call_usermodehelper_setcleanup - set a cleanup function
  * @info: a subprocess_info returned by call_usermodehelper_setup
  * @cleanup: a cleanup function
- * @init: an init function
- * @data: arbitrary context sensitive data
  *
- * The init function is used to customize the helper process prior to
- * exec.  A non-zero return code causes the process to error out, exit,
- * and return the failure to the calling process
- *
- * The cleanup function is just before ethe subprocess_info is about to
+ * The cleanup function is just befor ethe subprocess_info is about to
  * be freed.  This can be used for freeing the argv and envp.  The
  * Function must be runnable in either a process context or the
  * context in which call_usermodehelper_exec is called.
  */
-void call_usermodehelper_setfns(struct subprocess_info *info,
-		    int (*init)(struct subprocess_info *info, struct cred *new),
-		    void (*cleanup)(struct subprocess_info *info),
-		    void *data)
+void call_usermodehelper_setcleanup(struct subprocess_info *info,
+				    void (*cleanup)(char **argv, char **envp))
 {
 	info->cleanup = cleanup;
-	info->init = init;
-	info->data = data;
 }
-EXPORT_SYMBOL(call_usermodehelper_setfns);
+EXPORT_SYMBOL(call_usermodehelper_setcleanup);
+
+/**
+ * call_usermodehelper_stdinpipe - set up a pipe to be used for stdin
+ * @sub_info: a subprocess_info returned by call_usermodehelper_setup
+ * @filp: set to the write-end of a pipe
+ *
+ * This constructs a pipe, and sets the read end to be the stdin of the
+ * subprocess, and returns the write-end in *@filp.
+ */
+int call_usermodehelper_stdinpipe(struct subprocess_info *sub_info,
+				  struct file **filp)
+{
+	struct file *f;
+
+	f = create_write_pipe(0);
+	if (IS_ERR(f))
+		return PTR_ERR(f);
+	*filp = f;
+
+	f = create_read_pipe(f, 0);
+	if (IS_ERR(f)) {
+		free_write_pipe(*filp);
+		return PTR_ERR(f);
+	}
+	sub_info->stdin = f;
+
+	return 0;
+}
+EXPORT_SYMBOL(call_usermodehelper_stdinpipe);
 
 /**
  * call_usermodehelper_exec - start a usermode application
@@ -535,17 +551,20 @@ EXPORT_SYMBOL(call_usermodehelper_setfns);
  * asynchronously if wait is not set, and runs as a child of keventd.
  * (ie. it runs with full root capabilities).
  */
-int call_usermodehelper_exec(struct subprocess_info *sub_info, int wait)
+int call_usermodehelper_exec(struct subprocess_info *sub_info,
+			     enum umh_wait wait)
 {
 	DECLARE_COMPLETION_ONSTACK(done);
 	int retval = 0;
 
-	helper_lock();
-	if (!sub_info->path) {
-		retval = -EINVAL;
-		goto out;
-	}
+	BUG_ON(atomic_read(&sub_info->cred->usage) != 1);
+	validate_creds(sub_info->cred);
 
+	if (!sub_info->path) {
+		call_usermodehelper_freeinfo(sub_info);
+		return -EINVAL;
+	}
+	helper_lock();
 	if (sub_info->path[0] == '\0')
 		goto out;
 
@@ -583,83 +602,38 @@ unlock:
 }
 EXPORT_SYMBOL(call_usermodehelper_exec);
 
-static int proc_cap_handler(struct ctl_table *table, int write,
-			 void __user *buffer, size_t *lenp, loff_t *ppos)
+/**
+ * call_usermodehelper_pipe - call a usermode helper process with a pipe stdin
+ * @path: path to usermode executable
+ * @argv: arg vector for process
+ * @envp: environment for process
+ * @filp: set to the write-end of a pipe
+ *
+ * This is a simple wrapper which executes a usermode-helper function
+ * with a pipe as stdin.  It is implemented entirely in terms of
+ * lower-level call_usermodehelper_* functions.
+ */
+int call_usermodehelper_pipe(char *path, char **argv, char **envp,
+			     struct file **filp)
 {
-	struct ctl_table t;
-	unsigned long cap_array[_KERNEL_CAPABILITY_U32S];
-	kernel_cap_t new_cap;
-	int err, i;
+	struct subprocess_info *sub_info;
+	int ret;
 
-	if (write && (!capable(CAP_SETPCAP) ||
-		      !capable(CAP_SYS_MODULE)))
-		return -EPERM;
+	sub_info = call_usermodehelper_setup(path, argv, envp, GFP_KERNEL);
+	if (sub_info == NULL)
+		return -ENOMEM;
 
-	/*
-	 * convert from the global kernel_cap_t to the ulong array to print to
-	 * userspace if this is a read.
-	 */
-	spin_lock(&umh_sysctl_lock);
-	for (i = 0; i < _KERNEL_CAPABILITY_U32S; i++)  {
-		if (table->data == CAP_BSET)
-			cap_array[i] = usermodehelper_bset.cap[i];
-		else if (table->data == CAP_PI)
-			cap_array[i] = usermodehelper_inheritable.cap[i];
-		else
-			BUG();
-	}
-	spin_unlock(&umh_sysctl_lock);
+	ret = call_usermodehelper_stdinpipe(sub_info, filp);
+	if (ret < 0)
+		goto out;
 
-	t = *table;
-	t.data = &cap_array;
+	return call_usermodehelper_exec(sub_info, UMH_WAIT_EXEC);
 
-	/*
-	 * actually read or write and array of ulongs from userspace.  Remember
-	 * these are least significant 32 bits first
-	 */
-	err = proc_doulongvec_minmax(&t, write, buffer, lenp, ppos);
-	if (err < 0)
-		return err;
-
-	/*
-	 * convert from the sysctl array of ulongs to the kernel_cap_t
-	 * internal representation
-	 */
-	for (i = 0; i < _KERNEL_CAPABILITY_U32S; i++)
-		new_cap.cap[i] = cap_array[i];
-
-	/*
-	 * Drop everything not in the new_cap (but don't add things)
-	 */
-	spin_lock(&umh_sysctl_lock);
-	if (write) {
-		if (table->data == CAP_BSET)
-			usermodehelper_bset = cap_intersect(usermodehelper_bset, new_cap);
-		if (table->data == CAP_PI)
-			usermodehelper_inheritable = cap_intersect(usermodehelper_inheritable, new_cap);
-	}
-	spin_unlock(&umh_sysctl_lock);
-
-	return 0;
+  out:
+	call_usermodehelper_freeinfo(sub_info);
+	return ret;
 }
-
-struct ctl_table usermodehelper_table[] = {
-	{
-		.procname	= "bset",
-		.data		= CAP_BSET,
-		.maxlen		= _KERNEL_CAPABILITY_U32S * sizeof(unsigned long),
-		.mode		= 0600,
-		.proc_handler	= proc_cap_handler,
-	},
-	{
-		.procname	= "inheritable",
-		.data		= CAP_PI,
-		.maxlen		= _KERNEL_CAPABILITY_U32S * sizeof(unsigned long),
-		.mode		= 0600,
-		.proc_handler	= proc_cap_handler,
-	},
-	{ }
-};
+EXPORT_SYMBOL(call_usermodehelper_pipe);
 
 void __init usermodehelper_init(void)
 {

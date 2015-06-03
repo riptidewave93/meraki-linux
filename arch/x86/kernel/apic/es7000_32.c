@@ -27,9 +27,6 @@
  *
  * http://www.unisys.com
  */
-
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/notifier.h>
 #include <linux/spinlock.h>
 #include <linux/cpumask.h>
@@ -42,13 +39,12 @@
 #include <linux/errno.h>
 #include <linux/acpi.h>
 #include <linux/init.h>
-#include <linux/gfp.h>
 #include <linux/nmi.h>
 #include <linux/smp.h>
 #include <linux/io.h>
 
 #include <asm/apicdef.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/fixmap.h>
 #include <asm/mpspec.h>
 #include <asm/setup.h>
@@ -129,6 +125,25 @@ int					es7000_plat;
  * GSI override for ES7000 platforms.
  */
 
+static unsigned int			base;
+
+static int
+es7000_rename_gsi(int ioapic, int gsi)
+{
+	if (es7000_plat == ES7000_ZORRO)
+		return gsi;
+
+	if (!base) {
+		int i;
+		for (i = 0; i < nr_ioapics; i++)
+			base += nr_ioapic_registers[i];
+	}
+
+	if (!ioapic && (gsi < 16))
+		gsi += base;
+
+	return gsi;
+}
 
 static int __cpuinit wakeup_secondary_cpu_via_mip(int cpu, unsigned long eip)
 {
@@ -171,6 +186,7 @@ static void setup_unisys(void)
 		es7000_plat = ES7000_ZORRO;
 	else
 		es7000_plat = ES7000_CLASSIC;
+	ioapic_renumber_irq = es7000_rename_gsi;
 }
 
 /*
@@ -207,9 +223,9 @@ static int parse_unisys_oem(char *oemptr)
 			mip_addr = val;
 			mip = (struct mip_reg *)val;
 			mip_reg = __va(mip);
-			pr_debug("host_reg = 0x%lx\n",
+			pr_debug("es7000_mipcfg: host_reg = 0x%lx \n",
 				 (unsigned long)host_reg);
-			pr_debug("mip_reg = 0x%lx\n",
+			pr_debug("es7000_mipcfg: mip_reg = 0x%lx \n",
 				 (unsigned long)mip_reg);
 			success++;
 			break;
@@ -385,7 +401,7 @@ static void es7000_enable_apic_mode(void)
 	if (!es7000_plat)
 		return;
 
-	pr_info("Enabling APIC mode.\n");
+	printk(KERN_INFO "ES7000: Enabling APIC mode.\n");
 	memset(&es7000_mip_reg, 0, sizeof(struct mip_reg));
 	es7000_mip_reg.off_0x00 = MIP_SW_APIC;
 	es7000_mip_reg.off_0x38 = MIP_VALID;
@@ -450,20 +466,14 @@ static const struct cpumask *es7000_target_cpus(void)
 	return cpumask_of(smp_processor_id());
 }
 
-static unsigned long es7000_check_apicid_used(physid_mask_t *map, int apicid)
+static unsigned long
+es7000_check_apicid_used(physid_mask_t bitmap, int apicid)
 {
 	return 0;
 }
-
 static unsigned long es7000_check_apicid_present(int bit)
 {
 	return physid_isset(bit, phys_cpu_present_map);
-}
-
-static int es7000_early_logical_apicid(int cpu)
-{
-	/* on es7000, logical apicid is the same as physical */
-	return early_per_cpu(x86_bios_cpu_apicid, cpu);
 }
 
 static unsigned long calculate_ldr(int cpu)
@@ -504,11 +514,18 @@ static void es7000_setup_apic_routing(void)
 {
 	int apic = per_cpu(x86_bios_cpu_apicid, smp_processor_id());
 
-	pr_info("Enabling APIC mode:  %s. Using %d I/O APICs, target cpus %lx\n",
+	printk(KERN_INFO
+	  "Enabling APIC mode:  %s. Using %d I/O APICs, target cpus %lx\n",
 		(apic_version[apic] == 0x14) ?
 			"Physical Cluster" : "Logical Cluster",
 		nr_ioapics, cpumask_bits(es7000_target_cpus())[0]);
 }
+
+static int es7000_apicid_to_node(int logical_apicid)
+{
+	return 0;
+}
+
 
 static int es7000_cpu_present_to_apicid(int mps_cpu)
 {
@@ -522,16 +539,32 @@ static int es7000_cpu_present_to_apicid(int mps_cpu)
 
 static int cpu_id;
 
-static void es7000_apicid_to_cpu_present(int phys_apicid, physid_mask_t *retmap)
+static physid_mask_t es7000_apicid_to_cpu_present(int phys_apicid)
 {
-	physid_set_mask_of_physid(cpu_id, retmap);
+	physid_mask_t mask;
+
+	mask = physid_mask_of_physid(cpu_id);
 	++cpu_id;
+
+	return mask;
 }
 
-static void es7000_ioapic_phys_id_map(physid_mask_t *phys_map, physid_mask_t *retmap)
+/* Mapping from cpu number to logical apicid */
+static int es7000_cpu_to_logical_apicid(int cpu)
+{
+#ifdef CONFIG_SMP
+	if (cpu >= nr_cpu_ids)
+		return BAD_APICID;
+	return cpu_2_logical_apicid[cpu];
+#else
+	return logical_smp_processor_id();
+#endif
+}
+
+static physid_mask_t es7000_ioapic_phys_id_map(physid_mask_t phys_map)
 {
 	/* For clustered we don't have a good way to do this yet - hack */
-	physids_promote(0xFFL, retmap);
+	return physids_promote(0xff);
 }
 
 static int es7000_check_phys_apicid_present(int cpu_physical_apicid)
@@ -549,7 +582,7 @@ static unsigned int es7000_cpu_mask_to_apicid(const struct cpumask *cpumask)
 	 * The cpus in the mask must all be on the apic cluster.
 	 */
 	for_each_cpu(cpu, cpumask) {
-		int new_apicid = early_per_cpu(x86_cpu_to_logical_apicid, cpu);
+		int new_apicid = es7000_cpu_to_logical_apicid(cpu);
 
 		if (round && APIC_CLUSTER(apicid) != APIC_CLUSTER(new_apicid)) {
 			WARN(1, "Not a valid mask!");
@@ -566,7 +599,7 @@ static unsigned int
 es7000_cpu_mask_to_apicid_and(const struct cpumask *inmask,
 			      const struct cpumask *andmask)
 {
-	int apicid = early_per_cpu(x86_cpu_to_logical_apicid, 0);
+	int apicid = es7000_cpu_to_logical_apicid(0);
 	cpumask_var_t cpumask;
 
 	if (!alloc_cpumask_var(&cpumask, GFP_ATOMIC))
@@ -620,12 +653,11 @@ static int es7000_mps_oem_check_cluster(struct mpc_table *mpc, char *oem,
 }
 
 /* We've been warned by a false positive warning.Use __refdata to keep calm. */
-static struct apic __refdata apic_es7000_cluster = {
+struct apic __refdata apic_es7000_cluster = {
 
 	.name				= "es7000",
 	.probe				= probe_es7000,
 	.acpi_madt_oem_check		= es7000_acpi_madt_oem_check_cluster,
-	.apic_id_valid			= default_apic_id_valid,
 	.apic_id_registered		= es7000_apic_id_registered,
 
 	.irq_delivery_mode		= dest_LowestPrio,
@@ -644,6 +676,8 @@ static struct apic __refdata apic_es7000_cluster = {
 	.ioapic_phys_id_map		= es7000_ioapic_phys_id_map,
 	.setup_apic_routing		= es7000_setup_apic_routing,
 	.multi_timer_check		= NULL,
+	.apicid_to_node			= es7000_apicid_to_node,
+	.cpu_to_logical_apicid		= es7000_cpu_to_logical_apicid,
 	.cpu_present_to_apicid		= es7000_cpu_present_to_apicid,
 	.apicid_to_cpu_present		= es7000_apicid_to_cpu_present,
 	.setup_portio_remap		= NULL,
@@ -682,16 +716,13 @@ static struct apic __refdata apic_es7000_cluster = {
 	.icr_write			= native_apic_icr_write,
 	.wait_icr_idle			= native_apic_wait_icr_idle,
 	.safe_wait_icr_idle		= native_safe_apic_wait_icr_idle,
-
-	.x86_32_early_logical_apicid	= es7000_early_logical_apicid,
 };
 
-static struct apic __refdata apic_es7000 = {
+struct apic __refdata apic_es7000 = {
 
 	.name				= "es7000",
 	.probe				= probe_es7000,
 	.acpi_madt_oem_check		= es7000_acpi_madt_oem_check,
-	.apic_id_valid			= default_apic_id_valid,
 	.apic_id_registered		= es7000_apic_id_registered,
 
 	.irq_delivery_mode		= dest_Fixed,
@@ -710,6 +741,8 @@ static struct apic __refdata apic_es7000 = {
 	.ioapic_phys_id_map		= es7000_ioapic_phys_id_map,
 	.setup_apic_routing		= es7000_setup_apic_routing,
 	.multi_timer_check		= NULL,
+	.apicid_to_node			= es7000_apicid_to_node,
+	.cpu_to_logical_apicid		= es7000_cpu_to_logical_apicid,
 	.cpu_present_to_apicid		= es7000_cpu_present_to_apicid,
 	.apicid_to_cpu_present		= es7000_apicid_to_cpu_present,
 	.setup_portio_remap		= NULL,
@@ -746,12 +779,4 @@ static struct apic __refdata apic_es7000 = {
 	.icr_write			= native_apic_icr_write,
 	.wait_icr_idle			= native_apic_wait_icr_idle,
 	.safe_wait_icr_idle		= native_safe_apic_wait_icr_idle,
-
-	.x86_32_early_logical_apicid	= es7000_early_logical_apicid,
 };
-
-/*
- * Need to check for es7000 followed by es7000_cluster, so this order
- * in apic_drivers is important.
- */
-apic_drivers(apic_es7000, apic_es7000_cluster);

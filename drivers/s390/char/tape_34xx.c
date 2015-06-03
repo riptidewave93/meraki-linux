@@ -9,13 +9,11 @@
  */
 
 #define KMSG_COMPONENT "tape_34xx"
-#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
 
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/bio.h>
 #include <linux/workqueue.h>
-#include <linux/slab.h>
 
 #define TAPE_DBF_AREA	tape_34xx_dbf
 
@@ -53,11 +51,23 @@ static void tape_34xx_delete_sbid_from(struct tape_device *, int);
  * Medium sense for 34xx tapes. There is no 'real' medium sense call.
  * So we just do a normal sense.
  */
-static void __tape_34xx_medium_sense(struct tape_request *request)
+static int
+tape_34xx_medium_sense(struct tape_device *device)
 {
-	struct tape_device *device = request->device;
-	unsigned char *sense;
+	struct tape_request *request;
+	unsigned char       *sense;
+	int                  rc;
 
+	request = tape_alloc_request(1, 32);
+	if (IS_ERR(request)) {
+		DBF_EXCEPTION(6, "MSEN fail\n");
+		return PTR_ERR(request);
+	}
+
+	request->op = TO_MSEN;
+	tape_ccw_end(request->cpaddr, SENSE, 32, request->cpdata);
+
+	rc = tape_do_io_interruptible(device, request);
 	if (request->rc == 0) {
 		sense = request->cpdata;
 
@@ -76,45 +86,13 @@ static void __tape_34xx_medium_sense(struct tape_request *request)
 			device->tape_generic_status |= GMT_WR_PROT(~0);
 		else
 			device->tape_generic_status &= ~GMT_WR_PROT(~0);
-	} else
+	} else {
 		DBF_EVENT(4, "tape_34xx: medium sense failed with rc=%d\n",
 			request->rc);
+	}
 	tape_free_request(request);
-}
 
-static int tape_34xx_medium_sense(struct tape_device *device)
-{
-	struct tape_request *request;
-	int rc;
-
-	request = tape_alloc_request(1, 32);
-	if (IS_ERR(request)) {
-		DBF_EXCEPTION(6, "MSEN fail\n");
-		return PTR_ERR(request);
-	}
-
-	request->op = TO_MSEN;
-	tape_ccw_end(request->cpaddr, SENSE, 32, request->cpdata);
-	rc = tape_do_io_interruptible(device, request);
-	__tape_34xx_medium_sense(request);
 	return rc;
-}
-
-static void tape_34xx_medium_sense_async(struct tape_device *device)
-{
-	struct tape_request *request;
-
-	request = tape_alloc_request(1, 32);
-	if (IS_ERR(request)) {
-		DBF_EXCEPTION(6, "MSEN fail\n");
-		return;
-	}
-
-	request->op = TO_MSEN;
-	tape_ccw_end(request->cpaddr, SENSE, 32, request->cpdata);
-	request->callback = (void *) __tape_34xx_medium_sense;
-	request->callback_data = NULL;
-	tape_do_io_async(device, request);
 }
 
 struct tape_34xx_work {
@@ -129,25 +107,22 @@ struct tape_34xx_work {
  * is inserted but cannot call tape_do_io* from an interrupt context.
  * Maybe that's useful for other actions we want to start from the
  * interrupt handler.
- * Note: the work handler is called by the system work queue. The tape
- * commands started by the handler need to be asynchrounous, otherwise
- * a deadlock can occur e.g. in case of a deferred cc=1 (see __tape_do_irq).
  */
 static void
 tape_34xx_work_handler(struct work_struct *work)
 {
 	struct tape_34xx_work *p =
 		container_of(work, struct tape_34xx_work, work);
-	struct tape_device *device = p->device;
 
 	switch(p->op) {
 		case TO_MSEN:
-			tape_34xx_medium_sense_async(device);
+			tape_34xx_medium_sense(p->device);
 			break;
 		default:
 			DBF_EVENT(3, "T34XX: internal error: unknown work\n");
 	}
-	tape_put_device(device);
+
+	p->device = tape_put_device(p->device);
 	kfree(p);
 }
 
@@ -161,7 +136,7 @@ tape_34xx_schedule_work(struct tape_device *device, enum tape_op op)
 
 	INIT_WORK(&p->work, tape_34xx_work_handler);
 
-	p->device = tape_get_device(device);
+	p->device = tape_get_device_reference(device);
 	p->op     = op;
 
 	schedule_work(&p->work);
@@ -1320,17 +1295,14 @@ tape_34xx_online(struct ccw_device *cdev)
 }
 
 static struct ccw_driver tape_34xx_driver = {
-	.driver = {
-		.name = "tape_34xx",
-		.owner = THIS_MODULE,
-	},
+	.name = "tape_34xx",
+	.owner = THIS_MODULE,
 	.ids = tape_34xx_ids,
 	.probe = tape_generic_probe,
 	.remove = tape_generic_remove,
 	.set_online = tape_34xx_online,
 	.set_offline = tape_generic_offline,
 	.freeze = tape_generic_pm_suspend,
-	.int_class = IOINT_TAP,
 };
 
 static int

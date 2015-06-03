@@ -65,11 +65,11 @@ struct ext4_xattr_entry {
 
 # ifdef CONFIG_EXT4_FS_XATTR
 
-extern const struct xattr_handler ext4_xattr_user_handler;
-extern const struct xattr_handler ext4_xattr_trusted_handler;
-extern const struct xattr_handler ext4_xattr_acl_access_handler;
-extern const struct xattr_handler ext4_xattr_acl_default_handler;
-extern const struct xattr_handler ext4_xattr_security_handler;
+extern struct xattr_handler ext4_xattr_user_handler;
+extern struct xattr_handler ext4_xattr_trusted_handler;
+extern struct xattr_handler ext4_xattr_acl_access_handler;
+extern struct xattr_handler ext4_xattr_acl_default_handler;
+extern struct xattr_handler ext4_xattr_security_handler;
 
 extern ssize_t ext4_listxattr(struct dentry *, char *, size_t);
 
@@ -83,10 +83,10 @@ extern void ext4_xattr_put_super(struct super_block *);
 extern int ext4_expand_extra_isize_ea(struct inode *inode, int new_extra_isize,
 			    struct ext4_inode *raw_inode, handle_t *handle);
 
-extern int __init ext4_init_xattr(void);
-extern void ext4_exit_xattr(void);
+extern int init_ext4_xattr(void);
+extern void exit_ext4_xattr(void);
 
-extern const struct xattr_handler *ext4_xattr_handlers[];
+extern struct xattr_handler *ext4_xattr_handlers[];
 
 # else  /* CONFIG_EXT4_FS_XATTR */
 
@@ -121,14 +121,14 @@ ext4_xattr_put_super(struct super_block *sb)
 {
 }
 
-static __init inline int
-ext4_init_xattr(void)
+static inline int
+init_ext4_xattr(void)
 {
 	return 0;
 }
 
 static inline void
-ext4_exit_xattr(void)
+exit_ext4_xattr(void)
 {
 }
 
@@ -145,10 +145,10 @@ ext4_expand_extra_isize_ea(struct inode *inode, int new_extra_isize,
 
 #ifdef CONFIG_EXT4_FS_SECURITY
 extern int ext4_init_security(handle_t *handle, struct inode *inode,
-			      struct inode *dir, const struct qstr *qstr);
+				struct inode *dir);
 #else
 static inline int ext4_init_security(handle_t *handle, struct inode *inode,
-				     struct inode *dir, const struct qstr *qstr)
+				struct inode *dir)
 {
 	return 0;
 }

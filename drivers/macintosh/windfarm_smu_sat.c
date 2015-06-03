@@ -376,6 +376,7 @@ static int wf_sat_remove(struct i2c_client *client)
 	/* XXX TODO */
 
 	sat->i2c = NULL;
+	i2c_set_clientdata(client, NULL);
 	return 0;
 }
 

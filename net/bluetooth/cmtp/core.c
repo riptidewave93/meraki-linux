@@ -35,7 +35,6 @@
 #include <linux/ioctl.h>
 #include <linux/file.h>
 #include <linux/init.h>
-#include <linux/kthread.h>
 #include <net/sock.h>
 
 #include <linux/isdn/capilli.h>
@@ -53,29 +52,32 @@ static LIST_HEAD(cmtp_session_list);
 static struct cmtp_session *__cmtp_get_session(bdaddr_t *bdaddr)
 {
 	struct cmtp_session *session;
+	struct list_head *p;
 
 	BT_DBG("");
 
-	list_for_each_entry(session, &cmtp_session_list, list)
+	list_for_each(p, &cmtp_session_list) {
+		session = list_entry(p, struct cmtp_session, list);
 		if (!bacmp(bdaddr, &session->bdaddr))
 			return session;
-
+	}
 	return NULL;
 }
 
 static void __cmtp_link_session(struct cmtp_session *session)
 {
+	__module_get(THIS_MODULE);
 	list_add(&session->list, &cmtp_session_list);
 }
 
 static void __cmtp_unlink_session(struct cmtp_session *session)
 {
 	list_del(&session->list);
+	module_put(THIS_MODULE);
 }
 
 static void __cmtp_copy_session(struct cmtp_session *session, struct cmtp_conninfo *ci)
 {
-	memset(ci, 0, sizeof(*ci));
 	bacpy(&ci->bdaddr, &session->bdaddr);
 
 	ci->flags = session->flags;
@@ -112,8 +114,7 @@ static inline void cmtp_add_msgpart(struct cmtp_session *session, int id, const 
 
 	size = (skb) ? skb->len + count : count;
 
-	nskb = alloc_skb(size, GFP_ATOMIC);
-	if (!nskb) {
+	if (!(nskb = alloc_skb(size, GFP_ATOMIC))) {
 		BT_ERR("Can't allocate memory for CAPI message");
 		return;
 	}
@@ -214,8 +215,7 @@ static void cmtp_process_transmit(struct cmtp_session *session)
 
 	BT_DBG("session %p", session);
 
-	nskb = alloc_skb(session->mtu, GFP_ATOMIC);
-	if (!nskb) {
+	if (!(nskb = alloc_skb(session->mtu, GFP_ATOMIC))) {
 		BT_ERR("Can't allocate memory for new frame");
 		return;
 	}
@@ -223,8 +223,7 @@ static void cmtp_process_transmit(struct cmtp_session *session)
 	while ((skb = skb_dequeue(&session->transmit))) {
 		struct cmtp_scb *scb = (void *) skb->cb;
 
-		tail = session->mtu - nskb->len;
-		if (tail < 5) {
+		if ((tail = (session->mtu - nskb->len)) < 5) {
 			cmtp_send_frame(session, nskb->data, nskb->len);
 			skb_trim(nskb, 0);
 			tail = session->mtu;
@@ -232,12 +231,9 @@ static void cmtp_process_transmit(struct cmtp_session *session)
 
 		size = min_t(uint, ((tail < 258) ? (tail - 2) : (tail - 3)), skb->len);
 
-		if (scb->id < 0) {
-			scb->id = cmtp_alloc_block_id(session);
-			if (scb->id < 0) {
-				skb_queue_head(&session->transmit, skb);
-				break;
-			}
+		if ((scb->id < 0) && ((scb->id = cmtp_alloc_block_id(session)) < 0)) {
+			skb_queue_head(&session->transmit, skb);
+			break;
 		}
 
 		if (size < 256) {
@@ -284,32 +280,28 @@ static int cmtp_session(void *arg)
 
 	BT_DBG("session %p", session);
 
+	daemonize("kcmtpd_ctr_%d", session->num);
 	set_user_nice(current, -15);
 
 	init_waitqueue_entry(&wait, current);
-	add_wait_queue(sk_sleep(sk), &wait);
-	while (1) {
+	add_wait_queue(sk->sk_sleep, &wait);
+	while (!atomic_read(&session->terminate)) {
 		set_current_state(TASK_INTERRUPTIBLE);
 
-		if (atomic_read(&session->terminate))
-			break;
 		if (sk->sk_state != BT_CONNECTED)
 			break;
 
 		while ((skb = skb_dequeue(&sk->sk_receive_queue))) {
 			skb_orphan(skb);
-			if (!skb_linearize(skb))
-				cmtp_recv_frame(session, skb);
-			else
-				kfree_skb(skb);
+			cmtp_recv_frame(session, skb);
 		}
 
 		cmtp_process_transmit(session);
 
 		schedule();
 	}
-	__set_current_state(TASK_RUNNING);
-	remove_wait_queue(sk_sleep(sk), &wait);
+	set_current_state(TASK_RUNNING);
+	remove_wait_queue(sk->sk_sleep, &wait);
 
 	down_write(&cmtp_session_sem);
 
@@ -323,16 +315,19 @@ static int cmtp_session(void *arg)
 	up_write(&cmtp_session_sem);
 
 	kfree(session);
-	module_put_and_exit(0);
 	return 0;
 }
 
 int cmtp_add_connection(struct cmtp_connadd_req *req, struct socket *sock)
 {
 	struct cmtp_session *session, *s;
+	bdaddr_t src, dst;
 	int i, err;
 
 	BT_DBG("");
+
+	baswap(&src, &bt_sk(sock->sk)->src);
+	baswap(&dst, &bt_sk(sock->sk)->dst);
 
 	session = kzalloc(sizeof(struct cmtp_session), GFP_KERNEL);
 	if (!session)
@@ -348,12 +343,11 @@ int cmtp_add_connection(struct cmtp_connadd_req *req, struct socket *sock)
 
 	bacpy(&session->bdaddr, &bt_sk(sock->sk)->dst);
 
-	session->mtu = min_t(uint, l2cap_pi(sock->sk)->chan->omtu,
-					l2cap_pi(sock->sk)->chan->imtu);
+	session->mtu = min_t(uint, l2cap_pi(sock->sk)->omtu, l2cap_pi(sock->sk)->imtu);
 
 	BT_DBG("mtu %d", session->mtu);
 
-	sprintf(session->name, "%pMR", &bt_sk(sock->sk)->dst);
+	sprintf(session->name, "%s", batostr(&dst));
 
 	session->sock  = sock;
 	session->state = BT_CONFIG;
@@ -373,27 +367,21 @@ int cmtp_add_connection(struct cmtp_connadd_req *req, struct socket *sock)
 
 	__cmtp_link_session(session);
 
-	__module_get(THIS_MODULE);
-	session->task = kthread_run(cmtp_session, session, "kcmtpd_ctr_%d",
-								session->num);
-	if (IS_ERR(session->task)) {
-		module_put(THIS_MODULE);
-		err = PTR_ERR(session->task);
+	err = kernel_thread(cmtp_session, session, CLONE_KERNEL);
+	if (err < 0)
 		goto unlink;
-	}
 
 	if (!(session->flags & (1 << CMTP_LOOPBACK))) {
 		err = cmtp_attach_device(session);
-		if (err < 0) {
-			atomic_inc(&session->terminate);
-			wake_up_process(session->task);
-			up_write(&cmtp_session_sem);
-			return err;
-		}
+		if (err < 0)
+			goto detach;
 	}
 
 	up_write(&cmtp_session_sem);
 	return 0;
+
+detach:
+	cmtp_detach_device(session);
 
 unlink:
 	__cmtp_unlink_session(session);
@@ -418,9 +406,9 @@ int cmtp_del_connection(struct cmtp_conndel_req *req)
 		/* Flush the transmit queue */
 		skb_queue_purge(&session->transmit);
 
-		/* Stop session thread */
+		/* Kill session thread */
 		atomic_inc(&session->terminate);
-		wake_up_process(session->task);
+		cmtp_schedule(session);
 	} else
 		err = -ENOENT;
 
@@ -430,15 +418,18 @@ int cmtp_del_connection(struct cmtp_conndel_req *req)
 
 int cmtp_get_connlist(struct cmtp_connlist_req *req)
 {
-	struct cmtp_session *session;
+	struct list_head *p;
 	int err = 0, n = 0;
 
 	BT_DBG("");
 
 	down_read(&cmtp_session_sem);
 
-	list_for_each_entry(session, &cmtp_session_list, list) {
+	list_for_each(p, &cmtp_session_list) {
+		struct cmtp_session *session;
 		struct cmtp_conninfo ci;
+
+		session = list_entry(p, struct cmtp_session, list);
 
 		__cmtp_copy_session(session, &ci);
 
@@ -478,6 +469,8 @@ int cmtp_get_conninfo(struct cmtp_conninfo *ci)
 
 static int __init cmtp_init(void)
 {
+	l2cap_load();
+
 	BT_INFO("CMTP (CAPI Emulation) ver %s", VERSION);
 
 	cmtp_init_sockets();

@@ -14,7 +14,6 @@
 #include <linux/mm.h>
 #include <linux/bootmem.h>
 #include <linux/spinlock.h>
-#include <linux/gfp.h>
 #include <asm/mipsregs.h>
 #include <asm/jazz.h>
 #include <asm/io.h>

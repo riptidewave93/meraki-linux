@@ -16,7 +16,7 @@
 /**
 *  @file    mm_addr.h
 *
-*  @brief   Memory Map address definitions
+*  @brief   Memory Map address defintions
 *
 *  @note
 *     None

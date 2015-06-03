@@ -9,39 +9,57 @@
  * or implied.
  */
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/dma-mapping.h>
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
+#include <linux/leds.h>
+#include <linux/memory.h>
+
 #include <linux/i2c.h>
 #include <linux/i2c/pcf857x.h>
 #include <linux/i2c/at24.h>
+#include <linux/etherdevice.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/nand.h>
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/physmap.h>
+#include <linux/io.h>
 #include <linux/phy.h>
 #include <linux/clk.h>
 #include <linux/videodev2.h>
-#include <linux/export.h>
 
 #include <media/tvp514x.h>
 
+#include <asm/setup.h>
 #include <asm/mach-types.h>
-#include <asm/mach/arch.h>
 
+#include <asm/mach/arch.h>
+#include <asm/mach/map.h>
+#include <asm/mach/flash.h>
+
+#include <mach/dm644x.h>
 #include <mach/common.h>
 #include <mach/i2c.h>
 #include <mach/serial.h>
 #include <mach/mux.h>
+#include <mach/psc.h>
 #include <mach/nand.h>
 #include <mach/mmc.h>
-#include <mach/usb.h>
-#include <mach/aemif.h>
+#include <mach/emac.h>
 
-#include "davinci.h"
+#define DM644X_EVM_PHY_MASK		(0x2)
+#define DM644X_EVM_MDIO_FREQUENCY	(2200000) /* PHY bus frequency */
 
-#define DM644X_EVM_PHY_ID		"davinci_mdio-0:01"
+#define DAVINCI_CFC_ATA_BASE		  0x01C66000
+
+#define DAVINCI_ASYNC_EMIF_CONTROL_BASE   0x01e00000
+#define DAVINCI_ASYNC_EMIF_DATA_CE0_BASE  0x02000000
+#define DAVINCI_ASYNC_EMIF_DATA_CE1_BASE  0x04000000
+#define DAVINCI_ASYNC_EMIF_DATA_CE2_BASE  0x06000000
+#define DAVINCI_ASYNC_EMIF_DATA_CE3_BASE  0x08000000
+
 #define LXT971_PHY_ID	(0x001378e2)
 #define LXT971_PHY_MASK	(0xfffffff0)
 
@@ -85,8 +103,8 @@ static struct physmap_flash_data davinci_evm_norflash_data = {
 /* NOTE: CFI probe will correctly detect flash part as 32M, but EMIF
  * limits addresses to 16M, so using addresses past 16M will wrap */
 static struct resource davinci_evm_norflash_resource = {
-	.start		= DM644X_ASYNC_EMIF_DATA_CE0_BASE,
-	.end		= DM644X_ASYNC_EMIF_DATA_CE0_BASE + SZ_16M - 1,
+	.start		= DAVINCI_ASYNC_EMIF_DATA_CE0_BASE,
+	.end		= DAVINCI_ASYNC_EMIF_DATA_CE0_BASE + SZ_16M - 1,
 	.flags		= IORESOURCE_MEM,
 };
 
@@ -104,7 +122,7 @@ static struct platform_device davinci_evm_norflash_device = {
  * It may used instead of the (default) NOR chip to boot, using TI's
  * tools to install the secondary boot loader (UBL) and U-Boot.
  */
-static struct mtd_partition davinci_evm_nandflash_partition[] = {
+struct mtd_partition davinci_evm_nandflash_partition[] = {
 	/* Bootloader layout depends on whose u-boot is installed, but we
 	 * can hide all the details.
 	 *  - block 0 for u-boot environment ... in mainline u-boot
@@ -138,32 +156,21 @@ static struct mtd_partition davinci_evm_nandflash_partition[] = {
 	 */
 };
 
-static struct davinci_aemif_timing davinci_evm_nandflash_timing = {
-	.wsetup		= 20,
-	.wstrobe	= 40,
-	.whold		= 20,
-	.rsetup		= 10,
-	.rstrobe	= 40,
-	.rhold		= 10,
-	.ta		= 40,
-};
-
 static struct davinci_nand_pdata davinci_evm_nandflash_data = {
 	.parts		= davinci_evm_nandflash_partition,
 	.nr_parts	= ARRAY_SIZE(davinci_evm_nandflash_partition),
 	.ecc_mode	= NAND_ECC_HW,
-	.bbt_options	= NAND_BBT_USE_FLASH,
-	.timing		= &davinci_evm_nandflash_timing,
+	.options	= NAND_USE_FLASH_BBT,
 };
 
 static struct resource davinci_evm_nandflash_resource[] = {
 	{
-		.start		= DM644X_ASYNC_EMIF_DATA_CE0_BASE,
-		.end		= DM644X_ASYNC_EMIF_DATA_CE0_BASE + SZ_16M - 1,
+		.start		= DAVINCI_ASYNC_EMIF_DATA_CE0_BASE,
+		.end		= DAVINCI_ASYNC_EMIF_DATA_CE0_BASE + SZ_16M - 1,
 		.flags		= IORESOURCE_MEM,
 	}, {
-		.start		= DM644X_ASYNC_EMIF_CONTROL_BASE,
-		.end		= DM644X_ASYNC_EMIF_CONTROL_BASE + SZ_4K - 1,
+		.start		= DAVINCI_ASYNC_EMIF_CONTROL_BASE,
+		.end		= DAVINCI_ASYNC_EMIF_CONTROL_BASE + SZ_4K - 1,
 		.flags		= IORESOURCE_MEM,
 	},
 };
@@ -190,7 +197,7 @@ static struct platform_device davinci_fb_device = {
 	.num_resources = 0,
 };
 
-static struct tvp514x_platform_data dm644xevm_tvp5146_pdata = {
+static struct tvp514x_platform_data tvp5146_pdata = {
 	.clk_polarity = 0,
 	.hs_polarity = 1,
 	.vs_polarity = 1
@@ -198,7 +205,7 @@ static struct tvp514x_platform_data dm644xevm_tvp5146_pdata = {
 
 #define TVP514X_STD_ALL	(V4L2_STD_NTSC | V4L2_STD_PAL)
 /* Inputs available at the TVP5146 */
-static struct v4l2_input dm644xevm_tvp5146_inputs[] = {
+static struct v4l2_input tvp5146_inputs[] = {
 	{
 		.index = 0,
 		.name = "Composite",
@@ -218,7 +225,7 @@ static struct v4l2_input dm644xevm_tvp5146_inputs[] = {
  * ouput that goes to vpfe. There is a one to one correspondence
  * with tvp5146_inputs
  */
-static struct vpfe_route dm644xevm_tvp5146_routes[] = {
+static struct vpfe_route tvp5146_routes[] = {
 	{
 		.input = INPUT_CVBS_VI2B,
 		.output = OUTPUT_10BIT_422_EMBEDDED_SYNC,
@@ -229,13 +236,13 @@ static struct vpfe_route dm644xevm_tvp5146_routes[] = {
 	},
 };
 
-static struct vpfe_subdev_info dm644xevm_vpfe_sub_devs[] = {
+static struct vpfe_subdev_info vpfe_sub_devs[] = {
 	{
 		.name = "tvp5146",
 		.grp_id = 0,
-		.num_inputs = ARRAY_SIZE(dm644xevm_tvp5146_inputs),
-		.inputs = dm644xevm_tvp5146_inputs,
-		.routes = dm644xevm_tvp5146_routes,
+		.num_inputs = ARRAY_SIZE(tvp5146_inputs),
+		.inputs = tvp5146_inputs,
+		.routes = tvp5146_routes,
 		.can_route = 1,
 		.ccdc_if_params = {
 			.if_type = VPFE_BT656,
@@ -244,15 +251,14 @@ static struct vpfe_subdev_info dm644xevm_vpfe_sub_devs[] = {
 		},
 		.board_info = {
 			I2C_BOARD_INFO("tvp5146", 0x5d),
-			.platform_data = &dm644xevm_tvp5146_pdata,
+			.platform_data = &tvp5146_pdata,
 		},
 	},
 };
 
-static struct vpfe_config dm644xevm_capture_cfg = {
-	.num_subdevs = ARRAY_SIZE(dm644xevm_vpfe_sub_devs),
-	.i2c_adapter_id = 1,
-	.sub_devs = dm644xevm_vpfe_sub_devs,
+static struct vpfe_config vpfe_cfg = {
+	.num_subdevs = ARRAY_SIZE(vpfe_sub_devs),
+	.sub_devs = vpfe_sub_devs,
 	.card_name = "DM6446 EVM",
 	.ccdc = "DM6446 CCDC",
 };
@@ -260,6 +266,32 @@ static struct vpfe_config dm644xevm_capture_cfg = {
 static struct platform_device rtc_dev = {
 	.name           = "rtc_davinci_evm",
 	.id             = -1,
+};
+
+static struct resource ide_resources[] = {
+	{
+		.start          = DAVINCI_CFC_ATA_BASE,
+		.end            = DAVINCI_CFC_ATA_BASE + 0x7ff,
+		.flags          = IORESOURCE_MEM,
+	},
+	{
+		.start          = IRQ_IDE,
+		.end            = IRQ_IDE,
+		.flags          = IORESOURCE_IRQ,
+	},
+};
+
+static u64 ide_dma_mask = DMA_BIT_MASK(32);
+
+static struct platform_device ide_dev = {
+	.name           = "palm_bk3710",
+	.id             = -1,
+	.resource       = ide_resources,
+	.num_resources  = ARRAY_SIZE(ide_resources),
+	.dev = {
+		.dma_mask		= &ide_dma_mask,
+		.coherent_dma_mask      = DMA_BIT_MASK(32),
+	},
 };
 
 static struct snd_platform_data dm644x_evm_snd_data;
@@ -442,6 +474,11 @@ evm_u35_setup(struct i2c_client *client, int gpio, unsigned ngpio, void *c)
 	gpio_request(gpio + 7, "nCF_SEL");
 	gpio_direction_output(gpio + 7, 1);
 
+	/* irlml6401 switches over 1A, in under 8 msec;
+	 * now it can be managed by nDRV_VBUS ...
+	 */
+	setup_usb(500, 8);
+
 	return 0;
 }
 
@@ -602,8 +639,6 @@ static struct i2c_board_info __initdata i2c_info[] =  {
 static struct davinci_i2c_platform_data i2c_pdata = {
 	.bus_freq	= 20 /* kHz */,
 	.bus_delay	= 100 /* usec */,
-	.sda_pin        = 44,
-	.scl_pin        = 43,
 };
 
 static void __init evm_init_i2c(void)
@@ -612,113 +647,6 @@ static void __init evm_init_i2c(void)
 	i2c_add_driver(&dm6446evm_msp_driver);
 	i2c_register_board_info(1, i2c_info, ARRAY_SIZE(i2c_info));
 }
-
-#define VENC_STD_ALL	(V4L2_STD_NTSC | V4L2_STD_PAL)
-
-/* venc standard timings */
-static struct vpbe_enc_mode_info dm644xevm_enc_std_timing[] = {
-	{
-		.name		= "ntsc",
-		.timings_type	= VPBE_ENC_STD,
-		.timings	= {V4L2_STD_525_60},
-		.interlaced	= 1,
-		.xres		= 720,
-		.yres		= 480,
-		.aspect		= {11, 10},
-		.fps		= {30000, 1001},
-		.left_margin	= 0x79,
-		.upper_margin	= 0x10,
-	},
-	{
-		.name		= "pal",
-		.timings_type	= VPBE_ENC_STD,
-		.timings	= {V4L2_STD_625_50},
-		.interlaced	= 1,
-		.xres		= 720,
-		.yres		= 576,
-		.aspect		= {54, 59},
-		.fps		= {25, 1},
-		.left_margin	= 0x7e,
-		.upper_margin	= 0x16,
-	},
-};
-
-/* venc dv preset timings */
-static struct vpbe_enc_mode_info dm644xevm_enc_preset_timing[] = {
-	{
-		.name		= "480p59_94",
-		.timings_type	= VPBE_ENC_DV_PRESET,
-		.timings	= {V4L2_DV_480P59_94},
-		.interlaced	= 0,
-		.xres		= 720,
-		.yres		= 480,
-		.aspect		= {1, 1},
-		.fps		= {5994, 100},
-		.left_margin	= 0x80,
-		.upper_margin	= 0x20,
-	},
-	{
-		.name		= "576p50",
-		.timings_type	= VPBE_ENC_DV_PRESET,
-		.timings	= {V4L2_DV_576P50},
-		.interlaced	= 0,
-		.xres		= 720,
-		.yres		= 576,
-		.aspect		= {1, 1},
-		.fps		= {50, 1},
-		.left_margin	= 0x7e,
-		.upper_margin	= 0x30,
-	},
-};
-
-/*
- * The outputs available from VPBE + encoders. Keep the order same
- * as that of encoders. First those from venc followed by that from
- * encoders. Index in the output refers to index on a particular encoder.
- * Driver uses this index to pass it to encoder when it supports more
- * than one output. Userspace applications use index of the array to
- * set an output.
- */
-static struct vpbe_output dm644xevm_vpbe_outputs[] = {
-	{
-		.output		= {
-			.index		= 0,
-			.name		= "Composite",
-			.type		= V4L2_OUTPUT_TYPE_ANALOG,
-			.std		= VENC_STD_ALL,
-			.capabilities	= V4L2_OUT_CAP_STD,
-		},
-		.subdev_name	= VPBE_VENC_SUBDEV_NAME,
-		.default_mode	= "ntsc",
-		.num_modes	= ARRAY_SIZE(dm644xevm_enc_std_timing),
-		.modes		= dm644xevm_enc_std_timing,
-	},
-	{
-		.output		= {
-			.index		= 1,
-			.name		= "Component",
-			.type		= V4L2_OUTPUT_TYPE_ANALOG,
-			.capabilities	= V4L2_OUT_CAP_PRESETS,
-		},
-		.subdev_name	= VPBE_VENC_SUBDEV_NAME,
-		.default_mode	= "480p59_94",
-		.num_modes	= ARRAY_SIZE(dm644xevm_enc_preset_timing),
-		.modes		= dm644xevm_enc_preset_timing,
-	},
-};
-
-static struct vpbe_config dm644xevm_display_cfg = {
-	.module_name	= "dm644x-vpbe-display",
-	.i2c_adapter_id	= 1,
-	.osd		= {
-		.module_name	= VPBE_OSD_SUBDEV_NAME,
-	},
-	.venc		= {
-		.module_name	= VPBE_VENC_SUBDEV_NAME,
-	},
-	.num_outputs	= ARRAY_SIZE(dm644xevm_vpbe_outputs),
-	.outputs	= dm644xevm_vpbe_outputs,
-};
 
 static struct platform_device *davinci_evm_devices[] __initdata = {
 	&davinci_fb_device,
@@ -732,6 +660,8 @@ static struct davinci_uart_config uart_config __initdata = {
 static void __init
 davinci_evm_map_io(void)
 {
+	/* setup input configuration for VPFE input devices */
+	dm644x_set_vpfe_config(&vpfe_cfg);
 	dm644x_init();
 }
 
@@ -782,7 +712,10 @@ static __init void davinci_evm_init(void)
 			pr_warning("WARNING: both IDE and Flash are "
 				"enabled, but they share AEMIF pins.\n"
 				"\tDisable IDE for NAND/NOR support.\n");
-		davinci_init_ide();
+		davinci_cfg_reg(DM644X_HPIEN_DISABLE);
+		davinci_cfg_reg(DM644X_ATAEN);
+		davinci_cfg_reg(DM644X_HDIREN);
+		platform_device_register(&ide_dev);
 	} else if (HAS_NAND || HAS_NOR) {
 		davinci_cfg_reg(DM644X_HPIEN_DISABLE);
 		davinci_cfg_reg(DM644X_ATAEN_DISABLE);
@@ -803,28 +736,31 @@ static __init void davinci_evm_init(void)
 	evm_init_i2c();
 
 	davinci_setup_mmc(0, &dm6446evm_mmc_config);
-	dm644x_init_video(&dm644xevm_capture_cfg, &dm644xevm_display_cfg);
 
 	davinci_serial_init(&uart_config);
 	dm644x_init_asp(&dm644x_evm_snd_data);
 
-	/* irlml6401 switches over 1A, in under 8 msec */
-	davinci_setup_usb(1000, 8);
+	soc_info->emac_pdata->phy_mask = DM644X_EVM_PHY_MASK;
+	soc_info->emac_pdata->mdio_max_freq = DM644X_EVM_MDIO_FREQUENCY;
 
-	soc_info->emac_pdata->phy_id = DM644X_EVM_PHY_ID;
 	/* Register the fixup for PHY on DaVinci */
 	phy_register_fixup_for_uid(LXT971_PHY_ID, LXT971_PHY_MASK,
 					davinci_phy_fixup);
 
 }
 
+static __init void davinci_evm_irq_init(void)
+{
+	davinci_irq_init();
+}
+
 MACHINE_START(DAVINCI_EVM, "DaVinci DM644x EVM")
 	/* Maintainer: MontaVista Software <source@mvista.com> */
-	.atag_offset  = 0x100,
+	.phys_io      = IO_PHYS,
+	.io_pg_offst  = (__IO_ADDRESS(IO_PHYS) >> 18) & 0xfffc,
+	.boot_params  = (DAVINCI_DDR_BASE + 0x100),
 	.map_io	      = davinci_evm_map_io,
-	.init_irq     = davinci_irq_init,
+	.init_irq     = davinci_evm_irq_init,
 	.timer	      = &davinci_timer,
 	.init_machine = davinci_evm_init,
-	.dma_zone_size	= SZ_128M,
-	.restart	= davinci_restart,
 MACHINE_END

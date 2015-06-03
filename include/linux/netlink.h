@@ -1,14 +1,14 @@
 #ifndef __LINUX_NETLINK_H
 #define __LINUX_NETLINK_H
 
-#include <linux/socket.h> /* for __kernel_sa_family_t */
+#include <linux/socket.h> /* for sa_family_t */
 #include <linux/types.h>
 
 #define NETLINK_ROUTE		0	/* Routing/device hook				*/
 #define NETLINK_UNUSED		1	/* Unused number				*/
 #define NETLINK_USERSOCK	2	/* Reserved for user mode socket protocols 	*/
 #define NETLINK_FIREWALL	3	/* Firewalling hook				*/
-#define NETLINK_SOCK_DIAG	4	/* socket monitoring				*/
+#define NETLINK_INET_DIAG	4	/* INET socket monitoring			*/
 #define NETLINK_NFLOG		5	/* netfilter/iptables ULOG */
 #define NETLINK_XFRM		6	/* ipsec */
 #define NETLINK_SELINUX		7	/* SELinux event notifications */
@@ -24,21 +24,21 @@
 /* leave room for NETLINK_DM (DM Events) */
 #define NETLINK_SCSITRANSPORT	18	/* SCSI Transports */
 #define NETLINK_ECRYPTFS	19
-#define NETLINK_RDMA		20
-#define NETLINK_CRYPTO		21	/* Crypto layer */
-
-#define NETLINK_INET_DIAG	NETLINK_SOCK_DIAG
 
 #define MAX_LINKS 32		
 
-struct sockaddr_nl {
-	__kernel_sa_family_t	nl_family;	/* AF_NETLINK	*/
+struct net;
+
+struct sockaddr_nl
+{
+	sa_family_t	nl_family;	/* AF_NETLINK	*/
 	unsigned short	nl_pad;		/* zero		*/
 	__u32		nl_pid;		/* port ID	*/
        	__u32		nl_groups;	/* multicast groups mask */
 };
 
-struct nlmsghdr {
+struct nlmsghdr
+{
 	__u32		nlmsg_len;	/* Length of message including header */
 	__u16		nlmsg_type;	/* Message content */
 	__u16		nlmsg_flags;	/* Additional flags */
@@ -52,7 +52,6 @@ struct nlmsghdr {
 #define NLM_F_MULTI		2	/* Multipart message, terminated by NLMSG_DONE */
 #define NLM_F_ACK		4	/* Reply with ack, with zero or error code */
 #define NLM_F_ECHO		8	/* Echo this request 		*/
-#define NLM_F_DUMP_INTR		16	/* Dump was inconsistent due to sequence change */
 
 /* Modifiers to GET request */
 #define NLM_F_ROOT	0x100	/* specify tree	root	*/
@@ -75,7 +74,7 @@ struct nlmsghdr {
    Check		NLM_F_EXCL
  */
 
-#define NLMSG_ALIGNTO	4U
+#define NLMSG_ALIGNTO	4
 #define NLMSG_ALIGN(len) ( ((len)+NLMSG_ALIGNTO-1) & ~(NLMSG_ALIGNTO-1) )
 #define NLMSG_HDRLEN	 ((int) NLMSG_ALIGN(sizeof(struct nlmsghdr)))
 #define NLMSG_LENGTH(len) ((len)+NLMSG_ALIGN(NLMSG_HDRLEN))
@@ -95,7 +94,8 @@ struct nlmsghdr {
 
 #define NLMSG_MIN_TYPE		0x10	/* < 0x10: reserved control messages */
 
-struct nlmsgerr {
+struct nlmsgerr
+{
 	int		error;
 	struct nlmsghdr msg;
 };
@@ -106,7 +106,8 @@ struct nlmsgerr {
 #define NETLINK_BROADCAST_ERROR	4
 #define NETLINK_NO_ENOBUFS	5
 
-struct nl_pktinfo {
+struct nl_pktinfo
+{
 	__u32	group;
 };
 
@@ -126,7 +127,8 @@ enum {
  *  <-------------- nlattr->nla_len -------------->
  */
 
-struct nlattr {
+struct nlattr
+{
 	__u16           nla_len;
 	__u16           nla_type;
 };
@@ -153,19 +155,21 @@ struct nlattr {
 
 #include <linux/capability.h>
 #include <linux/skbuff.h>
-#include <linux/export.h>
-
-struct net;
 
 static inline struct nlmsghdr *nlmsg_hdr(const struct sk_buff *skb)
 {
 	return (struct nlmsghdr *)skb->data;
 }
 
-struct netlink_skb_parms {
+struct netlink_skb_parms
+{
 	struct ucred		creds;		/* Skb credentials	*/
 	__u32			pid;
 	__u32			dst_group;
+	kernel_cap_t		eff_cap;
+	__u32			loginuid;	/* Login (audit) uid */
+	__u32			sessionid;	/* Session id (audit) */
+	__u32			sid;		/* SELinux security id */
 };
 
 #define NETLINK_CB(skb)		(*(struct netlink_skb_parms*)&((skb)->cb))
@@ -190,11 +194,7 @@ extern int netlink_has_listeners(struct sock *sk, unsigned int group);
 extern int netlink_unicast(struct sock *ssk, struct sk_buff *skb, __u32 pid, int nonblock);
 extern int netlink_broadcast(struct sock *ssk, struct sk_buff *skb, __u32 pid,
 			     __u32 group, gfp_t allocation);
-extern int netlink_broadcast_filtered(struct sock *ssk, struct sk_buff *skb,
-	__u32 pid, __u32 group, gfp_t allocation,
-	int (*filter)(struct sock *dsk, struct sk_buff *skb, void *data),
-	void *filter_data);
-extern int netlink_set_err(struct sock *ssk, __u32 pid, __u32 group, int code);
+extern void netlink_set_err(struct sock *ssk, __u32 pid, __u32 group, int code);
 extern int netlink_register_notifier(struct notifier_block *nb);
 extern int netlink_unregister_notifier(struct notifier_block *nb);
 
@@ -220,29 +220,40 @@ int netlink_sendskb(struct sock *sk, struct sk_buff *skb);
 #define NLMSG_DEFAULT_SIZE (NLMSG_GOODSIZE - NLMSG_HDRLEN)
 
 
-struct netlink_callback {
+struct netlink_callback
+{
 	struct sk_buff		*skb;
 	const struct nlmsghdr	*nlh;
 	int			(*dump)(struct sk_buff * skb,
 					struct netlink_callback *cb);
 	int			(*done)(struct netlink_callback *cb);
-	void			*data;
-	/* the module that dump function belong to */
-	struct module		*module;
-	u16			family;
-	u16			min_dump_alloc;
-	unsigned int		prev_seq, seq;
+	int			family;
 	long			args[6];
 };
 
-struct netlink_notify {
+struct netlink_notify
+{
 	struct net *net;
 	int pid;
 	int protocol;
 };
 
-struct nlmsghdr *
-__nlmsg_put(struct sk_buff *skb, u32 pid, u32 seq, int type, int len, int flags);
+static __inline__ struct nlmsghdr *
+__nlmsg_put(struct sk_buff *skb, u32 pid, u32 seq, int type, int len, int flags)
+{
+	struct nlmsghdr *nlh;
+	int size = NLMSG_LENGTH(len);
+
+	nlh = (struct nlmsghdr*)skb_put(skb, NLMSG_ALIGN(size));
+	nlh->nlmsg_type = type;
+	nlh->nlmsg_len = size;
+	nlh->nlmsg_flags = flags;
+	nlh->nlmsg_pid = pid;
+	nlh->nlmsg_seq = seq;
+	if (!__builtin_constant_p(size) || NLMSG_ALIGN(size) - size != 0)
+		memset(NLMSG_DATA(nlh) + len, 0, NLMSG_ALIGN(size) - size);
+	return nlh;
+}
 
 #define NLMSG_NEW(skb, pid, seq, type, len, flags) \
 ({	if (unlikely(skb_tailroom(skb) < (int)NLMSG_SPACE(len))) \
@@ -252,26 +263,10 @@ __nlmsg_put(struct sk_buff *skb, u32 pid, u32 seq, int type, int len, int flags)
 #define NLMSG_PUT(skb, pid, seq, type, len) \
 	NLMSG_NEW(skb, pid, seq, type, len, 0)
 
-struct netlink_dump_control {
-	int (*dump)(struct sk_buff *skb, struct netlink_callback *);
-	int (*done)(struct netlink_callback *);
-	void *data;
-	struct module *module;
-	u16 min_dump_alloc;
-};
-
-extern int __netlink_dump_start(struct sock *ssk, struct sk_buff *skb,
-				const struct nlmsghdr *nlh,
-				struct netlink_dump_control *control);
-static inline int netlink_dump_start(struct sock *ssk, struct sk_buff *skb,
-				     const struct nlmsghdr *nlh,
-				     struct netlink_dump_control *control)
-{
-	if (!control->module)
-		control->module = THIS_MODULE;
-
-	return __netlink_dump_start(ssk, skb, nlh, control);
-}
+extern int netlink_dump_start(struct sock *ssk, struct sk_buff *skb,
+			      const struct nlmsghdr *nlh,
+			      int (*dump)(struct sk_buff *skb, struct netlink_callback*),
+			      int (*done)(struct netlink_callback*));
 
 
 #define NL_NONROOT_RECV 0x1

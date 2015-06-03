@@ -3,8 +3,7 @@
  * Copyright (C) 2009 Hong H. Pham <hong.pham@windriver.com>
  */
 
-#include <linux/export.h>
-#include <linux/slab.h>
+#include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/init.h>
 #include <linux/cpumask.h>
@@ -202,7 +201,7 @@ static struct cpuinfo_tree *build_cpuinfo_tree(void)
 	new_tree->total_nodes = n;
 	memcpy(&new_tree->level, tmp_level, sizeof(tmp_level));
 
-	prev_cpu = cpu = cpumask_first(cpu_online_mask);
+	prev_cpu = cpu = first_cpu(cpu_online_map);
 
 	/* Initialize all levels in the tree with the first CPU */
 	for (level = CPUINFO_LVL_PROC; level >= CPUINFO_LVL_ROOT; level--) {
@@ -324,9 +323,6 @@ static int iterate_cpu(struct cpuinfo_tree *t, unsigned int root_index)
 	switch (sun4v_chip_type) {
 	case SUN4V_CHIP_NIAGARA1:
 	case SUN4V_CHIP_NIAGARA2:
-	case SUN4V_CHIP_NIAGARA3:
-	case SUN4V_CHIP_NIAGARA4:
-	case SUN4V_CHIP_NIAGARA5:
 		rover_inc_table = niagara_iterate_method;
 		break;
 	default:
@@ -384,7 +380,7 @@ static int simple_map_to_cpu(unsigned int index)
 	}
 
 	/* Impossible, since num_online_cpus() <= num_possible_cpus() */
-	return cpumask_first(cpu_online_mask);
+	return first_cpu(cpu_online_map);
 }
 
 static int _map_to_cpu(unsigned int index)

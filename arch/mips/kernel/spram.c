@@ -15,6 +15,7 @@
 
 #include <asm/fpu.h>
 #include <asm/mipsregs.h>
+#include <asm/system.h>
 #include <asm/r4kcache.h>
 #include <asm/hazards.h>
 

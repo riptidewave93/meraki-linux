@@ -22,8 +22,6 @@
 #include <linux/clk.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
-#include <mach/board.h>
-#include <mach/cpu.h>
 
 /* Register definitions based on AT91SAM9RL64 preliminary draft datasheet */
 
@@ -38,9 +36,7 @@
 #define	  ATMEL_TSADCC_LOWRES	(1    <<  4)	/* Resolution selection */
 #define	  ATMEL_TSADCC_SLEEP	(1    <<  5)	/* Sleep mode */
 #define	  ATMEL_TSADCC_PENDET	(1    <<  6)	/* Pen Detect selection */
-#define	  ATMEL_TSADCC_PRES	(1    <<  7)	/* Pressure Measurement Selection */
 #define	  ATMEL_TSADCC_PRESCAL	(0x3f <<  8)	/* Prescalar Rate Selection */
-#define	  ATMEL_TSADCC_EPRESCAL	(0xff <<  8)	/* Prescalar Rate Selection (Extended) */
 #define	  ATMEL_TSADCC_STARTUP	(0x7f << 16)	/* Start Up time */
 #define	  ATMEL_TSADCC_SHTIM	(0xf  << 24)	/* Sample & Hold time */
 #define	  ATMEL_TSADCC_PENDBC	(0xf  << 28)	/* Pen Detect debouncing time */
@@ -88,13 +84,7 @@
 #define ATMEL_TSADCC_CDR4	0x40	/* Channel Data 4 */
 #define ATMEL_TSADCC_CDR5	0x44	/* Channel Data 5 */
 
-#define ATMEL_TSADCC_XPOS	0x50
-#define ATMEL_TSADCC_Z1DAT	0x54
-#define ATMEL_TSADCC_Z2DAT	0x58
-
-#define PRESCALER_VAL(x)	((x) >> 8)
-
-#define ADC_DEFAULT_CLOCK	100000
+#define ADC_CLOCK	1000000
 
 struct atmel_tsadcc {
 	struct input_dev	*input;
@@ -182,7 +172,6 @@ static int __devinit atmel_tsadcc_probe(struct platform_device *pdev)
 	struct atmel_tsadcc	*ts_dev;
 	struct input_dev	*input_dev;
 	struct resource		*res;
-	struct at91_tsadcc_data *pdata = pdev->dev.platform_data;
 	int		err = 0;
 	unsigned int	prsc;
 	unsigned int	reg;
@@ -229,7 +218,7 @@ static int __devinit atmel_tsadcc_probe(struct platform_device *pdev)
 		goto err_release_mem;
 	}
 
-	err = request_irq(ts_dev->irq, atmel_tsadcc_interrupt, 0,
+	err = request_irq(ts_dev->irq, atmel_tsadcc_interrupt, IRQF_DISABLED,
 			pdev->dev.driver->name, ts_dev);
 	if (err) {
 		dev_err(&pdev->dev, "failed to allocate irq.\n");
@@ -253,11 +242,11 @@ static int __devinit atmel_tsadcc_probe(struct platform_device *pdev)
 	input_dev->phys = ts_dev->phys;
 	input_dev->dev.parent = &pdev->dev;
 
-	__set_bit(EV_ABS, input_dev->evbit);
+	input_dev->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_ABS);
+	input_dev->keybit[BIT_WORD(BTN_TOUCH)] = BIT_MASK(BTN_TOUCH);
+
 	input_set_abs_params(input_dev, ABS_X, 0, 0x3FF, 0, 0);
 	input_set_abs_params(input_dev, ABS_Y, 0, 0x3FF, 0, 0);
-
-	input_set_capability(input_dev, EV_KEY, BTN_TOUCH);
 
 	/* clk_enable() always returns 0, no need to check it */
 	clk_enable(ts_dev->clk);
@@ -265,37 +254,19 @@ static int __devinit atmel_tsadcc_probe(struct platform_device *pdev)
 	prsc = clk_get_rate(ts_dev->clk);
 	dev_info(&pdev->dev, "Master clock is set at: %d Hz\n", prsc);
 
-	if (!pdata)
-		goto err_fail;
-
-	if (!pdata->adc_clock)
-		pdata->adc_clock = ADC_DEFAULT_CLOCK;
-
-	prsc = (prsc / (2 * pdata->adc_clock)) - 1;
-
-	/* saturate if this value is too high */
-	if (cpu_is_at91sam9rl()) {
-		if (prsc > PRESCALER_VAL(ATMEL_TSADCC_PRESCAL))
-			prsc = PRESCALER_VAL(ATMEL_TSADCC_PRESCAL);
-	} else {
-		if (prsc > PRESCALER_VAL(ATMEL_TSADCC_EPRESCAL))
-			prsc = PRESCALER_VAL(ATMEL_TSADCC_EPRESCAL);
-	}
-
-	dev_info(&pdev->dev, "Prescaler is set at: %d\n", prsc);
+	prsc = prsc / ADC_CLOCK / 2 - 1;
 
 	reg = ATMEL_TSADCC_TSAMOD_TS_ONLY_MODE		|
 		((0x00 << 5) & ATMEL_TSADCC_SLEEP)	|	/* Normal Mode */
 		((0x01 << 6) & ATMEL_TSADCC_PENDET)	|	/* Enable Pen Detect */
-		(prsc << 8)				|
-		((0x26 << 16) & ATMEL_TSADCC_STARTUP)	|
-		((pdata->pendet_debounce << 28) & ATMEL_TSADCC_PENDBC);
+		((prsc << 8) & ATMEL_TSADCC_PRESCAL)	|	/* PRESCAL */
+		((0x13 << 16) & ATMEL_TSADCC_STARTUP)	|	/* STARTUP */
+		((0x0F << 28) & ATMEL_TSADCC_PENDBC);		/* PENDBC */
 
 	atmel_tsadcc_write(ATMEL_TSADCC_CR, ATMEL_TSADCC_SWRST);
 	atmel_tsadcc_write(ATMEL_TSADCC_MR, reg);
 	atmel_tsadcc_write(ATMEL_TSADCC_TRGR, ATMEL_TSADCC_TRGMOD_NONE);
-	atmel_tsadcc_write(ATMEL_TSADCC_TSR,
-		(pdata->ts_sample_hold_time << 24) & ATMEL_TSADCC_TSSHTIM);
+	atmel_tsadcc_write(ATMEL_TSADCC_TSR, (0x3 << 24) & ATMEL_TSADCC_TSSHTIM);
 
 	atmel_tsadcc_read(ATMEL_TSADCC_SR);
 	atmel_tsadcc_write(ATMEL_TSADCC_IER, ATMEL_TSADCC_PENCNT);
@@ -317,7 +288,7 @@ err_unmap_regs:
 err_release_mem:
 	release_mem_region(res->start, resource_size(res));
 err_free_dev:
-	input_free_device(input_dev);
+	input_free_device(ts_dev->input);
 err_free_mem:
 	kfree(ts_dev);
 	return err;
@@ -351,7 +322,20 @@ static struct platform_driver atmel_tsadcc_driver = {
 		.name	= "atmel_tsadcc",
 	},
 };
-module_platform_driver(atmel_tsadcc_driver);
+
+static int __init atmel_tsadcc_init(void)
+{
+	return platform_driver_register(&atmel_tsadcc_driver);
+}
+
+static void __exit atmel_tsadcc_exit(void)
+{
+	platform_driver_unregister(&atmel_tsadcc_driver);
+}
+
+module_init(atmel_tsadcc_init);
+module_exit(atmel_tsadcc_exit);
+
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Atmel TouchScreen Driver");

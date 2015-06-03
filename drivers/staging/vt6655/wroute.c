@@ -53,58 +53,58 @@ static int          msglevel                =MSG_LEVEL_INFO;
 
 /*
  * Description:
- *      Relay packet.  Return true if packet is copy to DMA1
+ *      Relay packet.  Return TRUE if packet is copy to DMA1
  *
  * Parameters:
  *  In:
  *      pDevice             -
  *      pbySkbData          - rx packet skb data
  *  Out:
- *      true, false
+ *      TURE, FALSE
  *
- * Return Value: true if packet duplicate; otherwise false
+ * Return Value: TRUE if packet duplicate; otherwise FALSE
  *
  */
-bool ROUTEbRelay (PSDevice pDevice, unsigned char *pbySkbData, unsigned int uDataLen, unsigned int uNodeIndex)
+BOOL ROUTEbRelay (PSDevice pDevice, PBYTE pbySkbData, UINT uDataLen, UINT uNodeIndex)
 {
     PSMgmtObject    pMgmt = pDevice->pMgmt;
     PSTxDesc        pHeadTD, pLastTD;
-    unsigned int cbFrameBodySize;
-    unsigned int uMACfragNum;
-    unsigned char byPktType;
-    bool bNeedEncryption = false;
+    UINT            cbFrameBodySize;
+    UINT            uMACfragNum;
+    BYTE            byPktType;
+    BOOL            bNeedEncryption = FALSE;
     SKeyItem        STempKey;
     PSKeyItem       pTransmitKey = NULL;
-    unsigned int cbHeaderSize;
-    unsigned int ii;
-    unsigned char *pbyBSSID;
+    UINT            cbHeaderSize;
+    UINT            ii;
+    PBYTE           pbyBSSID;
 
 
 
 
     if (AVAIL_TD(pDevice, TYPE_AC0DMA)<=0) {
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO "Relay can't allocate TD1..\n");
-        return false;
+        return FALSE;
     }
 
     pHeadTD = pDevice->apCurrTD[TYPE_AC0DMA];
 
     pHeadTD->m_td1TD1.byTCR = (TCR_EDP|TCR_STP);
 
-    memcpy(pDevice->sTxEthHeader.abyDstAddr, (unsigned char *)pbySkbData, ETH_HLEN);
+    memcpy(pDevice->sTxEthHeader.abyDstAddr, (PBYTE)pbySkbData, U_HEADER_LEN);
 
-    cbFrameBodySize = uDataLen - ETH_HLEN;
+    cbFrameBodySize = uDataLen - U_HEADER_LEN;
 
-    if (ntohs(pDevice->sTxEthHeader.wType) > ETH_DATA_LEN) {
+    if (ntohs(pDevice->sTxEthHeader.wType) > MAX_DATA_LEN) {
         cbFrameBodySize += 8;
     }
 
-    if (pDevice->bEncryptionEnable == true) {
-        bNeedEncryption = true;
+    if (pDevice->bEncryptionEnable == TRUE) {
+        bNeedEncryption = TRUE;
 
         // get group key
         pbyBSSID = pDevice->abyBroadcastAddr;
-        if(KeybGetTransmitKey(&(pDevice->sKey), pbyBSSID, GROUP_KEY, &pTransmitKey) == false) {
+        if(KeybGetTransmitKey(&(pDevice->sKey), pbyBSSID, GROUP_KEY, &pTransmitKey) == FALSE) {
             pTransmitKey = NULL;
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_DEBUG"KEY is NULL. [%d]\n", pDevice->pMgmt->eCurrMode);
         } else {
@@ -113,7 +113,7 @@ bool ROUTEbRelay (PSDevice pDevice, unsigned char *pbySkbData, unsigned int uDat
     }
 
     if (pDevice->bEnableHostWEP) {
-	if (uNodeIndex < MAX_NODE_NUM + 1) {
+        if (uNodeIndex >= 0) {
             pTransmitKey = &STempKey;
             pTransmitKey->byCipherSuite = pMgmt->sNodeDBTable[uNodeIndex].byCipherSuite;
             pTransmitKey->dwKeyIndex = pMgmt->sNodeDBTable[uNodeIndex].dwKeyIndex;
@@ -130,16 +130,16 @@ bool ROUTEbRelay (PSDevice pDevice, unsigned char *pbySkbData, unsigned int uDat
     uMACfragNum = cbGetFragCount(pDevice, pTransmitKey, cbFrameBodySize, &pDevice->sTxEthHeader);
 
     if (uMACfragNum > AVAIL_TD(pDevice,TYPE_AC0DMA)) {
-        return false;
+        return FALSE;
     }
-    byPktType = (unsigned char)pDevice->byPacketType;
+    byPktType = (BYTE)pDevice->byPacketType;
 
     if (pDevice->bFixRate) {
         if (pDevice->eCurrentPHYType == PHY_TYPE_11B) {
             if (pDevice->uConnectionRate >= RATE_11M) {
                 pDevice->wCurrentRate = RATE_11M;
             } else {
-                pDevice->wCurrentRate = (unsigned short)pDevice->uConnectionRate;
+                pDevice->wCurrentRate = (WORD)pDevice->uConnectionRate;
             }
         } else {
             if ((pDevice->eCurrentPHYType == PHY_TYPE_11A) &&
@@ -149,7 +149,7 @@ bool ROUTEbRelay (PSDevice pDevice, unsigned char *pbySkbData, unsigned int uDat
                 if (pDevice->uConnectionRate >= RATE_54M)
                     pDevice->wCurrentRate = RATE_54M;
                 else
-                    pDevice->wCurrentRate = (unsigned short)pDevice->uConnectionRate;
+                    pDevice->wCurrentRate = (WORD)pDevice->uConnectionRate;
             }
         }
     }
@@ -172,7 +172,7 @@ bool ROUTEbRelay (PSDevice pDevice, unsigned char *pbySkbData, unsigned int uDat
         MACbPSWakeup(pDevice->PortOffset);
     }
 
-    pDevice->bPWBitOn = false;
+    pDevice->bPWBitOn = FALSE;
 
     pLastTD = pHeadTD;
     for (ii = 0; ii < uMACfragNum; ii++) {
@@ -192,7 +192,7 @@ bool ROUTEbRelay (PSDevice pDevice, unsigned char *pbySkbData, unsigned int uDat
 
     MACvTransmitAC0(pDevice->PortOffset);
 
-    return true;
+    return TRUE;
 }
 
 

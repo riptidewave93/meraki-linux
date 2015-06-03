@@ -31,7 +31,6 @@
 #include <linux/ip.h>
 #include <linux/atalk.h>
 #include <linux/if_arp.h>
-#include <linux/slab.h>
 #include <net/route.h>
 #include <asm/uaccess.h>
 
@@ -80,7 +79,7 @@ static struct net_device * __init ipddp_init(void)
 	if (version_printed++ == 0)
                 printk(version);
 
-	/* Initialize the device structure. */
+	/* Initalize the device structure. */
 	dev->netdev_ops = &ipddp_netdev_ops;
 
         dev->type = ARPHRD_IPDDP;       	/* IP over DDP tunnel */
@@ -231,9 +230,9 @@ static int ipddp_delete(struct ipddp_route *rt)
 	spin_lock_bh(&ipddp_route_lock);
         while((tmp = *r) != NULL)
         {
-                if(tmp->ip == rt->ip &&
-		   tmp->at.s_net == rt->at.s_net &&
-		   tmp->at.s_node == rt->at.s_node)
+                if(tmp->ip == rt->ip
+                        && tmp->at.s_net == rt->at.s_net
+                        && tmp->at.s_node == rt->at.s_node)
                 {
                         *r = tmp->next;
 			spin_unlock_bh(&ipddp_route_lock);
@@ -244,7 +243,7 @@ static int ipddp_delete(struct ipddp_route *rt)
         }
 
 	spin_unlock_bh(&ipddp_route_lock);
-        return -ENOENT;
+        return (-ENOENT);
 }
 
 /*
@@ -256,13 +255,13 @@ static struct ipddp_route* __ipddp_find_route(struct ipddp_route *rt)
 
         for(f = ipddp_route_list; f != NULL; f = f->next)
         {
-                if(f->ip == rt->ip &&
-		   f->at.s_net == rt->at.s_net &&
-		   f->at.s_node == rt->at.s_node)
-                        return f;
+                if(f->ip == rt->ip
+                        && f->at.s_net == rt->at.s_net
+                        && f->at.s_node == rt->at.s_node)
+                        return (f);
         }
 
-        return NULL;
+        return (NULL);
 }
 
 static int ipddp_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
@@ -279,7 +278,7 @@ static int ipddp_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
         switch(cmd)
         {
 		case SIOCADDIPDDPRT:
-                        return ipddp_create(&rcp);
+                        return (ipddp_create(&rcp));
 
                 case SIOCFINDIPDDPRT:
 			spin_lock_bh(&ipddp_route_lock);
@@ -297,7 +296,7 @@ static int ipddp_ioctl(struct net_device *dev, struct ifreq *ifr, int cmd)
 				return -ENOENT;
 
                 case SIOCDELIPDDPRT:
-                        return ipddp_delete(&rcp);
+                        return (ipddp_delete(&rcp));
 
                 default:
                         return -EINVAL;

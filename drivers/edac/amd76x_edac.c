@@ -16,10 +16,11 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/pci_ids.h>
+#include <linux/slab.h>
 #include <linux/edac.h>
 #include "edac_core.h"
 
-#define AMD76X_REVISION	" Ver: 2.0.2"
+#define AMD76X_REVISION	" Ver: 2.0.2 "  __DATE__
 #define EDAC_MOD_STR	"amd76x_edac"
 
 #define amd76x_printk(level, fmt, arg...) \
@@ -294,7 +295,7 @@ static int __devinit amd76x_init_one(struct pci_dev *pdev,
 {
 	debugf0("%s()\n", __func__);
 
-	/* don't need to call pci_enable_device() */
+	/* don't need to call pci_device_enable() */
 	return amd76x_probe1(pdev, ent->driver_data);
 }
 
@@ -321,7 +322,7 @@ static void __devexit amd76x_remove_one(struct pci_dev *pdev)
 	edac_mc_free(mci);
 }
 
-static DEFINE_PCI_DEVICE_TABLE(amd76x_pci_tbl) = {
+static const struct pci_device_id amd76x_pci_tbl[] __devinitdata = {
 	{
 	 PCI_VEND_DEV(AMD, FE_GATE_700C), PCI_ANY_ID, PCI_ANY_ID, 0, 0,
 	 AMD762},

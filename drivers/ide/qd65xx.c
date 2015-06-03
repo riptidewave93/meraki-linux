@@ -29,6 +29,7 @@
 #include <linux/blkdev.h>
 #include <linux/ide.h>
 #include <linux/init.h>
+#include <asm/system.h>
 #include <asm/io.h>
 
 #define DRV_NAME "qd65xx"
@@ -188,13 +189,15 @@ static void qd_set_timing (ide_drive_t *drive, u8 timing)
 	printk(KERN_DEBUG "%s: %#x\n", drive->name, timing);
 }
 
-static void qd6500_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void qd6500_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
 	u16 *id = drive->id;
 	int active_time   = 175;
 	int recovery_time = 415; /* worst case values from the dos driver */
 
-	/* FIXME: use drive->pio_mode value */
+	/*
+	 * FIXME: use "pio" value
+	 */
 	if (!qd_find_disk_type(drive, &active_time, &recovery_time) &&
 	    (id[ATA_ID_OLD_PIO_MODES] & 0xff) && (id[ATA_ID_FIELD_VALID] & 2) &&
 	    id[ATA_ID_EIDE_PIO] >= 240) {
@@ -208,9 +211,9 @@ static void qd6500_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 				active_time, recovery_time));
 }
 
-static void qd6580_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void qd6580_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
-	const u8 pio = drive->pio_mode - XFER_PIO_0;
+	ide_hwif_t *hwif = drive->hwif;
 	struct ide_timing *t = ide_timing_find_mode(XFER_PIO_0 + pio);
 	unsigned int cycle_time;
 	int active_time   = 175;
@@ -416,7 +419,7 @@ static int __init qd_probe(int base)
 	return rc;
 }
 
-static bool probe_qd65xx;
+static int probe_qd65xx;
 
 module_param_named(probe, probe_qd65xx, bool, 0);
 MODULE_PARM_DESC(probe, "probe for QD65xx chipsets");

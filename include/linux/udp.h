@@ -45,19 +45,16 @@ static inline struct udphdr *udp_hdr(const struct sk_buff *skb)
 	return (struct udphdr *)skb_transport_header(skb);
 }
 
-#define UDP_HTABLE_SIZE_MIN		(CONFIG_BASE_SMALL ? 128 : 256)
+#define UDP_HTABLE_SIZE		128
 
-static inline int udp_hashfn(struct net *net, unsigned num, unsigned mask)
+static inline int udp_hashfn(struct net *net, const unsigned num)
 {
-	return (num + net_hash_mix(net)) & mask;
+	return (num + net_hash_mix(net)) & (UDP_HTABLE_SIZE - 1);
 }
 
 struct udp_sock {
 	/* inet_sock has to be the first member */
 	struct inet_sock inet;
-#define udp_port_hash		inet.sk.__sk_common.skc_u16hashes[0]
-#define udp_portaddr_hash	inet.sk.__sk_common.skc_u16hashes[1]
-#define udp_portaddr_node	inet.sk.__sk_common.skc_portaddr_node
 	int		 pending;	/* Any pending frames ? */
 	unsigned int	 corkflag;	/* Cork is required */
   	__u16		 encap_type;	/* Is this an Encapsulation socket? */
@@ -87,12 +84,6 @@ static inline struct udp_sock *udp_sk(const struct sock *sk)
 {
 	return (struct udp_sock *)sk;
 }
-
-#define udp_portaddr_for_each_entry(__sk, node, list) \
-	hlist_nulls_for_each_entry(__sk, node, list, __sk_common.skc_portaddr_node)
-
-#define udp_portaddr_for_each_entry_rcu(__sk, node, list) \
-	hlist_nulls_for_each_entry_rcu(__sk, node, list, __sk_common.skc_portaddr_node)
 
 #define IS_UDPLITE(__sk) (udp_sk(__sk)->pcflag)
 

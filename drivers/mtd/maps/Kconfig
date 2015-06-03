@@ -1,6 +1,7 @@
+# drivers/mtd/maps/Kconfig
+
 menu "Mapping drivers for chip access"
 	depends on MTD!=n
-	depends on HAS_IOMEM
 
 config MTD_COMPLEX_MAPPINGS
 	bool "Support non-linear mappings of flash chips"
@@ -42,6 +43,8 @@ config MTD_PHYSMAP_START
 	  are mapped on your particular target board. Refer to the
 	  memory map which should hopefully be in the documentation for
 	  your board.
+	  Ignore this option if you use run-time physmap configuration
+	  (i.e., run-time calling physmap_configure()).
 
 config MTD_PHYSMAP_LEN
 	hex "Physical length of flash mapping"
@@ -54,6 +57,8 @@ config MTD_PHYSMAP_LEN
 	  than the total amount of flash present. Refer to the memory
 	  map which should hopefully be in the documentation for your
 	  board.
+	  Ignore this option if you use run-time physmap configuration
+	  (i.e., run-time calling physmap_configure()).
 
 config MTD_PHYSMAP_BANKWIDTH
 	int "Bank width in octets"
@@ -64,10 +69,12 @@ config MTD_PHYSMAP_BANKWIDTH
 	  in octets. For example, if you have a data bus width of 32
 	  bits, you would set the bus width octet value to 4. This is
 	  used internally by the CFI drivers.
+	  Ignore this option if you use run-time physmap configuration
+	  (i.e., run-time calling physmap_configure()).
 
 config MTD_PHYSMAP_OF
 	tristate "Flash device in physical memory map based on OF description"
-	depends on OF && (MTD_CFI || MTD_JEDECPROBE || MTD_ROM)
+	depends on (MICROBLAZE || PPC_OF) && (MTD_CFI || MTD_JEDECPROBE || MTD_ROM)
 	help
 	  This provides a 'mapping' driver which allows the NOR Flash and
 	  ROM driver code to communicate with chips which are mapped
@@ -164,7 +171,7 @@ config MTD_OCTAGON
 	  This provides a 'mapping' driver which supports the way in which
 	  the flash chips are connected in the Octagon-5066 Single Board
 	  Computer. More information on the board is available at
-	  <http://www.octagonsystems.com/products/5066.aspx>.
+	  <http://www.octagonsystems.com/CPUpages/5066.html>.
 
 config MTD_VMAX
 	tristate "JEDEC Flash device mapped on Tempustech VMAX SBC301"
@@ -243,11 +250,20 @@ config MTD_NETtel
 	help
 	  Support for flash chips on NETtel/SecureEdge/SnapGear boards.
 
-config MTD_LANTIQ
-	tristate "Lantiq SoC NOR support"
-	depends on LANTIQ
+config MTD_ALCHEMY
+	tristate "AMD Alchemy Pb1xxx/Db1xxx/RDK MTD support"
+	depends on SOC_AU1X00 && MTD_PARTITIONS && MTD_CFI
 	help
-	  Support for NOR flash attached to the Lantiq SoC's External Bus Unit.
+	  Flash memory access on AMD Alchemy Pb/Db/RDK Reference Boards
+
+config MTD_BCM963XX
+        tristate "Map driver for Broadcom BCM963xx boards"
+        depends on BCM63XX
+	select MTD_MAP_BANK_WIDTH_2
+	select MTD_CFI_I1
+        help
+	  Support for parsing CFE image tag and creating MTD partitions on
+	  Broadcom BCM63xx boards.
 
 config MTD_DILNETPC
 	tristate "CFI Flash device mapped on DIL/Net PC"
@@ -282,7 +298,7 @@ config MTD_TQM8XXL
 	  chips, currently uses AMD one. This 'mapping' driver supports
 	  that arrangement, allowing the CFI probe and command set driver
 	  code to communicate with the chips on the TQM8xxL board. More at
-	  <http://www.denx.de/wiki/PPCEmbedded/>.
+	  <http://www.denx.de/embedded-ppc-en.html>.
 
 config MTD_RPXLITE
 	tristate "CFI Flash device mapped on RPX Lite or CLLF"
@@ -323,6 +339,10 @@ config MTD_SOLUTIONENGINE
 	help
 	  This enables access to the flash chips on the Hitachi SolutionEngine and
 	  similar boards. Say 'Y' if you are building a kernel for such a board.
+
+config MTD_ARM_INTEGRATOR
+	tristate "CFI Flash device mapped on ARM Integrator/P720T"
+	depends on ARM && MTD_CFI
 
 config MTD_CDB89712
 	tristate "Cirrus CDB89712 evaluation board mappings"
@@ -379,6 +399,13 @@ config MTD_AUTCPU12
 	  This enables access to the NV-RAM on autronix autcpu12 board.
 	  If you have such a board, say 'Y'.
 
+config MTD_EDB7312
+	tristate "CFI Flash device mapped on EDB7312"
+	depends on ARCH_EDB7312 && MTD_CFI
+	help
+	  This enables access to the CFI Flash on the Cogent EDB7312 board.
+	  If you have such a board, say 'Y' here.
+
 config MTD_IMPA7
 	tristate "JEDEC Flash device mapped on impA7"
 	depends on ARM && MTD_JEDECPROBE
@@ -386,12 +413,29 @@ config MTD_IMPA7
 	  This enables access to the NOR Flash on the impA7 board of
 	  implementa GmbH. If you have such a board, say 'Y' here.
 
+config MTD_CEIVA
+	tristate "JEDEC Flash device mapped on Ceiva/Polaroid PhotoMax Digital Picture Frame"
+	depends on MTD_JEDECPROBE && ARCH_CEIVA
+	help
+	  This enables access to the flash chips on the Ceiva/Polaroid
+	  PhotoMax Digital Picture Frame.
+	  If you have such a device, say 'Y'.
+
 config MTD_H720X
 	tristate "Hynix evaluation board mappings"
 	depends on MTD_CFI && ( ARCH_H7201 || ARCH_H7202 )
 	help
 	  This enables access to the flash chips on the Hynix evaluation boards.
 	  If you have such a board, say 'Y'.
+
+config MTD_OMAP_NOR
+	tristate "TI OMAP board mappings"
+	depends on MTD_CFI && ARCH_OMAP
+	help
+	  This enables access to the NOR flash chips on TI OMAP-based
+	  boards defining flash platform devices and flash platform data.
+	  These boards include the Innovator, H2, H3, OSK, Perseus2, and
+	  more.  If you have such a board, say 'Y'.
 
 # This needs CFI or JEDEC, depending on the cards found.
 config MTD_PCI

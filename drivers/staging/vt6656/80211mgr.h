@@ -19,7 +19,7 @@
  *
  * File: 80211mgr.h
  *
- * Purpose: 802.11 management frames pre-defines.
+ * Purpose: 802.11 managment frames pre-defines.
  *
  *
  * Author: Lyndon Chen
@@ -66,9 +66,9 @@
 #define WLAN_EID_RSN_WPA        221
 
 #ifdef Cisco_ccx
-#define WLAN_EID_CCX        133
-#define WLAN_EID_CCX_IP        149
-#define WLAN_EID_CCX_Ver        221
+#define WLAN_EID_CCX        133            //DavidWang
+#define WLAN_EID_CCX_IP        149            //DavidWang
+#define WLAN_EID_CCX_Ver        221            //DavidWang
 #endif
 
 #define WLAN_EID_ERP_NONERP_PRESENT             0x01
@@ -222,11 +222,14 @@
 #define MEASURE_MODE_INCAPABLE  0x02
 #define MEASURE_MODE_REFUSED    0x04
 
+
+
 /*---------------------  Export Classes  ----------------------------*/
 
 /*---------------------  Export Variables  --------------------------*/
 
 /*---------------------  Export Types  ------------------------------*/
+
 
 // Information Element Types
 
@@ -234,8 +237,9 @@
 typedef struct tagWLAN_IE {
     BYTE   byElementID;
     BYTE   len;
-} __attribute__ ((__packed__))
+}__attribute__ ((__packed__))
 WLAN_IE, *PWLAN_IE;
+
 
 // Service Set Identity (SSID)
 #pragma pack(1)
@@ -243,8 +247,9 @@ typedef struct tagWLAN_IE_SSID {
     BYTE   byElementID;
     BYTE   len;
     BYTE   abySSID[1];
-} __attribute__ ((__packed__))
+}__attribute__ ((__packed__))
 WLAN_IE_SSID, *PWLAN_IE_SSID;
+
 
 // Supported Rates
 #pragma pack(1)
@@ -252,8 +257,10 @@ typedef struct tagWLAN_IE_SUPP_RATES {
     BYTE   byElementID;
     BYTE   len;
     BYTE   abyRates[1];
-} __attribute__ ((__packed__))
+}__attribute__ ((__packed__))
 WLAN_IE_SUPP_RATES,  *PWLAN_IE_SUPP_RATES;
+
+
 
 // FH Parameter Set
 #pragma pack(1)
@@ -272,8 +279,9 @@ typedef struct tagWLAN_IE_DS_PARMS {
     BYTE   byElementID;
     BYTE   len;
     BYTE   byCurrChannel;
-} __attribute__ ((__packed__))
+}__attribute__ ((__packed__))
 WLAN_IE_DS_PARMS,  *PWLAN_IE_DS_PARMS;
+
 
 // CF Parameter Set
 #pragma pack(1)
@@ -284,8 +292,9 @@ typedef struct tagWLAN_IE_CF_PARMS {
     BYTE   byCFPPeriod;
     WORD   wCFPMaxDuration;
     WORD   wCFPDurRemaining;
-} __attribute__ ((__packed__))
+}__attribute__ ((__packed__))
 WLAN_IE_CF_PARMS,  *PWLAN_IE_CF_PARMS;
+
 
 // TIM
 #pragma pack(1)
@@ -296,8 +305,9 @@ typedef struct tagWLAN_IE_TIM {
     BYTE   byDTIMPeriod;
     BYTE   byBitMapCtl;
     BYTE   byVirtBitMap[1];
-} __attribute__ ((__packed__))
+}__attribute__ ((__packed__))
 WLAN_IE_TIM,  *PWLAN_IE_TIM;
+
 
 // IBSS Parameter Set
 #pragma pack(1)
@@ -305,8 +315,9 @@ typedef struct tagWLAN_IE_IBSS_PARMS {
     BYTE   byElementID;
     BYTE   len;
     WORD   wATIMWindow;
-} __attribute__ ((__packed__))
+}__attribute__ ((__packed__))
 WLAN_IE_IBSS_PARMS, *PWLAN_IE_IBSS_PARMS;
+
 
 // Challenge Text
 #pragma pack(1)
@@ -314,8 +325,9 @@ typedef struct tagWLAN_IE_CHALLENGE {
     BYTE   byElementID;
     BYTE   len;
     BYTE   abyChallenge[1];
-} __attribute__ ((__packed__))
+}__attribute__ ((__packed__))
 WLAN_IE_CHALLENGE,  *PWLAN_IE_CHALLENGE;
+
 
 #pragma pack(1)
 typedef struct tagWLAN_IE_RSN_EXT {
@@ -348,7 +360,7 @@ typedef struct tagWLAN_IE_RSN {
     BYTE   abyRSN[WLAN_MIN_ARRAY];
 } WLAN_IE_RSN, *PWLAN_IE_RSN;
 
-
+//DavidWang
 // CCX Identity DavidWang
 #pragma pack(1)
 typedef struct tagWLAN_IE_CCX {
@@ -371,7 +383,7 @@ BYTE   len;
 BYTE   abyCCXVer[5];
 } WLAN_IE_CCX_Ver, *PWLAN_IE_CCX_Ver;
 
-
+//DavidWang
 
 // ERP
 #pragma pack(1)
@@ -379,8 +391,9 @@ typedef struct tagWLAN_IE_ERP {
     BYTE   byElementID;
     BYTE   len;
     BYTE   byContext;
-} __attribute__ ((__packed__))
+}__attribute__ ((__packed__))
 WLAN_IE_ERP,  *PWLAN_IE_ERP;
+
 
 #pragma pack(1)
 typedef struct _MEASEURE_REQ {
@@ -511,8 +524,8 @@ typedef struct _WLAN_IE_IBSS_DFS {
 // prototype structure, all mgmt frame types will start with these members
 typedef struct tagWLAN_FR_MGMT {
 
-    unsigned int                  uType;
-    unsigned int                  len;
+    UINT                  uType;
+    UINT                  len;
     PBYTE                 pBuf;
     PUWLAN_80211HDR       pHdr;
 
@@ -521,8 +534,8 @@ typedef struct tagWLAN_FR_MGMT {
 // Beacon frame
 typedef struct tagWLAN_FR_BEACON {
 
-    unsigned int                    uType;
-    unsigned int                    len;
+    UINT                    uType;
+    UINT                    len;
     PBYTE                   pBuf;
     PUWLAN_80211HDR         pHdr;
     // fixed fields
@@ -553,8 +566,8 @@ typedef struct tagWLAN_FR_BEACON {
 // IBSS ATIM frame
 typedef struct tagWLAN_FR_IBSSATIM {
 
-    unsigned int                    uType;
-    unsigned int                    len;
+    UINT                    uType;
+    UINT                    len;
     PBYTE                   pBuf;
     PUWLAN_80211HDR         pHdr;
 
@@ -567,8 +580,8 @@ typedef struct tagWLAN_FR_IBSSATIM {
 // Disassociation
 typedef struct tagWLAN_FR_DISASSOC {
 
-    unsigned int                    uType;
-    unsigned int                    len;
+    UINT                    uType;
+    UINT                    len;
     PBYTE                   pBuf;
     PUWLAN_80211HDR         pHdr;
     /*-- fixed fields -----------*/
@@ -580,8 +593,8 @@ typedef struct tagWLAN_FR_DISASSOC {
 // Association Request
 typedef struct tagWLAN_FR_ASSOCREQ {
 
-    unsigned int                    uType;
-    unsigned int                    len;
+    UINT                    uType;
+    UINT                    len;
     PBYTE                   pBuf;
     PUWLAN_80211HDR         pHdr;
     /*-- fixed fields -----------*/
@@ -604,8 +617,8 @@ typedef struct tagWLAN_FR_ASSOCREQ {
 // Association Response
 typedef struct tagWLAN_FR_ASSOCRESP {
 
-    unsigned int                    uType;
-    unsigned int                    len;
+    UINT                    uType;
+    UINT                    len;
     PBYTE                   pBuf;
     PUWLAN_80211HDR         pHdr;
     /*-- fixed fields -----------*/
@@ -621,8 +634,8 @@ typedef struct tagWLAN_FR_ASSOCRESP {
 // Reassociation Request
 typedef struct tagWLAN_FR_REASSOCREQ {
 
-    unsigned int                    uType;
-    unsigned int                    len;
+    UINT                    uType;
+    UINT                    len;
     PBYTE                   pBuf;
     PUWLAN_80211HDR         pHdr;
 
@@ -646,8 +659,8 @@ typedef struct tagWLAN_FR_REASSOCREQ {
 // Reassociation Response
 typedef struct tagWLAN_FR_REASSOCRESP {
 
-    unsigned int                    uType;
-    unsigned int                    len;
+    UINT                    uType;
+    UINT                    len;
     PBYTE                   pBuf;
     PUWLAN_80211HDR         pHdr;
     /*-- fixed fields -----------*/
@@ -663,8 +676,8 @@ typedef struct tagWLAN_FR_REASSOCRESP {
 // Probe Request
 typedef struct tagWLAN_FR_PROBEREQ {
 
-    unsigned int                    uType;
-    unsigned int                    len;
+    UINT                    uType;
+    UINT                    len;
     PBYTE                   pBuf;
     PUWLAN_80211HDR         pHdr;
     /*-- fixed fields -----------*/
@@ -678,8 +691,8 @@ typedef struct tagWLAN_FR_PROBEREQ {
 // Probe Response
 typedef struct tagWLAN_FR_PROBERESP {
 
-    unsigned int                    uType;
-    unsigned int                    len;
+    UINT                    uType;
+    UINT                    len;
     PBYTE                   pBuf;
     PUWLAN_80211HDR         pHdr;
     /*-- fixed fields -----------*/
@@ -707,8 +720,8 @@ typedef struct tagWLAN_FR_PROBERESP {
 // Authentication
 typedef struct tagWLAN_FR_AUTHEN {
 
-    unsigned int                    uType;
-    unsigned int                    len;
+    UINT                    uType;
+    UINT                    len;
     PBYTE                   pBuf;
     PUWLAN_80211HDR         pHdr;
     /*-- fixed fields -----------*/
@@ -723,8 +736,8 @@ typedef struct tagWLAN_FR_AUTHEN {
 // Deauthenication
 typedef struct tagWLAN_FR_DEAUTHEN {
 
-    unsigned int                    uType;
-    unsigned int                    len;
+    UINT                    uType;
+    UINT                    len;
     PBYTE                   pBuf;
     PUWLAN_80211HDR         pHdr;
     /*-- fixed fields -----------*/
@@ -735,114 +748,114 @@ typedef struct tagWLAN_FR_DEAUTHEN {
 } WLAN_FR_DEAUTHEN, *PWLAN_FR_DEAUTHEN;
 
 /*---------------------  Export Functions  --------------------------*/
-void
+VOID
 vMgrEncodeBeacon(
-      PWLAN_FR_BEACON  pFrame
+    IN  PWLAN_FR_BEACON  pFrame
      );
 
-void
+VOID
 vMgrDecodeBeacon(
-      PWLAN_FR_BEACON  pFrame
+    IN  PWLAN_FR_BEACON  pFrame
     );
 
-void
+VOID
 vMgrEncodeIBSSATIM(
-      PWLAN_FR_IBSSATIM   pFrame
+    IN  PWLAN_FR_IBSSATIM   pFrame
     );
 
-void
+VOID
 vMgrDecodeIBSSATIM(
-      PWLAN_FR_IBSSATIM   pFrame
+    IN  PWLAN_FR_IBSSATIM   pFrame
     );
 
-void
+VOID
 vMgrEncodeDisassociation(
-      PWLAN_FR_DISASSOC  pFrame
+    IN  PWLAN_FR_DISASSOC  pFrame
     );
 
-void
+VOID
 vMgrDecodeDisassociation(
-      PWLAN_FR_DISASSOC  pFrame
+    IN  PWLAN_FR_DISASSOC  pFrame
     );
 
-void
+VOID
 vMgrEncodeAssocRequest(
-      PWLAN_FR_ASSOCREQ  pFrame
+    IN  PWLAN_FR_ASSOCREQ  pFrame
     );
 
-void
+VOID
 vMgrDecodeAssocRequest(
-      PWLAN_FR_ASSOCREQ  pFrame
+    IN  PWLAN_FR_ASSOCREQ  pFrame
     );
 
-void
+VOID
 vMgrEncodeAssocResponse(
-      PWLAN_FR_ASSOCRESP  pFrame
+    IN  PWLAN_FR_ASSOCRESP  pFrame
     );
 
-void
+VOID
 vMgrDecodeAssocResponse(
-     PWLAN_FR_ASSOCRESP  pFrame
+    IN PWLAN_FR_ASSOCRESP  pFrame
     );
 
-void
+VOID
 vMgrEncodeReassocRequest(
-      PWLAN_FR_REASSOCREQ  pFrame
+    IN  PWLAN_FR_REASSOCREQ  pFrame
     );
 
-void
+VOID
 vMgrDecodeReassocRequest(
-      PWLAN_FR_REASSOCREQ  pFrame
+    IN  PWLAN_FR_REASSOCREQ  pFrame
     );
 
-void
+VOID
 vMgrEncodeProbeRequest(
-     PWLAN_FR_PROBEREQ  pFrame
+    IN PWLAN_FR_PROBEREQ  pFrame
     );
 
-void
+VOID
 vMgrDecodeProbeRequest(
-     PWLAN_FR_PROBEREQ  pFrame
+    IN PWLAN_FR_PROBEREQ  pFrame
     );
 
-void
+VOID
 vMgrEncodeProbeResponse(
-     PWLAN_FR_PROBERESP  pFrame
+    IN PWLAN_FR_PROBERESP  pFrame
     );
 
-void
+VOID
 vMgrDecodeProbeResponse(
-     PWLAN_FR_PROBERESP  pFrame
+    IN PWLAN_FR_PROBERESP  pFrame
     );
 
-void
+VOID
 vMgrEncodeAuthen(
-      PWLAN_FR_AUTHEN  pFrame
+    IN  PWLAN_FR_AUTHEN  pFrame
     );
 
-void
+VOID
 vMgrDecodeAuthen(
-      PWLAN_FR_AUTHEN  pFrame
+    IN  PWLAN_FR_AUTHEN  pFrame
     );
 
-void
+VOID
 vMgrEncodeDeauthen(
-      PWLAN_FR_DEAUTHEN  pFrame
+    IN  PWLAN_FR_DEAUTHEN  pFrame
     );
 
-void
+VOID
 vMgrDecodeDeauthen(
-      PWLAN_FR_DEAUTHEN  pFrame
+    IN  PWLAN_FR_DEAUTHEN  pFrame
     );
 
-void
+VOID
 vMgrEncodeReassocResponse(
-      PWLAN_FR_REASSOCRESP  pFrame
+    IN  PWLAN_FR_REASSOCRESP  pFrame
     );
 
-void
+VOID
 vMgrDecodeReassocResponse(
-      PWLAN_FR_REASSOCRESP  pFrame
+    IN  PWLAN_FR_REASSOCRESP  pFrame
     );
 
 #endif// __80211MGR_H__

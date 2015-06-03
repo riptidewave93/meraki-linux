@@ -35,7 +35,6 @@
 #include <linux/init.h>
 #include <linux/mutex.h>
 #include <linux/sched.h>
-#include <linux/semaphore.h>
 #include <linux/kthread.h>
 #include "ibmphp.h"
 
@@ -133,8 +132,8 @@ void __init ibmphp_hpc_initvars (void)
 	debug ("%s - Entry\n", __func__);
 
 	mutex_init(&sem_hpcaccess);
-	sema_init(&semOperations, 1);
-	sema_init(&sem_exit, 0);
+	init_MUTEX (&semOperations);
+	init_MUTEX_LOCKED (&sem_exit);
 	to_debug = 0;
 
 	debug ("%s - Exit\n", __func__);
@@ -891,7 +890,7 @@ static int poll_hpc(void *data)
 			msleep(POLL_INTERVAL_SEC * 1000);
 
 			if (kthread_should_stop())
-				goto out_sleep;
+				break;
 			
 			down (&semOperations);
 			
@@ -905,7 +904,6 @@ static int poll_hpc(void *data)
 		/* give up the hardware semaphore */
 		up (&semOperations);
 		/* sleep for a short time just for good measure */
-out_sleep:
 		msleep(100);
 	}
 	up (&sem_exit);

@@ -17,7 +17,6 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/usb.h>
 
@@ -28,7 +27,7 @@
 #define USB_SKEL_VENDOR_ID	0x04b4
 #define USB_SKEL_PRODUCT_ID	0x0002
 
-static const struct usb_device_id id_table[] = {
+static struct usb_device_id id_table [] = {
 	{ USB_DEVICE(USB_SKEL_VENDOR_ID, USB_SKEL_PRODUCT_ID) },
 	{ }
 };
@@ -417,7 +416,31 @@ static void cytherm_disconnect(struct usb_interface *interface)
 	dev_info(&interface->dev, "Cypress thermometer now disconnected\n");
 }
 
-module_usb_driver(cytherm_driver);
+
+static int __init usb_cytherm_init(void)
+{
+	int result;
+
+	result = usb_register(&cytherm_driver);
+	if (result) {
+		printk(KERN_ERR KBUILD_MODNAME ": usb_register failed! "
+		       "Error number: %d\n", result);
+		return result;
+	}
+
+	printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_VERSION ":"
+	       DRIVER_DESC "\n");
+	return 0;
+}
+
+static void __exit usb_cytherm_exit(void)
+{
+	usb_deregister(&cytherm_driver);
+}
+
+
+module_init (usb_cytherm_init);
+module_exit (usb_cytherm_exit);
 
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);

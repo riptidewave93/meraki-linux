@@ -175,7 +175,6 @@ static const struct agp_bridge_driver via_agp3_driver = {
 	.aperture_sizes		= agp3_generic_sizes,
 	.size_type		= U8_APER_SIZE,
 	.num_aperture_sizes	= 10,
-	.needs_scratch_page	= true,
 	.configure		= via_configure_agp3,
 	.fetch_size		= via_fetch_size_agp3,
 	.cleanup		= via_cleanup_agp3,
@@ -202,7 +201,6 @@ static const struct agp_bridge_driver via_driver = {
 	.aperture_sizes		= via_generic_sizes,
 	.size_type		= U8_APER_SIZE,
 	.num_aperture_sizes	= 9,
-	.needs_scratch_page	= true,
 	.configure		= via_configure,
 	.fetch_size		= via_fetch_size,
 	.cleanup		= via_cleanup,
@@ -400,7 +398,7 @@ static struct agp_device_ids via_agp_device_ids[] __devinitdata =
 	 * the traditional AGP which resides only in chipset. AGP is used
 	 * by 3D driver which wasn't available for the VT3336 and VT3364
 	 * generation until now.  Unfortunately, by testing, VT3364 works
-	 * but VT3336 doesn't. - explanation from via, just leave this as
+	 * but VT3336 doesn't. - explaination from via, just leave this as
 	 * as a placeholder to avoid future patches adding it back in.
 	 */
 #if 0

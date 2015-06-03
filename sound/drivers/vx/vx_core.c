@@ -26,7 +26,6 @@
 #include <linux/init.h>
 #include <linux/device.h>
 #include <linux/firmware.h>
-#include <linux/module.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/asoundef.h>

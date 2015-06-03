@@ -15,12 +15,10 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/errno.h>
-#include <linux/slab.h>
 #include <linux/skbuff.h>
 #include <linux/init.h>
 #include <linux/kmod.h>
 #include <linux/err.h>
-#include <linux/module.h>
 #include <net/net_namespace.h>
 #include <net/sock.h>
 #include <net/sch_generic.h>
@@ -39,11 +37,7 @@ void tcf_hash_destroy(struct tcf_common *p, struct tcf_hashinfo *hinfo)
 			write_unlock_bh(hinfo->lock);
 			gen_kill_estimator(&p->tcfc_bstats,
 					   &p->tcfc_rate_est);
-			/*
-			 * gen_estimator est_timer() might access p->tcfc_lock
-			 * or bstats, wait a RCU grace period before freeing p
-			 */
-			kfree_rcu(p, tcfc_rcu);
+			kfree(p);
 			return;
 		}
 	}
@@ -74,7 +68,7 @@ static int tcf_dump_walker(struct sk_buff *skb, struct netlink_callback *cb,
 			   struct tc_action *a, struct tcf_hashinfo *hinfo)
 {
 	struct tcf_common *p;
-	int err = 0, index = -1, i = 0, s_i = 0, n_i = 0;
+	int err = 0, index = -1,i = 0, s_i = 0, n_i = 0;
 	struct nlattr *nest;
 
 	read_lock_bh(hinfo->lock);
@@ -122,7 +116,7 @@ static int tcf_del_walker(struct sk_buff *skb, struct tc_action *a,
 {
 	struct tcf_common *p, *s_p;
 	struct nlattr *nest;
-	int i = 0, n_i = 0;
+	int i= 0, n_i = 0;
 
 	nest = nla_nest_start(skb, a->order);
 	if (nest == NULL)
@@ -134,7 +128,7 @@ static int tcf_del_walker(struct sk_buff *skb, struct tc_action *a,
 		while (p != NULL) {
 			s_p = p->tcfc_next;
 			if (ACT_P_DELETED == tcf_hash_release(p, 0, hinfo))
-				module_put(a->ops->owner);
+				 module_put(a->ops->owner);
 			n_i++;
 			p = s_p;
 		}
@@ -158,7 +152,7 @@ int tcf_generic_walker(struct sk_buff *skb, struct netlink_callback *cb,
 	} else if (type == RTM_GETACTION) {
 		return tcf_dump_walker(skb, cb, a, hinfo);
 	} else {
-		WARN(1, "tcf_generic_walker: unknown action %d\n", type);
+		printk("tcf_generic_walker: unknown action %d\n", type);
 		return -EINVAL;
 	}
 }
@@ -366,10 +360,10 @@ static struct tc_action_ops *tc_lookup_action_id(u32 type)
 }
 #endif
 
-int tcf_action_exec(struct sk_buff *skb, const struct tc_action *act,
+int tcf_action_exec(struct sk_buff *skb, struct tc_action *act,
 		    struct tcf_result *res)
 {
-	const struct tc_action *a;
+	struct tc_action *a;
 	int ret = -1;
 
 	if (skb->tc_verd & TC_NCLS) {
@@ -408,9 +402,8 @@ void tcf_action_destroy(struct tc_action *act, int bind)
 				module_put(a->ops->owner);
 			act = act->next;
 			kfree(a);
-		} else {
-			/*FIXME: Remove later - catch insertion bugs*/
-			WARN(1, "tcf_action_destroy: BUG? destroying NULL ops\n");
+		} else { /*FIXME: Remove later - catch insertion bugs*/
+			printk("tcf_action_destroy: BUG? destroying NULL ops\n");
 			act = act->next;
 			kfree(a);
 		}
@@ -443,8 +436,7 @@ tcf_action_dump_1(struct sk_buff *skb, struct tc_action *a, int bind, int ref)
 	nest = nla_nest_start(skb, TCA_OPTIONS);
 	if (nest == NULL)
 		goto nla_put_failure;
-	err = tcf_action_dump_old(skb, a, bind, ref);
-	if (err > 0) {
+	if ((err = tcf_action_dump_old(skb, a, bind, ref)) > 0) {
 		nla_nest_end(skb, nest);
 		return err;
 	}
@@ -488,7 +480,7 @@ struct tc_action *tcf_action_init_1(struct nlattr *nla, struct nlattr *est,
 	struct tc_action *a;
 	struct tc_action_ops *a_o;
 	char act_name[IFNAMSIZ];
-	struct nlattr *tb[TCA_ACT_MAX + 1];
+	struct nlattr *tb[TCA_ACT_MAX+1];
 	struct nlattr *kind;
 	int err;
 
@@ -546,9 +538,9 @@ struct tc_action *tcf_action_init_1(struct nlattr *nla, struct nlattr *est,
 		goto err_free;
 
 	/* module count goes up only when brand new policy is created
-	 * if it exists and is only bound to in a_o->init() then
-	 * ACT_P_CREATED is not returned (a zero is).
-	 */
+	   if it exists and is only bound to in a_o->init() then
+	   ACT_P_CREATED is not returned (a zero is).
+	*/
 	if (err != ACT_P_CREATED)
 		module_put(a_o->owner);
 	a->ops = a_o;
@@ -566,7 +558,7 @@ err_out:
 struct tc_action *tcf_action_init(struct nlattr *nla, struct nlattr *est,
 				  char *name, int ovr, int bind)
 {
-	struct nlattr *tb[TCA_ACT_MAX_PRIO + 1];
+	struct nlattr *tb[TCA_ACT_MAX_PRIO+1];
 	struct tc_action *head = NULL, *act, *act_prev = NULL;
 	int err;
 	int i;
@@ -606,7 +598,7 @@ int tcf_action_copy_stats(struct sk_buff *skb, struct tc_action *a,
 		goto errout;
 
 	/* compat_mode being true specifies a call that is supposed
-	 * to add additional backward compatibility statistic TLVs.
+	 * to add additional backward compatiblity statistic TLVs.
 	 */
 	if (compat_mode) {
 		if (a->type == TCA_OLD_COMPAT)
@@ -626,8 +618,7 @@ int tcf_action_copy_stats(struct sk_buff *skb, struct tc_action *a,
 			goto errout;
 
 	if (gnet_stats_copy_basic(&d, &h->tcf_bstats) < 0 ||
-	    gnet_stats_copy_rate_est(&d, &h->tcf_bstats,
-				     &h->tcf_rate_est) < 0 ||
+	    gnet_stats_copy_rate_est(&d, &h->tcf_rate_est) < 0 ||
 	    gnet_stats_copy_queue(&d, &h->tcf_qstats) < 0)
 		goto errout;
 
@@ -675,8 +666,7 @@ nlmsg_failure:
 }
 
 static int
-act_get_notify(struct net *net, u32 pid, struct nlmsghdr *n,
-	       struct tc_action *a, int event)
+act_get_notify(u32 pid, struct nlmsghdr *n, struct tc_action *a, int event)
 {
 	struct sk_buff *skb;
 
@@ -688,13 +678,13 @@ act_get_notify(struct net *net, u32 pid, struct nlmsghdr *n,
 		return -EINVAL;
 	}
 
-	return rtnl_unicast(skb, net, pid);
+	return rtnl_unicast(skb, &init_net, pid);
 }
 
 static struct tc_action *
 tcf_action_get_1(struct nlattr *nla, struct nlmsghdr *n, u32 pid)
 {
-	struct nlattr *tb[TCA_ACT_MAX + 1];
+	struct nlattr *tb[TCA_ACT_MAX+1];
 	struct tc_action *a;
 	int index;
 	int err;
@@ -751,15 +741,14 @@ static struct tc_action *create_a(int i)
 
 	act = kzalloc(sizeof(*act), GFP_KERNEL);
 	if (act == NULL) {
-		pr_debug("create_a: failed to alloc!\n");
+		printk("create_a: failed to alloc!\n");
 		return NULL;
 	}
 	act->order = i;
 	return act;
 }
 
-static int tca_action_flush(struct net *net, struct nlattr *nla,
-			    struct nlmsghdr *n, u32 pid)
+static int tca_action_flush(struct nlattr *nla, struct nlmsghdr *n, u32 pid)
 {
 	struct sk_buff *skb;
 	unsigned char *b;
@@ -767,19 +756,19 @@ static int tca_action_flush(struct net *net, struct nlattr *nla,
 	struct tcamsg *t;
 	struct netlink_callback dcb;
 	struct nlattr *nest;
-	struct nlattr *tb[TCA_ACT_MAX + 1];
+	struct nlattr *tb[TCA_ACT_MAX+1];
 	struct nlattr *kind;
 	struct tc_action *a = create_a(0);
 	int err = -ENOMEM;
 
 	if (a == NULL) {
-		pr_debug("tca_action_flush: couldnt create tc_action\n");
+		printk("tca_action_flush: couldnt create tc_action\n");
 		return err;
 	}
 
 	skb = alloc_skb(NLMSG_GOODSIZE, GFP_KERNEL);
 	if (!skb) {
-		pr_debug("tca_action_flush: failed skb alloc\n");
+		printk("tca_action_flush: failed skb alloc\n");
 		kfree(a);
 		return err;
 	}
@@ -818,8 +807,7 @@ static int tca_action_flush(struct net *net, struct nlattr *nla,
 	nlh->nlmsg_flags |= NLM_F_ROOT;
 	module_put(a->ops->owner);
 	kfree(a);
-	err = rtnetlink_send(skb, net, pid, RTNLGRP_TC,
-			     n->nlmsg_flags & NLM_F_ECHO);
+	err = rtnetlink_send(skb, &init_net, pid, RTNLGRP_TC, n->nlmsg_flags&NLM_F_ECHO);
 	if (err > 0)
 		return 0;
 
@@ -836,20 +824,19 @@ noflush_out:
 }
 
 static int
-tca_action_gd(struct net *net, struct nlattr *nla, struct nlmsghdr *n,
-	      u32 pid, int event)
+tca_action_gd(struct nlattr *nla, struct nlmsghdr *n, u32 pid, int event)
 {
 	int i, ret;
-	struct nlattr *tb[TCA_ACT_MAX_PRIO + 1];
+	struct nlattr *tb[TCA_ACT_MAX_PRIO+1];
 	struct tc_action *head = NULL, *act, *act_prev = NULL;
 
 	ret = nla_parse_nested(tb, TCA_ACT_MAX_PRIO, nla, NULL);
 	if (ret < 0)
 		return ret;
 
-	if (event == RTM_DELACTION && n->nlmsg_flags & NLM_F_ROOT) {
+	if (event == RTM_DELACTION && n->nlmsg_flags&NLM_F_ROOT) {
 		if (tb[1] != NULL)
-			return tca_action_flush(net, tb[1], n, pid);
+			return tca_action_flush(tb[1], n, pid);
 		else
 			return -EINVAL;
 	}
@@ -870,7 +857,7 @@ tca_action_gd(struct net *net, struct nlattr *nla, struct nlmsghdr *n,
 	}
 
 	if (event == RTM_GETACTION)
-		ret = act_get_notify(net, pid, n, head, event);
+		ret = act_get_notify(pid, n, head, event);
 	else { /* delete */
 		struct sk_buff *skb;
 
@@ -889,8 +876,8 @@ tca_action_gd(struct net *net, struct nlattr *nla, struct nlmsghdr *n,
 
 		/* now do the delete */
 		tcf_action_destroy(head, 0);
-		ret = rtnetlink_send(skb, net, pid, RTNLGRP_TC,
-				     n->nlmsg_flags & NLM_F_ECHO);
+		ret = rtnetlink_send(skb, &init_net, pid, RTNLGRP_TC,
+				     n->nlmsg_flags&NLM_F_ECHO);
 		if (ret > 0)
 			return 0;
 		return ret;
@@ -900,8 +887,8 @@ err:
 	return ret;
 }
 
-static int tcf_add_notify(struct net *net, struct tc_action *a,
-			  u32 pid, u32 seq, int event, u16 flags)
+static int tcf_add_notify(struct tc_action *a, u32 pid, u32 seq, int event,
+			  u16 flags)
 {
 	struct tcamsg *t;
 	struct nlmsghdr *nlh;
@@ -934,7 +921,7 @@ static int tcf_add_notify(struct net *net, struct tc_action *a,
 	nlh->nlmsg_len = skb_tail_pointer(skb) - b;
 	NETLINK_CB(skb).dst_group = RTNLGRP_TC;
 
-	err = rtnetlink_send(skb, net, pid, RTNLGRP_TC, flags & NLM_F_ECHO);
+	err = rtnetlink_send(skb, &init_net, pid, RTNLGRP_TC, flags&NLM_F_ECHO);
 	if (err > 0)
 		err = 0;
 	return err;
@@ -947,8 +934,7 @@ nlmsg_failure:
 
 
 static int
-tcf_action_add(struct net *net, struct nlattr *nla, struct nlmsghdr *n,
-	       u32 pid, int ovr)
+tcf_action_add(struct nlattr *nla, struct nlmsghdr *n, u32 pid, int ovr)
 {
 	int ret = 0;
 	struct tc_action *act;
@@ -965,8 +951,8 @@ tcf_action_add(struct net *net, struct nlattr *nla, struct nlmsghdr *n,
 
 	/* dump then free all the actions after update; inserted policy
 	 * stays intact
-	 */
-	ret = tcf_add_notify(net, act, pid, seq, RTM_NEWACTION, n->nlmsg_flags);
+	 * */
+	ret = tcf_add_notify(act, pid, seq, RTM_NEWACTION, n->nlmsg_flags);
 	for (a = act; a; a = act) {
 		act = a->next;
 		kfree(a);
@@ -982,38 +968,40 @@ static int tc_ctl_action(struct sk_buff *skb, struct nlmsghdr *n, void *arg)
 	u32 pid = skb ? NETLINK_CB(skb).pid : 0;
 	int ret = 0, ovr = 0;
 
+	if (net != &init_net)
+		return -EINVAL;
+
 	ret = nlmsg_parse(n, sizeof(struct tcamsg), tca, TCA_ACT_MAX, NULL);
 	if (ret < 0)
 		return ret;
 
 	if (tca[TCA_ACT_TAB] == NULL) {
-		pr_notice("tc_ctl_action: received NO action attribs\n");
+		printk("tc_ctl_action: received NO action attribs\n");
 		return -EINVAL;
 	}
 
-	/* n->nlmsg_flags & NLM_F_CREATE */
+	/* n->nlmsg_flags&NLM_F_CREATE
+	 * */
 	switch (n->nlmsg_type) {
 	case RTM_NEWACTION:
 		/* we are going to assume all other flags
-		 * imply create only if it doesn't exist
+		 * imply create only if it doesnt exist
 		 * Note that CREATE | EXCL implies that
 		 * but since we want avoid ambiguity (eg when flags
 		 * is zero) then just set this
 		 */
-		if (n->nlmsg_flags & NLM_F_REPLACE)
+		if (n->nlmsg_flags&NLM_F_REPLACE)
 			ovr = 1;
 replay:
-		ret = tcf_action_add(net, tca[TCA_ACT_TAB], n, pid, ovr);
+		ret = tcf_action_add(tca[TCA_ACT_TAB], n, pid, ovr);
 		if (ret == -EAGAIN)
 			goto replay;
 		break;
 	case RTM_DELACTION:
-		ret = tca_action_gd(net, tca[TCA_ACT_TAB], n,
-				    pid, RTM_DELACTION);
+		ret = tca_action_gd(tca[TCA_ACT_TAB], n, pid, RTM_DELACTION);
 		break;
 	case RTM_GETACTION:
-		ret = tca_action_gd(net, tca[TCA_ACT_TAB], n,
-				    pid, RTM_GETACTION);
+		ret = tca_action_gd(tca[TCA_ACT_TAB], n, pid, RTM_GETACTION);
 		break;
 	default:
 		BUG();
@@ -1025,7 +1013,7 @@ replay:
 static struct nlattr *
 find_dump_kind(const struct nlmsghdr *n)
 {
-	struct nlattr *tb1, *tb2[TCA_ACT_MAX + 1];
+	struct nlattr *tb1, *tb2[TCA_ACT_MAX+1];
 	struct nlattr *tb[TCA_ACT_MAX_PRIO + 1];
 	struct nlattr *nla[TCAA_MAX + 1];
 	struct nlattr *kind;
@@ -1053,6 +1041,7 @@ find_dump_kind(const struct nlmsghdr *n)
 static int
 tc_dump_action(struct sk_buff *skb, struct netlink_callback *cb)
 {
+	struct net *net = sock_net(skb->sk);
 	struct nlmsghdr *nlh;
 	unsigned char *b = skb_tail_pointer(skb);
 	struct nlattr *nest;
@@ -1062,21 +1051,24 @@ tc_dump_action(struct sk_buff *skb, struct netlink_callback *cb)
 	struct tcamsg *t = (struct tcamsg *) NLMSG_DATA(cb->nlh);
 	struct nlattr *kind = find_dump_kind(cb->nlh);
 
+	if (net != &init_net)
+		return 0;
+
 	if (kind == NULL) {
-		pr_info("tc_dump_action: action bad kind\n");
+		printk("tc_dump_action: action bad kind\n");
 		return 0;
 	}
 
 	a_o = tc_lookup_action(kind);
-	if (a_o == NULL)
+	if (a_o == NULL) {
 		return 0;
+	}
 
 	memset(&a, 0, sizeof(struct tc_action));
 	a.ops = a_o;
 
 	if (a_o->walk == NULL) {
-		WARN(1, "tc_dump_action: %s !capable of dumping table\n",
-		     a_o->kind);
+		printk("tc_dump_action: %s !capable of dumping table\n", a_o->kind);
 		goto nla_put_failure;
 	}
 
@@ -1116,10 +1108,9 @@ nlmsg_failure:
 
 static int __init tc_action_init(void)
 {
-	rtnl_register(PF_UNSPEC, RTM_NEWACTION, tc_ctl_action, NULL, NULL);
-	rtnl_register(PF_UNSPEC, RTM_DELACTION, tc_ctl_action, NULL, NULL);
-	rtnl_register(PF_UNSPEC, RTM_GETACTION, tc_ctl_action, tc_dump_action,
-		      NULL);
+	rtnl_register(PF_UNSPEC, RTM_NEWACTION, tc_ctl_action, NULL);
+	rtnl_register(PF_UNSPEC, RTM_DELACTION, tc_ctl_action, NULL);
+	rtnl_register(PF_UNSPEC, RTM_GETACTION, tc_ctl_action, tc_dump_action);
 
 	return 0;
 }

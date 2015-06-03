@@ -20,6 +20,7 @@
 #include <linux/string.h>
 #include <linux/mm.h>
 #include <linux/tty.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -28,9 +29,8 @@
 #include <linux/init.h>
 #include <linux/dma-mapping.h>
 #include <linux/clk.h>
-#include <linux/gfp.h>
 #include <asm/uaccess.h>
-#include <asm/gpio.h>
+#include <mach/gpio.h>
 
 #include "sdum.h"
 #include "fbcommon.h"
@@ -856,6 +856,17 @@ static struct platform_driver sdum_driver = {
 	.resume = sdum_resume,
 };
 
-module_platform_driver(sdum_driver);
+int __init sdum_init(void)
+{
+	return platform_driver_register(&sdum_driver);
+}
+
+static void __exit sdum_exit(void)
+{
+	platform_driver_unregister(&sdum_driver);
+};
+
+module_init(sdum_init);
+module_exit(sdum_exit);
 
 MODULE_LICENSE("GPL");

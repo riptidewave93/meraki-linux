@@ -122,21 +122,21 @@ int ehca_create_eq(struct ehca_shca *shca,
 
 	/* register interrupt handlers and initialize work queues */
 	if (type == EHCA_EQ) {
-		tasklet_init(&eq->interrupt_task, ehca_tasklet_eq, (long)shca);
-
 		ret = ibmebus_request_irq(eq->ist, ehca_interrupt_eq,
-					  0, "ehca_eq",
+					  IRQF_DISABLED, "ehca_eq",
 					  (void *)shca);
 		if (ret < 0)
 			ehca_err(ib_dev, "Can't map interrupt handler.");
-	} else if (type == EHCA_NEQ) {
-		tasklet_init(&eq->interrupt_task, ehca_tasklet_neq, (long)shca);
 
+		tasklet_init(&eq->interrupt_task, ehca_tasklet_eq, (long)shca);
+	} else if (type == EHCA_NEQ) {
 		ret = ibmebus_request_irq(eq->ist, ehca_interrupt_neq,
-					  0, "ehca_neq",
+					  IRQF_DISABLED, "ehca_neq",
 					  (void *)shca);
 		if (ret < 0)
 			ehca_err(ib_dev, "Can't map interrupt handler.");
+
+		tasklet_init(&eq->interrupt_task, ehca_tasklet_neq, (long)shca);
 	}
 
 	eq->is_initialized = 1;
@@ -169,15 +169,12 @@ int ehca_destroy_eq(struct ehca_shca *shca, struct ehca_eq *eq)
 	unsigned long flags;
 	u64 h_ret;
 
+	spin_lock_irqsave(&eq->spinlock, flags);
 	ibmebus_free_irq(eq->ist, (void *)shca);
 
-	spin_lock_irqsave(&shca_list_lock, flags);
-	eq->is_initialized = 0;
-	spin_unlock_irqrestore(&shca_list_lock, flags);
-
-	tasklet_kill(&eq->interrupt_task);
-
 	h_ret = hipz_h_destroy_eq(shca->ipz_hca_handle, eq);
+
+	spin_unlock_irqrestore(&eq->spinlock, flags);
 
 	if (h_ret != H_SUCCESS) {
 		ehca_err(&shca->ib_device, "Can't free EQ resources.");

@@ -75,7 +75,7 @@ static int jdvbt90502_single_reg_write(struct jdvbt90502_state *state,
 	return 0;
 }
 
-static int _jdvbt90502_write(struct dvb_frontend *fe, const u8 buf[], int len)
+static int _jdvbt90502_write(struct dvb_frontend *fe, u8 *buf, int len)
 {
 	struct jdvbt90502_state *state = fe->demodulator_priv;
 	int err, i;
@@ -134,13 +134,11 @@ static int jdvbt90502_pll_set_freq(struct jdvbt90502_state *state, u32 freq)
 	deb_fe("%s: freq=%d, step=%d\n", __func__, freq,
 	       state->frontend.ops.info.frequency_stepsize);
 	/* freq -> oscilator frequency conversion. */
-	/* freq: 473,000,000 + n*6,000,000 [+ 142857 (center freq. shift)] */
+	/* freq: 473,000,000 + n*6,000,000 (no 1/7MHz shift to center freq) */
+	/* add 400[1/7 MHZ] = 57.142857MHz.   57MHz for the IF,  */
+	/*                                   1/7MHz for center freq shift */
 	f = freq / state->frontend.ops.info.frequency_stepsize;
-	/* add 399[1/7 MHZ] = 57MHz for the IF  */
-	f += 399;
-	/* add center frequency shift if necessary */
-	if (f % 7 == 0)
-		f++;
+	f += 400;
 	pll_freq_cmd[DEMOD_REDIRECT_REG] = JDVBT90502_2ND_I2C_REG; /* 0xFE */
 	pll_freq_cmd[ADDRESS_BYTE] = state->config.pll_address << 1;
 	pll_freq_cmd[DIVIDER_BYTE1] = (f >> 8) & 0x7F;
@@ -234,6 +232,12 @@ static int jdvbt90502_read_status(struct dvb_frontend *fe, fe_status_t *state)
 	return 0;
 }
 
+static int jdvbt90502_read_ber(struct dvb_frontend *fe, u32 *ber)
+{
+	*ber = 0;
+	return 0;
+}
+
 static int jdvbt90502_read_signal_strength(struct dvb_frontend *fe,
 					   u16 *strength)
 {
@@ -260,48 +264,47 @@ static int jdvbt90502_read_signal_strength(struct dvb_frontend *fe,
 	return 0;
 }
 
-
-/* filter out un-supported properties to notify users */
-static int jdvbt90502_set_property(struct dvb_frontend *fe,
-				   struct dtv_property *tvp)
+static int jdvbt90502_read_snr(struct dvb_frontend *fe, u16 *snr)
 {
-	int r = 0;
-
-	switch (tvp->cmd) {
-	case DTV_DELIVERY_SYSTEM:
-		if (tvp->u.data != SYS_ISDBT)
-			r = -EINVAL;
-		break;
-	case DTV_CLEAR:
-	case DTV_TUNE:
-	case DTV_FREQUENCY:
-		break;
-	default:
-		r = -EINVAL;
-	}
-	return r;
-}
-
-static int jdvbt90502_get_frontend(struct dvb_frontend *fe)
-{
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
-	p->inversion = INVERSION_AUTO;
-	p->bandwidth_hz = 6000000;
-	p->code_rate_HP = FEC_AUTO;
-	p->code_rate_LP = FEC_AUTO;
-	p->modulation = QAM_64;
-	p->transmission_mode = TRANSMISSION_MODE_AUTO;
-	p->guard_interval = GUARD_INTERVAL_AUTO;
-	p->hierarchy = HIERARCHY_AUTO;
+	*snr = 0x0101;
 	return 0;
 }
 
-static int jdvbt90502_set_frontend(struct dvb_frontend *fe)
+static int jdvbt90502_read_ucblocks(struct dvb_frontend *fe, u32 *ucblocks)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
+	*ucblocks = 0;
+	return 0;
+}
 
+static int jdvbt90502_get_tune_settings(struct dvb_frontend *fe,
+					struct dvb_frontend_tune_settings *fs)
+{
+	fs->min_delay_ms = 500;
+	fs->step_size = 0;
+	fs->max_drift = 0;
+
+	return 0;
+}
+
+static int jdvbt90502_get_frontend(struct dvb_frontend *fe,
+				   struct dvb_frontend_parameters *p)
+{
+	p->inversion = INVERSION_AUTO;
+	p->u.ofdm.bandwidth = BANDWIDTH_6_MHZ;
+	p->u.ofdm.code_rate_HP = FEC_AUTO;
+	p->u.ofdm.code_rate_LP = FEC_AUTO;
+	p->u.ofdm.constellation = QAM_64;
+	p->u.ofdm.transmission_mode = TRANSMISSION_MODE_AUTO;
+	p->u.ofdm.guard_interval = GUARD_INTERVAL_AUTO;
+	p->u.ofdm.hierarchy_information = HIERARCHY_AUTO;
+	return 0;
+}
+
+static int jdvbt90502_set_frontend(struct dvb_frontend *fe,
+				   struct dvb_frontend_parameters *p)
+{
 	/**
-	 * NOTE: ignore all the parameters except frequency.
+	 * NOTE: ignore all the paramters except frequency.
 	 *       others should be fixed to the proper value for ISDB-T,
 	 *       but don't check here.
 	 */
@@ -311,15 +314,18 @@ static int jdvbt90502_set_frontend(struct dvb_frontend *fe)
 
 	deb_fe("%s: Freq:%d\n", __func__, p->frequency);
 
-	/* for recovery from DTV_CLEAN */
-	fe->dtv_property_cache.delivery_system = SYS_ISDBT;
-
 	ret = jdvbt90502_pll_set_freq(state, p->frequency);
 	if (ret) {
 		deb_fe("%s:ret == %d\n", __func__, ret);
 		return -EREMOTEIO;
 	}
 
+	return 0;
+}
+
+static int jdvbt90502_sleep(struct dvb_frontend *fe)
+{
+	deb_fe("%s called.\n", __func__);
 	return 0;
 }
 
@@ -367,7 +373,7 @@ static u8 init_code[][2] = {
 	{0x76, 0x0C},
 };
 
-static const int init_code_len = sizeof(init_code) / sizeof(u8[2]);
+const static int init_code_len = sizeof(init_code) / sizeof(u8[2]);
 
 static int jdvbt90502_init(struct dvb_frontend *fe)
 {
@@ -388,7 +394,6 @@ static int jdvbt90502_init(struct dvb_frontend *fe)
 		if (ret != 1)
 			goto error;
 	}
-	fe->dtv_property_cache.delivery_system = SYS_ISDBT;
 	msleep(100);
 
 	return 0;
@@ -439,12 +444,14 @@ error:
 }
 
 static struct dvb_frontend_ops jdvbt90502_ops = {
-	.delsys = { SYS_ISDBT },
+
 	.info = {
 		.name			= "Comtech JDVBT90502 ISDB-T",
+		.type			= FE_OFDM,
 		.frequency_min		= 473000000, /* UHF 13ch, center */
 		.frequency_max		= 767142857, /* UHF 62ch, center */
-		.frequency_stepsize	= JDVBT90502_PLL_CLK / JDVBT90502_PLL_DIVIDER,
+		.frequency_stepsize	= JDVBT90502_PLL_CLK /
+							JDVBT90502_PLL_DIVIDER,
 		.frequency_tolerance	= 0,
 
 		/* NOTE: this driver ignores all parameters but frequency. */
@@ -461,13 +468,16 @@ static struct dvb_frontend_ops jdvbt90502_ops = {
 	.release = jdvbt90502_release,
 
 	.init = jdvbt90502_init,
+	.sleep = jdvbt90502_sleep,
 	.write = _jdvbt90502_write,
-
-	.set_property = jdvbt90502_set_property,
 
 	.set_frontend = jdvbt90502_set_frontend,
 	.get_frontend = jdvbt90502_get_frontend,
+	.get_tune_settings = jdvbt90502_get_tune_settings,
 
 	.read_status = jdvbt90502_read_status,
+	.read_ber = jdvbt90502_read_ber,
 	.read_signal_strength = jdvbt90502_read_signal_strength,
+	.read_snr = jdvbt90502_read_snr,
+	.read_ucblocks = jdvbt90502_read_ucblocks,
 };

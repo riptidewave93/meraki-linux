@@ -20,7 +20,6 @@
 #undef DEBUG
 
 #include <linux/kernel.h>
-#include <linux/export.h>
 #include <asm/prom.h>
 #include <asm/dcr.h>
 

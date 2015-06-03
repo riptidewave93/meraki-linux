@@ -2,9 +2,13 @@
 #define LINUX_HARDIRQ_H
 
 #include <linux/preempt.h>
+#ifdef CONFIG_PREEMPT
+#include <linux/smp_lock.h>
+#endif
 #include <linux/lockdep.h>
 #include <linux/ftrace_irq.h>
 #include <asm/hardirq.h>
+#include <asm/system.h>
 
 /*
  * We put the hardirq and softirq counter into the preemption
@@ -93,9 +97,11 @@
  */
 #define in_nmi()	(preempt_count() & NMI_MASK)
 
-#if defined(CONFIG_PREEMPT_COUNT)
+#if defined(CONFIG_PREEMPT)
+# define PREEMPT_INATOMIC_BASE kernel_locked()
 # define PREEMPT_CHECK_OFFSET 1
 #else
+# define PREEMPT_INATOMIC_BASE 0
 # define PREEMPT_CHECK_OFFSET 0
 #endif
 
@@ -106,7 +112,7 @@
  * used in the general case to determine whether sleeping is possible.
  * Do not use in_atomic() in driver code.
  */
-#define in_atomic()	((preempt_count() & ~PREEMPT_ACTIVE) != 0)
+#define in_atomic()	((preempt_count() & ~PREEMPT_ACTIVE) != PREEMPT_INATOMIC_BASE)
 
 /*
  * Check whether we were atomic before we did preempt_disable():
@@ -115,7 +121,7 @@
 #define in_atomic_preempt_off() \
 		((preempt_count() & ~PREEMPT_ACTIVE) != PREEMPT_CHECK_OFFSET)
 
-#ifdef CONFIG_PREEMPT_COUNT
+#ifdef CONFIG_PREEMPT
 # define preemptible()	(preempt_count() == 0 && !irqs_disabled())
 # define IRQ_EXIT_OFFSET (HARDIRQ_OFFSET-1)
 #else
@@ -139,20 +145,17 @@ static inline void account_system_vtime(struct task_struct *tsk)
 extern void account_system_vtime(struct task_struct *tsk);
 #endif
 
-#if defined(CONFIG_TINY_RCU) || defined(CONFIG_TINY_PREEMPT_RCU)
-
-static inline void rcu_nmi_enter(void)
-{
-}
-
-static inline void rcu_nmi_exit(void)
-{
-}
-
-#else
+#if defined(CONFIG_NO_HZ)
+extern void rcu_irq_enter(void);
+extern void rcu_irq_exit(void);
 extern void rcu_nmi_enter(void);
 extern void rcu_nmi_exit(void);
-#endif
+#else
+# define rcu_irq_enter() do { } while (0)
+# define rcu_irq_exit() do { } while (0)
+# define rcu_nmi_enter() do { } while (0)
+# define rcu_nmi_exit() do { } while (0)
+#endif /* #if defined(CONFIG_NO_HZ) */
 
 /*
  * It is safe to do non-atomic ops on ->hardirq_context,

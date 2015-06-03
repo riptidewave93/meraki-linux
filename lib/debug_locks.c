@@ -8,9 +8,10 @@
  *
  *  Copyright (C) 2006 Red Hat, Inc., Ingo Molnar <mingo@redhat.com>
  */
+#include <linux/kernel.h>
 #include <linux/rwsem.h>
 #include <linux/mutex.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/spinlock.h>
 #include <linux/debug_locks.h>
 
@@ -22,7 +23,6 @@
  * shut up after that.
  */
 int debug_locks = 1;
-EXPORT_SYMBOL_GPL(debug_locks);
 
 /*
  * The locking-testsuite uses <debug_locks_silent> to get a
@@ -38,6 +38,7 @@ int debug_locks_off(void)
 {
 	if (__debug_locks_off()) {
 		if (!debug_locks_silent) {
+			oops_in_progress = 1;
 			console_verbose();
 			return 1;
 		}

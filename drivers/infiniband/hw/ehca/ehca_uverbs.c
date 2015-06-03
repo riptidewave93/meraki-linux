@@ -40,8 +40,6 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-#include <linux/slab.h>
-
 #include "ehca_classes.h"
 #include "ehca_iverbs.h"
 #include "ehca_mrmw.h"

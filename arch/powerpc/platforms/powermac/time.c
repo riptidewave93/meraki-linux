@@ -26,6 +26,7 @@
 
 #include <asm/sections.h>
 #include <asm/prom.h>
+#include <asm/system.h>
 #include <asm/io.h>
 #include <asm/pgtable.h>
 #include <asm/machdep.h>
@@ -273,7 +274,7 @@ int __init via_calibrate_decr(void)
 		return 0;
 	}
 	of_node_put(vias);
-	via = ioremap(rsrc.start, resource_size(&rsrc));
+	via = ioremap(rsrc.start, rsrc.end - rsrc.start + 1);
 	if (via == NULL) {
 		printk(KERN_ERR "Failed to map VIA for timer calibration !\n");
 		return 0;
@@ -316,9 +317,9 @@ void __init pmac_calibrate_decr(void)
 	 * calibration. That's better since the VIA itself seems
 	 * to be slightly off. --BenH
 	 */
-	if (!of_machine_is_compatible("MacRISC2") &&
-	    !of_machine_is_compatible("MacRISC3") &&
-	    !of_machine_is_compatible("MacRISC4"))
+	if (!machine_is_compatible("MacRISC2") &&
+	    !machine_is_compatible("MacRISC3") &&
+	    !machine_is_compatible("MacRISC4"))
 		if (via_calibrate_decr())
 			return;
 
@@ -327,7 +328,7 @@ void __init pmac_calibrate_decr(void)
 	 * probably implement calibration based on the KL timer on these
 	 * machines anyway... -BenH
 	 */
-	if (of_machine_is_compatible("PowerMac3,5"))
+	if (machine_is_compatible("PowerMac3,5"))
 		if (via_calibrate_decr())
 			return;
 #endif

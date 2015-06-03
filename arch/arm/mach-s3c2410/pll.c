@@ -1,6 +1,6 @@
 /* arch/arm/mach-s3c2410/pll.c
  *
- * Copyright (c) 2006-2007 Simtec Electronics
+ * Copyright (c) 2006,2007 Simtec Electronics
  *	http://armlinux.simtec.co.uk/
  *	Ben Dooks <ben@simtec.co.uk>
  *	Vincent Sanders <vince@arm.linux.org.uk>
@@ -25,7 +25,7 @@
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/device.h>
+#include <linux/sysdev.h>
 #include <linux/list.h>
 #include <linux/clk.h>
 #include <linux/err.h>
@@ -66,34 +66,30 @@ static struct cpufreq_frequency_table pll_vals_12MHz[] = {
     { .frequency = 270000000, .index = PLLVAL(127, 1, 1),  },
 };
 
-static int s3c2410_plls_add(struct device *dev, struct subsys_interface *sif)
+static int s3c2410_plls_add(struct sys_device *dev)
 {
 	return s3c_plltab_register(pll_vals_12MHz, ARRAY_SIZE(pll_vals_12MHz));
 }
 
-static struct subsys_interface s3c2410_plls_interface = {
-	.name		= "s3c2410_plls",
-	.subsys		= &s3c2410_subsys,
-	.add_dev	= s3c2410_plls_add,
+static struct sysdev_driver s3c2410_plls_drv = {
+	.add	= s3c2410_plls_add,
 };
 
 static int __init s3c2410_pll_init(void)
 {
-	return subsys_interface_register(&s3c2410_plls_interface);
+	return sysdev_driver_register(&s3c2410_sysclass, &s3c2410_plls_drv);
 
 }
 
 arch_initcall(s3c2410_pll_init);
 
-static struct subsys_interface s3c2410a_plls_interface = {
-	.name		= "s3c2410a_plls",
-	.subsys		= &s3c2410a_subsys,
-	.add_dev	= s3c2410_plls_add,
+static struct sysdev_driver s3c2410a_plls_drv = {
+	.add	= s3c2410_plls_add,
 };
 
 static int __init s3c2410a_pll_init(void)
 {
-	return subsys_interface_register(&s3c2410a_plls_interface);
+	return sysdev_driver_register(&s3c2410a_sysclass, &s3c2410a_plls_drv);
 }
 
 arch_initcall(s3c2410a_pll_init);

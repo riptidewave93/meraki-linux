@@ -27,7 +27,7 @@
  *	with nanosecond accuracy
  */
 
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/timex.h>
 #include <linux/capability.h>
 #include <linux/clocksource.h>
@@ -35,6 +35,7 @@
 #include <linux/syscalls.h>
 #include <linux/security.h>
 #include <linux/fs.h>
+#include <linux/slab.h>
 #include <linux/math64.h>
 #include <linux/ptrace.h>
 
@@ -132,11 +133,12 @@ SYSCALL_DEFINE2(gettimeofday, struct timeval __user *, tv,
  */
 static inline void warp_clock(void)
 {
-	struct timespec adjust;
-
-	adjust = current_kernel_time();
-	adjust.tv_sec += sys_tz.tz_minuteswest * 60;
-	do_settimeofday(&adjust);
+	write_seqlock_irq(&xtime_lock);
+	wall_to_monotonic.tv_sec -= sys_tz.tz_minuteswest * 60;
+	xtime.tv_sec += sys_tz.tz_minuteswest * 60;
+	update_xtime_cache(0);
+	write_sequnlock_irq(&xtime_lock);
+	clock_was_set();
 }
 
 /*
@@ -150,7 +152,7 @@ static inline void warp_clock(void)
  * various programs will get confused when the clock gets warped.
  */
 
-int do_sys_settimeofday(const struct timespec *tv, const struct timezone *tz)
+int do_sys_settimeofday(struct timespec *tv, struct timezone *tz)
 {
 	static int firsttime = 1;
 	int error = 0;
@@ -163,6 +165,7 @@ int do_sys_settimeofday(const struct timespec *tv, const struct timezone *tz)
 		return error;
 
 	if (tz) {
+		/* SMP safe, global irq locking makes it work. */
 		sys_tz = *tz;
 		update_vsyscall_tz();
 		if (firsttime) {
@@ -172,7 +175,12 @@ int do_sys_settimeofday(const struct timespec *tv, const struct timezone *tz)
 		}
 	}
 	if (tv)
+	{
+		/* SMP safe, again the code in arch/foo/time.c should
+		 * globally block out interrupts when it runs.
+		 */
 		return do_settimeofday(tv);
+	}
 	return 0;
 }
 
@@ -232,7 +240,7 @@ EXPORT_SYMBOL(current_fs_time);
  * Avoid unnecessary multiplications/divisions in the
  * two most common HZ cases:
  */
-inline unsigned int jiffies_to_msecs(const unsigned long j)
+unsigned int inline jiffies_to_msecs(const unsigned long j)
 {
 #if HZ <= MSEC_PER_SEC && !(MSEC_PER_SEC % HZ)
 	return (MSEC_PER_SEC / HZ) * j;
@@ -248,7 +256,7 @@ inline unsigned int jiffies_to_msecs(const unsigned long j)
 }
 EXPORT_SYMBOL(jiffies_to_msecs);
 
-inline unsigned int jiffies_to_usecs(const unsigned long j)
+unsigned int inline jiffies_to_usecs(const unsigned long j)
 {
 #if HZ <= USEC_PER_SEC && !(USEC_PER_SEC % HZ)
 	return (USEC_PER_SEC / HZ) * j;
@@ -293,6 +301,22 @@ struct timespec timespec_trunc(struct timespec t, unsigned gran)
 	return t;
 }
 EXPORT_SYMBOL(timespec_trunc);
+
+#ifndef CONFIG_GENERIC_TIME
+/*
+ * Simulate gettimeofday using do_gettimeofday which only allows a timeval
+ * and therefore only yields usec accuracy
+ */
+void getnstimeofday(struct timespec *tv)
+{
+	struct timeval x;
+
+	do_gettimeofday(&x);
+	tv->tv_sec = x.tv_sec;
+	tv->tv_nsec = x.tv_usec * NSEC_PER_USEC;
+}
+EXPORT_SYMBOL_GPL(getnstimeofday);
+#endif
 
 /* Converts Gregorian date to seconds since 1970-01-01 00:00:00.
  * Assumes input in normal date format, i.e. 1980-12-31 23:59:59
@@ -487,20 +511,17 @@ EXPORT_SYMBOL(usecs_to_jiffies);
  * that a remainder subtract here would not do the right thing as the
  * resolution values don't fall on second boundries.  I.e. the line:
  * nsec -= nsec % TICK_NSEC; is NOT a correct resolution rounding.
- * Note that due to the small error in the multiplier here, this
- * rounding is incorrect for sufficiently large values of tv_nsec, but
- * well formed timespecs should have tv_nsec < NSEC_PER_SEC, so we're
- * OK.
  *
  * Rather, we just shift the bits off the right.
  *
  * The >> (NSEC_JIFFIE_SC - SEC_JIFFIE_SC) converts the scaled nsec
  * value to a scaled second value.
  */
-static unsigned long
-__timespec_to_jiffies(unsigned long sec, long nsec)
+unsigned long
+timespec_to_jiffies(const struct timespec *value)
 {
-	nsec = nsec + TICK_NSEC - 1;
+	unsigned long sec = value->tv_sec;
+	long nsec = value->tv_nsec + TICK_NSEC - 1;
 
 	if (sec >= MAX_SEC_IN_JIFFIES){
 		sec = MAX_SEC_IN_JIFFIES;
@@ -511,13 +532,6 @@ __timespec_to_jiffies(unsigned long sec, long nsec)
 		 (NSEC_JIFFIE_SC - SEC_JIFFIE_SC))) >> SEC_JIFFIE_SC;
 
 }
-
-unsigned long
-timespec_to_jiffies(const struct timespec *value)
-{
-	return __timespec_to_jiffies(value->tv_sec, value->tv_nsec);
-}
-
 EXPORT_SYMBOL(timespec_to_jiffies);
 
 void
@@ -534,27 +548,31 @@ jiffies_to_timespec(const unsigned long jiffies, struct timespec *value)
 }
 EXPORT_SYMBOL(jiffies_to_timespec);
 
-/*
- * We could use a similar algorithm to timespec_to_jiffies (with a
- * different multiplier for usec instead of nsec). But this has a
- * problem with rounding: we can't exactly add TICK_NSEC - 1 to the
- * usec value, since it's not necessarily integral.
+/* Same for "timeval"
  *
- * We could instead round in the intermediate scaled representation
- * (i.e. in units of 1/2^(large scale) jiffies) but that's also
- * perilous: the scaling introduces a small positive error, which
- * combined with a division-rounding-upward (i.e. adding 2^(scale) - 1
- * units to the intermediate before shifting) leads to accidental
- * overflow and overestimates.
- *
- * At the cost of one additional multiplication by a constant, just
- * use the timespec implementation.
+ * Well, almost.  The problem here is that the real system resolution is
+ * in nanoseconds and the value being converted is in micro seconds.
+ * Also for some machines (those that use HZ = 1024, in-particular),
+ * there is a LARGE error in the tick size in microseconds.
+
+ * The solution we use is to do the rounding AFTER we convert the
+ * microsecond part.  Thus the USEC_ROUND, the bits to be shifted off.
+ * Instruction wise, this should cost only an additional add with carry
+ * instruction above the way it was done above.
  */
 unsigned long
 timeval_to_jiffies(const struct timeval *value)
 {
-	return __timespec_to_jiffies(value->tv_sec,
-				     value->tv_usec * NSEC_PER_USEC);
+	unsigned long sec = value->tv_sec;
+	long usec = value->tv_usec;
+
+	if (sec >= MAX_SEC_IN_JIFFIES){
+		sec = MAX_SEC_IN_JIFFIES;
+		usec = 0;
+	}
+	return (((u64)sec * SEC_CONVERSION) +
+		(((u64)usec * USEC_CONVERSION + USEC_ROUND) >>
+		 (USEC_JIFFIE_SC - SEC_JIFFIE_SC))) >> SEC_JIFFIE_SC;
 }
 EXPORT_SYMBOL(timeval_to_jiffies);
 
@@ -644,53 +662,22 @@ u64 nsec_to_clock_t(u64 x)
 #endif
 }
 
-/**
- * nsecs_to_jiffies64 - Convert nsecs in u64 to jiffies64
- *
- * @n:	nsecs in u64
- *
- * Unlike {m,u}secs_to_jiffies, type of input is not unsigned int but u64.
- * And this doesn't return MAX_JIFFY_OFFSET since this function is designed
- * for scheduler, not for use in device drivers to calculate timeout value.
- *
- * note:
- *   NSEC_PER_SEC = 10^9 = (5^9 * 2^9) = (1953125 * 512)
- *   ULLONG_MAX ns = 18446744073.709551615 secs = about 584 years
- */
-u64 nsecs_to_jiffies64(u64 n)
+#if (BITS_PER_LONG < 64)
+u64 get_jiffies_64(void)
 {
-#if (NSEC_PER_SEC % HZ) == 0
-	/* Common case, HZ = 100, 128, 200, 250, 256, 500, 512, 1000 etc. */
-	return div_u64(n, NSEC_PER_SEC / HZ);
-#elif (HZ % 512) == 0
-	/* overflow after 292 years if HZ = 1024 */
-	return div_u64(n * HZ / 512, NSEC_PER_SEC / 512);
-#else
-	/*
-	 * Generic case - optimized for cases where HZ is a multiple of 3.
-	 * overflow after 64.99 years, exact for HZ = 60, 72, 90, 120 etc.
-	 */
-	return div_u64(n * 9, (9ull * NSEC_PER_SEC + HZ / 2) / HZ);
-#endif
-}
+	unsigned long seq;
+	u64 ret;
 
-/**
- * nsecs_to_jiffies - Convert nsecs in u64 to jiffies
- *
- * @n:	nsecs in u64
- *
- * Unlike {m,u}secs_to_jiffies, type of input is not unsigned int but u64.
- * And this doesn't return MAX_JIFFY_OFFSET since this function is designed
- * for scheduler, not for use in device drivers to calculate timeout value.
- *
- * note:
- *   NSEC_PER_SEC = 10^9 = (5^9 * 2^9) = (1953125 * 512)
- *   ULLONG_MAX ns = 18446744073.709551615 secs = about 584 years
- */
-unsigned long nsecs_to_jiffies(u64 n)
-{
-	return (unsigned long)nsecs_to_jiffies64(n);
+	do {
+		seq = read_seqbegin(&xtime_lock);
+		ret = jiffies_64;
+	} while (read_seqretry(&xtime_lock, seq));
+	return ret;
 }
+EXPORT_SYMBOL(get_jiffies_64);
+#endif
+
+EXPORT_SYMBOL(jiffies);
 
 /*
  * Add two timespec values and do a safety check for overflow.

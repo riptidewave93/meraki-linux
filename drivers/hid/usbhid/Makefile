@@ -3,15 +3,15 @@
 #
 
 # Multipart objects.
-usbhid-y	:= hid-core.o hid-quirks.o
+usbhid-objs	:= hid-core.o hid-quirks.o
 
 # Optional parts of multipart objects.
 
 ifeq ($(CONFIG_USB_HIDDEV),y)
-	usbhid-y	+= hiddev.o
+	usbhid-objs	+= hiddev.o
 endif
 ifeq ($(CONFIG_HID_PID),y)
-	usbhid-y	+= hid-pidff.o
+	usbhid-objs	+= hid-pidff.o
 endif
 
 obj-$(CONFIG_USB_HID)		+= usbhid.o

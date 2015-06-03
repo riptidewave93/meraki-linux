@@ -215,7 +215,7 @@ static struct mtd_partition main_partition = {
 };
 #endif
 
-/* Auxiliary partition if we find another flash */
+/* Auxilliary partition if we find another flash */
 static struct mtd_partition aux_partition = {
 	.name = "aux",
 	.size = 0,
@@ -404,7 +404,8 @@ static int __init init_axis_flash(void)
 		 */
 		int blockstat;
 		do {
-			blockstat = mtd_block_isbad(main_mtd, ptable_sector);
+			blockstat = main_mtd->block_isbad(main_mtd,
+				ptable_sector);
 			if (blockstat < 0)
 				ptable_sector = 0; /* read error */
 			else if (blockstat)
@@ -412,8 +413,8 @@ static int __init init_axis_flash(void)
 		} while (blockstat && ptable_sector);
 #endif
 		if (ptable_sector) {
-			mtd_read(main_mtd, ptable_sector, PAGESIZE, &len,
-				 page);
+			main_mtd->read(main_mtd, ptable_sector, PAGESIZE,
+				&len, page);
 			ptable_head = &((struct partitiontable *) page)->head;
 		}
 

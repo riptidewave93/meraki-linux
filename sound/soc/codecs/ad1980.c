@@ -11,16 +11,7 @@
  *  option) any later version.
  */
 
-/*
- * WARNING:
- *
- * Because Analog Devices Inc. discontinued the ad1980 sound chip since
- * Sep. 2009, this ad1980 driver is not maintained, tested and supported
- * by ADI now.
- */
-
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/device.h>
@@ -29,8 +20,14 @@
 #include <sound/ac97_codec.h>
 #include <sound/initval.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 
 #include "ad1980.h"
+
+static unsigned int ac97_read(struct snd_soc_codec *codec,
+	unsigned int reg);
+static int ac97_write(struct snd_soc_codec *codec,
+	unsigned int reg, unsigned int val);
 
 /*
  * AD1980 register cache
@@ -132,8 +129,8 @@ static int ac97_write(struct snd_soc_codec *codec, unsigned int reg,
 	return 0;
 }
 
-static struct snd_soc_dai_driver ad1980_dai = {
-	.name = "ad1980-hifi",
+struct snd_soc_dai ad1980_dai = {
+	.name = "AC97",
 	.ac97_control = 1,
 	.playback = {
 		.stream_name = "Playback",
@@ -148,6 +145,7 @@ static struct snd_soc_dai_driver ad1980_dai = {
 		.rates = SNDRV_PCM_RATE_48000,
 		.formats = SND_SOC_STD_AC97_FMTS, },
 };
+EXPORT_SYMBOL_GPL(ad1980_dai);
 
 static int ad1980_reset(struct snd_soc_codec *codec, int try_warm)
 {
@@ -178,19 +176,52 @@ err:
 	return -EIO;
 }
 
-static int ad1980_soc_probe(struct snd_soc_codec *codec)
+static int ad1980_soc_probe(struct platform_device *pdev)
 {
-	int ret;
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec;
+	int ret = 0;
 	u16 vendor_id2;
 	u16 ext_status;
 
 	printk(KERN_INFO "AD1980 SoC Audio Codec\n");
 
+	socdev->card->codec = kzalloc(sizeof(struct snd_soc_codec), GFP_KERNEL);
+	if (socdev->card->codec == NULL)
+		return -ENOMEM;
+	codec = socdev->card->codec;
+	mutex_init(&codec->mutex);
+
+	codec->reg_cache =
+		kzalloc(sizeof(u16) * ARRAY_SIZE(ad1980_reg), GFP_KERNEL);
+	if (codec->reg_cache == NULL) {
+		ret = -ENOMEM;
+		goto cache_err;
+	}
+	memcpy(codec->reg_cache, ad1980_reg, sizeof(u16) * \
+			ARRAY_SIZE(ad1980_reg));
+	codec->reg_cache_size = sizeof(u16) * ARRAY_SIZE(ad1980_reg);
+	codec->reg_cache_step = 2;
+	codec->name = "AD1980";
+	codec->owner = THIS_MODULE;
+	codec->dai = &ad1980_dai;
+	codec->num_dai = 1;
+	codec->write = ac97_write;
+	codec->read = ac97_read;
+	INIT_LIST_HEAD(&codec->dapm_widgets);
+	INIT_LIST_HEAD(&codec->dapm_paths);
+
 	ret = snd_soc_new_ac97_codec(codec, &soc_ac97_ops, 0);
 	if (ret < 0) {
 		printk(KERN_ERR "ad1980: failed to register AC97 codec\n");
-		return ret;
+		goto codec_err;
 	}
+
+	/* register pcms */
+	ret = snd_soc_new_pcms(socdev, SNDRV_DEFAULT_IDX1, SNDRV_DEFAULT_STR1);
+	if (ret < 0)
+		goto pcm_err;
+
 
 	ret = ad1980_reset(codec, 0);
 	if (ret < 0) {
@@ -199,22 +230,18 @@ static int ad1980_soc_probe(struct snd_soc_codec *codec)
 	}
 
 	/* Read out vendor ID to make sure it is ad1980 */
-	if (ac97_read(codec, AC97_VENDOR_ID1) != 0x4144) {
-		ret = -ENODEV;
+	if (ac97_read(codec, AC97_VENDOR_ID1) != 0x4144)
 		goto reset_err;
-	}
 
 	vendor_id2 = ac97_read(codec, AC97_VENDOR_ID2);
 
 	if (vendor_id2 != 0x5370) {
-		if (vendor_id2 != 0x5374) {
-			ret = -ENODEV;
+		if (vendor_id2 != 0x5374)
 			goto reset_err;
-		} else {
+		else
 			printk(KERN_WARNING "ad1980: "
 				"Found AD1981 - only 2/2 IN/OUT Channels "
 				"supported\n");
-		}
 	}
 
 	/* unmute captures and playbacks volume */
@@ -228,57 +255,53 @@ static int ad1980_soc_probe(struct snd_soc_codec *codec)
 	ext_status = ac97_read(codec, AC97_EXTENDED_STATUS);
 	ac97_write(codec, AC97_EXTENDED_STATUS, ext_status&~0x3800);
 
-	snd_soc_add_codec_controls(codec, ad1980_snd_ac97_controls,
+	snd_soc_add_controls(codec, ad1980_snd_ac97_controls,
 				ARRAY_SIZE(ad1980_snd_ac97_controls));
+	ret = snd_soc_init_card(socdev);
+	if (ret < 0) {
+		printk(KERN_ERR "ad1980: failed to register card\n");
+		goto reset_err;
+	}
 
 	return 0;
 
 reset_err:
+	snd_soc_free_pcms(socdev);
+
+pcm_err:
 	snd_soc_free_ac97_codec(codec);
+
+codec_err:
+	kfree(codec->reg_cache);
+
+cache_err:
+	kfree(socdev->card->codec);
+	socdev->card->codec = NULL;
 	return ret;
 }
 
-static int ad1980_soc_remove(struct snd_soc_codec *codec)
+static int ad1980_soc_remove(struct platform_device *pdev)
 {
+	struct snd_soc_device *socdev = platform_get_drvdata(pdev);
+	struct snd_soc_codec *codec = socdev->card->codec;
+
+	if (codec == NULL)
+		return 0;
+
+	snd_soc_dapm_free(socdev);
+	snd_soc_free_pcms(socdev);
 	snd_soc_free_ac97_codec(codec);
+	kfree(codec->reg_cache);
+	kfree(codec);
 	return 0;
 }
 
-static struct snd_soc_codec_driver soc_codec_dev_ad1980 = {
+struct snd_soc_codec_device soc_codec_dev_ad1980 = {
 	.probe = 	ad1980_soc_probe,
 	.remove = 	ad1980_soc_remove,
-	.reg_cache_size = ARRAY_SIZE(ad1980_reg),
-	.reg_word_size = sizeof(u16),
-	.reg_cache_default = ad1980_reg,
-	.reg_cache_step = 2,
-	.write = ac97_write,
-	.read = ac97_read,
 };
+EXPORT_SYMBOL_GPL(soc_codec_dev_ad1980);
 
-static __devinit int ad1980_probe(struct platform_device *pdev)
-{
-	return snd_soc_register_codec(&pdev->dev,
-			&soc_codec_dev_ad1980, &ad1980_dai, 1);
-}
-
-static int __devexit ad1980_remove(struct platform_device *pdev)
-{
-	snd_soc_unregister_codec(&pdev->dev);
-	return 0;
-}
-
-static struct platform_driver ad1980_codec_driver = {
-	.driver = {
-			.name = "ad1980",
-			.owner = THIS_MODULE,
-	},
-
-	.probe = ad1980_probe,
-	.remove = __devexit_p(ad1980_remove),
-};
-
-module_platform_driver(ad1980_codec_driver);
-
-MODULE_DESCRIPTION("ASoC ad1980 driver (Obsolete)");
+MODULE_DESCRIPTION("ASoC ad1980 driver");
 MODULE_AUTHOR("Roy Huang, Cliff Cai");
 MODULE_LICENSE("GPL");

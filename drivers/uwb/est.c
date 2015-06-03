@@ -40,8 +40,6 @@
  *   uwb_est_get_size()
  */
 #include <linux/spinlock.h>
-#include <linux/slab.h>
-#include <linux/export.h>
 
 #include "uwb-internal.h"
 
@@ -184,7 +182,7 @@ int uwb_est_create(void)
 
 	uwb_est_size = 2;
 	uwb_est_used = 0;
-	uwb_est = kcalloc(uwb_est_size, sizeof(uwb_est[0]), GFP_KERNEL);
+	uwb_est = kzalloc(uwb_est_size * sizeof(uwb_est[0]), GFP_KERNEL);
 	if (uwb_est == NULL)
 		return -ENOMEM;
 

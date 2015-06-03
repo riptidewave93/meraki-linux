@@ -29,7 +29,7 @@
 #include <linux/pci.h>
 #include <linux/blkdev.h>
 #include <linux/dma-mapping.h>
-#include <linux/slab.h>
+#include <asm/system.h>
 #include <asm/io.h>
 
 #include <scsi/scsi.h>
@@ -604,7 +604,7 @@ handled:
  *
  *	Queue a command to the ATP queue. Called with the host lock held.
  */
-static int atp870u_queuecommand_lck(struct scsi_cmnd *req_p,
+static int atp870u_queuecommand(struct scsi_cmnd * req_p, 
 			 void (*done) (struct scsi_cmnd *))
 {
 	unsigned char c;
@@ -692,8 +692,6 @@ static int atp870u_queuecommand_lck(struct scsi_cmnd *req_p,
 #endif	
 	return 0;
 }
-
-static DEF_SCSI_QCMD(atp870u_queuecommand)
 
 /**
  *	send_s870	-	send a command to the controller
@@ -1173,16 +1171,7 @@ wait_io1:
 	outw(val, tmport);
 	outb(2, 0x80);
 TCM_SYNC:
-	/*
-	 * The funny division into multiple delays is to accomodate
-	 * arches like ARM where udelay() multiplies its argument by
-	 * a large number to initialize a loop counter.  To avoid
-	 * overflow, the maximum supported udelay is 2000 microseconds.
-	 *
-	 * XXX it would be more polite to find a way to use msleep()
-	 */
-	mdelay(2);
-	udelay(48);
+	udelay(0x800);
 	if ((inb(tmport) & 0x80) == 0x00) {	/* bsy ? */
 		outw(0, tmport--);
 		outb(0, tmport);
@@ -1236,7 +1225,7 @@ TCM_5:			/* isolation complete..  */
 	printk(" \n%x %x %x %s\n ",assignid_map,mbuf[0],mbuf[1],&mbuf[2]); */
 	i = 15;
 	j = mbuf[0];
-	if ((j & 0x20) != 0) {	/* bit5=1:ID up to 7      */
+	if ((j & 0x20) != 0) {	/* bit5=1:ID upto 7      */
 		i = 7;
 	}
 	if ((j & 0x06) == 0) {	/* IDvalid?             */
@@ -2591,7 +2580,7 @@ static int atp870u_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	 * this than via the PCI device table
 	 */
 	if (ent->device == PCI_DEVICE_ID_ARTOP_AEC7610) {
-		atpdev->chip_ver = pdev->revision;
+		error = pci_read_config_byte(pdev, PCI_CLASS_REVISION, &atpdev->chip_ver);
 		if (atpdev->chip_ver < 2)
 			goto err_eio;
 	}
@@ -2610,7 +2599,7 @@ static int atp870u_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 	base_io &= 0xfffffff8;
 
 	if ((ent->device == ATP880_DEVID1)||(ent->device == ATP880_DEVID2)) {
-		atpdev->chip_ver = pdev->revision;
+		error = pci_read_config_byte(pdev, PCI_CLASS_REVISION, &atpdev->chip_ver);
 		pci_write_config_byte(pdev, PCI_LATENCY_TIMER, 0x80);//JCC082803
 
 		host_id = inb(base_io + 0x39);

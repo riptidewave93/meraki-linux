@@ -37,7 +37,7 @@ SECTIONS
   _einittext = .;
 
   INIT_DATA_SECTION(8)
-  PERCPU_SECTION(L1_CACHE_BYTES)
+  PERCPU(4096)
 
   . = ALIGN(PAGE_SIZE);
   __init_end = .;
@@ -57,10 +57,10 @@ SECTIONS
   _text = .;
   _stext = .;
   .text : {
-	*(.text..start)
-	*(.text..entry)
-	*(.text..break)
-	*(.text..tlbmiss)
+	*(.text.start)
+	*(.text.entry)
+	*(.text.break)
+	*(.text.tlbmiss)
 	TEXT_TEXT
 	SCHED_TEXT
 	LOCK_TEXT
@@ -114,7 +114,7 @@ SECTIONS
 
   .sbss		: { *(.sbss .sbss.*) }
   .bss		: { *(.bss .bss.*) }
-  .bss..stack	: { *(.bss) }
+  .bss.stack	: { *(.bss) }
 
   __bss_stop = .;
   _end = . ;

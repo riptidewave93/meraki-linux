@@ -4,10 +4,14 @@
  *	Created by: Hariprasad Nellitheertha (hari@in.ibm.com)
  *	Copyright (C) IBM Corporation, 2004. All rights reserved
  */
+
 #include <linux/errno.h>
 #include <linux/crash_dump.h>
 #include <linux/io.h>
 #include <asm/uaccess.h>
+
+/* Stores the physical address of elf header of crash image. */
+unsigned long long elfcorehdr_addr = ELFCORE_ADDR_MAX;
 
 /**
  * copy_oldmem_page - copy one page from "oldmem"

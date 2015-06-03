@@ -1,7 +1,7 @@
 /*
  *  init.c, Common initialization routines for NEC VR4100 series.
  *
- *  Copyright (C) 2003-2009  Yoichi Yuasa <yuasa@linux-mips.org>
+ *  Copyright (C) 2003-2008  Yoichi Yuasa <yuasa@linux-mips.org>
  *
  *  This program is free software; you can redistribute it and/or modify
  *  it under the terms of the GNU General Public License as published by
@@ -66,9 +66,9 @@ void __init prom_init(void)
 	argv = (char **)fw_arg1;
 
 	for (i = 1; i < argc; i++) {
-		strlcat(arcs_cmdline, argv[i], COMMAND_LINE_SIZE);
+		strcat(arcs_cmdline, argv[i]);
 		if (i < (argc - 1))
-			strlcat(arcs_cmdline, " ", COMMAND_LINE_SIZE);
+			strcat(arcs_cmdline, " ");
 	}
 }
 

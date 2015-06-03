@@ -23,6 +23,15 @@ static int xfrm4_transport_output(struct xfrm_state *x, struct sk_buff *skb)
 	struct iphdr *iph = ip_hdr(skb);
 	int ihl = iph->ihl * 4;
 
+	if (x->alg_flags & XFRM_ALGO_FLAGS_OFFLOAD_TRANPORT) {
+		/* Hardware offload will take care of moving the IP header */
+		skb_set_network_header(skb, -x->props.header_len);
+		skb->mac_header = skb->network_header +
+				  offsetof(struct iphdr, protocol);
+		skb->transport_header = skb->network_header + ihl;
+		return 0;
+	}
+
 	skb_set_network_header(skb, -x->props.header_len);
 	skb->mac_header = skb->network_header +
 			  offsetof(struct iphdr, protocol);
@@ -42,8 +51,16 @@ static int xfrm4_transport_output(struct xfrm_state *x, struct sk_buff *skb)
  */
 static int xfrm4_transport_input(struct xfrm_state *x, struct sk_buff *skb)
 {
-	int ihl = skb->data - skb_transport_header(skb);
+	int ihl;
 
+	if (x->alg_flags & XFRM_ALGO_FLAGS_OFFLOAD_TRANPORT) {
+		/* Hardware offload will take care of move the IP header */
+		skb->network_header = skb->transport_header;
+		skb_reset_transport_header(skb);
+		return 0;
+	}
+
+	ihl = skb->data - skb_transport_header(skb);
 	if (skb->transport_header != skb->network_header) {
 		memmove(skb_transport_header(skb),
 			skb_network_header(skb), ihl);

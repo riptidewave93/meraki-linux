@@ -12,8 +12,6 @@
 
 #define ARCH_HAS_DMA_GET_REQUIRED_MASK
 
-#define DMA_ERROR_CODE 0
-
 extern struct dma_map_ops *dma_ops;
 extern struct ia64_machine_vector ia64_mv;
 extern void set_iommu_machvec(void);
@@ -23,29 +21,23 @@ extern void machvec_dma_sync_single(struct device *, dma_addr_t, size_t,
 extern void machvec_dma_sync_sg(struct device *, struct scatterlist *, int,
 				enum dma_data_direction);
 
-#define dma_alloc_coherent(d,s,h,f)	dma_alloc_attrs(d,s,h,f,NULL)
-
-static inline void *dma_alloc_attrs(struct device *dev, size_t size,
-				    dma_addr_t *daddr, gfp_t gfp,
-				    struct dma_attrs *attrs)
+static inline void *dma_alloc_coherent(struct device *dev, size_t size,
+				       dma_addr_t *daddr, gfp_t gfp)
 {
 	struct dma_map_ops *ops = platform_dma_get_ops(dev);
 	void *caddr;
 
-	caddr = ops->alloc(dev, size, daddr, gfp, attrs);
+	caddr = ops->alloc_coherent(dev, size, daddr, gfp);
 	debug_dma_alloc_coherent(dev, size, *daddr, caddr);
 	return caddr;
 }
 
-#define dma_free_coherent(d,s,c,h) dma_free_attrs(d,s,c,h,NULL)
-
-static inline void dma_free_attrs(struct device *dev, size_t size,
-				  void *caddr, dma_addr_t daddr,
-				  struct dma_attrs *attrs)
+static inline void dma_free_coherent(struct device *dev, size_t size,
+				     void *caddr, dma_addr_t daddr)
 {
 	struct dma_map_ops *ops = platform_dma_get_ops(dev);
 	debug_dma_free_coherent(dev, size, caddr, daddr);
-	ops->free(dev, size, caddr, daddr, attrs);
+	ops->free_coherent(dev, size, caddr, daddr);
 }
 
 #define dma_alloc_noncoherent(d, s, h, f) dma_alloc_coherent(d, s, h, f)
@@ -81,7 +73,7 @@ static inline bool dma_capable(struct device *dev, dma_addr_t addr, size_t size)
 	if (!dev->dma_mask)
 		return 0;
 
-	return addr + size - 1 <= *dev->dma_mask;
+	return addr + size <= *dev->dma_mask;
 }
 
 static inline dma_addr_t phys_to_dma(struct device *dev, phys_addr_t paddr)
@@ -94,6 +86,8 @@ static inline phys_addr_t dma_to_phys(struct device *dev, dma_addr_t daddr)
 	return daddr;
 }
 
+extern int dma_get_cache_alignment(void);
+
 static inline void
 dma_cache_sync (struct device *dev, void *vaddr, size_t size,
 	enum dma_data_direction dir)
@@ -104,5 +98,7 @@ dma_cache_sync (struct device *dev, void *vaddr, size_t size,
 	 */
 	mb();
 }
+
+#define dma_is_consistent(d, h)	(1)	/* all we do is coherent memory... */
 
 #endif /* _ASM_IA64_DMA_MAPPING_H */

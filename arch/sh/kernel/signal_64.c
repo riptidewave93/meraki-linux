@@ -98,7 +98,10 @@ static int do_signal(struct pt_regs *regs, sigset_t *oldset)
 	if (!user_mode(regs))
 		return 1;
 
-	if (current_thread_info()->status & TS_RESTORE_SIGMASK)
+	if (try_to_freeze())
+		goto no_signal;
+
+	if (test_thread_flag(TIF_RESTORE_SIGMASK))
 		oldset = &current->saved_sigmask;
 	else if (!oldset)
 		oldset = &current->blocked;
@@ -112,16 +115,17 @@ static int do_signal(struct pt_regs *regs, sigset_t *oldset)
 			/*
 			 * If a signal was successfully delivered, the
 			 * saved sigmask is in its frame, and we can
-			 * clear the TS_RESTORE_SIGMASK flag.
+			 * clear the TIF_RESTORE_SIGMASK flag.
 			 */
-			current_thread_info()->status &= ~TS_RESTORE_SIGMASK;
+			if (test_thread_flag(TIF_RESTORE_SIGMASK))
+				clear_thread_flag(TIF_RESTORE_SIGMASK);
 
-			tracehook_signal_handler(signr, &info, &ka, regs,
-					test_thread_flag(TIF_SINGLESTEP));
+			tracehook_signal_handler(signr, &info, &ka, regs, 0);
 			return 1;
 		}
 	}
 
+no_signal:
 	/* Did we come from a system call? */
 	if (regs->syscall_nr >= 0) {
 		/* Restart the system call - no handlers present */
@@ -142,8 +146,8 @@ static int do_signal(struct pt_regs *regs, sigset_t *oldset)
 	}
 
 	/* No signal to deliver -- put the saved sigmask back */
-	if (current_thread_info()->status & TS_RESTORE_SIGMASK) {
-		current_thread_info()->status &= ~TS_RESTORE_SIGMASK;
+	if (test_thread_flag(TIF_RESTORE_SIGMASK)) {
+		clear_thread_flag(TIF_RESTORE_SIGMASK);
 		sigprocmask(SIG_SETMASK, &current->saved_sigmask, NULL);
 	}
 
@@ -159,19 +163,19 @@ sys_sigsuspend(old_sigset_t mask,
 	       unsigned long r6, unsigned long r7,
 	       struct pt_regs * regs)
 {
-	sigset_t saveset, blocked;
-
-	saveset = current->blocked;
+	sigset_t saveset;
 
 	mask &= _BLOCKABLE;
-	siginitset(&blocked, mask);
-	set_current_blocked(&blocked);
+	spin_lock_irq(&current->sighand->siglock);
+	saveset = current->blocked;
+	siginitset(&current->blocked, mask);
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
 
 	REF_REG_RET = -EINTR;
 	while (1) {
 		current->state = TASK_INTERRUPTIBLE;
 		schedule();
-		set_restore_sigmask();
 		regs->pc += 4;    /* because sys_sigreturn decrements the pc */
 		if (do_signal(regs, &saveset)) {
 			/* pc now points at signal handler. Need to decrement
@@ -197,8 +201,11 @@ sys_rt_sigsuspend(sigset_t *unewset, size_t sigsetsize,
 	if (copy_from_user(&newset, unewset, sizeof(newset)))
 		return -EFAULT;
 	sigdelsetmask(&newset, ~_BLOCKABLE);
+	spin_lock_irq(&current->sighand->siglock);
 	saveset = current->blocked;
-	set_current_blocked(&newset);
+	current->blocked = newset;
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
 
 	REF_REG_RET = -EINTR;
 	while (1) {
@@ -289,7 +296,7 @@ restore_sigcontext_fpu(struct pt_regs *regs, struct sigcontext __user *sc)
 		regs->sr |= SR_FD;
 	}
 
-	err |= __copy_from_user(&current->thread.xstate->hardfpu, &sc->sc_fpregs[0],
+	err |= __copy_from_user(&current->thread.fpu.hard, &sc->sc_fpregs[0],
 				(sizeof(long long) * 32) + (sizeof(int) * 1));
 
 	return err;
@@ -308,13 +315,13 @@ setup_sigcontext_fpu(struct pt_regs *regs, struct sigcontext __user *sc)
 
 	if (current == last_task_used_math) {
 		enable_fpu();
-		save_fpu(current);
+		save_fpu(current, regs);
 		disable_fpu();
 		last_task_used_math = NULL;
 		regs->sr |= SR_FD;
 	}
 
-	err |= __copy_to_user(&sc->sc_fpregs[0], &current->thread.xstate->hardfpu,
+	err |= __copy_to_user(&sc->sc_fpregs[0], &current->thread.fpu.hard,
 			      (sizeof(long long) * 32) + (sizeof(int) * 1));
 	clear_used_math();
 
@@ -404,7 +411,11 @@ asmlinkage int sys_sigreturn(unsigned long r2, unsigned long r3,
 		goto badframe;
 
 	sigdelsetmask(&set, ~_BLOCKABLE);
-	set_current_blocked(&set);
+
+	spin_lock_irq(&current->sighand->siglock);
+	current->blocked = set;
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
 
 	if (restore_sigcontext(regs, &frame->sc, &ret))
 		goto badframe;
@@ -437,7 +448,10 @@ asmlinkage int sys_rt_sigreturn(unsigned long r2, unsigned long r3,
 		goto badframe;
 
 	sigdelsetmask(&set, ~_BLOCKABLE);
-	set_current_blocked(&set);
+	spin_lock_irq(&current->sighand->siglock);
+	current->blocked = set;
+	recalc_sigpending();
+	spin_unlock_irq(&current->sighand->siglock);
 
 	if (restore_sigcontext(regs, &frame->uc.uc_mcontext, &ret))
 		goto badframe;
@@ -723,8 +737,17 @@ handle_signal(unsigned long sig, siginfo_t *info, struct k_sigaction *ka,
 	else
 		ret = setup_frame(sig, ka, oldset, regs);
 
-	if (ret == 0)
-		block_sigmask(ka, sig);
+	if (ka->sa.sa_flags & SA_ONESHOT)
+		ka->sa.sa_handler = SIG_DFL;
+
+	if (ret == 0) {
+		spin_lock_irq(&current->sighand->siglock);
+		sigorsets(&current->blocked,&current->blocked,&ka->sa.sa_mask);
+		if (!(ka->sa.sa_flags & SA_NODEFER))
+			sigaddset(&current->blocked,sig);
+		recalc_sigpending();
+		spin_unlock_irq(&current->sighand->siglock);
+	}
 
 	return ret;
 }

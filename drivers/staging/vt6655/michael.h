@@ -35,16 +35,16 @@
 
 /*---------------------  Export Types  ------------------------------*/
 
-void MIC_vInit(unsigned long dwK0, unsigned long dwK1);
+VOID MIC_vInit(DWORD dwK0, DWORD dwK1);
 
-void MIC_vUnInit(void);
+VOID MIC_vUnInit(void);
 
 // Append bytes to the message to be MICed
-void MIC_vAppend(unsigned char *src, unsigned int nBytes);
+VOID MIC_vAppend(PBYTE src, UINT nBytes);
 
 // Get the MIC result. Destination should accept 8 bytes of result.
 // This also resets the message to empty.
-void MIC_vGetMIC(unsigned long *pdwL, unsigned long *pdwR);
+VOID MIC_vGetMIC(PDWORD pdwL, PDWORD pdwR);
 
 /*---------------------  Export Macros ------------------------------*/
 

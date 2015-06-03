@@ -17,7 +17,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/device.h>
@@ -30,13 +29,13 @@
 struct pcf50633_adc_request {
 	int mux;
 	int avg;
+	int result;
 	void (*callback)(struct pcf50633 *, void *, int);
 	void *callback_param;
-};
 
-struct pcf50633_adc_sync_request {
-	int result;
+	/* Used in case of sync requests */
 	struct completion completion;
+
 };
 
 #define PCF50633_MAX_ADC_FIFO_DEPTH 8
@@ -109,10 +108,10 @@ adc_enqueue_request(struct pcf50633 *pcf, struct pcf50633_adc_request *req)
 	return 0;
 }
 
-static void pcf50633_adc_sync_read_callback(struct pcf50633 *pcf, void *param,
-	int result)
+static void
+pcf50633_adc_sync_read_callback(struct pcf50633 *pcf, void *param, int result)
 {
-	struct pcf50633_adc_sync_request *req = param;
+	struct pcf50633_adc_request *req = param;
 
 	req->result = result;
 	complete(&req->completion);
@@ -120,19 +119,28 @@ static void pcf50633_adc_sync_read_callback(struct pcf50633 *pcf, void *param,
 
 int pcf50633_adc_sync_read(struct pcf50633 *pcf, int mux, int avg)
 {
-	struct pcf50633_adc_sync_request req;
-	int ret;
+	struct pcf50633_adc_request *req;
+	int err;
 
-	init_completion(&req.completion);
+	/* req is freed when the result is ready, in interrupt handler */
+	req = kzalloc(sizeof(*req), GFP_KERNEL);
+	if (!req)
+		return -ENOMEM;
 
-	ret = pcf50633_adc_async_read(pcf, mux, avg,
-		pcf50633_adc_sync_read_callback, &req);
-	if (ret)
-		return ret;
+	req->mux = mux;
+	req->avg = avg;
+	req->callback =  pcf50633_adc_sync_read_callback;
+	req->callback_param = req;
 
-	wait_for_completion(&req.completion);
+	init_completion(&req->completion);
+	err = adc_enqueue_request(pcf, req);
+	if (err)
+		return err;
 
-	return req.result;
+	wait_for_completion(&req->completion);
+
+	/* FIXME by this time req might be already freed */
+	return req->result;
 }
 EXPORT_SYMBOL_GPL(pcf50633_adc_sync_read);
 
@@ -201,16 +209,17 @@ static void pcf50633_adc_irq(int irq, void *data)
 
 static int __devinit pcf50633_adc_probe(struct platform_device *pdev)
 {
+	struct pcf50633_subdev_pdata *pdata = pdev->dev.platform_data;
 	struct pcf50633_adc *adc;
 
 	adc = kzalloc(sizeof(*adc), GFP_KERNEL);
 	if (!adc)
 		return -ENOMEM;
 
-	adc->pcf = dev_to_pcf50633(pdev->dev.parent);
+	adc->pcf = pdata->pcf;
 	platform_set_drvdata(pdev, adc);
 
-	pcf50633_register_irq(adc->pcf, PCF50633_IRQ_ADCRDY,
+	pcf50633_register_irq(pdata->pcf, PCF50633_IRQ_ADCRDY,
 					pcf50633_adc_irq, adc);
 
 	mutex_init(&adc->queue_mutex);
@@ -249,7 +258,17 @@ static struct platform_driver pcf50633_adc_driver = {
 	.remove = __devexit_p(pcf50633_adc_remove),
 };
 
-module_platform_driver(pcf50633_adc_driver);
+static int __init pcf50633_adc_init(void)
+{
+	return platform_driver_register(&pcf50633_adc_driver);
+}
+module_init(pcf50633_adc_init);
+
+static void __exit pcf50633_adc_exit(void)
+{
+	platform_driver_unregister(&pcf50633_adc_driver);
+}
+module_exit(pcf50633_adc_exit);
 
 MODULE_AUTHOR("Balaji Rao <balajirrao@openmoko.org>");
 MODULE_DESCRIPTION("PCF50633 adc driver");

@@ -32,7 +32,7 @@ struct kyrofb_info {
 	u32 PIXCLK;	/* Pixel Clock       */
 	u32 HCLK;	/* Hor Clock         */
 
-	/* Useful to hold depth here for Linux */
+	/* Usefull to hold depth here for Linux */
 	u8 PIXDEPTH;
 
 #ifdef CONFIG_MTRR

@@ -8,9 +8,6 @@
 
 #include <linux/module.h>
 #include <linux/of_device.h>
-#include <linux/dma-mapping.h>
-#include <linux/slab.h>
-#include <linux/of_platform.h>
 
 #include <sound/soc.h>
 
@@ -61,15 +58,47 @@ static void psc_dma_bcom_enqueue_next_buffer(struct psc_dma_stream *s)
 	/* Prepare and enqueue the next buffer descriptor */
 	bd = bcom_prepare_next_buffer(s->bcom_task);
 	bd->status = s->period_bytes;
-	bd->data[0] = s->runtime->dma_addr + (s->period_next * s->period_bytes);
+	bd->data[0] = s->period_next_pt;
 	bcom_submit_next_buffer(s->bcom_task, NULL);
 
 	/* Update for next period */
-	s->period_next = (s->period_next + 1) % s->runtime->periods;
+	s->period_next_pt += s->period_bytes;
+	if (s->period_next_pt >= s->period_end)
+		s->period_next_pt = s->period_start;
+}
+
+static void psc_dma_bcom_enqueue_tx(struct psc_dma_stream *s)
+{
+	if (s->appl_ptr > s->runtime->control->appl_ptr) {
+		/*
+		 * In this case s->runtime->control->appl_ptr has wrapped around.
+		 * Play the data to the end of the boundary, then wrap our own
+		 * appl_ptr back around.
+		 */
+		while (s->appl_ptr < s->runtime->boundary) {
+			if (bcom_queue_full(s->bcom_task))
+				return;
+
+			s->appl_ptr += s->period_size;
+
+			psc_dma_bcom_enqueue_next_buffer(s);
+		}
+		s->appl_ptr -= s->runtime->boundary;
+	}
+
+	while (s->appl_ptr < s->runtime->control->appl_ptr) {
+
+		if (bcom_queue_full(s->bcom_task))
+			return;
+
+		s->appl_ptr += s->period_size;
+
+		psc_dma_bcom_enqueue_next_buffer(s);
+	}
 }
 
 /* Bestcomm DMA irq handler */
-static irqreturn_t psc_dma_bcom_irq(int irq, void *_psc_dma_stream)
+static irqreturn_t psc_dma_bcom_irq_tx(int irq, void *_psc_dma_stream)
 {
 	struct psc_dma_stream *s = _psc_dma_stream;
 
@@ -79,8 +108,34 @@ static irqreturn_t psc_dma_bcom_irq(int irq, void *_psc_dma_stream)
 	while (bcom_buffer_done(s->bcom_task)) {
 		bcom_retrieve_buffer(s->bcom_task, NULL, NULL);
 
-		s->period_current = (s->period_current+1) % s->runtime->periods;
-		s->period_count++;
+		s->period_current_pt += s->period_bytes;
+		if (s->period_current_pt >= s->period_end)
+			s->period_current_pt = s->period_start;
+	}
+	psc_dma_bcom_enqueue_tx(s);
+	spin_unlock(&s->psc_dma->lock);
+
+	/* If the stream is active, then also inform the PCM middle layer
+	 * of the period finished event. */
+	if (s->active)
+		snd_pcm_period_elapsed(s->stream);
+
+	return IRQ_HANDLED;
+}
+
+static irqreturn_t psc_dma_bcom_irq_rx(int irq, void *_psc_dma_stream)
+{
+	struct psc_dma_stream *s = _psc_dma_stream;
+
+	spin_lock(&s->psc_dma->lock);
+	/* For each finished period, dequeue the completed period buffer
+	 * and enqueue a new one in it's place. */
+	while (bcom_buffer_done(s->bcom_task)) {
+		bcom_retrieve_buffer(s->bcom_task, NULL, NULL);
+
+		s->period_current_pt += s->period_bytes;
+		if (s->period_current_pt >= s->period_end)
+			s->period_current_pt = s->period_start;
 
 		psc_dma_bcom_enqueue_next_buffer(s);
 	}
@@ -109,40 +164,56 @@ static int psc_dma_hw_free(struct snd_pcm_substream *substream)
 static int psc_dma_trigger(struct snd_pcm_substream *substream, int cmd)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct psc_dma *psc_dma = snd_soc_dai_get_drvdata(rtd->cpu_dai);
+	struct psc_dma *psc_dma = rtd->dai->cpu_dai->private_data;
 	struct snd_pcm_runtime *runtime = substream->runtime;
-	struct psc_dma_stream *s = to_psc_dma_stream(substream, psc_dma);
+	struct psc_dma_stream *s;
 	struct mpc52xx_psc __iomem *regs = psc_dma->psc_regs;
 	u16 imr;
 	unsigned long flags;
 	int i;
 
+	if (substream->pstr->stream == SNDRV_PCM_STREAM_CAPTURE)
+		s = &psc_dma->capture;
+	else
+		s = &psc_dma->playback;
+
+	dev_dbg(psc_dma->dev, "psc_dma_trigger(substream=%p, cmd=%i)"
+		" stream_id=%i\n",
+		substream, cmd, substream->pstr->stream);
+
 	switch (cmd) {
 	case SNDRV_PCM_TRIGGER_START:
-		dev_dbg(psc_dma->dev, "START: stream=%i fbits=%u ps=%u #p=%u\n",
-			substream->pstr->stream, runtime->frame_bits,
-			(int)runtime->period_size, runtime->periods);
 		s->period_bytes = frames_to_bytes(runtime,
 						  runtime->period_size);
-		s->period_next = 0;
-		s->period_current = 0;
+		s->period_start = virt_to_phys(runtime->dma_area);
+		s->period_end = s->period_start +
+				(s->period_bytes * runtime->periods);
+		s->period_next_pt = s->period_start;
+		s->period_current_pt = s->period_start;
+		s->period_size = runtime->period_size;
 		s->active = 1;
-		s->period_count = 0;
+
+		/* track appl_ptr so that we have a better chance of detecting
+		 * end of stream and not over running it.
+		 */
 		s->runtime = runtime;
+		s->appl_ptr = s->runtime->control->appl_ptr -
+				(runtime->period_size * runtime->periods);
 
 		/* Fill up the bestcomm bd queue and enable DMA.
 		 * This will begin filling the PSC's fifo.
 		 */
 		spin_lock_irqsave(&psc_dma->lock, flags);
 
-		if (substream->pstr->stream == SNDRV_PCM_STREAM_CAPTURE)
+		if (substream->pstr->stream == SNDRV_PCM_STREAM_CAPTURE) {
 			bcom_gen_bd_rx_reset(s->bcom_task);
-		else
+			for (i = 0; i < runtime->periods; i++)
+				if (!bcom_queue_full(s->bcom_task))
+					psc_dma_bcom_enqueue_next_buffer(s);
+		} else {
 			bcom_gen_bd_tx_reset(s->bcom_task);
-
-		for (i = 0; i < runtime->periods; i++)
-			if (!bcom_queue_full(s->bcom_task))
-				psc_dma_bcom_enqueue_next_buffer(s);
+			psc_dma_bcom_enqueue_tx(s);
+		}
 
 		bcom_enable(s->bcom_task);
 		spin_unlock_irqrestore(&psc_dma->lock, flags);
@@ -152,8 +223,6 @@ static int psc_dma_trigger(struct snd_pcm_substream *substream, int cmd)
 		break;
 
 	case SNDRV_PCM_TRIGGER_STOP:
-		dev_dbg(psc_dma->dev, "STOP: stream=%i periods_count=%i\n",
-			substream->pstr->stream, s->period_count);
 		s->active = 0;
 
 		spin_lock_irqsave(&psc_dma->lock, flags);
@@ -167,8 +236,7 @@ static int psc_dma_trigger(struct snd_pcm_substream *substream, int cmd)
 		break;
 
 	default:
-		dev_dbg(psc_dma->dev, "unhandled trigger: stream=%i cmd=%i\n",
-			substream->pstr->stream, cmd);
+		dev_dbg(psc_dma->dev, "invalid command\n");
 		return -EINVAL;
 	}
 
@@ -214,7 +282,7 @@ static int psc_dma_open(struct snd_pcm_substream *substream)
 {
 	struct snd_pcm_runtime *runtime = substream->runtime;
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct psc_dma *psc_dma = snd_soc_dai_get_drvdata(rtd->cpu_dai);
+	struct psc_dma *psc_dma = rtd->dai->cpu_dai->private_data;
 	struct psc_dma_stream *s;
 	int rc;
 
@@ -241,7 +309,7 @@ static int psc_dma_open(struct snd_pcm_substream *substream)
 static int psc_dma_close(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct psc_dma *psc_dma = snd_soc_dai_get_drvdata(rtd->cpu_dai);
+	struct psc_dma *psc_dma = rtd->dai->cpu_dai->private_data;
 	struct psc_dma_stream *s;
 
 	dev_dbg(psc_dma->dev, "psc_dma_close(substream=%p)\n", substream);
@@ -266,7 +334,7 @@ static snd_pcm_uframes_t
 psc_dma_pointer(struct snd_pcm_substream *substream)
 {
 	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct psc_dma *psc_dma = snd_soc_dai_get_drvdata(rtd->cpu_dai);
+	struct psc_dma *psc_dma = rtd->dai->cpu_dai->private_data;
 	struct psc_dma_stream *s;
 	dma_addr_t count;
 
@@ -275,7 +343,7 @@ psc_dma_pointer(struct snd_pcm_substream *substream)
 	else
 		s = &psc_dma->playback;
 
-	count = s->period_current * s->period_bytes;
+	count = s->period_current_pt - s->period_start;
 
 	return bytes_to_frames(substream->runtime, count);
 }
@@ -299,46 +367,45 @@ static struct snd_pcm_ops psc_dma_ops = {
 	.hw_params	= psc_dma_hw_params,
 };
 
-static u64 psc_dma_dmamask = DMA_BIT_MASK(32);
-static int psc_dma_new(struct snd_soc_pcm_runtime *rtd)
+static u64 psc_dma_dmamask = 0xffffffff;
+static int psc_dma_new(struct snd_card *card, struct snd_soc_dai *dai,
+			   struct snd_pcm *pcm)
 {
-	struct snd_card *card = rtd->card->snd_card;
-	struct snd_soc_dai *dai = rtd->cpu_dai;
-	struct snd_pcm *pcm = rtd->pcm;
-	struct psc_dma *psc_dma = snd_soc_dai_get_drvdata(rtd->cpu_dai);
+	struct snd_soc_pcm_runtime *rtd = pcm->private_data;
+	struct psc_dma *psc_dma = rtd->dai->cpu_dai->private_data;
 	size_t size = psc_dma_hardware.buffer_bytes_max;
 	int rc = 0;
 
-	dev_dbg(rtd->platform->dev, "psc_dma_new(card=%p, dai=%p, pcm=%p)\n",
+	dev_dbg(rtd->socdev->dev, "psc_dma_new(card=%p, dai=%p, pcm=%p)\n",
 		card, dai, pcm);
 
 	if (!card->dev->dma_mask)
 		card->dev->dma_mask = &psc_dma_dmamask;
 	if (!card->dev->coherent_dma_mask)
-		card->dev->coherent_dma_mask = DMA_BIT_MASK(32);
+		card->dev->coherent_dma_mask = 0xffffffff;
 
-	if (pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream) {
+	if (pcm->streams[0].substream) {
 		rc = snd_dma_alloc_pages(SNDRV_DMA_TYPE_DEV, pcm->card->dev,
-				size, &pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream->dma_buffer);
+				size, &pcm->streams[0].substream->dma_buffer);
 		if (rc)
 			goto playback_alloc_err;
 	}
 
-	if (pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream) {
+	if (pcm->streams[1].substream) {
 		rc = snd_dma_alloc_pages(SNDRV_DMA_TYPE_DEV, pcm->card->dev,
-				size, &pcm->streams[SNDRV_PCM_STREAM_CAPTURE].substream->dma_buffer);
+				size, &pcm->streams[1].substream->dma_buffer);
 		if (rc)
 			goto capture_alloc_err;
 	}
 
-	if (rtd->codec->ac97)
-		rtd->codec->ac97->private_data = psc_dma;
+	if (rtd->socdev->card->codec->ac97)
+		rtd->socdev->card->codec->ac97->private_data = psc_dma;
 
 	return 0;
 
  capture_alloc_err:
-	if (pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream)
-		snd_dma_free_pages(&pcm->streams[SNDRV_PCM_STREAM_PLAYBACK].substream->dma_buffer);
+	if (pcm->streams[0].substream)
+		snd_dma_free_pages(&pcm->streams[0].substream->dma_buffer);
 
  playback_alloc_err:
 	dev_err(card->dev, "Cannot allocate buffer(s)\n");
@@ -352,7 +419,7 @@ static void psc_dma_free(struct snd_pcm *pcm)
 	struct snd_pcm_substream *substream;
 	int stream;
 
-	dev_dbg(rtd->platform->dev, "psc_dma_free(pcm=%p)\n", pcm);
+	dev_dbg(rtd->socdev->dev, "psc_dma_free(pcm=%p)\n", pcm);
 
 	for (stream = 0; stream < 2; stream++) {
 		substream = pcm->streams[stream].substream;
@@ -364,13 +431,15 @@ static void psc_dma_free(struct snd_pcm *pcm)
 	}
 }
 
-static struct snd_soc_platform_driver mpc5200_audio_dma_platform = {
-	.ops		= &psc_dma_ops,
+struct snd_soc_platform mpc5200_audio_dma_platform = {
+	.name		= "mpc5200-psc-audio",
+	.pcm_ops	= &psc_dma_ops,
 	.pcm_new	= &psc_dma_new,
 	.pcm_free	= &psc_dma_free,
 };
+EXPORT_SYMBOL_GPL(mpc5200_audio_dma_platform);
 
-static int mpc5200_hpcd_probe(struct platform_device *op)
+int mpc5200_audio_dma_create(struct of_device *op)
 {
 	phys_addr_t fifo;
 	struct psc_dma *psc_dma;
@@ -381,12 +450,12 @@ static int mpc5200_hpcd_probe(struct platform_device *op)
 	int ret;
 
 	/* Fetch the registers and IRQ of the PSC */
-	irq = irq_of_parse_and_map(op->dev.of_node, 0);
-	if (of_address_to_resource(op->dev.of_node, 0, &res)) {
+	irq = irq_of_parse_and_map(op->node, 0);
+	if (of_address_to_resource(op->node, 0, &res)) {
 		dev_err(&op->dev, "Missing reg property\n");
 		return -ENODEV;
 	}
-	regs = ioremap(res.start, resource_size(&res));
+	regs = ioremap(res.start, 1 + res.end - res.start);
 	if (!regs) {
 		dev_err(&op->dev, "Could not map registers\n");
 		return -ENODEV;
@@ -400,7 +469,7 @@ static int mpc5200_hpcd_probe(struct platform_device *op)
 	}
 
 	/* Get the PSC ID */
-	prop = of_get_property(op->dev.of_node, "cell-index", &size);
+	prop = of_get_property(op->node, "cell-index", &size);
 	if (!prop || size < sizeof *prop) {
 		ret = -ENODEV;
 		goto out_free;
@@ -463,9 +532,11 @@ static int mpc5200_hpcd_probe(struct platform_device *op)
 
 	rc = request_irq(psc_dma->irq, &psc_dma_status_irq, IRQF_SHARED,
 			 "psc-dma-status", psc_dma);
-	rc |= request_irq(psc_dma->capture.irq, &psc_dma_bcom_irq, IRQF_SHARED,
+	rc |= request_irq(psc_dma->capture.irq,
+			  &psc_dma_bcom_irq_rx, IRQF_SHARED,
 			  "psc-dma-capture", &psc_dma->capture);
-	rc |= request_irq(psc_dma->playback.irq, &psc_dma_bcom_irq, IRQF_SHARED,
+	rc |= request_irq(psc_dma->playback.irq,
+			  &psc_dma_bcom_irq_tx, IRQF_SHARED,
 			  "psc-dma-playback", &psc_dma->playback);
 	if (rc) {
 		ret = -ENODEV;
@@ -476,7 +547,7 @@ static int mpc5200_hpcd_probe(struct platform_device *op)
 	dev_set_drvdata(&op->dev, psc_dma);
 
 	/* Tell the ASoC OF helpers about it */
-	return snd_soc_register_platform(&op->dev, &mpc5200_audio_dma_platform);
+	return snd_soc_register_platform(&mpc5200_audio_dma_platform);
 out_irq:
 	free_irq(psc_dma->irq, psc_dma);
 	free_irq(psc_dma->capture.irq, &psc_dma->capture);
@@ -487,14 +558,15 @@ out_unmap:
 	iounmap(regs);
 	return ret;
 }
+EXPORT_SYMBOL_GPL(mpc5200_audio_dma_create);
 
-static int mpc5200_hpcd_remove(struct platform_device *op)
+int mpc5200_audio_dma_destroy(struct of_device *op)
 {
 	struct psc_dma *psc_dma = dev_get_drvdata(&op->dev);
 
 	dev_dbg(&op->dev, "mpc5200_audio_dma_destroy()\n");
 
-	snd_soc_unregister_platform(&op->dev);
+	snd_soc_unregister_platform(&mpc5200_audio_dma_platform);
 
 	bcom_gen_bd_rx_release(psc_dma->capture.bcom_task);
 	bcom_gen_bd_tx_release(psc_dma->playback.bcom_task);
@@ -510,24 +582,7 @@ static int mpc5200_hpcd_remove(struct platform_device *op)
 
 	return 0;
 }
-
-static struct of_device_id mpc5200_hpcd_match[] = {
-	{ .compatible = "fsl,mpc5200-pcm", },
-	{}
-};
-MODULE_DEVICE_TABLE(of, mpc5200_hpcd_match);
-
-static struct platform_driver mpc5200_hpcd_of_driver = {
-	.probe		= mpc5200_hpcd_probe,
-	.remove		= mpc5200_hpcd_remove,
-	.driver = {
-		.owner		= THIS_MODULE,
-		.name		= "mpc5200-pcm-audio",
-		.of_match_table    = mpc5200_hpcd_match,
-	}
-};
-
-module_platform_driver(mpc5200_hpcd_of_driver);
+EXPORT_SYMBOL_GPL(mpc5200_audio_dma_destroy);
 
 MODULE_AUTHOR("Grant Likely <grant.likely@secretlab.ca>");
 MODULE_DESCRIPTION("Freescale MPC5200 PSC in DMA mode ASoC Driver");

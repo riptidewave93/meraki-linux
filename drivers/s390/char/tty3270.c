@@ -19,7 +19,6 @@
 
 #include <linux/slab.h>
 #include <linux/bootmem.h>
-#include <linux/compat.h>
 
 #include <asm/ccwdev.h>
 #include <asm/cio.h>
@@ -328,7 +327,7 @@ tty3270_write_callback(struct raw3270_request *rq, void *data)
 
 	tp = (struct tty3270 *) rq->view;
 	if (rq->rc != 0) {
-		/* Write wasn't successful. Refresh all. */
+		/* Write wasn't successfull. Refresh all. */
 		tp->update_flags = TTY_UPDATE_ALL;
 		tty3270_set_timer(tp, 1);
 	}
@@ -1718,8 +1717,9 @@ tty3270_wait_until_sent(struct tty_struct *tty, int timeout)
 {
 }
 
-static int tty3270_ioctl(struct tty_struct *tty, unsigned int cmd,
-			 unsigned long arg)
+static int
+tty3270_ioctl(struct tty_struct *tty, struct file *file,
+	      unsigned int cmd, unsigned long arg)
 {
 	struct tty3270 *tp;
 
@@ -1728,23 +1728,8 @@ static int tty3270_ioctl(struct tty_struct *tty, unsigned int cmd,
 		return -ENODEV;
 	if (tty->flags & (1 << TTY_IO_ERROR))
 		return -EIO;
-	return kbd_ioctl(tp->kbd, cmd, arg);
+	return kbd_ioctl(tp->kbd, file, cmd, arg);
 }
-
-#ifdef CONFIG_COMPAT
-static long tty3270_compat_ioctl(struct tty_struct *tty,
-				 unsigned int cmd, unsigned long arg)
-{
-	struct tty3270 *tp;
-
-	tp = tty->driver_data;
-	if (!tp)
-		return -ENODEV;
-	if (tty->flags & (1 << TTY_IO_ERROR))
-		return -EIO;
-	return kbd_ioctl(tp->kbd, cmd, (unsigned long)compat_ptr(arg));
-}
-#endif
 
 static const struct tty_operations tty3270_ops = {
 	.open = tty3270_open,
@@ -1760,9 +1745,6 @@ static const struct tty_operations tty3270_ops = {
 	.hangup = tty3270_hangup,
 	.wait_until_sent = tty3270_wait_until_sent,
 	.ioctl = tty3270_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl = tty3270_compat_ioctl,
-#endif
 	.set_termios = tty3270_set_termios
 };
 
@@ -1784,6 +1766,7 @@ static int __init tty3270_init(void)
 	 * Entries in tty3270_driver that are NOT initialized:
 	 * proc_entry, set_termios, flush_buffer, set_ldisc, write_proc
 	 */
+	driver->owner = THIS_MODULE;
 	driver->driver_name = "ttyTUB";
 	driver->name = "ttyTUB";
 	driver->major = IBM_TTY3270_MAJOR;

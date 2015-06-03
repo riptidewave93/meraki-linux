@@ -31,12 +31,6 @@ int nr_dcplb_miss[NR_CPUS], nr_icplb_miss[NR_CPUS];
 int nr_icplb_supv_miss[NR_CPUS], nr_dcplb_prot[NR_CPUS];
 int nr_cplb_flush[NR_CPUS];
 
-#ifdef CONFIG_EXCPT_IRQ_SYSC_L1
-#define MGR_ATTR __attribute__((l1_text))
-#else
-#define MGR_ATTR
-#endif
-
 /*
  * Given the contents of the status register, return the index of the
  * CPLB that caused the fault.
@@ -65,7 +59,7 @@ static int icplb_rr_index[NR_CPUS], dcplb_rr_index[NR_CPUS];
 /*
  * Find an ICPLB entry to be evicted and return its index.
  */
-MGR_ATTR static int evict_one_icplb(unsigned int cpu)
+static int evict_one_icplb(unsigned int cpu)
 {
 	int i;
 	for (i = first_switched_icplb; i < MAX_CPLBS; i++)
@@ -80,7 +74,7 @@ MGR_ATTR static int evict_one_icplb(unsigned int cpu)
 	return i;
 }
 
-MGR_ATTR static int evict_one_dcplb(unsigned int cpu)
+static int evict_one_dcplb(unsigned int cpu)
 {
 	int i;
 	for (i = first_switched_dcplb; i < MAX_CPLBS; i++)
@@ -95,7 +89,7 @@ MGR_ATTR static int evict_one_dcplb(unsigned int cpu)
 	return i;
 }
 
-MGR_ATTR static noinline int dcplb_miss(unsigned int cpu)
+static noinline int dcplb_miss(unsigned int cpu)
 {
 	unsigned long addr = bfin_read_DCPLB_FAULT_ADDR();
 	int status = bfin_read_DCPLB_STATUS();
@@ -119,18 +113,11 @@ MGR_ATTR static noinline int dcplb_miss(unsigned int cpu)
 		addr = L2_START;
 		d_data = L2_DMEMORY;
 	} else if (addr >= physical_mem_end) {
-		if (addr >= ASYNC_BANK0_BASE && addr < ASYNC_BANK3_BASE + ASYNC_BANK3_SIZE) {
-#if defined(CONFIG_ROMFS_ON_MTD) && defined(CONFIG_MTD_ROM)
-			mask = current_rwx_mask[cpu];
-			if (mask) {
-				int page = (addr - (ASYNC_BANK0_BASE - _ramend)) >> PAGE_SHIFT;
-				int idx = page >> 5;
-				int bit = 1 << (page & 31);
-
-				if (mask[idx] & bit)
-					d_data |= CPLB_USER_RD;
-			}
-#endif
+		if (addr >= ASYNC_BANK0_BASE && addr < ASYNC_BANK3_BASE + ASYNC_BANK3_SIZE
+		    && (status & FAULT_USERSUPV)) {
+			addr &= ~0x3fffff;
+			d_data &= ~PAGE_SIZE_4KB;
+			d_data |= PAGE_SIZE_4MB;
 		} else if (addr >= BOOT_ROM_START && addr < BOOT_ROM_START + BOOT_ROM_LENGTH
 		    && (status & (FAULT_RW | FAULT_USERSUPV)) == FAULT_USERSUPV) {
 			addr &= ~(1 * 1024 * 1024 - 1);
@@ -139,9 +126,7 @@ MGR_ATTR static noinline int dcplb_miss(unsigned int cpu)
 		} else
 			return CPLB_PROT_VIOL;
 	} else if (addr >= _ramend) {
-		d_data |= CPLB_USER_RD | CPLB_USER_WR;
-		if (reserved_mem_dcache_on)
-			d_data |= CPLB_L1_CHBL;
+	    d_data |= CPLB_USER_RD | CPLB_USER_WR;
 	} else {
 		mask = current_rwx_mask[cpu];
 		if (mask) {
@@ -171,7 +156,7 @@ MGR_ATTR static noinline int dcplb_miss(unsigned int cpu)
 	return 0;
 }
 
-MGR_ATTR static noinline int icplb_miss(unsigned int cpu)
+static noinline int icplb_miss(unsigned int cpu)
 {
 	unsigned long addr = bfin_read_ICPLB_FAULT_ADDR();
 	int status = bfin_read_ICPLB_STATUS();
@@ -218,21 +203,7 @@ MGR_ATTR static noinline int icplb_miss(unsigned int cpu)
 		addr = L2_START;
 		i_data = L2_IMEMORY;
 	} else if (addr >= physical_mem_end) {
-		if (addr >= ASYNC_BANK0_BASE && addr < ASYNC_BANK3_BASE + ASYNC_BANK3_SIZE) {
-			if (!(status & FAULT_USERSUPV)) {
-				unsigned long *mask = current_rwx_mask[cpu];
-
-				if (mask) {
-					int page = (addr - (ASYNC_BANK0_BASE - _ramend)) >> PAGE_SHIFT;
-					int idx = page >> 5;
-					int bit = 1 << (page & 31);
-
-					mask += 2 * page_mask_nelts;
-					if (mask[idx] & bit)
-						i_data |= CPLB_USER_RD;
-				}
-			}
-		} else if (addr >= BOOT_ROM_START && addr < BOOT_ROM_START + BOOT_ROM_LENGTH
+		if (addr >= BOOT_ROM_START && addr < BOOT_ROM_START + BOOT_ROM_LENGTH
 		    && (status & FAULT_USERSUPV)) {
 			addr &= ~(1 * 1024 * 1024 - 1);
 			i_data &= ~PAGE_SIZE_4KB;
@@ -241,8 +212,6 @@ MGR_ATTR static noinline int icplb_miss(unsigned int cpu)
 		    return CPLB_PROT_VIOL;
 	} else if (addr >= _ramend) {
 		i_data |= CPLB_USER_RD;
-		if (reserved_mem_icache_on)
-			i_data |= CPLB_L1_CHBL;
 	} else {
 		/*
 		 * Two cases to distinguish - a supervisor access must
@@ -277,7 +246,7 @@ MGR_ATTR static noinline int icplb_miss(unsigned int cpu)
 	return 0;
 }
 
-MGR_ATTR static noinline int dcplb_protection_fault(unsigned int cpu)
+static noinline int dcplb_protection_fault(unsigned int cpu)
 {
 	int status = bfin_read_DCPLB_STATUS();
 
@@ -297,7 +266,7 @@ MGR_ATTR static noinline int dcplb_protection_fault(unsigned int cpu)
 	return CPLB_PROT_VIOL;
 }
 
-MGR_ATTR int cplb_hdr(int seqstat, struct pt_regs *regs)
+int cplb_hdr(int seqstat, struct pt_regs *regs)
 {
 	int cause = seqstat & 0x3f;
 	unsigned int cpu = raw_smp_processor_id();
@@ -320,7 +289,7 @@ void flush_switched_cplbs(unsigned int cpu)
 
 	nr_cplb_flush[cpu]++;
 
-	flags = hard_local_irq_save();
+	local_irq_save_hw(flags);
 	_disable_icplb();
 	for (i = first_switched_icplb; i < MAX_CPLBS; i++) {
 		icplb_tbl[cpu][i].data = 0;
@@ -334,7 +303,7 @@ void flush_switched_cplbs(unsigned int cpu)
 		bfin_write32(DCPLB_DATA0 + i * 4, 0);
 	}
 	_enable_dcplb();
-	hard_local_irq_restore(flags);
+	local_irq_restore_hw(flags);
 
 }
 
@@ -350,7 +319,7 @@ void set_mask_dcplbs(unsigned long *masks, unsigned int cpu)
 		return;
 	}
 
-	flags = hard_local_irq_save();
+	local_irq_save_hw(flags);
 	current_rwx_mask[cpu] = masks;
 
 	if (L2_LENGTH && addr >= L2_START && addr < L2_START + L2_LENGTH) {
@@ -375,5 +344,5 @@ void set_mask_dcplbs(unsigned long *masks, unsigned int cpu)
 		addr += PAGE_SIZE;
 	}
 	_enable_dcplb();
-	hard_local_irq_restore(flags);
+	local_irq_restore_hw(flags);
 }

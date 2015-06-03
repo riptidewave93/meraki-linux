@@ -16,11 +16,12 @@
 
 #ifdef CONFIG_MAGIC_SYSRQ
 static int ctrlchar_sysrq_key;
+static struct tty_struct *sysrq_tty;
 
 static void
 ctrlchar_handle_sysrq(struct work_struct *work)
 {
-	handle_sysrq(ctrlchar_sysrq_key);
+	handle_sysrq(ctrlchar_sysrq_key, sysrq_tty);
 }
 
 static DECLARE_WORK(ctrlchar_work, ctrlchar_handle_sysrq);
@@ -53,6 +54,7 @@ ctrlchar_handle(const unsigned char *buf, int len, struct tty_struct *tty)
 	/* racy */
 	if (len == 3 && buf[1] == '-') {
 		ctrlchar_sysrq_key = buf[2];
+		sysrq_tty = tty;
 		schedule_work(&ctrlchar_work);
 		return CTRLCHAR_SYSRQ;
 	}

@@ -4,7 +4,7 @@
 #define TAGVER_LEN		4	/* Length of Tag Version */
 #define TAGLAYOUT_LEN		4	/* Length of FlashLayoutVer */
 #define SIG1_LEN		20	/* Company Signature 1 Length */
-#define SIG2_LEN		14	/* Company Signature 2 Length */
+#define SIG2_LEN		14	/* Company Signature 2 Lenght */
 #define BOARDID_LEN		16	/* Length of BoardId */
 #define ENDIANFLAG_LEN		2	/* Endian Flag Length */
 #define CHIPID_LEN		6	/* Chip Id Length */
@@ -16,6 +16,7 @@
 #define TAGINFO1_LEN		30	/* Length of vendor information field1 in tag */
 #define FLASHLAYOUTVER_LEN	4	/* Length of Flash Layout Version String tag */
 #define TAGINFO2_LEN		16	/* Length of vendor information field2 in tag */
+#define CRC_LEN			4	/* Length of CRC in bytes */
 #define ALTTAGINFO_LEN		54	/* Alternate length for vendor information; Pirelli */
 
 #define NUM_PIRELLI		2
@@ -76,19 +77,19 @@ struct bcm_tag {
 	/* 192-195: Version flash layout */
 	char flash_layout_ver[FLASHLAYOUTVER_LEN];
 	/* 196-199: kernel+rootfs CRC32 */
-	__u32 fskernel_crc;
+	char fskernel_crc[CRC_LEN];
 	/* 200-215: Unused except on Alice Gate where is is information */
 	char information2[TAGINFO2_LEN];
 	/* 216-219: CRC32 of image less imagetag (kernel for Alice Gate) */
-	__u32 image_crc;
+	char image_crc[CRC_LEN];
 	/* 220-223: CRC32 of rootfs partition */
-	__u32 rootfs_crc;
+	char rootfs_crc[CRC_LEN];
 	/* 224-227: CRC32 of kernel partition */
-	__u32 kernel_crc;
+	char kernel_crc[CRC_LEN];
 	/* 228-235: Unused at present */
 	char reserved1[8];
-	/* 236-239: CRC32 of header excluding last 20 bytes */
-	__u32 header_crc;
+	/* 236-239: CRC32 of header excluding tagVersion */
+	char header_crc[CRC_LEN];
 	/* 240-255: Unused at present */
 	char reserved2[16];
 };

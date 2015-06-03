@@ -10,46 +10,50 @@
  */
 
 #include <linux/init.h>
+#include <linux/sched.h>
+#include <linux/interrupt.h>
+#include <linux/kernel.h>
 #include <linux/irq.h>
 #include <linux/io.h>
 
-#include <mach/common.h>
 #include <mach/cp_intc.h>
+
+static void __iomem *cp_intc_base;
 
 static inline unsigned int cp_intc_read(unsigned offset)
 {
-	return __raw_readl(davinci_intc_base + offset);
+	return __raw_readl(cp_intc_base + offset);
 }
 
 static inline void cp_intc_write(unsigned long value, unsigned offset)
 {
-	__raw_writel(value, davinci_intc_base + offset);
+	__raw_writel(value, cp_intc_base + offset);
 }
 
-static void cp_intc_ack_irq(struct irq_data *d)
+static void cp_intc_ack_irq(unsigned int irq)
 {
-	cp_intc_write(d->irq, CP_INTC_SYS_STAT_IDX_CLR);
+	cp_intc_write(irq, CP_INTC_SYS_STAT_IDX_CLR);
 }
 
 /* Disable interrupt */
-static void cp_intc_mask_irq(struct irq_data *d)
+static void cp_intc_mask_irq(unsigned int irq)
 {
 	/* XXX don't know why we need to disable nIRQ here... */
 	cp_intc_write(1, CP_INTC_HOST_ENABLE_IDX_CLR);
-	cp_intc_write(d->irq, CP_INTC_SYS_ENABLE_IDX_CLR);
+	cp_intc_write(irq, CP_INTC_SYS_ENABLE_IDX_CLR);
 	cp_intc_write(1, CP_INTC_HOST_ENABLE_IDX_SET);
 }
 
 /* Enable interrupt */
-static void cp_intc_unmask_irq(struct irq_data *d)
+static void cp_intc_unmask_irq(unsigned int irq)
 {
-	cp_intc_write(d->irq, CP_INTC_SYS_ENABLE_IDX_SET);
+	cp_intc_write(irq, CP_INTC_SYS_ENABLE_IDX_SET);
 }
 
-static int cp_intc_set_irq_type(struct irq_data *d, unsigned int flow_type)
+static int cp_intc_set_irq_type(unsigned int irq, unsigned int flow_type)
 {
-	unsigned reg		= BIT_WORD(d->irq);
-	unsigned mask		= BIT_MASK(d->irq);
+	unsigned reg		= BIT_WORD(irq);
+	unsigned mask		= BIT_MASK(irq);
 	unsigned polarity	= cp_intc_read(CP_INTC_SYS_POLARITY(reg));
 	unsigned type		= cp_intc_read(CP_INTC_SYS_TYPE(reg));
 
@@ -80,37 +84,21 @@ static int cp_intc_set_irq_type(struct irq_data *d, unsigned int flow_type)
 	return 0;
 }
 
-/*
- * Faking this allows us to to work with suspend functions of
- * generic drivers which call {enable|disable}_irq_wake for
- * wake up interrupt sources (eg RTC on DA850).
- */
-static int cp_intc_set_wake(struct irq_data *d, unsigned int on)
-{
-	return 0;
-}
-
 static struct irq_chip cp_intc_irq_chip = {
 	.name		= "cp_intc",
-	.irq_ack	= cp_intc_ack_irq,
-	.irq_mask	= cp_intc_mask_irq,
-	.irq_unmask	= cp_intc_unmask_irq,
-	.irq_set_type	= cp_intc_set_irq_type,
-	.irq_set_wake	= cp_intc_set_wake,
+	.ack		= cp_intc_ack_irq,
+	.mask		= cp_intc_mask_irq,
+	.unmask		= cp_intc_unmask_irq,
+	.set_type	= cp_intc_set_irq_type,
 };
 
-void __init cp_intc_init(void)
+void __init cp_intc_init(void __iomem *base, unsigned short num_irq,
+			 u8 *irq_prio)
 {
-	unsigned long num_irq	= davinci_soc_info.intc_irq_num;
-	u8 *irq_prio		= davinci_soc_info.intc_irq_prios;
-	u32 *host_map		= davinci_soc_info.intc_host_map;
 	unsigned num_reg	= BITS_TO_LONGS(num_irq);
 	int i;
 
-	davinci_intc_type = DAVINCI_INTC_TYPE_CP_INTC;
-	davinci_intc_base = ioremap(davinci_soc_info.intc_base, SZ_8K);
-	if (WARN_ON(!davinci_intc_base))
-		return;
+	cp_intc_base = base;
 
 	cp_intc_write(0, CP_INTC_GLOBAL_ENABLE);
 
@@ -161,15 +149,11 @@ void __init cp_intc_init(void)
 			cp_intc_write(0x0f0f0f0f, CP_INTC_CHAN_MAP(i));
 	}
 
-	if (host_map)
-		for (i = 0; host_map[i] != -1; i++)
-			cp_intc_write(host_map[i], CP_INTC_HOST_MAP(i));
-
 	/* Set up genirq dispatching for cp_intc */
 	for (i = 0; i < num_irq; i++) {
-		irq_set_chip(i, &cp_intc_irq_chip);
+		set_irq_chip(i, &cp_intc_irq_chip);
 		set_irq_flags(i, IRQF_VALID | IRQF_PROBE);
-		irq_set_handler(i, handle_edge_irq);
+		set_irq_handler(i, handle_edge_irq);
 	}
 
 	/* Enable global interrupt */

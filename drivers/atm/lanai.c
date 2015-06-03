@@ -55,7 +55,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/atmdev.h>
 #include <asm/io.h>
@@ -307,10 +306,11 @@ static void vci_bitfield_iterate(struct lanai_dev *lanai,
 	const unsigned long *lp,
 	void (*func)(struct lanai_dev *,vci_t vci))
 {
-	vci_t vci;
-
-	for_each_set_bit(vci, lp, NUM_VCI)
+	vci_t vci = find_first_bit(lp, NUM_VCI);
+	while (vci < NUM_VCI) {
 		func(lanai, vci);
+		vci = find_next_bit(lp, NUM_VCI, vci + 1);
+	}
 }
 
 /* -------------------- BUFFER  UTILITIES: */
@@ -998,7 +998,9 @@ static int __devinit eeprom_validate(struct lanai_dev *lanai)
 			    (unsigned int) e[EEPROM_MAC_REV + i]);
 			return -EIO;
 		}
-	DPRINTK("eeprom: MAC address = %pM\n", &e[EEPROM_MAC]);
+	DPRINTK("eeprom: MAC address = %02X:%02X:%02X:%02X:%02X:%02X\n",
+		e[EEPROM_MAC + 0], e[EEPROM_MAC + 1], e[EEPROM_MAC + 2],
+		e[EEPROM_MAC + 3], e[EEPROM_MAC + 4], e[EEPROM_MAC + 5]);
 	/* Verify serial number */
 	lanai->serialno = eeprom_be4(lanai, EEPROM_SERIAL);
 	v = eeprom_be4(lanai, EEPROM_SERIAL_REV);
@@ -1255,7 +1257,7 @@ static inline void lanai_endtx(struct lanai_dev *lanai,
 	/*
 	 * Since the "butt register" is a shared resounce on the card we
 	 * serialize all accesses to it through this spinlock.  This is
-	 * mostly just paranoia since the register is rarely "busy" anyway
+	 * mostly just paranoia sicne the register is rarely "busy" anyway
 	 * but is needed for correctness.
 	 */
 	spin_lock(&lanai->endtxlock);
@@ -1457,9 +1459,10 @@ static int __devinit vcc_table_allocate(struct lanai_dev *lanai)
 	return (lanai->vccs == NULL) ? -ENOMEM : 0;
 #else
 	int bytes = (lanai->num_vci) * sizeof(struct lanai_vcc *);
-	lanai->vccs = vzalloc(bytes);
+	lanai->vccs = (struct lanai_vcc **) vmalloc(bytes);
 	if (unlikely(lanai->vccs == NULL))
 		return -ENOMEM;
+	memset(lanai->vccs, 0, bytes);
 	return 0;
 #endif
 }
@@ -1572,7 +1575,7 @@ static inline void host_vcc_unbind(struct lanai_dev *lanai,
 
 static void lanai_reset(struct lanai_dev *lanai)
 {
-	printk(KERN_CRIT DEV_LABEL "(itf %d): *NOT* resetting - not "
+	printk(KERN_CRIT DEV_LABEL "(itf %d): *NOT* reseting - not "
 	    "implemented\n", lanai->number);
 	/* TODO */
 	/* The following is just a hack until we write the real
@@ -1946,6 +1949,7 @@ static int __devinit lanai_pci_start(struct lanai_dev *lanai)
 {
 	struct pci_dev *pci = lanai->pci;
 	int result;
+	u16 w;
 
 	if (pci_enable_device(pci) != 0) {
 		printk(KERN_ERR DEV_LABEL "(itf %d): can't enable "
@@ -1963,7 +1967,13 @@ static int __devinit lanai_pci_start(struct lanai_dev *lanai)
 		    "(itf %d): No suitable DMA available.\n", lanai->number);
 		return -EBUSY;
 	}
-	result = check_board_id_and_rev("PCI", pci->subsystem_device, NULL);
+	result = pci_read_config_word(pci, PCI_SUBSYSTEM_ID, &w);
+	if (result != PCIBIOS_SUCCESSFUL) {
+		printk(KERN_ERR DEV_LABEL "(itf %d): can't read "
+		    "PCI_SUBSYSTEM_ID: %d\n", lanai->number, result);
+		return -EINVAL;
+	}
+	result = check_board_id_and_rev("PCI", w, NULL);
 	if (result != 0)
 		return result;
 	/* Set latency timer to zero as per lanai docs */
@@ -1982,7 +1992,7 @@ static int __devinit lanai_pci_start(struct lanai_dev *lanai)
 
 /*
  * We _can_ use VCI==0 for normal traffic, but only for UBR (or we'll
- * get a CBRZERO interrupt), and we can use it only if no one is receiving
+ * get a CBRZERO interrupt), and we can use it only if noone is receiving
  * AAL0 traffic (since they will use the same queue) - according to the
  * docs we shouldn't even use it for AAL0 traffic
  */
@@ -2233,8 +2243,11 @@ static int __devinit lanai_dev_open(struct atm_dev *atmdev)
 	memcpy(atmdev->esi, eeprom_mac(lanai), ESI_LEN);
 	lanai_timed_poll_start(lanai);
 	printk(KERN_NOTICE DEV_LABEL "(itf %d): rev.%d, base=0x%lx, irq=%u "
-		"(%pMF)\n", lanai->number, (int) lanai->pci->revision,
-		(unsigned long) lanai->base, lanai->pci->irq, atmdev->esi);
+	    "(%02X-%02X-%02X-%02X-%02X-%02X)\n", lanai->number,
+	    (int) lanai->pci->revision, (unsigned long) lanai->base,
+	    lanai->pci->irq,
+	    atmdev->esi[0], atmdev->esi[1], atmdev->esi[2],
+	    atmdev->esi[3], atmdev->esi[4], atmdev->esi[5]);
 	printk(KERN_NOTICE DEV_LABEL "(itf %d): LANAI%s, serialno=%u(0x%X), "
 	    "board_rev=%d\n", lanai->number,
 	    lanai->type==lanai2 ? "2" : "HB", (unsigned int) lanai->serialno,
@@ -2470,8 +2483,14 @@ static int lanai_proc_read(struct atm_dev *atmdev, loff_t *pos, char *page)
 		return sprintf(page, "revision: board=%d, pci_if=%d\n",
 		    lanai->board_rev, (int) lanai->pci->revision);
 	if (left-- == 0)
-		return sprintf(page, "EEPROM ESI: %pM\n",
-		    &lanai->eeprom[EEPROM_MAC]);
+		return sprintf(page, "EEPROM ESI: "
+		    "%02X:%02X:%02X:%02X:%02X:%02X\n",
+		    lanai->eeprom[EEPROM_MAC + 0],
+		    lanai->eeprom[EEPROM_MAC + 1],
+		    lanai->eeprom[EEPROM_MAC + 2],
+		    lanai->eeprom[EEPROM_MAC + 3],
+		    lanai->eeprom[EEPROM_MAC + 4],
+		    lanai->eeprom[EEPROM_MAC + 5]);
 	if (left-- == 0)
 		return sprintf(page, "status: SOOL=%d, LOCD=%d, LED=%d, "
 		    "GPIN=%d\n", (lanai->status & STATUS_SOOL) ? 1 : 0,
@@ -2580,7 +2599,7 @@ static int __devinit lanai_init_one(struct pci_dev *pci,
 		return -ENOMEM;
 	}
 
-	atmdev = atm_dev_register(DEV_LABEL, &pci->dev, &ops, -1, NULL);
+	atmdev = atm_dev_register(DEV_LABEL, &ops, -1, NULL);
 	if (atmdev == NULL) {
 		printk(KERN_ERR DEV_LABEL
 		    ": couldn't register atm device!\n");

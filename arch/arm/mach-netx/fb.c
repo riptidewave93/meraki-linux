@@ -23,7 +23,6 @@
 #include <linux/amba/bus.h>
 #include <linux/amba/clcd.h>
 #include <linux/err.h>
-#include <linux/gfp.h>
 
 #include <asm/irq.h>
 
@@ -92,7 +91,19 @@ void clk_put(struct clk *clk)
 {
 }
 
-static AMBA_AHB_DEVICE(fb, "fb", 0, 0x00104000, { NETX_IRQ_LCD }, NULL);
+static struct amba_device fb_device = {
+	.dev		= {
+		.init_name = "fb",
+		.coherent_dma_mask = ~0,
+	},
+	.res		= {
+		.start	= 0x00104000,
+		.end	= 0x00104fff,
+		.flags	= IORESOURCE_MEM,
+	},
+	.irq		= { NETX_IRQ_LCD, NO_IRQ },
+	.periphid	= 0x10112400,
+};
 
 int netx_fb_init(struct clcd_board *board, struct clcd_panel *panel)
 {

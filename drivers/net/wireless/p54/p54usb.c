@@ -15,12 +15,10 @@
 #include <linux/init.h>
 #include <linux/usb.h>
 #include <linux/pci.h>
-#include <linux/slab.h>
 #include <linux/firmware.h>
 #include <linux/etherdevice.h>
 #include <linux/delay.h>
 #include <linux/crc32.h>
-#include <linux/module.h>
 #include <net/mac80211.h>
 
 #include "p54.h"
@@ -42,13 +40,11 @@ MODULE_FIRMWARE("isl3887usb");
  * whenever you add a new device.
  */
 
-static struct usb_device_id p54u_table[] = {
+static struct usb_device_id p54u_table[] __devinitdata = {
 	/* Version 1 devices (pci chip + net2280) */
 	{USB_DEVICE(0x0411, 0x0050)},	/* Buffalo WLI2-USB2-G54 */
 	{USB_DEVICE(0x045e, 0x00c2)},	/* Microsoft MN-710 */
 	{USB_DEVICE(0x0506, 0x0a11)},	/* 3COM 3CRWE254G72 */
-	{USB_DEVICE(0x0675, 0x0530)},	/* DrayTek Vigor 530 */
-	{USB_DEVICE(0x06b9, 0x0120)},	/* Thomson SpeedTouch 120g */
 	{USB_DEVICE(0x0707, 0xee06)},	/* SMC 2862W-G */
 	{USB_DEVICE(0x07aa, 0x001c)},	/* Corega CG-WLUSB2GT */
 	{USB_DEVICE(0x083a, 0x4501)},	/* Accton 802.11g WN4501 USB */
@@ -83,10 +79,7 @@ static struct usb_device_id p54u_table[] = {
 	{USB_DEVICE(0x06a9, 0x000e)},	/* Westell 802.11g USB (A90-211WG-01) */
 	{USB_DEVICE(0x06b9, 0x0121)},	/* Thomson SpeedTouch 121g */
 	{USB_DEVICE(0x0707, 0xee13)},   /* SMC 2862W-G version 2 */
-	{USB_DEVICE(0x07aa, 0x0020)},	/* Corega WLUSB2GTST USB */
-	{USB_DEVICE(0x0803, 0x4310)},	/* Zoom 4410a */
 	{USB_DEVICE(0x083a, 0x4521)},   /* Siemens Gigaset USB Adapter 54 version 2 */
-	{USB_DEVICE(0x083a, 0x4531)},	/* T-Com Sinus 154 data II */
 	{USB_DEVICE(0x083a, 0xc501)},	/* Zoom Wireless-G 4410 */
 	{USB_DEVICE(0x083a, 0xf503)},	/* Accton FD7050E ver 1010ec  */
 	{USB_DEVICE(0x0846, 0x4240)},	/* Netgear WG111 (v2) */
@@ -94,8 +87,7 @@ static struct usb_device_id p54u_table[] = {
 	{USB_DEVICE(0x0915, 0x2002)},	/* Cohiba Proto board */
 	{USB_DEVICE(0x0baf, 0x0118)},   /* U.S. Robotics U5 802.11g Adapter*/
 	{USB_DEVICE(0x0bf8, 0x1009)},   /* FUJITSU E-5400 USB D1700*/
-	/* {USB_DEVICE(0x0cde, 0x0006)}, * Medion MD40900 already listed above,
-					 * just noting it here for clarity */
+	{USB_DEVICE(0x0cde, 0x0006)},   /* Medion MD40900 */
 	{USB_DEVICE(0x0cde, 0x0008)},	/* Sagem XG703A */
 	{USB_DEVICE(0x0cde, 0x0015)},	/* Zcomax XG-705A */
 	{USB_DEVICE(0x0d8e, 0x3762)},	/* DLink DWL-G120 Cohiba */
@@ -105,7 +97,6 @@ static struct usb_device_id p54u_table[] = {
 	{USB_DEVICE(0x13B1, 0x000C)},	/* Linksys WUSB54AG */
 	{USB_DEVICE(0x1413, 0x5400)},   /* Telsey 802.11g USB2.0 Adapter */
 	{USB_DEVICE(0x1435, 0x0427)},	/* Inventel UR054G */
-	/* {USB_DEVICE(0x15a9, 0x0002)}, * Also SparkLAN WL-682 with 3887 */
 	{USB_DEVICE(0x1668, 0x1050)},	/* Actiontec 802UIG-1 */
 	{USB_DEVICE(0x1740, 0x1000)},	/* Senao NUB-350 */
 	{USB_DEVICE(0x2001, 0x3704)},	/* DLink DWL-G122 rev A2 */
@@ -199,7 +190,7 @@ static void p54u_rx_cb(struct urb *urb)
 static void p54u_tx_cb(struct urb *urb)
 {
 	struct sk_buff *skb = urb->context;
-	struct ieee80211_hw *dev =
+	struct ieee80211_hw *dev = (struct ieee80211_hw *)
 		usb_get_intfdata(usb_ifnum_to_if(urb->dev, 0));
 
 	p54_free_skb(dev, skb);
@@ -464,9 +455,10 @@ static int p54u_firmware_reset_3887(struct ieee80211_hw *dev)
 	u8 *buf;
 	int ret;
 
-	buf = kmemdup(p54u_romboot_3887, 4, GFP_KERNEL);
+	buf = kmalloc(4, GFP_KERNEL);
 	if (!buf)
 		return -ENOMEM;
+	memcpy(buf, p54u_romboot_3887, 4);
 	ret = p54u_bulk_msg(priv, P54U_PIPE_DATA,
 			    buf, 4);
 	kfree(buf);
@@ -905,6 +897,7 @@ static void p54u_stop(struct ieee80211_hw *dev)
 	   the hardware is still usable next time we want to start it.
 	   until then, we just stop listening to the hardware.. */
 	p54u_free_urbs(dev);
+	return;
 }
 
 static int __devinit p54u_probe(struct usb_interface *intf,
@@ -1088,4 +1081,15 @@ static struct usb_driver p54u_driver = {
 	.soft_unbind = 1,
 };
 
-module_usb_driver(p54u_driver);
+static int __init p54u_init(void)
+{
+	return usb_register(&p54u_driver);
+}
+
+static void __exit p54u_exit(void)
+{
+	usb_deregister(&p54u_driver);
+}
+
+module_init(p54u_init);
+module_exit(p54u_exit);

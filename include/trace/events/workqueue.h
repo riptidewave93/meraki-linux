@@ -4,118 +4,97 @@
 #if !defined(_TRACE_WORKQUEUE_H) || defined(TRACE_HEADER_MULTI_READ)
 #define _TRACE_WORKQUEUE_H
 
-#include <linux/tracepoint.h>
 #include <linux/workqueue.h>
+#include <linux/sched.h>
+#include <linux/tracepoint.h>
 
-DECLARE_EVENT_CLASS(workqueue_work,
+TRACE_EVENT(workqueue_insertion,
 
-	TP_PROTO(struct work_struct *work),
+	TP_PROTO(struct task_struct *wq_thread, struct work_struct *work),
 
-	TP_ARGS(work),
+	TP_ARGS(wq_thread, work),
 
 	TP_STRUCT__entry(
-		__field( void *,	work	)
+		__array(char,		thread_comm,	TASK_COMM_LEN)
+		__field(pid_t,		thread_pid)
+		__field(work_func_t,	func)
 	),
 
 	TP_fast_assign(
-		__entry->work		= work;
+		memcpy(__entry->thread_comm, wq_thread->comm, TASK_COMM_LEN);
+		__entry->thread_pid	= wq_thread->pid;
+		__entry->func		= work->func;
 	),
 
-	TP_printk("work struct %p", __entry->work)
+	TP_printk("thread=%s:%d func=%pf", __entry->thread_comm,
+		__entry->thread_pid, __entry->func)
 );
 
-/**
- * workqueue_queue_work - called when a work gets queued
- * @req_cpu:	the requested cpu
- * @cwq:	pointer to struct cpu_workqueue_struct
- * @work:	pointer to struct work_struct
- *
- * This event occurs when a work is queued immediately or once a
- * delayed work is actually queued on a workqueue (ie: once the delay
- * has been reached).
- */
-TRACE_EVENT(workqueue_queue_work,
+TRACE_EVENT(workqueue_execution,
 
-	TP_PROTO(unsigned int req_cpu, struct cpu_workqueue_struct *cwq,
-		 struct work_struct *work),
+	TP_PROTO(struct task_struct *wq_thread, struct work_struct *work),
 
-	TP_ARGS(req_cpu, cwq, work),
+	TP_ARGS(wq_thread, work),
 
 	TP_STRUCT__entry(
-		__field( void *,	work	)
-		__field( void *,	function)
-		__field( void *,	workqueue)
-		__field( unsigned int,	req_cpu	)
-		__field( unsigned int,	cpu	)
+		__array(char,		thread_comm,	TASK_COMM_LEN)
+		__field(pid_t,		thread_pid)
+		__field(work_func_t,	func)
 	),
 
 	TP_fast_assign(
-		__entry->work		= work;
-		__entry->function	= work->func;
-		__entry->workqueue	= cwq->wq;
-		__entry->req_cpu	= req_cpu;
-		__entry->cpu		= cwq->gcwq->cpu;
+		memcpy(__entry->thread_comm, wq_thread->comm, TASK_COMM_LEN);
+		__entry->thread_pid	= wq_thread->pid;
+		__entry->func		= work->func;
 	),
 
-	TP_printk("work struct=%p function=%pf workqueue=%p req_cpu=%u cpu=%u",
-		  __entry->work, __entry->function, __entry->workqueue,
-		  __entry->req_cpu, __entry->cpu)
+	TP_printk("thread=%s:%d func=%pf", __entry->thread_comm,
+		__entry->thread_pid, __entry->func)
 );
 
-/**
- * workqueue_activate_work - called when a work gets activated
- * @work:	pointer to struct work_struct
- *
- * This event occurs when a queued work is put on the active queue,
- * which happens immediately after queueing unless @max_active limit
- * is reached.
- */
-DEFINE_EVENT(workqueue_work, workqueue_activate_work,
+/* Trace the creation of one workqueue thread on a cpu */
+TRACE_EVENT(workqueue_creation,
 
-	TP_PROTO(struct work_struct *work),
+	TP_PROTO(struct task_struct *wq_thread, int cpu),
 
-	TP_ARGS(work)
-);
-
-/**
- * workqueue_execute_start - called immediately before the workqueue callback
- * @work:	pointer to struct work_struct
- *
- * Allows to track workqueue execution.
- */
-TRACE_EVENT(workqueue_execute_start,
-
-	TP_PROTO(struct work_struct *work),
-
-	TP_ARGS(work),
+	TP_ARGS(wq_thread, cpu),
 
 	TP_STRUCT__entry(
-		__field( void *,	work	)
-		__field( void *,	function)
+		__array(char,	thread_comm,	TASK_COMM_LEN)
+		__field(pid_t,	thread_pid)
+		__field(int,	cpu)
 	),
 
 	TP_fast_assign(
-		__entry->work		= work;
-		__entry->function	= work->func;
+		memcpy(__entry->thread_comm, wq_thread->comm, TASK_COMM_LEN);
+		__entry->thread_pid	= wq_thread->pid;
+		__entry->cpu		= cpu;
 	),
 
-	TP_printk("work struct %p: function %pf", __entry->work, __entry->function)
+	TP_printk("thread=%s:%d cpu=%d", __entry->thread_comm,
+		__entry->thread_pid, __entry->cpu)
 );
 
-/**
- * workqueue_execute_end - called immediately before the workqueue callback
- * @work:	pointer to struct work_struct
- *
- * Allows to track workqueue execution.
- */
-DEFINE_EVENT(workqueue_work, workqueue_execute_end,
+TRACE_EVENT(workqueue_destruction,
 
-	TP_PROTO(struct work_struct *work),
+	TP_PROTO(struct task_struct *wq_thread),
 
-	TP_ARGS(work)
+	TP_ARGS(wq_thread),
+
+	TP_STRUCT__entry(
+		__array(char,	thread_comm,	TASK_COMM_LEN)
+		__field(pid_t,	thread_pid)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->thread_comm, wq_thread->comm, TASK_COMM_LEN);
+		__entry->thread_pid	= wq_thread->pid;
+	),
+
+	TP_printk("thread=%s:%d", __entry->thread_comm, __entry->thread_pid)
 );
 
-#endif /*  _TRACE_WORKQUEUE_H */
+#endif /* _TRACE_WORKQUEUE_H */
 
 /* This part must be outside protection */
 #include <trace/define_trace.h>

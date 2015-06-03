@@ -31,7 +31,6 @@
  */
 #include <linux/module.h>
 #include <linux/list.h>
-#include <linux/slab.h>
 #include <linux/workqueue.h>
 #include <linux/skbuff.h>
 #include <linux/timer.h>
@@ -102,9 +101,12 @@ static unsigned int cong_flavor = 1;
 module_param(cong_flavor, uint, 0644);
 MODULE_PARM_DESC(cong_flavor, "TCP Congestion control flavor (default=1)");
 
+static void process_work(struct work_struct *work);
 static struct workqueue_struct *workq;
+static DECLARE_WORK(skb_work, process_work);
 
 static struct sk_buff_head rxq;
+static cxgb3_cpl_handler_func work_handlers[NUM_CPL_CMDS];
 
 static struct sk_buff *get_skb(struct sk_buff *skb, int len, gfp_t gfp);
 static void ep_timeout(unsigned long arg);
@@ -137,7 +139,7 @@ static void stop_ep_timer(struct iwch_ep *ep)
 	put_ep(&ep->com);
 }
 
-static int iwch_l2t_send(struct t3cdev *tdev, struct sk_buff *skb, struct l2t_entry *l2e)
+int iwch_l2t_send(struct t3cdev *tdev, struct sk_buff *skb, struct l2t_entry *l2e)
 {
 	int	error = 0;
 	struct cxio_rdev *rdev;
@@ -148,7 +150,7 @@ static int iwch_l2t_send(struct t3cdev *tdev, struct sk_buff *skb, struct l2t_en
 		return -EIO;
 	}
 	error = l2t_send(tdev, skb, l2e);
-	if (error < 0)
+	if (error)
 		kfree_skb(skb);
 	return error;
 }
@@ -164,7 +166,7 @@ int iwch_cxgb3_ofld_send(struct t3cdev *tdev, struct sk_buff *skb)
 		return -EIO;
 	}
 	error = cxgb3_ofld_send(tdev, skb);
-	if (error < 0)
+	if (error)
 		kfree_skb(skb);
 	return error;
 }
@@ -287,7 +289,7 @@ void __free_ep(struct kref *kref)
 	if (test_bit(RELEASE_RESOURCES, &ep->com.flags)) {
 		cxgb3_remove_tid(ep->com.tdev, (void *)ep, ep->hwtid);
 		dst_release(ep->dst);
-		l2t_release(ep->com.tdev, ep->l2t);
+		l2t_release(L2DATA(ep->com.tdev), ep->l2t);
 	}
 	kfree(ep);
 }
@@ -297,6 +299,27 @@ static void release_ep_resources(struct iwch_ep *ep)
 	PDBG("%s ep %p tid %d\n", __func__, ep, ep->hwtid);
 	set_bit(RELEASE_RESOURCES, &ep->com.flags);
 	put_ep(&ep->com);
+}
+
+static void process_work(struct work_struct *work)
+{
+	struct sk_buff *skb = NULL;
+	void *ep;
+	struct t3cdev *tdev;
+	int ret;
+
+	while ((skb = skb_dequeue(&rxq))) {
+		ep = *((void **) (skb->cb));
+		tdev = *((struct t3cdev **) (skb->cb + sizeof(void *)));
+		ret = work_handlers[G_OPCODE(ntohl((__force __be32)skb->csum))](tdev, skb, ep);
+		if (ret & CPL_RET_BUF_DONE)
+			kfree_skb(skb);
+
+		/*
+		 * ep was referenced in sched(), and is freed here.
+		 */
+		put_ep((struct iwch_ep_common *)ep);
+	}
 }
 
 static int status2errno(int status)
@@ -338,12 +361,23 @@ static struct rtable *find_route(struct t3cdev *dev, __be32 local_ip,
 				 __be16 peer_port, u8 tos)
 {
 	struct rtable *rt;
-	struct flowi4 fl4;
+	struct flowi fl = {
+		.oif = 0,
+		.nl_u = {
+			 .ip4_u = {
+				   .daddr = peer_ip,
+				   .saddr = local_ip,
+				   .tos = tos}
+			 },
+		.proto = IPPROTO_TCP,
+		.uli_u = {
+			  .ports = {
+				    .sport = local_port,
+				    .dport = peer_port}
+			  }
+	};
 
-	rt = ip_route_output_ports(&init_net, &fl4, NULL, peer_ip, local_ip,
-				   peer_port, local_port, IPPROTO_TCP,
-				   tos, 0);
-	if (IS_ERR(rt))
+	if (ip_route_output_flow(&init_net, &rt, &fl, NULL, 0))
 		return NULL;
 	return rt;
 }
@@ -753,11 +787,6 @@ static void connect_request_upcall(struct iwch_ep *ep)
 	event.private_data_len = ep->plen;
 	event.private_data = ep->mpa_pkt + sizeof(struct mpa_message);
 	event.provider_data = ep;
-	/*
-	 * Until ird/ord negotiation via MPAv2 support is added, send max
-	 * supported values
-	 */
-	event.ird = event.ord = 8;
 	if (state_read(&ep->parent_ep->com) != DEAD) {
 		get_ep(&ep->com);
 		ep->parent_ep->com.cm_id->event_handler(
@@ -775,11 +804,6 @@ static void established_upcall(struct iwch_ep *ep)
 	PDBG("%s ep %p\n", __func__, ep);
 	memset(&event, 0, sizeof(event));
 	event.event = IW_CM_EVENT_ESTABLISHED;
-	/*
-	 * Until ird/ord negotiation via MPAv2 support is added, send max
-	 * supported values
-	 */
-	event.ird = event.ord = 8;
 	if (ep->com.cm_id) {
 		PDBG("%s ep %p tid %d\n", __func__, ep, ep->hwtid);
 		ep->com.cm_id->event_handler(ep->com.cm_id, &event);
@@ -924,7 +948,7 @@ static void process_mpa_reply(struct iwch_ep *ep, struct sk_buff *skb)
 		goto err;
 
 	if (peer2peer && iwch_rqes_posted(ep->com.qp) == 0) {
-		iwch_post_zb_read(ep);
+		iwch_post_zb_read(ep->com.qp);
 	}
 
 	goto out;
@@ -1088,45 +1112,37 @@ static int tx_ack(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
 	struct iwch_ep *ep = ctx;
 	struct cpl_wr_ack *hdr = cplhdr(skb);
 	unsigned int credits = ntohs(hdr->credits);
-	unsigned long flags;
-	int post_zb = 0;
 
 	PDBG("%s ep %p credits %u\n", __func__, ep, credits);
 
 	if (credits == 0) {
-		PDBG("%s 0 credit ack  ep %p state %u\n",
-		     __func__, ep, state_read(&ep->com));
+		PDBG(KERN_ERR "%s 0 credit ack  ep %p state %u\n",
+			__func__, ep, state_read(&ep->com));
 		return CPL_RET_BUF_DONE;
 	}
 
-	spin_lock_irqsave(&ep->com.lock, flags);
 	BUG_ON(credits != 1);
 	dst_confirm(ep->dst);
 	if (!ep->mpa_skb) {
 		PDBG("%s rdma_init wr_ack ep %p state %u\n",
-			__func__, ep, ep->com.state);
+			__func__, ep, state_read(&ep->com));
 		if (ep->mpa_attr.initiator) {
 			PDBG("%s initiator ep %p state %u\n",
-				__func__, ep, ep->com.state);
-			if (peer2peer && ep->com.state == FPDU_MODE)
-				post_zb = 1;
+				__func__, ep, state_read(&ep->com));
+			if (peer2peer)
+				iwch_post_zb_read(ep->com.qp);
 		} else {
 			PDBG("%s responder ep %p state %u\n",
-				__func__, ep, ep->com.state);
-			if (ep->com.state == MPA_REQ_RCVD) {
-				ep->com.rpl_done = 1;
-				wake_up(&ep->com.waitq);
-			}
+				__func__, ep, state_read(&ep->com));
+			ep->com.rpl_done = 1;
+			wake_up(&ep->com.waitq);
 		}
 	} else {
 		PDBG("%s lsm ack ep %p state %u freeing skb\n",
-			__func__, ep, ep->com.state);
+			__func__, ep, state_read(&ep->com));
 		kfree_skb(ep->mpa_skb);
 		ep->mpa_skb = NULL;
 	}
-	spin_unlock_irqrestore(&ep->com.lock, flags);
-	if (post_zb)
-		iwch_post_zb_read(ep);
 	return CPL_RET_BUF_DONE;
 }
 
@@ -1188,7 +1204,7 @@ static int act_open_rpl(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
 		release_tid(ep->com.tdev, GET_TID(rpl), NULL);
 	cxgb3_free_atid(ep->com.tdev, ep->atid);
 	dst_release(ep->dst);
-	l2t_release(ep->com.tdev, ep->l2t);
+	l2t_release(L2DATA(ep->com.tdev), ep->l2t);
 	put_ep(&ep->com);
 	return CPL_RET_BUF_DONE;
 }
@@ -1357,8 +1373,15 @@ static int pass_accept_req(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
 	tim.mac_addr = req->dst_mac;
 	tim.vlan_tag = ntohs(req->vlan_tag);
 	if (tdev->ctl(tdev, GET_IFF_FROM_MAC, &tim) < 0 || !tim.dev) {
-		printk(KERN_ERR "%s bad dst mac %pM\n",
-			__func__, req->dst_mac);
+		printk(KERN_ERR
+			"%s bad dst mac %02x %02x %02x %02x %02x %02x\n",
+			__func__,
+			req->dst_mac[0],
+			req->dst_mac[1],
+			req->dst_mac[2],
+			req->dst_mac[3],
+			req->dst_mac[4],
+			req->dst_mac[5]);
 		goto reject;
 	}
 
@@ -1373,8 +1396,8 @@ static int pass_accept_req(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
 		       __func__);
 		goto reject;
 	}
-	dst = &rt->dst;
-	l2t = t3_l2t_get(tdev, dst, NULL);
+	dst = &rt->u.dst;
+	l2t = t3_l2t_get(tdev, dst->neighbour, dst->neighbour->dev);
 	if (!l2t) {
 		printk(KERN_ERR MOD "%s - failed to allocate l2t entry!\n",
 		       __func__);
@@ -1385,7 +1408,7 @@ static int pass_accept_req(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
 	if (!child_ep) {
 		printk(KERN_ERR MOD "%s - failed to allocate ep entry!\n",
 		       __func__);
-		l2t_release(tdev, l2t);
+		l2t_release(L2DATA(tdev), l2t);
 		dst_release(dst);
 		goto reject;
 	}
@@ -1884,10 +1907,10 @@ static int is_loopback_dst(struct iw_cm_id *cm_id)
 
 int iwch_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 {
+	int err = 0;
 	struct iwch_dev *h = to_iwch_dev(cm_id->device);
 	struct iwch_ep *ep;
 	struct rtable *rt;
-	int err = 0;
 
 	if (is_loopback_dst(cm_id)) {
 		err = -ENOSYS;
@@ -1941,8 +1964,11 @@ int iwch_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 		err = -EHOSTUNREACH;
 		goto fail3;
 	}
-	ep->dst = &rt->dst;
-	ep->l2t = t3_l2t_get(ep->com.tdev, ep->dst, NULL);
+	ep->dst = &rt->u.dst;
+
+	/* get a l2t entry */
+	ep->l2t = t3_l2t_get(ep->com.tdev, ep->dst->neighbour,
+			     ep->dst->neighbour->dev);
 	if (!ep->l2t) {
 		printk(KERN_ERR MOD "%s - cannot alloc l2e.\n", __func__);
 		err = -ENOMEM;
@@ -1959,7 +1985,7 @@ int iwch_connect(struct iw_cm_id *cm_id, struct iw_cm_conn_param *conn_param)
 	if (!err)
 		goto out;
 
-	l2t_release(h->rdev.t3cdev_p, ep->l2t);
+	l2t_release(L2DATA(h->rdev.t3cdev_p), ep->l2t);
 fail4:
 	dst_release(ep->dst);
 fail3:
@@ -2130,7 +2156,7 @@ int iwch_ep_redirect(void *ctx, struct dst_entry *old, struct dst_entry *new,
 	PDBG("%s ep %p redirect to dst %p l2t %p\n", __func__, ep, new,
 	     l2t);
 	dst_hold(new);
-	l2t_release(ep->com.tdev, ep->l2t);
+	l2t_release(L2DATA(ep->com.tdev), ep->l2t);
 	ep->l2t = l2t;
 	dst_release(old);
 	ep->dst = new;
@@ -2139,49 +2165,7 @@ int iwch_ep_redirect(void *ctx, struct dst_entry *old, struct dst_entry *new,
 
 /*
  * All the CM events are handled on a work queue to have a safe context.
- * These are the real handlers that are called from the work queue.
  */
-static const cxgb3_cpl_handler_func work_handlers[NUM_CPL_CMDS] = {
-	[CPL_ACT_ESTABLISH]	= act_establish,
-	[CPL_ACT_OPEN_RPL]	= act_open_rpl,
-	[CPL_RX_DATA]		= rx_data,
-	[CPL_TX_DMA_ACK]	= tx_ack,
-	[CPL_ABORT_RPL_RSS]	= abort_rpl,
-	[CPL_ABORT_RPL]		= abort_rpl,
-	[CPL_PASS_OPEN_RPL]	= pass_open_rpl,
-	[CPL_CLOSE_LISTSRV_RPL]	= close_listsrv_rpl,
-	[CPL_PASS_ACCEPT_REQ]	= pass_accept_req,
-	[CPL_PASS_ESTABLISH]	= pass_establish,
-	[CPL_PEER_CLOSE]	= peer_close,
-	[CPL_ABORT_REQ_RSS]	= peer_abort,
-	[CPL_CLOSE_CON_RPL]	= close_con_rpl,
-	[CPL_RDMA_TERMINATE]	= terminate,
-	[CPL_RDMA_EC_STATUS]	= ec_status,
-};
-
-static void process_work(struct work_struct *work)
-{
-	struct sk_buff *skb = NULL;
-	void *ep;
-	struct t3cdev *tdev;
-	int ret;
-
-	while ((skb = skb_dequeue(&rxq))) {
-		ep = *((void **) (skb->cb));
-		tdev = *((struct t3cdev **) (skb->cb + sizeof(void *)));
-		ret = work_handlers[G_OPCODE(ntohl((__force __be32)skb->csum))](tdev, skb, ep);
-		if (ret & CPL_RET_BUF_DONE)
-			kfree_skb(skb);
-
-		/*
-		 * ep was referenced in sched(), and is freed here.
-		 */
-		put_ep((struct iwch_ep_common *)ep);
-	}
-}
-
-static DECLARE_WORK(skb_work, process_work);
-
 static int sched(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
 {
 	struct iwch_ep_common *epc = ctx;
@@ -2213,29 +2197,6 @@ static int set_tcb_rpl(struct t3cdev *tdev, struct sk_buff *skb, void *ctx)
 	return CPL_RET_BUF_DONE;
 }
 
-/*
- * All upcalls from the T3 Core go to sched() to schedule the
- * processing on a work queue.
- */
-cxgb3_cpl_handler_func t3c_handlers[NUM_CPL_CMDS] = {
-	[CPL_ACT_ESTABLISH]	= sched,
-	[CPL_ACT_OPEN_RPL]	= sched,
-	[CPL_RX_DATA]		= sched,
-	[CPL_TX_DMA_ACK]	= sched,
-	[CPL_ABORT_RPL_RSS]	= sched,
-	[CPL_ABORT_RPL]		= sched,
-	[CPL_PASS_OPEN_RPL]	= sched,
-	[CPL_CLOSE_LISTSRV_RPL]	= sched,
-	[CPL_PASS_ACCEPT_REQ]	= sched,
-	[CPL_PASS_ESTABLISH]	= sched,
-	[CPL_PEER_CLOSE]	= sched,
-	[CPL_CLOSE_CON_RPL]	= sched,
-	[CPL_ABORT_REQ_RSS]	= sched,
-	[CPL_RDMA_TERMINATE]	= sched,
-	[CPL_RDMA_EC_STATUS]	= sched,
-	[CPL_SET_TCB_RPL]	= set_tcb_rpl,
-};
-
 int __init iwch_cm_init(void)
 {
 	skb_queue_head_init(&rxq);
@@ -2244,6 +2205,46 @@ int __init iwch_cm_init(void)
 	if (!workq)
 		return -ENOMEM;
 
+	/*
+	 * All upcalls from the T3 Core go to sched() to
+	 * schedule the processing on a work queue.
+	 */
+	t3c_handlers[CPL_ACT_ESTABLISH] = sched;
+	t3c_handlers[CPL_ACT_OPEN_RPL] = sched;
+	t3c_handlers[CPL_RX_DATA] = sched;
+	t3c_handlers[CPL_TX_DMA_ACK] = sched;
+	t3c_handlers[CPL_ABORT_RPL_RSS] = sched;
+	t3c_handlers[CPL_ABORT_RPL] = sched;
+	t3c_handlers[CPL_PASS_OPEN_RPL] = sched;
+	t3c_handlers[CPL_CLOSE_LISTSRV_RPL] = sched;
+	t3c_handlers[CPL_PASS_ACCEPT_REQ] = sched;
+	t3c_handlers[CPL_PASS_ESTABLISH] = sched;
+	t3c_handlers[CPL_PEER_CLOSE] = sched;
+	t3c_handlers[CPL_CLOSE_CON_RPL] = sched;
+	t3c_handlers[CPL_ABORT_REQ_RSS] = sched;
+	t3c_handlers[CPL_RDMA_TERMINATE] = sched;
+	t3c_handlers[CPL_RDMA_EC_STATUS] = sched;
+	t3c_handlers[CPL_SET_TCB_RPL] = set_tcb_rpl;
+
+	/*
+	 * These are the real handlers that are called from a
+	 * work queue.
+	 */
+	work_handlers[CPL_ACT_ESTABLISH] = act_establish;
+	work_handlers[CPL_ACT_OPEN_RPL] = act_open_rpl;
+	work_handlers[CPL_RX_DATA] = rx_data;
+	work_handlers[CPL_TX_DMA_ACK] = tx_ack;
+	work_handlers[CPL_ABORT_RPL_RSS] = abort_rpl;
+	work_handlers[CPL_ABORT_RPL] = abort_rpl;
+	work_handlers[CPL_PASS_OPEN_RPL] = pass_open_rpl;
+	work_handlers[CPL_CLOSE_LISTSRV_RPL] = close_listsrv_rpl;
+	work_handlers[CPL_PASS_ACCEPT_REQ] = pass_accept_req;
+	work_handlers[CPL_PASS_ESTABLISH] = pass_establish;
+	work_handlers[CPL_PEER_CLOSE] = peer_close;
+	work_handlers[CPL_ABORT_REQ_RSS] = peer_abort;
+	work_handlers[CPL_CLOSE_CON_RPL] = close_con_rpl;
+	work_handlers[CPL_RDMA_TERMINATE] = terminate;
+	work_handlers[CPL_RDMA_EC_STATUS] = ec_status;
 	return 0;
 }
 

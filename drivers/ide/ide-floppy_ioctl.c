@@ -5,7 +5,6 @@
 #include <linux/kernel.h>
 #include <linux/ide.h>
 #include <linux/cdrom.h>
-#include <linux/mutex.h>
 
 #include <asm/unaligned.h>
 
@@ -32,7 +31,6 @@
  * On exit we set nformats to the number of records we've actually initialized.
  */
 
-static DEFINE_MUTEX(ide_floppy_ioctl_mutex);
 static int ide_floppy_get_format_capacities(ide_drive_t *drive,
 					    struct ide_atapi_pc *pc,
 					    int __user *arg)
@@ -277,15 +275,12 @@ int ide_floppy_ioctl(ide_drive_t *drive, struct block_device *bdev,
 	void __user *argp = (void __user *)arg;
 	int err;
 
-	mutex_lock(&ide_floppy_ioctl_mutex);
-	if (cmd == CDROMEJECT || cmd == CDROM_LOCKDOOR) {
-		err = ide_floppy_lockdoor(drive, &pc, arg, cmd);
-		goto out;
-	}
+	if (cmd == CDROMEJECT || cmd == CDROM_LOCKDOOR)
+		return ide_floppy_lockdoor(drive, &pc, arg, cmd);
 
 	err = ide_floppy_format_ioctl(drive, &pc, mode, cmd, argp);
 	if (err != -ENOTTY)
-		goto out;
+		return err;
 
 	/*
 	 * skip SCSI_IOCTL_SEND_COMMAND (deprecated)
@@ -297,7 +292,5 @@ int ide_floppy_ioctl(ide_drive_t *drive, struct block_device *bdev,
 	if (err == -ENOTTY)
 		err = generic_ide_ioctl(drive, bdev, cmd, arg);
 
-out:
-	mutex_unlock(&ide_floppy_ioctl_mutex);
 	return err;
 }

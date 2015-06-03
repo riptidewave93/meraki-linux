@@ -21,6 +21,7 @@
 #include <linux/pci.h>
 #include <linux/pm.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 #include <linux/serial_core.h>
 #include <linux/serial_8250.h>
 #include <linux/mtd/physmap.h>
@@ -77,6 +78,7 @@ static void __init iq31244_timer_init(void)
 
 static struct sys_timer iq31244_timer = {
 	.init		= iq31244_timer_init,
+	.offset		= iop_gettimeoffset,
 };
 
 
@@ -103,7 +105,7 @@ void __init iq31244_map_io(void)
  * EP80219/IQ31244 PCI.
  */
 static int __init
-ep80219_pci_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+ep80219_pci_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	int irq;
 
@@ -139,7 +141,7 @@ static struct hw_pci ep80219_pci __initdata = {
 };
 
 static int __init
-iq31244_pci_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+iq31244_pci_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	int irq;
 
@@ -313,12 +315,13 @@ __setup("force_ep80219", force_ep80219_setup);
 
 MACHINE_START(IQ31244, "Intel IQ31244")
 	/* Maintainer: Intel Corp. */
-	.atag_offset	= 0x100,
+	.phys_io	= IQ31244_UART,
+	.io_pg_offst	= ((IQ31244_UART) >> 18) & 0xfffc,
+	.boot_params	= 0xa0000100,
 	.map_io		= iq31244_map_io,
 	.init_irq	= iop32x_init_irq,
 	.timer		= &iq31244_timer,
 	.init_machine	= iq31244_init_machine,
-	.restart	= iop3xx_restart,
 MACHINE_END
 
 /* There should have been an ep80219 machine identifier from the beginning.
@@ -328,10 +331,11 @@ MACHINE_END
  */
 MACHINE_START(EP80219, "Intel EP80219")
 	/* Maintainer: Intel Corp. */
-	.atag_offset	= 0x100,
+	.phys_io	= IQ31244_UART,
+	.io_pg_offst	= ((IQ31244_UART) >> 18) & 0xfffc,
+	.boot_params	= 0xa0000100,
 	.map_io		= iq31244_map_io,
 	.init_irq	= iop32x_init_irq,
 	.timer		= &iq31244_timer,
 	.init_machine	= iq31244_init_machine,
-	.restart	= iop3xx_restart,
 MACHINE_END

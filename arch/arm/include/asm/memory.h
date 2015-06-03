@@ -15,12 +15,8 @@
 
 #include <linux/compiler.h>
 #include <linux/const.h>
-#include <linux/types.h>
-#include <asm/sizes.h>
-
-#ifdef CONFIG_NEED_MACH_MEMORY_H
 #include <mach/memory.h>
-#endif
+#include <asm/sizes.h>
 
 /*
  * Allow for constants defined here to be used from assembly code
@@ -80,8 +76,6 @@
  */
 #define IOREMAP_MAX_ORDER	24
 
-#define CONSISTENT_END		(0xffe00000UL)
-
 #else /* CONFIG_MMU */
 
 /*
@@ -99,11 +93,11 @@
 #endif
 
 #ifndef PHYS_OFFSET
-#define PHYS_OFFSET 		UL(CONFIG_DRAM_BASE)
+#define PHYS_OFFSET 		(CONFIG_DRAM_BASE)
 #endif
 
 #ifndef END_MEM
-#define END_MEM     		(UL(CONFIG_DRAM_BASE) + CONFIG_DRAM_SIZE)
+#define END_MEM     		(CONFIG_DRAM_BASE + CONFIG_DRAM_SIZE)
 #endif
 
 #ifndef PAGE_OFFSET
@@ -116,84 +110,46 @@
 #define MODULES_END		(END_MEM)
 #define MODULES_VADDR		(PHYS_OFFSET)
 
-#define XIP_VIRT_ADDR(physaddr)  (physaddr)
-
 #endif /* !CONFIG_MMU */
 
 /*
- * We fix the TCM memories max 32 KiB ITCM resp DTCM at these
- * locations
+ * Size of DMA-consistent memory region.  Must be multiple of 2M,
+ * between 2MB and 14MB inclusive.
  */
-#ifdef CONFIG_HAVE_TCM
-#define ITCM_OFFSET	UL(0xfffe0000)
-#define DTCM_OFFSET	UL(0xfffe8000)
+#ifndef CONSISTENT_DMA_SIZE
+#define CONSISTENT_DMA_SIZE SZ_2M
 #endif
-
-/*
- * Convert a physical address to a Page Frame Number and back
- */
-#define	__phys_to_pfn(paddr)	((unsigned long)((paddr) >> PAGE_SHIFT))
-#define	__pfn_to_phys(pfn)	((phys_addr_t)(pfn) << PAGE_SHIFT)
-
-/*
- * Convert a page to/from a physical address
- */
-#define page_to_phys(page)	(__pfn_to_phys(page_to_pfn(page)))
-#define phys_to_page(phys)	(pfn_to_page(__phys_to_pfn(phys)))
-
-#ifndef __ASSEMBLY__
 
 /*
  * Physical vs virtual RAM address space conversion.  These are
  * private definitions which should NOT be used outside memory.h
  * files.  Use virt_to_phys/phys_to_virt/__pa/__va instead.
  */
-#ifndef __virt_to_phys
-#ifdef CONFIG_ARM_PATCH_PHYS_VIRT
-
-/*
- * Constants used to force the right instruction encodings and shifts
- * so that all we need to do is modify the 8-bit constant field.
- */
-#define __PV_BITS_31_24	0x81000000
-
-extern unsigned long __pv_phys_offset;
-#define PHYS_OFFSET __pv_phys_offset
-
-#define __pv_stub(from,to,instr,type)			\
-	__asm__("@ __pv_stub\n"				\
-	"1:	" instr "	%0, %1, %2\n"		\
-	"	.pushsection .pv_table,\"a\"\n"		\
-	"	.long	1b\n"				\
-	"	.popsection\n"				\
-	: "=r" (to)					\
-	: "r" (from), "I" (type))
-
-static inline unsigned long __virt_to_phys(unsigned long x)
-{
-	unsigned long t;
-	__pv_stub(x, t, "add", __PV_BITS_31_24);
-	return t;
-}
-
-static inline unsigned long __phys_to_virt(unsigned long x)
-{
-	unsigned long t;
-	__pv_stub(x, t, "sub", __PV_BITS_31_24);
-	return t;
-}
-#else
 #define __virt_to_phys(x)	((x) - PAGE_OFFSET + PHYS_OFFSET)
 #define __phys_to_virt(x)	((x) - PHYS_OFFSET + PAGE_OFFSET)
-#endif
+
+/*
+ * Convert a physical address to a Page Frame Number and back
+ */
+#define	__phys_to_pfn(paddr)	((paddr) >> PAGE_SHIFT)
+#define	__pfn_to_phys(pfn)	((pfn) << PAGE_SHIFT)
+
+#ifndef __ASSEMBLY__
+
+/*
+ * The DMA mask corresponding to the maximum bus address allocatable
+ * using GFP_DMA.  The default here places no restriction on DMA
+ * allocations.  This must be the smallest DMA mask in the system,
+ * so a successful GFP_DMA allocation will always satisfy this.
+ */
+#ifndef ISA_DMA_THRESHOLD
+#define ISA_DMA_THRESHOLD	(0xffffffffULL)
 #endif
 
-#ifndef PHYS_OFFSET
-#ifdef PLAT_PHYS_OFFSET
-#define PHYS_OFFSET	PLAT_PHYS_OFFSET
-#else
-#define PHYS_OFFSET	UL(CONFIG_PHYS_OFFSET)
-#endif
+#ifndef arch_adjust_zones
+#define arch_adjust_zones(node,size,holes) do { } while (0)
+#elif !defined(CONFIG_ZONE_DMA)
+#error "custom arch_adjust_zones() requires CONFIG_ZONE_DMA"
 #endif
 
 /*
@@ -212,12 +168,12 @@ static inline unsigned long __phys_to_virt(unsigned long x)
  * translation for translating DMA addresses.  Use the driver
  * DMA support - see dma-mapping.h.
  */
-static inline phys_addr_t virt_to_phys(const volatile void *x)
+static inline unsigned long virt_to_phys(void *x)
 {
 	return __virt_to_phys((unsigned long)(x));
 }
 
-static inline void *phys_to_virt(phys_addr_t x)
+static inline void *phys_to_virt(unsigned long x)
 {
 	return (void *)(__phys_to_virt((unsigned long)(x)));
 }
@@ -238,8 +194,7 @@ static inline void *phys_to_virt(phys_addr_t x)
 #ifndef __virt_to_bus
 #define __virt_to_bus	__virt_to_phys
 #define __bus_to_virt	__phys_to_virt
-#define __pfn_to_bus(x)	__pfn_to_phys(x)
-#define __bus_to_pfn(x)	__phys_to_pfn(x)
+#define __pfn_to_bus(x)	((x) << PAGE_SHIFT)
 #endif
 
 static inline __deprecated unsigned long virt_to_bus(void *x)
@@ -267,10 +222,80 @@ static inline __deprecated void *bus_to_virt(unsigned long x)
  *  virt_to_page(k)	convert a _valid_ virtual address to struct page *
  *  virt_addr_valid(k)	indicates whether a virtual address is valid
  */
+#ifndef CONFIG_DISCONTIGMEM
+
 #define ARCH_PFN_OFFSET		PHYS_PFN_OFFSET
 
 #define virt_to_page(kaddr)	pfn_to_page(__pa(kaddr) >> PAGE_SHIFT)
 #define virt_addr_valid(kaddr)	((unsigned long)(kaddr) >= PAGE_OFFSET && (unsigned long)(kaddr) < (unsigned long)high_memory)
+
+#define PHYS_TO_NID(addr)	(0)
+
+#else /* CONFIG_DISCONTIGMEM */
+
+/*
+ * This is more complex.  We have a set of mem_map arrays spread
+ * around in memory.
+ */
+#include <linux/numa.h>
+
+#define arch_pfn_to_nid(pfn)	PFN_TO_NID(pfn)
+#define arch_local_page_offset(pfn, nid) LOCAL_MAP_NR((pfn) << PAGE_SHIFT)
+
+#define virt_to_page(kaddr)					\
+	(ADDR_TO_MAPBASE(kaddr) + LOCAL_MAP_NR(kaddr))
+
+#define virt_addr_valid(kaddr)	(KVADDR_TO_NID(kaddr) < MAX_NUMNODES)
+
+/*
+ * Common discontigmem stuff.
+ *  PHYS_TO_NID is used by the ARM kernel/setup.c
+ */
+#define PHYS_TO_NID(addr)	PFN_TO_NID((addr) >> PAGE_SHIFT)
+
+/*
+ * Given a kaddr, ADDR_TO_MAPBASE finds the owning node of the memory
+ * and returns the mem_map of that node.
+ */
+#define ADDR_TO_MAPBASE(kaddr)	NODE_MEM_MAP(KVADDR_TO_NID(kaddr))
+
+/*
+ * Given a page frame number, find the owning node of the memory
+ * and returns the mem_map of that node.
+ */
+#define PFN_TO_MAPBASE(pfn)	NODE_MEM_MAP(PFN_TO_NID(pfn))
+
+#ifdef NODE_MEM_SIZE_BITS
+#define NODE_MEM_SIZE_MASK	((1 << NODE_MEM_SIZE_BITS) - 1)
+
+/*
+ * Given a kernel address, find the home node of the underlying memory.
+ */
+#define KVADDR_TO_NID(addr) \
+	(((unsigned long)(addr) - PAGE_OFFSET) >> NODE_MEM_SIZE_BITS)
+
+/*
+ * Given a page frame number, convert it to a node id.
+ */
+#define PFN_TO_NID(pfn) \
+	(((pfn) - PHYS_PFN_OFFSET) >> (NODE_MEM_SIZE_BITS - PAGE_SHIFT))
+
+/*
+ * Given a kaddr, LOCAL_MEM_MAP finds the owning node of the memory
+ * and returns the index corresponding to the appropriate page in the
+ * node's mem_map.
+ */
+#define LOCAL_MAP_NR(addr) \
+	(((unsigned long)(addr) & NODE_MEM_SIZE_MASK) >> PAGE_SHIFT)
+
+#endif /* NODE_MEM_SIZE_BITS */
+
+#endif /* !CONFIG_DISCONTIGMEM */
+
+/*
+ * For BIO.  "will die".  Kill me when bio_to_phys() and bvec_to_phys() die.
+ */
+#define page_to_phys(page)	(page_to_pfn(page) << PAGE_SHIFT)
 
 /*
  * Optional coherency support.  Currently used only by selected

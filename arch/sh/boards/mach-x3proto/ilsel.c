@@ -1,22 +1,20 @@
 /*
- * arch/sh/boards/mach-x3proto/ilsel.c
+ * arch/sh/boards/renesas/x3proto/ilsel.c
  *
  * Helper routines for SH-X3 proto board ILSEL.
  *
- * Copyright (C) 2007 - 2010  Paul Mundt
+ * Copyright (C) 2007 Paul Mundt
  *
  * This file is subject to the terms and conditions of the GNU General Public
  * License.  See the file "COPYING" in the main directory of this archive
  * for more details.
  */
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/bitmap.h>
 #include <linux/io.h>
-#include <mach/ilsel.h>
+#include <asm/ilsel.h>
 
 /*
  * ILSEL is split across:
@@ -66,18 +64,16 @@ static void __ilsel_enable(ilsel_source_t set, unsigned int bit)
 	unsigned int tmp, shift;
 	unsigned long addr;
 
-	pr_notice("enabling ILSEL set %d\n", set);
-
 	addr = mk_ilsel_addr(bit);
 	shift = mk_ilsel_shift(bit);
 
 	pr_debug("%s: bit#%d: addr - 0x%08lx (shift %d, set %d)\n",
 		 __func__, bit, addr, shift, set);
 
-	tmp = __raw_readw(addr);
+	tmp = ctrl_inw(addr);
 	tmp &= ~(0xf << shift);
 	tmp |= set << shift;
-	__raw_writew(tmp, addr);
+	ctrl_outw(tmp, addr);
 }
 
 /**
@@ -96,10 +92,8 @@ int ilsel_enable(ilsel_source_t set)
 {
 	unsigned int bit;
 
-	if (unlikely(set > ILSEL_KEY)) {
-		pr_err("Aliased sources must use ilsel_enable_fixed()\n");
-		return -EINVAL;
-	}
+	/* Aliased sources must use ilsel_enable_fixed() */
+	BUG_ON(set > ILSEL_KEY);
 
 	do {
 		bit = find_first_zero_bit(&ilsel_level_map, ILSEL_LEVELS);
@@ -146,13 +140,11 @@ void ilsel_disable(unsigned int irq)
 	unsigned long addr;
 	unsigned int tmp;
 
-	pr_notice("disabling ILSEL set %d\n", irq);
-
 	addr = mk_ilsel_addr(irq);
 
-	tmp = __raw_readw(addr);
+	tmp = ctrl_inw(addr);
 	tmp &= ~(0xf << mk_ilsel_shift(irq));
-	__raw_writew(tmp, addr);
+	ctrl_outw(tmp, addr);
 
 	clear_bit(irq, &ilsel_level_map);
 }

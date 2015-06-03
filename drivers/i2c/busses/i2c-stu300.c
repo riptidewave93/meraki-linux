@@ -16,7 +16,6 @@
 #include <linux/interrupt.h>
 #include <linux/clk.h>
 #include <linux/io.h>
-#include <linux/slab.h>
 
 /* the name of this kernel module */
 #define NAME "stu300"
@@ -497,8 +496,8 @@ static int stu300_set_clk(struct stu300_dev *dev, unsigned long clkrate)
 	u32 val;
 	int i = 0;
 
-	/* Locate the appropriate clock setting */
-	while (i < ARRAY_SIZE(stu300_clktable) - 1 &&
+	/* Locate the apropriate clock setting */
+	while (i < ARRAY_SIZE(stu300_clktable) &&
 	       stu300_clktable[i].rate < clkrate)
 		i++;
 
@@ -644,7 +643,7 @@ static int stu300_send_address(struct stu300_dev *dev,
 	ret = stu300_await_event(dev, STU300_EVENT_6);
 
 	/*
-	 * Clear any pending EVENT 6 no matter what happened during
+	 * Clear any pending EVENT 6 no matter what happend during
 	 * await_event.
 	 */
 	val = stu300_r8(dev->virtbase + I2C_CR);
@@ -916,7 +915,7 @@ stu300_probe(struct platform_device *pdev)
 	}
 
 	dev->irq = platform_get_irq(pdev, 0);
-	if (request_irq(dev->irq, stu300_irh, 0,
+	if (request_irq(dev->irq, stu300_irh, IRQF_DISABLED,
 			NAME, dev)) {
 		ret = -EIO;
 		goto err_no_irq;
@@ -942,7 +941,7 @@ stu300_probe(struct platform_device *pdev)
 	adap->owner = THIS_MODULE;
 	/* DDC class but actually often used for more generic I2C */
 	adap->class = I2C_CLASS_DDC;
-	strlcpy(adap->name, "ST Microelectronics DDC I2C adapter",
+	strncpy(adap->name, "ST Microelectronics DDC I2C adapter",
 		sizeof(adap->name));
 	adap->nr = bus_nr;
 	adap->algo = &stu300_algo;

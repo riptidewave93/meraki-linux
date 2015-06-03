@@ -147,9 +147,9 @@ void flush_cache_page(struct vm_area_struct* vma, unsigned long address,
 #endif
 
 void
-update_mmu_cache(struct vm_area_struct * vma, unsigned long addr, pte_t *ptep)
+update_mmu_cache(struct vm_area_struct * vma, unsigned long addr, pte_t pte)
 {
-	unsigned long pfn = pte_pfn(*ptep);
+	unsigned long pfn = pte_pfn(pte);
 	struct page *page;
 
 	if (!pfn_valid(pfn))

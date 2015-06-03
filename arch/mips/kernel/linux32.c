@@ -9,12 +9,14 @@
 #include <linux/mm.h>
 #include <linux/errno.h>
 #include <linux/file.h>
+#include <linux/smp_lock.h>
 #include <linux/highuid.h>
 #include <linux/resource.h>
 #include <linux/highmem.h>
 #include <linux/time.h>
 #include <linux/times.h>
 #include <linux/poll.h>
+#include <linux/slab.h>
 #include <linux/skbuff.h>
 #include <linux/filter.h>
 #include <linux/shm.h>
@@ -33,7 +35,6 @@
 #include <linux/compat.h>
 #include <linux/vfs.h>
 #include <linux/ipc.h>
-#include <linux/slab.h>
 
 #include <net/sock.h>
 #include <net/scm.h>
@@ -249,17 +250,93 @@ SYSCALL_DEFINE5(n32_msgrcv, int, msqid, u32, msgp, size_t, msgsz,
 }
 #endif
 
+struct sysctl_args32
+{
+	compat_caddr_t name;
+	int nlen;
+	compat_caddr_t oldval;
+	compat_caddr_t oldlenp;
+	compat_caddr_t newval;
+	compat_size_t newlen;
+	unsigned int __unused[4];
+};
+
+#ifdef CONFIG_SYSCTL_SYSCALL
+
+SYSCALL_DEFINE1(32_sysctl, struct sysctl_args32 __user *, args)
+{
+	struct sysctl_args32 tmp;
+	int error;
+	size_t oldlen;
+	size_t __user *oldlenp = NULL;
+	unsigned long addr = (((unsigned long)&args->__unused[0]) + 7) & ~7;
+
+	if (copy_from_user(&tmp, args, sizeof(tmp)))
+		return -EFAULT;
+
+	if (tmp.oldval && tmp.oldlenp) {
+		/* Duh, this is ugly and might not work if sysctl_args
+		   is in read-only memory, but do_sysctl does indirectly
+		   a lot of uaccess in both directions and we'd have to
+		   basically copy the whole sysctl.c here, and
+		   glibc's __sysctl uses rw memory for the structure
+		   anyway.  */
+		if (get_user(oldlen, (u32 __user *)A(tmp.oldlenp)) ||
+		    put_user(oldlen, (size_t __user *)addr))
+			return -EFAULT;
+		oldlenp = (size_t __user *)addr;
+	}
+
+	lock_kernel();
+	error = do_sysctl((int __user *)A(tmp.name), tmp.nlen, (void __user *)A(tmp.oldval),
+			  oldlenp, (void __user *)A(tmp.newval), tmp.newlen);
+	unlock_kernel();
+	if (oldlenp) {
+		if (!error) {
+			if (get_user(oldlen, (size_t __user *)addr) ||
+			    put_user(oldlen, (u32 __user *)A(tmp.oldlenp)))
+				error = -EFAULT;
+		}
+		copy_to_user(args->__unused, tmp.__unused, sizeof(tmp.__unused));
+	}
+	return error;
+}
+
+#else
+
+SYSCALL_DEFINE1(32_sysctl, struct sysctl_args32 __user *, args)
+{
+	return -ENOSYS;
+}
+
+#endif /* CONFIG_SYSCTL_SYSCALL */
+
+SYSCALL_DEFINE1(32_newuname, struct new_utsname __user *, name)
+{
+	int ret = 0;
+
+	down_read(&uts_sem);
+	if (copy_to_user(name, utsname(), sizeof *name))
+		ret = -EFAULT;
+	up_read(&uts_sem);
+
+	if (current->personality == PER_LINUX32 && !ret)
+		if (copy_to_user(name->machine, "mips\0\0\0", 8))
+			ret = -EFAULT;
+
+	return ret;
+}
+
 SYSCALL_DEFINE1(32_personality, unsigned long, personality)
 {
-	unsigned int p = personality & 0xffffffff;
 	int ret;
-
+	personality &= 0xffffffff;
 	if (personality(current->personality) == PER_LINUX32 &&
-	    personality(p) == PER_LINUX)
-		p = (p & ~PER_MASK) | PER_LINUX32;
-	ret = sys_personality(p);
-	if (ret != -1 && personality(ret) == PER_LINUX32)
-		ret = (ret & ~PER_MASK) | PER_LINUX;
+	    personality == PER_LINUX)
+		personality = PER_LINUX32;
+	ret = sys_personality(personality);
+	if (ret == PER_LINUX32)
+		ret = PER_LINUX;
 	return ret;
 }
 
@@ -341,18 +418,4 @@ asmlinkage long sys32_lookup_dcookie(u32 a0, u32 a1, char __user *buf,
 	size_t len)
 {
 	return sys_lookup_dcookie(merge_64(a0, a1), buf, len);
-}
-
-SYSCALL_DEFINE6(32_fanotify_mark, int, fanotify_fd, unsigned int, flags,
-		u64, a3, u64, a4, int, dfd, const char  __user *, pathname)
-{
-	return sys_fanotify_mark(fanotify_fd, flags, merge_64(a3, a4),
-				 dfd, pathname);
-}
-
-SYSCALL_DEFINE6(32_futex, u32 __user *, uaddr, int, op, u32, val,
-		struct compat_timespec __user *, utime, u32 __user *, uaddr2,
-		u32, val3)
-{
-	return compat_sys_futex(uaddr, op, val, utime, uaddr2, val3);
 }

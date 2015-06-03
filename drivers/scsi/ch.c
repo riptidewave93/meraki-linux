@@ -22,7 +22,7 @@
 #include <linux/chio.h>			/* here are all the ioctls */
 #include <linux/mutex.h>
 #include <linux/idr.h>
-#include <linux/slab.h>
+#include <linux/smp_lock.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
@@ -43,7 +43,6 @@ MODULE_LICENSE("GPL");
 MODULE_ALIAS_CHARDEV_MAJOR(SCSI_CHANGER_MAJOR);
 MODULE_ALIAS_SCSI_DEVICE(TYPE_MEDIUM_CHANGER);
 
-static DEFINE_MUTEX(ch_mutex);
 static int init = 1;
 module_param(init, int, 0444);
 MODULE_PARM_DESC(init, \
@@ -84,16 +83,10 @@ static const char * vendor_labels[CH_TYPES-4] = {
 };
 // module_param_string_array(vendor_labels, NULL, 0444);
 
-#define DPRINTK(fmt, arg...)						\
-do {									\
-	if (debug)							\
-		printk(KERN_DEBUG "%s: " fmt, ch->name, ##arg);		\
-} while (0)
-#define VPRINTK(level, fmt, arg...)					\
-do {									\
-	if (verbose)							\
-		printk(level "%s: " fmt, ch->name, ##arg);		\
-} while (0)
+#define dprintk(fmt, arg...)    if (debug) \
+        printk(KERN_DEBUG "%s: " fmt, ch->name , ## arg)
+#define vprintk(fmt, arg...)    if (verbose) \
+        printk(KERN_INFO "%s: " fmt, ch->name , ## arg)
 
 /* ------------------------------------------------------------------- */
 
@@ -192,7 +185,7 @@ ch_do_scsi(scsi_changer *ch, unsigned char *cmd,
  retry:
 	errno = 0;
 	if (debug) {
-		DPRINTK("command: ");
+		dprintk("command: ");
 		__scsi_print_command(cmd);
 	}
 
@@ -200,7 +193,7 @@ ch_do_scsi(scsi_changer *ch, unsigned char *cmd,
 				  buflength, &sshdr, timeout * HZ,
 				  MAX_RETRIES, NULL);
 
-	DPRINTK("result: 0x%x\n",result);
+	dprintk("result: 0x%x\n",result);
 	if (driver_byte(result) & DRIVER_SENSE) {
 		if (debug)
 			scsi_print_sense_hdr(ch->name, &sshdr);
@@ -256,7 +249,7 @@ ch_read_element_status(scsi_changer *ch, u_int elem, char *data)
 	cmd[9] = 255;
 	if (0 == (result = ch_do_scsi(ch, cmd, buffer, 256, DMA_FROM_DEVICE))) {
 		if (((buffer[16] << 8) | buffer[17]) != elem) {
-			DPRINTK("asked for element 0x%02x, got 0x%02x\n",
+			dprintk("asked for element 0x%02x, got 0x%02x\n",
 				elem,(buffer[16] << 8) | buffer[17]);
 			kfree(buffer);
 			return -EIO;
@@ -265,10 +258,10 @@ ch_read_element_status(scsi_changer *ch, u_int elem, char *data)
 	} else {
 		if (ch->voltags) {
 			ch->voltags = 0;
-			VPRINTK(KERN_INFO, "device has no volume tag support\n");
+			vprintk("device has no volume tag support\n");
 			goto retry;
 		}
-		DPRINTK("READ ELEMENT STATUS for element 0x%x failed\n",elem);
+		dprintk("READ ELEMENT STATUS for element 0x%x failed\n",elem);
 	}
 	kfree(buffer);
 	return result;
@@ -280,12 +273,12 @@ ch_init_elem(scsi_changer *ch)
 	int err;
 	u_char cmd[6];
 
-	VPRINTK(KERN_INFO, "INITIALIZE ELEMENT STATUS, may take some time ...\n");
+	vprintk("INITIALIZE ELEMENT STATUS, may take some time ...\n");
 	memset(cmd,0,sizeof(cmd));
 	cmd[0] = INITIALIZE_ELEMENT_STATUS;
 	cmd[1] = ch->device->lun << 5;
 	err = ch_do_scsi(ch, cmd, NULL, 0, DMA_NONE);
-	VPRINTK(KERN_INFO, "... finished\n");
+	vprintk("... finished\n");
 	return err;
 }
 
@@ -328,20 +321,20 @@ ch_readconfig(scsi_changer *ch)
 			(buffer[buffer[3]+18] << 8) | buffer[buffer[3]+19];
 		ch->counts[CHET_DT] =
 			(buffer[buffer[3]+20] << 8) | buffer[buffer[3]+21];
-		VPRINTK(KERN_INFO, "type #1 (mt): 0x%x+%d [medium transport]\n",
+		vprintk("type #1 (mt): 0x%x+%d [medium transport]\n",
 			ch->firsts[CHET_MT],
 			ch->counts[CHET_MT]);
-		VPRINTK(KERN_INFO, "type #2 (st): 0x%x+%d [storage]\n",
+		vprintk("type #2 (st): 0x%x+%d [storage]\n",
 			ch->firsts[CHET_ST],
 			ch->counts[CHET_ST]);
-		VPRINTK(KERN_INFO, "type #3 (ie): 0x%x+%d [import/export]\n",
+		vprintk("type #3 (ie): 0x%x+%d [import/export]\n",
 			ch->firsts[CHET_IE],
 			ch->counts[CHET_IE]);
-		VPRINTK(KERN_INFO, "type #4 (dt): 0x%x+%d [data transfer]\n",
+		vprintk("type #4 (dt): 0x%x+%d [data transfer]\n",
 			ch->firsts[CHET_DT],
 			ch->counts[CHET_DT]);
 	} else {
-		VPRINTK(KERN_INFO, "reading element address assigment page failed!\n");
+		vprintk("reading element address assigment page failed!\n");
 	}
 
 	/* vendor specific element types */
@@ -352,13 +345,13 @@ ch_readconfig(scsi_changer *ch)
 			continue;
 		ch->firsts[CHET_V1+i] = vendor_firsts[i];
 		ch->counts[CHET_V1+i] = vendor_counts[i];
-		VPRINTK(KERN_INFO, "type #%d (v%d): 0x%x+%d [%s, vendor specific]\n",
+		vprintk("type #%d (v%d): 0x%x+%d [%s, vendor specific]\n",
 			i+5,i+1,vendor_firsts[i],vendor_counts[i],
 			vendor_labels[i]);
 	}
 
 	/* look up the devices of the data transfer elements */
-	ch->dt = kcalloc(ch->counts[CHET_DT], sizeof(*ch->dt),
+	ch->dt = kmalloc(ch->counts[CHET_DT]*sizeof(struct scsi_device),
 			 GFP_KERNEL);
 
 	if (!ch->dt) {
@@ -372,19 +365,21 @@ ch_readconfig(scsi_changer *ch)
 		if (elem < CH_DT_MAX  &&  -1 != dt_id[elem]) {
 			id  = dt_id[elem];
 			lun = dt_lun[elem];
-			VPRINTK(KERN_INFO, "dt 0x%x: [insmod option] ",
+			vprintk("dt 0x%x: [insmod option] ",
 				elem+ch->firsts[CHET_DT]);
 		} else if (0 != ch_read_element_status
 			   (ch,elem+ch->firsts[CHET_DT],data)) {
-			VPRINTK(KERN_INFO, "dt 0x%x: READ ELEMENT STATUS failed\n",
+			vprintk("dt 0x%x: READ ELEMENT STATUS failed\n",
 				elem+ch->firsts[CHET_DT]);
 		} else {
-			VPRINTK(KERN_INFO, "dt 0x%x: ",elem+ch->firsts[CHET_DT]);
+			vprintk("dt 0x%x: ",elem+ch->firsts[CHET_DT]);
 			if (data[6] & 0x80) {
-				VPRINTK(KERN_CONT, "not this SCSI bus\n");
+				if (verbose)
+					printk("not this SCSI bus\n");
 				ch->dt[elem] = NULL;
 			} else if (0 == (data[6] & 0x30)) {
-				VPRINTK(KERN_CONT, "ID/LUN unknown\n");
+				if (verbose)
+					printk("ID/LUN unknown\n");
 				ch->dt[elem] = NULL;
 			} else {
 				id  = ch->device->id;
@@ -394,19 +389,22 @@ ch_readconfig(scsi_changer *ch)
 			}
 		}
 		if (-1 != id) {
-			VPRINTK(KERN_CONT, "ID %i, LUN %i, ",id,lun);
+			if (verbose)
+				printk("ID %i, LUN %i, ",id,lun);
 			ch->dt[elem] =
 				scsi_device_lookup(ch->device->host,
 						   ch->device->channel,
 						   id,lun);
 			if (!ch->dt[elem]) {
 				/* should not happen */
-				VPRINTK(KERN_CONT, "Huh? device not found!\n");
+				if (verbose)
+					printk("Huh? device not found!\n");
 			} else {
-				VPRINTK(KERN_CONT, "name: %8.8s %16.16s %4.4s\n",
-					ch->dt[elem]->vendor,
-					ch->dt[elem]->model,
-					ch->dt[elem]->rev);
+				if (verbose)
+					printk("name: %8.8s %16.16s %4.4s\n",
+					       ch->dt[elem]->vendor,
+					       ch->dt[elem]->model,
+					       ch->dt[elem]->rev);
 			}
 		}
 	}
@@ -423,7 +421,7 @@ ch_position(scsi_changer *ch, u_int trans, u_int elem, int rotate)
 {
 	u_char  cmd[10];
 
-	DPRINTK("position: 0x%x\n",elem);
+	dprintk("position: 0x%x\n",elem);
 	if (0 == trans)
 		trans = ch->firsts[CHET_MT];
 	memset(cmd,0,sizeof(cmd));
@@ -442,7 +440,7 @@ ch_move(scsi_changer *ch, u_int trans, u_int src, u_int dest, int rotate)
 {
 	u_char  cmd[12];
 
-	DPRINTK("move: 0x%x => 0x%x\n",src,dest);
+	dprintk("move: 0x%x => 0x%x\n",src,dest);
 	if (0 == trans)
 		trans = ch->firsts[CHET_MT];
 	memset(cmd,0,sizeof(cmd));
@@ -464,7 +462,7 @@ ch_exchange(scsi_changer *ch, u_int trans, u_int src,
 {
 	u_char  cmd[12];
 
-	DPRINTK("exchange: 0x%x => 0x%x => 0x%x\n",
+	dprintk("exchange: 0x%x => 0x%x => 0x%x\n",
 		src,dest1,dest2);
 	if (0 == trans)
 		trans = ch->firsts[CHET_MT];
@@ -512,7 +510,7 @@ ch_set_voltag(scsi_changer *ch, u_int elem,
 	if (!buffer)
 		return -ENOMEM;
 
-	DPRINTK("%s %s voltag: 0x%x => \"%s\"\n",
+	dprintk("%s %s voltag: 0x%x => \"%s\"\n",
 		clear     ? "clear"     : "set",
 		alternate ? "alternate" : "primary",
 		elem, tag);
@@ -551,7 +549,7 @@ static int ch_gstatus(scsi_changer *ch, int type, unsigned char __user *dest)
 		}
 		put_user(data[2], dest+i);
 		if (data[2] & CESTATUS_EXCEPT)
-			VPRINTK(KERN_INFO, "element 0x%x: asc=0x%x, ascq=0x%x\n",
+			vprintk("element 0x%x: asc=0x%x, ascq=0x%x\n",
 				ch->firsts[type]+i,
 				(int)data[4],(int)data[5]);
 		retval = ch_read_element_status
@@ -581,19 +579,19 @@ ch_open(struct inode *inode, struct file *file)
 	scsi_changer *ch;
 	int minor = iminor(inode);
 
-	mutex_lock(&ch_mutex);
+	lock_kernel();
 	spin_lock(&ch_index_lock);
 	ch = idr_find(&ch_index_idr, minor);
 
 	if (NULL == ch || scsi_device_get(ch->device)) {
 		spin_unlock(&ch_index_lock);
-		mutex_unlock(&ch_mutex);
+		unlock_kernel();
 		return -ENXIO;
 	}
 	spin_unlock(&ch_index_lock);
 
 	file->private_data = ch;
-	mutex_unlock(&ch_mutex);
+	unlock_kernel();
 	return 0;
 }
 
@@ -661,7 +659,7 @@ static long ch_ioctl(struct file *file,
 			return -EFAULT;
 
 		if (0 != ch_checkrange(ch, pos.cp_type, pos.cp_unit)) {
-			DPRINTK("CHIOPOSITION: invalid parameter\n");
+			dprintk("CHIOPOSITION: invalid parameter\n");
 			return -EBADSLT;
 		}
 		mutex_lock(&ch->lock);
@@ -681,7 +679,7 @@ static long ch_ioctl(struct file *file,
 
 		if (0 != ch_checkrange(ch, mv.cm_fromtype, mv.cm_fromunit) ||
 		    0 != ch_checkrange(ch, mv.cm_totype,   mv.cm_tounit  )) {
-			DPRINTK("CHIOMOVE: invalid parameter\n");
+			dprintk("CHIOMOVE: invalid parameter\n");
 			return -EBADSLT;
 		}
 
@@ -704,7 +702,7 @@ static long ch_ioctl(struct file *file,
 		if (0 != ch_checkrange(ch, mv.ce_srctype,  mv.ce_srcunit ) ||
 		    0 != ch_checkrange(ch, mv.ce_fdsttype, mv.ce_fdstunit) ||
 		    0 != ch_checkrange(ch, mv.ce_sdsttype, mv.ce_sdstunit)) {
-			DPRINTK("CHIOEXCHANGE: invalid parameter\n");
+			dprintk("CHIOEXCHANGE: invalid parameter\n");
 			return -EBADSLT;
 		}
 
@@ -797,7 +795,7 @@ static long ch_ioctl(struct file *file,
 			}
 		} else if (ch->voltags) {
 			ch->voltags = 0;
-			VPRINTK(KERN_INFO, "device has no volume tag support\n");
+			vprintk("device has no volume tag support\n");
 			goto voltag_retry;
 		}
 		kfree(buffer);
@@ -825,7 +823,7 @@ static long ch_ioctl(struct file *file,
 			return -EFAULT;
 
 		if (0 != ch_checkrange(ch, csv.csv_type, csv.csv_unit)) {
-			DPRINTK("CHIOSVOLTAG: invalid parameter\n");
+			dprintk("CHIOSVOLTAG: invalid parameter\n");
 			return -EBADSLT;
 		}
 		elem = ch->firsts[csv.csv_type] + csv.csv_unit;
@@ -981,7 +979,6 @@ static const struct file_operations changer_fops = {
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= ch_ioctl_compat,
 #endif
-	.llseek		= noop_llseek,
 };
 
 static int __init init_ch_module(void)

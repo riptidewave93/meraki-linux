@@ -35,9 +35,7 @@
 #include <net/icmp.h>
 #include <linux/icmpv6.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
 #include <linux/vmalloc.h>
-#include <linux/moduleparam.h>
 
 #include "ipoib.h"
 
@@ -85,7 +83,7 @@ static void ipoib_cm_dma_unmap_rx(struct ipoib_dev_priv *priv, int frags,
 	ib_dma_unmap_single(priv->ca, mapping[0], IPOIB_CM_HEAD_SIZE, DMA_FROM_DEVICE);
 
 	for (i = 0; i < frags; ++i)
-		ib_dma_unmap_page(priv->ca, mapping[i + 1], PAGE_SIZE, DMA_FROM_DEVICE);
+		ib_dma_unmap_single(priv->ca, mapping[i + 1], PAGE_SIZE, DMA_FROM_DEVICE);
 }
 
 static int ipoib_cm_post_receive_srq(struct net_device *dev, int id)
@@ -170,7 +168,7 @@ static struct sk_buff *ipoib_cm_alloc_rx_skb(struct net_device *dev,
 			goto partial_error;
 		skb_fill_page_desc(skb, i, page, 0, PAGE_SIZE);
 
-		mapping[i + 1] = ib_dma_map_page(priv->ca, page,
+		mapping[i + 1] = ib_dma_map_page(priv->ca, skb_shinfo(skb)->frags[i].page,
 						 0, PAGE_SIZE, DMA_FROM_DEVICE);
 		if (unlikely(ib_dma_mapping_error(priv->ca, mapping[i + 1])))
 			goto partial_error;
@@ -184,7 +182,7 @@ partial_error:
 	ib_dma_unmap_single(priv->ca, mapping[0], IPOIB_CM_HEAD_SIZE, DMA_FROM_DEVICE);
 
 	for (; i > 0; --i)
-		ib_dma_unmap_page(priv->ca, mapping[i], PAGE_SIZE, DMA_FROM_DEVICE);
+		ib_dma_unmap_single(priv->ca, mapping[i], PAGE_SIZE, DMA_FROM_DEVICE);
 
 	dev_kfree_skb_any(skb);
 	return NULL;
@@ -353,12 +351,14 @@ static int ipoib_cm_nonsrq_init_rx(struct net_device *dev, struct ib_cm_id *cm_i
 	int ret;
 	int i;
 
-	rx->rx_ring = vzalloc(ipoib_recvq_size * sizeof *rx->rx_ring);
+	rx->rx_ring = vmalloc(ipoib_recvq_size * sizeof *rx->rx_ring);
 	if (!rx->rx_ring) {
 		printk(KERN_WARNING "%s: failed to allocate CM non-SRQ ring (%d entries)\n",
 		       priv->ca->name, ipoib_recvq_size);
 		return -ENOMEM;
 	}
+
+	memset(rx->rx_ring, 0, ipoib_recvq_size * sizeof *rx->rx_ring);
 
 	t = kmalloc(sizeof *t, GFP_KERNEL);
 	if (!t) {
@@ -538,13 +538,12 @@ static void skb_put_frags(struct sk_buff *skb, unsigned int hdr_space,
 
 		if (length == 0) {
 			/* don't need this page */
-			skb_fill_page_desc(toskb, i, skb_frag_page(frag),
-					   0, PAGE_SIZE);
+			skb_fill_page_desc(toskb, i, frag->page, 0, PAGE_SIZE);
 			--skb_shinfo(skb)->nr_frags;
 		} else {
 			size = min(length, (unsigned) PAGE_SIZE);
 
-			skb_frag_size_set(frag, size);
+			frag->size = size;
 			skb->data_len += size;
 			skb->truesize += size;
 			skb->len += size;
@@ -709,7 +708,6 @@ void ipoib_cm_send(struct net_device *dev, struct sk_buff *skb, struct ipoib_cm_
 	struct ipoib_dev_priv *priv = netdev_priv(dev);
 	struct ipoib_cm_tx_buf *tx_req;
 	u64 addr;
-	int rc;
 
 	if (unlikely(skb->len > tx->mtu)) {
 		ipoib_warn(priv, "packet len %d (> %d) too long to send, dropping\n",
@@ -741,10 +739,9 @@ void ipoib_cm_send(struct net_device *dev, struct sk_buff *skb, struct ipoib_cm_
 
 	tx_req->mapping = addr;
 
-	rc = post_send(priv, tx, tx->tx_head & (ipoib_sendq_size - 1),
-		       addr, skb->len);
-	if (unlikely(rc)) {
-		ipoib_warn(priv, "post_send failed, error %d\n", rc);
+	if (unlikely(post_send(priv, tx, tx->tx_head & (ipoib_sendq_size - 1),
+			       addr, skb->len))) {
+		ipoib_warn(priv, "post_send failed\n");
 		++dev->stats.tx_errors;
 		ib_dma_unmap_single(priv->ca, addr, skb->len, DMA_TO_DEVICE);
 		dev_kfree_skb_any(skb);
@@ -755,13 +752,9 @@ void ipoib_cm_send(struct net_device *dev, struct sk_buff *skb, struct ipoib_cm_
 		if (++priv->tx_outstanding == ipoib_sendq_size) {
 			ipoib_dbg(priv, "TX ring 0x%x full, stopping kernel net queue\n",
 				  tx->qp->qp_num);
-			netif_stop_queue(dev);
-			rc = ib_req_notify_cq(priv->send_cq,
-				IB_CQ_NEXT_COMP | IB_CQ_REPORT_MISSED_EVENTS);
-			if (rc < 0)
+			if (ib_req_notify_cq(priv->send_cq, IB_CQ_NEXT_COMP))
 				ipoib_warn(priv, "request notify on send CQ failed\n");
-			else if (rc)
-				ipoib_send_comp_handler(priv->send_cq, dev);
+			netif_stop_queue(dev);
 		}
 	}
 }
@@ -1101,12 +1094,13 @@ static int ipoib_cm_tx_init(struct ipoib_cm_tx *p, u32 qpn,
 	struct ipoib_dev_priv *priv = netdev_priv(p->dev);
 	int ret;
 
-	p->tx_ring = vzalloc(ipoib_sendq_size * sizeof *p->tx_ring);
+	p->tx_ring = vmalloc(ipoib_sendq_size * sizeof *p->tx_ring);
 	if (!p->tx_ring) {
 		ipoib_warn(priv, "failed to allocate tx ring\n");
 		ret = -ENOMEM;
 		goto err_tx;
 	}
+	memset(p->tx_ring, 0, ipoib_sendq_size * sizeof *p->tx_ring);
 
 	p->qp = ipoib_cm_create_tx_qp(p->dev, p);
 	if (IS_ERR(p->qp)) {
@@ -1382,7 +1376,7 @@ static void ipoib_cm_skb_reap(struct work_struct *work)
 			icmp_send(skb, ICMP_DEST_UNREACH, ICMP_FRAG_NEEDED, htonl(mtu));
 #if defined(CONFIG_IPV6) || defined(CONFIG_IPV6_MODULE)
 		else if (skb->protocol == htons(ETH_P_IPV6))
-			icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu);
+			icmpv6_send(skb, ICMPV6_PKT_TOOBIG, 0, mtu, priv->dev);
 #endif
 		dev_kfree_skb_any(skb);
 
@@ -1469,7 +1463,8 @@ static ssize_t set_mode(struct device *d, struct device_attribute *attr,
 		set_bit(IPOIB_FLAG_ADMIN_CM, &priv->flags);
 		ipoib_warn(priv, "enabling connected mode "
 			   "will cause multicast packet drops\n");
-		netdev_update_features(dev);
+
+		dev->features &= ~(NETIF_F_IP_CSUM | NETIF_F_SG | NETIF_F_TSO);
 		rtnl_unlock();
 		priv->tx_wr.send_flags &= ~IB_SEND_IP_CSUM;
 
@@ -1479,7 +1474,12 @@ static ssize_t set_mode(struct device *d, struct device_attribute *attr,
 
 	if (!strcmp(buf, "datagram\n")) {
 		clear_bit(IPOIB_FLAG_ADMIN_CM, &priv->flags);
-		netdev_update_features(dev);
+
+		if (test_bit(IPOIB_FLAG_CSUM, &priv->flags)) {
+			dev->features |= NETIF_F_IP_CSUM | NETIF_F_SG;
+			if (priv->hca_caps & IB_DEVICE_UD_TSO)
+				dev->features |= NETIF_F_TSO;
+		}
 		dev_set_mtu(dev, min(priv->mcast_mtu, dev->mtu));
 		rtnl_unlock();
 		ipoib_flush_paths(dev);
@@ -1502,7 +1502,6 @@ static void ipoib_cm_create_srq(struct net_device *dev, int max_sge)
 {
 	struct ipoib_dev_priv *priv = netdev_priv(dev);
 	struct ib_srq_init_attr srq_init_attr = {
-		.srq_type = IB_SRQT_BASIC,
 		.attr = {
 			.max_wr  = ipoib_recvq_size,
 			.max_sge = max_sge
@@ -1518,7 +1517,7 @@ static void ipoib_cm_create_srq(struct net_device *dev, int max_sge)
 		return;
 	}
 
-	priv->cm.srq_ring = vzalloc(ipoib_recvq_size * sizeof *priv->cm.srq_ring);
+	priv->cm.srq_ring = vmalloc(ipoib_recvq_size * sizeof *priv->cm.srq_ring);
 	if (!priv->cm.srq_ring) {
 		printk(KERN_WARNING "%s: failed to allocate CM SRQ ring (%d entries)\n",
 		       priv->ca->name, ipoib_recvq_size);
@@ -1527,6 +1526,7 @@ static void ipoib_cm_create_srq(struct net_device *dev, int max_sge)
 		return;
 	}
 
+	memset(priv->cm.srq_ring, 0, ipoib_recvq_size * sizeof *priv->cm.srq_ring);
 }
 
 int ipoib_cm_dev_init(struct net_device *dev)

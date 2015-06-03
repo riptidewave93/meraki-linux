@@ -28,6 +28,8 @@
 #include "bmap.h"
 
 
+struct nilfs_direct;
+
 /**
  * struct nilfs_direct_node - direct node
  * @dn_flags: flags
@@ -37,6 +39,15 @@ struct nilfs_direct_node {
 	__u8 dn_flags;
 	__u8 pad[7];
 };
+
+/**
+ * struct nilfs_direct - direct mapping
+ * @d_bmap: bmap structure
+ */
+struct nilfs_direct {
+	struct nilfs_bmap d_bmap;
+};
+
 
 #define NILFS_DIRECT_NBLOCKS	(NILFS_BMAP_SIZE / sizeof(__le64) - 1)
 #define NILFS_DIRECT_KEY_MIN	0

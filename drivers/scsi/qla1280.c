@@ -17,11 +17,9 @@
 * General Public License for more details.
 *
 ******************************************************************************/
-#define QLA1280_VERSION      "3.27.1"
+#define QLA1280_VERSION      "3.27"
 /*****************************************************************************
     Revision History:
-    Rev  3.27.1, February 8, 2010, Michael Reed
-	- Retain firmware image for error recovery.
     Rev  3.27, February 10, 2009, Michael Reed
 	- General code cleanup.
 	- Improve error recovery.
@@ -78,7 +76,7 @@
 	- Clean up vchan handling
     Rev  3.23.33 July 3, 2003, Jes Sorensen
 	- Don't define register access macros before define determining MMIO.
-	  This just happened to work out on ia64 but not elsewhere.
+	  This just happend to work out on ia64 but not elsewhere.
 	- Don't try and read from the card while it is in reset as
 	  it won't respond and causes an MCA
     Rev  3.23.32 June 23, 2003, Jes Sorensen
@@ -348,6 +346,7 @@
 #include <linux/pci.h>
 #include <linux/proc_fs.h>
 #include <linux/stat.h>
+#include <linux/slab.h>
 #include <linux/pci_ids.h>
 #include <linux/interrupt.h>
 #include <linux/init.h>
@@ -359,6 +358,7 @@
 #include <asm/byteorder.h>
 #include <asm/processor.h>
 #include <asm/types.h>
+#include <asm/system.h>
 
 #include <scsi/scsi.h>
 #include <scsi/scsi_cmnd.h>
@@ -538,9 +538,9 @@ __setup("qla1280=", qla1280_setup);
 /*****************************************/
 
 struct qla_boards {
-	char *name;		/* Board ID String */
+	unsigned char name[9];	/* Board ID String */
 	int numPorts;		/* Number of SCSI ports */
-	int fw_index;		/* index into qla1280_fw_tbl for firmware */
+	char *fwname;		/* firmware name        */
 };
 
 /* NOTE: the last argument in each entry is used to index ql1280_board_tbl */
@@ -561,30 +561,15 @@ static struct pci_device_id qla1280_pci_tbl[] = {
 };
 MODULE_DEVICE_TABLE(pci, qla1280_pci_tbl);
 
-DEFINE_MUTEX(qla1280_firmware_mutex);
-
-struct qla_fw {
-	char *fwname;
-	const struct firmware *fw;
-};
-
-#define QL_NUM_FW_IMAGES 3
-
-struct qla_fw qla1280_fw_tbl[QL_NUM_FW_IMAGES] = {
-	{"qlogic/1040.bin",  NULL},	/* image 0 */
-	{"qlogic/1280.bin",  NULL},	/* image 1 */
-	{"qlogic/12160.bin", NULL},	/* image 2 */
-};
-
-/* NOTE: Order of boards in this table must match order in qla1280_pci_tbl */
 static struct qla_boards ql1280_board_tbl[] = {
-	{.name = "QLA12160", .numPorts = 2, .fw_index = 2},
-	{.name = "QLA1040" , .numPorts = 1, .fw_index = 0},
-	{.name = "QLA1080" , .numPorts = 1, .fw_index = 1},
-	{.name = "QLA1240" , .numPorts = 2, .fw_index = 1},
-	{.name = "QLA1280" , .numPorts = 2, .fw_index = 1},
-	{.name = "QLA10160", .numPorts = 1, .fw_index = 2},
-	{.name = "        ", .numPorts = 0, .fw_index = -1},
+	/* Name ,  Number of ports, FW details */
+	{"QLA12160",	2, "qlogic/12160.bin"},
+	{"QLA1040",	1, "qlogic/1040.bin"},
+	{"QLA1080",	1, "qlogic/1280.bin"},
+	{"QLA1240",	2, "qlogic/1280.bin"},
+	{"QLA1280",	2, "qlogic/1280.bin"},
+	{"QLA10160",	1, "qlogic/12160.bin"},
+	{"        ",	0, "   "},
 };
 
 static int qla1280_verbose = 1;
@@ -726,7 +711,7 @@ qla1280_info(struct Scsi_Host *host)
  * context which is a big NO! NO!.
  **************************************************************************/
 static int
-qla1280_queuecommand_lck(struct scsi_cmnd *cmd, void (*fn)(struct scsi_cmnd *))
+qla1280_queuecommand(struct scsi_cmnd *cmd, void (*fn)(struct scsi_cmnd *))
 {
 	struct Scsi_Host *host = cmd->device->host;
 	struct scsi_qla_host *ha = (struct scsi_qla_host *)host->hostdata;
@@ -754,8 +739,6 @@ qla1280_queuecommand_lck(struct scsi_cmnd *cmd, void (*fn)(struct scsi_cmnd *))
 #endif
 	return status;
 }
-
-static DEF_SCSI_QCMD(qla1280_queuecommand)
 
 enum action {
 	ABORT_COMMAND,
@@ -1529,63 +1512,6 @@ qla1280_initialize_adapter(struct scsi_qla_host *ha)
 }
 
 /*
- * qla1280_request_firmware
- *      Acquire firmware for chip.  Retain in memory
- *      for error recovery.
- *
- * Input:
- *      ha = adapter block pointer.
- *
- * Returns:
- *      Pointer to firmware image or an error code
- *      cast to pointer via ERR_PTR().
- */
-static const struct firmware *
-qla1280_request_firmware(struct scsi_qla_host *ha)
-{
-	const struct firmware *fw;
-	int err;
-	int index;
-	char *fwname;
-
-	spin_unlock_irq(ha->host->host_lock);
-	mutex_lock(&qla1280_firmware_mutex);
-
-	index = ql1280_board_tbl[ha->devnum].fw_index;
-	fw = qla1280_fw_tbl[index].fw;
-	if (fw)
-		goto out;
-
-	fwname = qla1280_fw_tbl[index].fwname;
-	err = request_firmware(&fw, fwname, &ha->pdev->dev);
-
-	if (err) {
-		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
-		       fwname, err);
-		fw = ERR_PTR(err);
-		goto unlock;
-	}
-	if ((fw->size % 2) || (fw->size < 6)) {
-		printk(KERN_ERR "Invalid firmware length %zu in image \"%s\"\n",
-		       fw->size, fwname);
-		release_firmware(fw);
-		fw = ERR_PTR(-EINVAL);
-		goto unlock;
-	}
-
-	qla1280_fw_tbl[index].fw = fw;
-
- out:
-	ha->fwver1 = fw->data[0];
-	ha->fwver2 = fw->data[1];
-	ha->fwver3 = fw->data[2];
- unlock:
-	mutex_unlock(&qla1280_firmware_mutex);
-	spin_lock_irq(ha->host->host_lock);
-	return fw;
-}
-
-/*
  * Chip diagnostics
  *      Test chip for proper operation.
  *
@@ -1708,18 +1634,30 @@ qla1280_chip_diag(struct scsi_qla_host *ha)
 static int
 qla1280_load_firmware_pio(struct scsi_qla_host *ha)
 {
-	/* enter with host_lock acquired */
-
 	const struct firmware *fw;
 	const __le16 *fw_data;
 	uint16_t risc_address, risc_code_size;
 	uint16_t mb[MAILBOX_REGISTER_COUNT], i;
-	int err = 0;
+	int err;
 
-	fw = qla1280_request_firmware(ha);
-	if (IS_ERR(fw))
-		return PTR_ERR(fw);
-
+	spin_unlock_irq(ha->host->host_lock);
+	err = request_firmware(&fw, ql1280_board_tbl[ha->devnum].fwname,
+			       &ha->pdev->dev);
+	spin_lock_irq(ha->host->host_lock);
+	if (err) {
+		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
+		       ql1280_board_tbl[ha->devnum].fwname, err);
+		return err;
+	}
+	if ((fw->size % 2) || (fw->size < 6)) {
+		printk(KERN_ERR "Bogus length %zu in image \"%s\"\n",
+		       fw->size, ql1280_board_tbl[ha->devnum].fwname);
+		err = -EINVAL;
+		goto out;
+	}
+	ha->fwver1 = fw->data[0];
+	ha->fwver2 = fw->data[1];
+	ha->fwver3 = fw->data[2];
 	fw_data = (const __le16 *)&fw->data[0];
 	ha->fwstart = __le16_to_cpu(fw_data[2]);
 
@@ -1737,10 +1675,11 @@ qla1280_load_firmware_pio(struct scsi_qla_host *ha)
 		if (err) {
 			printk(KERN_ERR "scsi(%li): Failed to load firmware\n",
 					ha->host_no);
-			break;
+			goto out;
 		}
 	}
-
+out:
+	release_firmware(fw);
 	return err;
 }
 
@@ -1748,7 +1687,6 @@ qla1280_load_firmware_pio(struct scsi_qla_host *ha)
 static int
 qla1280_load_firmware_dma(struct scsi_qla_host *ha)
 {
-	/* enter with host_lock acquired */
 	const struct firmware *fw;
 	const __le16 *fw_data;
 	uint16_t risc_address, risc_code_size;
@@ -1763,10 +1701,24 @@ qla1280_load_firmware_dma(struct scsi_qla_host *ha)
 		return -ENOMEM;
 #endif
 
-	fw = qla1280_request_firmware(ha);
-	if (IS_ERR(fw))
-		return PTR_ERR(fw);
-
+	spin_unlock_irq(ha->host->host_lock);
+	err = request_firmware(&fw, ql1280_board_tbl[ha->devnum].fwname,
+			       &ha->pdev->dev);
+	spin_lock_irq(ha->host->host_lock);
+	if (err) {
+		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
+		       ql1280_board_tbl[ha->devnum].fwname, err);
+		return err;
+	}
+	if ((fw->size % 2) || (fw->size < 6)) {
+		printk(KERN_ERR "Bogus length %zu in image \"%s\"\n",
+		       fw->size, ql1280_board_tbl[ha->devnum].fwname);
+		err = -EINVAL;
+		goto out;
+	}
+	ha->fwver1 = fw->data[0];
+	ha->fwver2 = fw->data[1];
+	ha->fwver3 = fw->data[2];
 	fw_data = (const __le16 *)&fw->data[0];
 	ha->fwstart = __le16_to_cpu(fw_data[2]);
 
@@ -1851,6 +1803,7 @@ qla1280_load_firmware_dma(struct scsi_qla_host *ha)
 #if DUMP_IT_BACK
 	pci_free_consistent(ha->pdev, 8000, tbuf, p_tbuf);
 #endif
+	release_firmware(fw);
 	return err;
 }
 
@@ -1889,7 +1842,6 @@ qla1280_start_firmware(struct scsi_qla_host *ha)
 static int
 qla1280_load_firmware(struct scsi_qla_host *ha)
 {
-	/* enter with host_lock taken */
 	int err;
 
 	err = qla1280_chip_diag(ha);
@@ -4065,7 +4017,7 @@ __qla1280_print_scsi_cmd(struct scsi_cmnd *cmd)
 	   } */
 	printk("  tag=%d, transfersize=0x%x \n",
 	       cmd->tag, cmd->transfersize);
-	printk("  SP=0x%p\n", CMD_SP(cmd));
+	printk("  Pid=%li, SP=0x%p\n", cmd->serial_number, CMD_SP(cmd));
 	printk(" underflow size = 0x%x, direction=0x%x\n",
 	       cmd->underflow, cmd->sc_data_direction);
 }
@@ -4468,16 +4420,7 @@ qla1280_init(void)
 static void __exit
 qla1280_exit(void)
 {
-	int i;
-
 	pci_unregister_driver(&qla1280_pci_driver);
-	/* release any allocated firmware images */
-	for (i = 0; i < QL_NUM_FW_IMAGES; i++) {
-		if (qla1280_fw_tbl[i].fw) {
-			release_firmware(qla1280_fw_tbl[i].fw);
-			qla1280_fw_tbl[i].fw = NULL;
-		}
-	}
 }
 
 module_init(qla1280_init);

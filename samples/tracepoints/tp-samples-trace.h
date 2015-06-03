@@ -7,5 +7,7 @@
 DECLARE_TRACE(subsys_event,
 	TP_PROTO(struct inode *inode, struct file *file),
 	TP_ARGS(inode, file));
-DECLARE_TRACE_NOARGS(subsys_eventb);
+DECLARE_TRACE(subsys_eventb,
+	TP_PROTO(void),
+	TP_ARGS());
 #endif

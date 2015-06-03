@@ -21,7 +21,6 @@
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
 #include <linux/delay.h>
-#include <linux/gfp.h>
 #include <linux/spinlock.h>
 #include <linux/clk.h>
 #include <linux/io.h>
@@ -187,8 +186,10 @@ static void mddi_wait_interrupt(struct mddi_info *mddi, uint32_t intmask);
 
 static void mddi_handle_rev_data_avail(struct mddi_info *mddi)
 {
+	union mddi_rev *rev = mddi->rev_data;
 	uint32_t rev_data_count;
 	uint32_t rev_crc_err_count;
+	int i;
 	struct reg_read_info *ri;
 	size_t prev_offset;
 	uint16_t length;
@@ -318,7 +319,7 @@ static long mddi_wait_interrupt_timeout(struct mddi_info *mddi,
 static void mddi_wait_interrupt(struct mddi_info *mddi, uint32_t intmask)
 {
 	if (mddi_wait_interrupt_timeout(mddi, intmask, HZ/10) == 0)
-		printk(KERN_INFO "mddi_wait_interrupt %d, timeout "
+		printk(KERN_INFO KERN_ERR "mddi_wait_interrupt %d, timeout "
 		       "waiting for %x, INT = %x, STAT = %x gotint = %x\n",
 		       current->pid, intmask, mddi_readl(INT), mddi_readl(STAT),
 		       mddi->got_int);
@@ -420,7 +421,7 @@ static void mddi_resume(struct msm_mddi_client_data *cdata)
 	mddi_set_auto_hibernate(&mddi->client_data, 1);
 }
 
-static int __devinit mddi_get_client_caps(struct mddi_info *mddi)
+static int __init mddi_get_client_caps(struct mddi_info *mddi)
 {
 	int i, j;
 
@@ -465,7 +466,8 @@ static int __devinit mddi_get_client_caps(struct mddi_info *mddi)
 
 		if (mddi->flags & FLAG_HAVE_CAPS)
 			break;
-		printk(KERN_INFO "mddi_init, timeout waiting for caps\n");
+		printk(KERN_INFO KERN_ERR "mddi_init, timeout waiting for "
+				"caps\n");
 	}
 	return mddi->flags & FLAG_HAVE_CAPS;
 }
@@ -622,9 +624,9 @@ uint32_t mddi_remote_read(struct msm_mddi_client_data *cdata, uint32_t reg)
 
 static struct mddi_info mddi_info[2];
 
-static int __devinit mddi_clk_setup(struct platform_device *pdev,
-				    struct mddi_info *mddi,
-				    unsigned long clk_rate)
+static int __init mddi_clk_setup(struct platform_device *pdev,
+				 struct mddi_info *mddi,
+				 unsigned long clk_rate)
 {
 	int ret;
 
@@ -667,7 +669,7 @@ static int __init mddi_rev_data_setup(struct mddi_info *mddi)
 	return 0;
 }
 
-static int __devinit mddi_probe(struct platform_device *pdev)
+static int __init mddi_probe(struct platform_device *pdev)
 {
 	struct msm_mddi_platform_data *pdata = pdev->dev.platform_data;
 	struct mddi_info *mddi = &mddi_info[pdev->id];
@@ -679,7 +681,7 @@ static int __devinit mddi_probe(struct platform_device *pdev)
 		printk(KERN_ERR "mddi: no associated mem resource!\n");
 		return -ENOMEM;
 	}
-	mddi->base = ioremap(resource->start, resource_size(resource));
+	mddi->base = ioremap(resource->start, resource->end - resource->start);
 	if (!mddi->base) {
 		printk(KERN_ERR "mddi: failed to remap base!\n");
 		ret = -EINVAL;
@@ -715,7 +717,7 @@ static int __devinit mddi_probe(struct platform_device *pdev)
 
 	mddi->int_enable = 0;
 	mddi_writel(mddi->int_enable, INTEN);
-	ret = request_irq(mddi->irq, mddi_isr, 0, "mddi",
+	ret = request_irq(mddi->irq, mddi_isr, IRQF_DISABLED, "mddi",
 			  &mddi->client_data);
 	if (ret) {
 		printk(KERN_ERR "mddi: failed to request enable irq!\n");

@@ -62,11 +62,11 @@ struct hci_vendor_hdr {
 	__u8    type;
 	__le16  snum;
 	__le16  dlen;
-} __packed;
+} __attribute__ ((packed));
 
 static int bpa10x_recv(struct hci_dev *hdev, int queue, void *buf, int count)
 {
-	struct bpa10x_data *data = hci_get_drvdata(hdev);
+	struct bpa10x_data *data = hdev->driver_data;
 
 	BT_DBG("%s queue %d buffer %p count %d", hdev->name,
 							queue, buf, count);
@@ -189,7 +189,7 @@ done:
 static void bpa10x_rx_complete(struct urb *urb)
 {
 	struct hci_dev *hdev = urb->context;
-	struct bpa10x_data *data = hci_get_drvdata(hdev);
+	struct bpa10x_data *data = hdev->driver_data;
 	int err;
 
 	BT_DBG("%s urb %p status %d count %d", hdev->name,
@@ -219,7 +219,7 @@ static void bpa10x_rx_complete(struct urb *urb)
 
 static inline int bpa10x_submit_intr_urb(struct hci_dev *hdev)
 {
-	struct bpa10x_data *data = hci_get_drvdata(hdev);
+	struct bpa10x_data *data = hdev->driver_data;
 	struct urb *urb;
 	unsigned char *buf;
 	unsigned int pipe;
@@ -260,7 +260,7 @@ static inline int bpa10x_submit_intr_urb(struct hci_dev *hdev)
 
 static inline int bpa10x_submit_bulk_urb(struct hci_dev *hdev)
 {
-	struct bpa10x_data *data = hci_get_drvdata(hdev);
+	struct bpa10x_data *data = hdev->driver_data;
 	struct urb *urb;
 	unsigned char *buf;
 	unsigned int pipe;
@@ -301,7 +301,7 @@ static inline int bpa10x_submit_bulk_urb(struct hci_dev *hdev)
 
 static int bpa10x_open(struct hci_dev *hdev)
 {
-	struct bpa10x_data *data = hci_get_drvdata(hdev);
+	struct bpa10x_data *data = hdev->driver_data;
 	int err;
 
 	BT_DBG("%s", hdev->name);
@@ -329,7 +329,7 @@ error:
 
 static int bpa10x_close(struct hci_dev *hdev)
 {
-	struct bpa10x_data *data = hci_get_drvdata(hdev);
+	struct bpa10x_data *data = hdev->driver_data;
 
 	BT_DBG("%s", hdev->name);
 
@@ -343,7 +343,7 @@ static int bpa10x_close(struct hci_dev *hdev)
 
 static int bpa10x_flush(struct hci_dev *hdev)
 {
-	struct bpa10x_data *data = hci_get_drvdata(hdev);
+	struct bpa10x_data *data = hdev->driver_data;
 
 	BT_DBG("%s", hdev->name);
 
@@ -355,7 +355,7 @@ static int bpa10x_flush(struct hci_dev *hdev)
 static int bpa10x_send_frame(struct sk_buff *skb)
 {
 	struct hci_dev *hdev = (struct hci_dev *) skb->dev;
-	struct bpa10x_data *data = hci_get_drvdata(hdev);
+	struct bpa10x_data *data = hdev->driver_data;
 	struct usb_ctrlrequest *dr;
 	struct urb *urb;
 	unsigned int pipe;
@@ -432,6 +432,17 @@ static int bpa10x_send_frame(struct sk_buff *skb)
 	return 0;
 }
 
+static void bpa10x_destruct(struct hci_dev *hdev)
+{
+	struct bpa10x_data *data = hdev->driver_data;
+
+	BT_DBG("%s", hdev->name);
+
+	kfree_skb(data->rx_skb[0]);
+	kfree_skb(data->rx_skb[1]);
+	kfree(data);
+}
+
 static int bpa10x_probe(struct usb_interface *intf, const struct usb_device_id *id)
 {
 	struct bpa10x_data *data;
@@ -443,7 +454,7 @@ static int bpa10x_probe(struct usb_interface *intf, const struct usb_device_id *
 	if (intf->cur_altsetting->desc.bInterfaceNumber != 0)
 		return -ENODEV;
 
-	data = devm_kzalloc(&intf->dev, sizeof(*data), GFP_KERNEL);
+	data = kzalloc(sizeof(*data), GFP_KERNEL);
 	if (!data)
 		return -ENOMEM;
 
@@ -453,11 +464,13 @@ static int bpa10x_probe(struct usb_interface *intf, const struct usb_device_id *
 	init_usb_anchor(&data->rx_anchor);
 
 	hdev = hci_alloc_dev();
-	if (!hdev)
+	if (!hdev) {
+		kfree(data);
 		return -ENOMEM;
+	}
 
-	hdev->bus = HCI_USB;
-	hci_set_drvdata(hdev, data);
+	hdev->type = HCI_USB;
+	hdev->driver_data = data;
 
 	data->hdev = hdev;
 
@@ -467,12 +480,16 @@ static int bpa10x_probe(struct usb_interface *intf, const struct usb_device_id *
 	hdev->close    = bpa10x_close;
 	hdev->flush    = bpa10x_flush;
 	hdev->send     = bpa10x_send_frame;
+	hdev->destruct = bpa10x_destruct;
 
-	set_bit(HCI_QUIRK_RESET_ON_CLOSE, &hdev->quirks);
+	hdev->owner = THIS_MODULE;
+
+	set_bit(HCI_QUIRK_NO_RESET, &hdev->quirks);
 
 	err = hci_register_dev(hdev);
 	if (err < 0) {
 		hci_free_dev(hdev);
+		kfree(data);
 		return err;
 	}
 
@@ -495,8 +512,6 @@ static void bpa10x_disconnect(struct usb_interface *intf)
 	hci_unregister_dev(data->hdev);
 
 	hci_free_dev(data->hdev);
-	kfree_skb(data->rx_skb[0]);
-	kfree_skb(data->rx_skb[1]);
 }
 
 static struct usb_driver bpa10x_driver = {
@@ -504,10 +519,22 @@ static struct usb_driver bpa10x_driver = {
 	.probe		= bpa10x_probe,
 	.disconnect	= bpa10x_disconnect,
 	.id_table	= bpa10x_table,
-	.disable_hub_initiated_lpm = 1,
 };
 
-module_usb_driver(bpa10x_driver);
+static int __init bpa10x_init(void)
+{
+	BT_INFO("Digianswer Bluetooth USB driver ver %s", VERSION);
+
+	return usb_register(&bpa10x_driver);
+}
+
+static void __exit bpa10x_exit(void)
+{
+	usb_deregister(&bpa10x_driver);
+}
+
+module_init(bpa10x_init);
+module_exit(bpa10x_exit);
 
 MODULE_AUTHOR("Marcel Holtmann <marcel@holtmann.org>");
 MODULE_DESCRIPTION("Digianswer Bluetooth USB driver ver " VERSION);

@@ -4,7 +4,8 @@
 #include <linux/types.h>
 #include <linux/pkt_cls.h>
 
-enum {
+enum
+{
 	TCA_EM_META_UNSPEC,
 	TCA_EM_META_HDR,
 	TCA_EM_META_LVALUE,
@@ -13,7 +14,8 @@ enum {
 };
 #define TCA_EM_META_MAX (__TCA_EM_META_MAX - 1)
 
-struct tcf_meta_val {
+struct tcf_meta_val
+{
 	__u16			kind;
 	__u8			shift;
 	__u8			op;
@@ -24,14 +26,16 @@ struct tcf_meta_val {
 #define TCF_META_ID_MASK	0x7ff
 #define TCF_META_ID(kind)	((kind) & TCF_META_ID_MASK)
 
-enum {
+enum
+{
 	TCF_META_TYPE_VAR,
 	TCF_META_TYPE_INT,
 	__TCF_META_TYPE_MAX
 };
 #define TCF_META_TYPE_MAX (__TCF_META_TYPE_MAX - 1)
 
-enum {
+enum
+{
 	TCF_META_ID_VALUE,
 	TCF_META_ID_RANDOM,
 	TCF_META_ID_LOADAVG_0,
@@ -67,7 +71,7 @@ enum {
 	TCF_META_ID_SK_FORWARD_ALLOCS,
 	TCF_META_ID_SK_SNDBUF,
  	TCF_META_ID_SK_ALLOCS,
-	__TCF_META_ID_SK_ROUTE_CAPS,	/* unimplemented but in ABI already */
+ 	TCF_META_ID_SK_ROUTE_CAPS,
  	TCF_META_ID_SK_HASH,
  	TCF_META_ID_SK_LINGERTIME,
  	TCF_META_ID_SK_ACK_BACKLOG,
@@ -79,12 +83,12 @@ enum {
  	TCF_META_ID_SK_SENDMSG_OFF,
  	TCF_META_ID_SK_WRITE_PENDING,
 	TCF_META_ID_VLAN_TAG,
-	TCF_META_ID_RXHASH,
 	__TCF_META_ID_MAX
 };
 #define TCF_META_ID_MAX (__TCF_META_ID_MAX - 1)
 
-struct tcf_meta_hdr {
+struct tcf_meta_hdr
+{
 	struct tcf_meta_val	left;
 	struct tcf_meta_val	right;
 };

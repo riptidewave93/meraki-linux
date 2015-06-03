@@ -18,7 +18,6 @@
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/irq.h>
-#include <linux/slab.h>
 #include <scsi/scsi_host.h>
 #include <linux/ata.h>
 #include <linux/libata.h>
@@ -194,7 +193,7 @@ static int __init pata_at32_init_one(struct device *dev,
 	/* Setup ATA bindings */
 	ap->ops	     = &at32_port_ops;
 	ap->pio_mask = PIO_MASK;
-	ap->flags   |= ATA_FLAG_SLAVE_POSS;
+	ap->flags   |= ATA_FLAG_MMIO | ATA_FLAG_SLAVE_POSS;
 
 	/*
 	 * Since all 8-bit taskfile transfers has to go on the lower

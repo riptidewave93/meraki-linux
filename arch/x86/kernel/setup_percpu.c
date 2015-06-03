@@ -1,5 +1,3 @@
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/init.h>
@@ -20,6 +18,12 @@
 #include <asm/cpumask.h>
 #include <asm/cpu.h>
 #include <asm/stackprotector.h>
+
+#ifdef CONFIG_DEBUG_PER_CPU_MAPS
+# define DBG(x...) printk(KERN_DEBUG x)
+#else
+# define DBG(x...)
+#endif
 
 DEFINE_PER_CPU(int, cpu_number);
 EXPORT_PER_CPU_SYMBOL(cpu_number);
@@ -112,8 +116,8 @@ static void * __init pcpu_alloc_bootmem(unsigned int cpu, unsigned long size,
 	} else {
 		ptr = __alloc_bootmem_node_nopanic(NODE_DATA(node),
 						   size, align, goal);
-		pr_debug("per cpu data for cpu%d %lu bytes on node%d at %016lx\n",
-			 cpu, size, node, __pa(ptr));
+		pr_debug("per cpu data for cpu%d %lu bytes on node%d at "
+			 "%016lx\n", cpu, size, node, __pa(ptr));
 	}
 	return ptr;
 #else
@@ -185,28 +189,17 @@ void __init setup_per_cpu_areas(void)
 #endif
 	rc = -EINVAL;
 	if (pcpu_chosen_fc != PCPU_FC_PAGE) {
+		const size_t atom_size = cpu_has_pse ? PMD_SIZE : PAGE_SIZE;
 		const size_t dyn_size = PERCPU_MODULE_RESERVE +
 			PERCPU_DYNAMIC_RESERVE - PERCPU_FIRST_CHUNK_RESERVE;
-		size_t atom_size;
 
-		/*
-		 * On 64bit, use PMD_SIZE for atom_size so that embedded
-		 * percpu areas are aligned to PMD.  This, in the future,
-		 * can also allow using PMD mappings in vmalloc area.  Use
-		 * PAGE_SIZE on 32bit as vmalloc space is highly contended
-		 * and large vmalloc area allocs can easily fail.
-		 */
-#ifdef CONFIG_X86_64
-		atom_size = PMD_SIZE;
-#else
-		atom_size = PAGE_SIZE;
-#endif
 		rc = pcpu_embed_first_chunk(PERCPU_FIRST_CHUNK_RESERVE,
 					    dyn_size, atom_size,
 					    pcpu_cpu_distance,
 					    pcpu_fc_alloc, pcpu_fc_free);
 		if (rc < 0)
-			pr_warning("%s allocator failed (%d), falling back to page size\n",
+			pr_warning("PERCPU: %s allocator failed (%d), "
+				   "falling back to page size\n",
 				   pcpu_fc_names[pcpu_chosen_fc], rc);
 	}
 	if (rc < 0)
@@ -237,33 +230,20 @@ void __init setup_per_cpu_areas(void)
 		per_cpu(x86_bios_cpu_apicid, cpu) =
 			early_per_cpu_map(x86_bios_cpu_apicid, cpu);
 #endif
-#ifdef CONFIG_X86_32
-		per_cpu(x86_cpu_to_logical_apicid, cpu) =
-			early_per_cpu_map(x86_cpu_to_logical_apicid, cpu);
-#endif
 #ifdef CONFIG_X86_64
 		per_cpu(irq_stack_ptr, cpu) =
 			per_cpu(irq_stack_union.irq_stack, cpu) +
 			IRQ_STACK_SIZE - 64;
-#endif
 #ifdef CONFIG_NUMA
 		per_cpu(x86_cpu_to_node_map, cpu) =
 			early_per_cpu_map(x86_cpu_to_node_map, cpu);
-		/*
-		 * Ensure that the boot cpu numa_node is correct when the boot
-		 * cpu is on a node that doesn't have memory installed.
-		 * Also cpu_up() will call cpu_to_node() for APs when
-		 * MEMORY_HOTPLUG is defined, before per_cpu(numa_node) is set
-		 * up later with c_init aka intel_init/amd_init.
-		 * So set them all (boot cpu and all APs).
-		 */
-		set_cpu_numa_node(cpu, early_cpu_to_node(cpu));
+#endif
 #endif
 		/*
-		 * Up to this point, the boot CPU has been using .init.data
+		 * Up to this point, the boot CPU has been using .data.init
 		 * area.  Reload any changed state for the boot CPU.
 		 */
-		if (!cpu)
+		if (cpu == boot_cpu_id)
 			switch_to_new_gdt(cpu);
 	}
 
@@ -272,11 +252,16 @@ void __init setup_per_cpu_areas(void)
 	early_per_cpu_ptr(x86_cpu_to_apicid) = NULL;
 	early_per_cpu_ptr(x86_bios_cpu_apicid) = NULL;
 #endif
-#ifdef CONFIG_X86_32
-	early_per_cpu_ptr(x86_cpu_to_logical_apicid) = NULL;
-#endif
-#ifdef CONFIG_NUMA
+#if defined(CONFIG_X86_64) && defined(CONFIG_NUMA)
 	early_per_cpu_ptr(x86_cpu_to_node_map) = NULL;
+#endif
+
+#if defined(CONFIG_X86_64) && defined(CONFIG_NUMA)
+	/*
+	 * make sure boot cpu node_number is right, when boot cpu is on the
+	 * node that doesn't have mem installed
+	 */
+	per_cpu(node_number, boot_cpu_id) = cpu_to_node(boot_cpu_id);
 #endif
 
 	/* Setup node to cpumask map */

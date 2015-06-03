@@ -9,9 +9,6 @@
 #include <linux/types.h>
 #include <linux/interrupt.h>
 #include <linux/pci.h>
-#include <linux/bitmap.h>
-#include <linux/slab.h>
-#include <linux/export.h>
 #include <asm/sn/sn_sal.h>
 #include <asm/sn/addrs.h>
 #include <asm/sn/io.h>
@@ -372,7 +369,7 @@ tioca_dma_d48(struct pci_dev *pdev, u64 paddr)
 static dma_addr_t
 tioca_dma_mapped(struct pci_dev *pdev, unsigned long paddr, size_t req_size)
 {
-	int ps, ps_shift, entry, entries, mapsize;
+	int i, ps, ps_shift, entry, entries, mapsize, last_entry;
 	u64 xio_addr, end_xio_addr;
 	struct tioca_common *tioca_common;
 	struct tioca_kernel *tioca_kern;
@@ -413,13 +410,23 @@ tioca_dma_mapped(struct pci_dev *pdev, unsigned long paddr, size_t req_size)
 	map = tioca_kern->ca_pcigart_pagemap;
 	mapsize = tioca_kern->ca_pcigart_entries;
 
-	entry = bitmap_find_next_zero_area(map, mapsize, 0, entries, 0);
-	if (entry >= mapsize) {
+	entry = find_first_zero_bit(map, mapsize);
+	while (entry < mapsize) {
+		last_entry = find_next_bit(map, mapsize, entry);
+
+		if (last_entry - entry >= entries)
+			break;
+
+		entry = find_next_zero_bit(map, mapsize, last_entry);
+	}
+
+	if (entry > mapsize) {
 		kfree(ca_dmamap);
 		goto map_return;
 	}
 
-	bitmap_set(map, entry, entries);
+	for (i = 0; i < entries; i++)
+		set_bit(entry + i, map);
 
 	bus_addr = tioca_kern->ca_pciap_base + (entry * ps);
 
@@ -600,11 +607,11 @@ tioca_bus_fixup(struct pcibus_bussoft *prom_bussoft, struct pci_controller *cont
 	 * Allocate kernel bus soft and copy from prom.
 	 */
 
-	tioca_common = kmemdup(prom_bussoft, sizeof(struct tioca_common),
-			       GFP_KERNEL);
+	tioca_common = kzalloc(sizeof(struct tioca_common), GFP_KERNEL);
 	if (!tioca_common)
 		return NULL;
 
+	memcpy(tioca_common, prom_bussoft, sizeof(struct tioca_common));
 	tioca_common->ca_common.bs_base = (unsigned long)
 		ioremap(REGION_OFFSET(tioca_common->ca_common.bs_base),
 			sizeof(struct tioca_common));
@@ -649,7 +656,6 @@ tioca_bus_fixup(struct pcibus_bussoft *prom_bussoft, struct pci_controller *cont
 		       __func__, SGI_TIOCA_ERROR,
 		       (int)tioca_common->ca_common.bs_persist_busnum);
 
-	irq_set_handler(SGI_TIOCA_ERROR, handle_level_irq);
 	sn_set_err_irq_affinity(SGI_TIOCA_ERROR);
 
 	/* Setup locality information */

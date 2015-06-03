@@ -4,6 +4,7 @@
 #include <linux/types.h>
 #include <linux/init.h>
 #include <linux/errno.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/videodev2.h>
 #include <media/v4l2-common.h>
@@ -36,8 +37,6 @@ struct tda9887_priv {
 	unsigned int       mode;
 	unsigned int       audmode;
 	v4l2_std_id        std;
-
-	bool               standby;
 };
 
 /* ---------------------------------------------------------------------- */
@@ -464,7 +463,7 @@ static int tda9887_set_insmod(struct dvb_frontend *fe)
 			buf[1] &= ~cQSS;
 	}
 
-	if (adjust < 0x20) {
+	if (adjust >= 0x00 && adjust < 0x20) {
 		buf[2] &= ~cTopMask;
 		buf[2] |= adjust;
 	}
@@ -570,7 +569,7 @@ static void tda9887_configure(struct dvb_frontend *fe)
 	tda9887_do_config(fe);
 	tda9887_set_insmod(fe);
 
-	if (priv->standby)
+	if (priv->mode == T_STANDBY)
 		priv->data[1] |= cForcedMuteAudioON;
 
 	tuner_dbg("writing: b=0x%02x c=0x%02x e=0x%02x\n",
@@ -618,7 +617,7 @@ static void tda9887_standby(struct dvb_frontend *fe)
 {
 	struct tda9887_priv *priv = fe->analog_demod_priv;
 
-	priv->standby = true;
+	priv->mode = T_STANDBY;
 
 	tda9887_configure(fe);
 }
@@ -628,7 +627,6 @@ static void tda9887_set_params(struct dvb_frontend *fe,
 {
 	struct tda9887_priv *priv = fe->analog_demod_priv;
 
-	priv->standby = false;
 	priv->mode    = params->mode;
 	priv->audmode = params->audmode;
 	priv->std     = params->std;
@@ -689,7 +687,7 @@ struct dvb_frontend *tda9887_attach(struct dvb_frontend *fe,
 		return NULL;
 	case 1:
 		fe->analog_demod_priv = priv;
-		priv->standby = true;
+		priv->mode = T_STANDBY;
 		tuner_info("tda988[5/6/7] found\n");
 		break;
 	default:

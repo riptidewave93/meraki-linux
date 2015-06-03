@@ -22,34 +22,41 @@
 #ifndef __HW_H__
 #define __HW_H__
 
-#include <linux/seq_file.h>
-
-#include "viamode.h"
 #include "global.h"
-#include "via_modesetting.h"
 
-#define viafb_read_reg(p, i)			via_read_reg(p, i)
-#define viafb_write_reg(i, p, d)		via_write_reg(p, i, d)
-#define viafb_write_reg_mask(i, p, d, m)	via_write_reg_mask(p, i, d, m)
+/***************************************************
+* Definition IGA1 Design Method of CRTC Registers *
+****************************************************/
+#define IGA1_HOR_TOTAL_FORMULA(x)           (((x)/8)-5)
+#define IGA1_HOR_ADDR_FORMULA(x)            (((x)/8)-1)
+#define IGA1_HOR_BLANK_START_FORMULA(x)     (((x)/8)-1)
+#define IGA1_HOR_BLANK_END_FORMULA(x, y)     (((x+y)/8)-1)
+#define IGA1_HOR_SYNC_START_FORMULA(x)      ((x)/8)
+#define IGA1_HOR_SYNC_END_FORMULA(x, y)      ((x+y)/8)
 
-/* VIA output devices */
-#define VIA_LDVP0	0x00000001
-#define VIA_LDVP1	0x00000002
-#define VIA_DVP0	0x00000004
-#define VIA_CRT		0x00000010
-#define VIA_DVP1	0x00000020
-#define VIA_LVDS1	0x00000040
-#define VIA_LVDS2	0x00000080
+#define IGA1_VER_TOTAL_FORMULA(x)           ((x)-2)
+#define IGA1_VER_ADDR_FORMULA(x)            ((x)-1)
+#define IGA1_VER_BLANK_START_FORMULA(x)     ((x)-1)
+#define IGA1_VER_BLANK_END_FORMULA(x, y)     ((x+y)-1)
+#define IGA1_VER_SYNC_START_FORMULA(x)      ((x)-1)
+#define IGA1_VER_SYNC_END_FORMULA(x, y)      ((x+y)-1)
 
-/* VIA output device power states */
-#define VIA_STATE_ON		0
-#define VIA_STATE_STANDBY	1
-#define VIA_STATE_SUSPEND	2
-#define VIA_STATE_OFF		3
+/***************************************************
+** Definition IGA2 Design Method of CRTC Registers *
+****************************************************/
+#define IGA2_HOR_TOTAL_FORMULA(x)           ((x)-1)
+#define IGA2_HOR_ADDR_FORMULA(x)            ((x)-1)
+#define IGA2_HOR_BLANK_START_FORMULA(x)     ((x)-1)
+#define IGA2_HOR_BLANK_END_FORMULA(x, y)     ((x+y)-1)
+#define IGA2_HOR_SYNC_START_FORMULA(x)      ((x)-1)
+#define IGA2_HOR_SYNC_END_FORMULA(x, y)      ((x+y)-1)
 
-/* VIA output device sync polarity */
-#define VIA_HSYNC_NEGATIVE	0x01
-#define VIA_VSYNC_NEGATIVE	0x02
+#define IGA2_VER_TOTAL_FORMULA(x)           ((x)-1)
+#define IGA2_VER_ADDR_FORMULA(x)            ((x)-1)
+#define IGA2_VER_BLANK_START_FORMULA(x)     ((x)-1)
+#define IGA2_VER_BLANK_END_FORMULA(x, y)     ((x+y)-1)
+#define IGA2_VER_SYNC_START_FORMULA(x)      ((x)-1)
+#define IGA2_VER_SYNC_END_FORMULA(x, y)      ((x+y)-1)
 
 /**********************************************************/
 /* Definition IGA2 Design Method of CRTC Shadow Registers */
@@ -62,6 +69,33 @@
 #define IGA2_VER_BLANK_END_SHADOW_FORMULA(x, y)     ((x+y)-1)
 #define IGA2_VER_SYNC_START_SHADOW_FORMULA(x)      (x)
 #define IGA2_VER_SYNC_END_SHADOW_FORMULA(x, y)      (x+y)
+
+/* Define Register Number for IGA1 CRTC Timing */
+
+/* location: {CR00,0,7},{CR36,3,3} */
+#define IGA1_HOR_TOTAL_REG_NUM		2
+/* location: {CR01,0,7} */
+#define IGA1_HOR_ADDR_REG_NUM		1
+/* location: {CR02,0,7} */
+#define IGA1_HOR_BLANK_START_REG_NUM    1
+/* location: {CR03,0,4},{CR05,7,7},{CR33,5,5} */
+#define IGA1_HOR_BLANK_END_REG_NUM	3
+/* location: {CR04,0,7},{CR33,4,4} */
+#define IGA1_HOR_SYNC_START_REG_NUM	2
+/* location: {CR05,0,4} */
+#define IGA1_HOR_SYNC_END_REG_NUM       1
+/* location: {CR06,0,7},{CR07,0,0},{CR07,5,5},{CR35,0,0} */
+#define IGA1_VER_TOTAL_REG_NUM          4
+/* location: {CR12,0,7},{CR07,1,1},{CR07,6,6},{CR35,2,2} */
+#define IGA1_VER_ADDR_REG_NUM           4
+/* location: {CR15,0,7},{CR07,3,3},{CR09,5,5},{CR35,3,3} */
+#define IGA1_VER_BLANK_START_REG_NUM    4
+/* location: {CR16,0,7} */
+#define IGA1_VER_BLANK_END_REG_NUM      1
+/* location: {CR10,0,7},{CR07,2,2},{CR07,7,7},{CR35,1,1} */
+#define IGA1_VER_SYNC_START_REG_NUM     4
+/* location: {CR11,0,3} */
+#define IGA1_VER_SYNC_END_REG_NUM       1
 
 /* Define Register Number for IGA2 Shadow CRTC Timing */
 
@@ -81,6 +115,37 @@
 #define IGA2_SHADOW_VER_SYNC_START_REG_NUM  2
 /* location: {CR76,0,3} */
 #define IGA2_SHADOW_VER_SYNC_END_REG_NUM    1
+
+/* Define Register Number for IGA2 CRTC Timing */
+
+/* location: {CR50,0,7},{CR55,0,3} */
+#define IGA2_HOR_TOTAL_REG_NUM          2
+/* location: {CR51,0,7},{CR55,4,6} */
+#define IGA2_HOR_ADDR_REG_NUM           2
+/* location: {CR52,0,7},{CR54,0,2} */
+#define IGA2_HOR_BLANK_START_REG_NUM    2
+/* location: CLE266: {CR53,0,7},{CR54,3,5} => CLE266's CR5D[6]
+is reserved, so it may have problem to set 1600x1200 on IGA2. */
+/*         	Others: {CR53,0,7},{CR54,3,5},{CR5D,6,6} */
+#define IGA2_HOR_BLANK_END_REG_NUM      3
+/* location: {CR56,0,7},{CR54,6,7},{CR5C,7,7} */
+/* VT3314 and Later: {CR56,0,7},{CR54,6,7},{CR5C,7,7}, {CR5D,7,7} */
+#define IGA2_HOR_SYNC_START_REG_NUM     4
+
+/* location: {CR57,0,7},{CR5C,6,6} */
+#define IGA2_HOR_SYNC_END_REG_NUM       2
+/* location: {CR58,0,7},{CR5D,0,2} */
+#define IGA2_VER_TOTAL_REG_NUM          2
+/* location: {CR59,0,7},{CR5D,3,5} */
+#define IGA2_VER_ADDR_REG_NUM           2
+/* location: {CR5A,0,7},{CR5C,0,2} */
+#define IGA2_VER_BLANK_START_REG_NUM    2
+/* location: {CR5E,0,7},{CR5C,3,5} */
+#define IGA2_VER_BLANK_END_REG_NUM      2
+/* location: {CR5E,0,7},{CR5F,5,7} */
+#define IGA2_VER_SYNC_START_REG_NUM     2
+/* location: {CR5F,0,4} */
+#define IGA2_VER_SYNC_END_REG_NUM       1
 
 /* Define Fetch Count Register*/
 
@@ -270,17 +335,6 @@
 #define VX855_IGA2_FIFO_HIGH_THRESHOLD          160
 #define VX855_IGA2_DISPLAY_QUEUE_EXPIRE_NUM     320
 
-/* For VT3410 */
-#define VX900_IGA1_FIFO_MAX_DEPTH               400
-#define VX900_IGA1_FIFO_THRESHOLD               320
-#define VX900_IGA1_FIFO_HIGH_THRESHOLD          320
-#define VX900_IGA1_DISPLAY_QUEUE_EXPIRE_NUM     160
-
-#define VX900_IGA2_FIFO_MAX_DEPTH               192
-#define VX900_IGA2_FIFO_THRESHOLD               160
-#define VX900_IGA2_FIFO_HIGH_THRESHOLD          160
-#define VX900_IGA2_DISPLAY_QUEUE_EXPIRE_NUM     320
-
 #define IGA1_FIFO_DEPTH_SELECT_REG_NUM          1
 #define IGA1_FIFO_THRESHOLD_REG_NUM             2
 #define IGA1_FIFO_HIGH_THRESHOLD_REG_NUM        2
@@ -354,10 +408,85 @@
 /* location: {CR78,0,7},{CR79,6,7} */
 #define LCD_VER_SCALING_FACTOR_REG_NUM_CLE  2
 
+/************************************************
+ *****     Define IGA1 Display Timing       *****
+ ************************************************/
 struct io_register {
 	u8 io_addr;
 	u8 start_bit;
 	u8 end_bit;
+};
+
+/* IGA1 Horizontal Total */
+struct iga1_hor_total {
+	int reg_num;
+	struct io_register reg[IGA1_HOR_TOTAL_REG_NUM];
+};
+
+/* IGA1 Horizontal Addressable Video */
+struct iga1_hor_addr {
+	int reg_num;
+	struct io_register reg[IGA1_HOR_ADDR_REG_NUM];
+};
+
+/* IGA1 Horizontal Blank Start */
+struct iga1_hor_blank_start {
+	int reg_num;
+	struct io_register reg[IGA1_HOR_BLANK_START_REG_NUM];
+};
+
+/* IGA1 Horizontal Blank End */
+struct iga1_hor_blank_end {
+	int reg_num;
+	struct io_register reg[IGA1_HOR_BLANK_END_REG_NUM];
+};
+
+/* IGA1 Horizontal Sync Start */
+struct iga1_hor_sync_start {
+	int reg_num;
+	struct io_register reg[IGA1_HOR_SYNC_START_REG_NUM];
+};
+
+/* IGA1 Horizontal Sync End */
+struct iga1_hor_sync_end {
+	int reg_num;
+	struct io_register reg[IGA1_HOR_SYNC_END_REG_NUM];
+};
+
+/* IGA1 Vertical Total */
+struct iga1_ver_total {
+	int reg_num;
+	struct io_register reg[IGA1_VER_TOTAL_REG_NUM];
+};
+
+/* IGA1 Vertical Addressable Video */
+struct iga1_ver_addr {
+	int reg_num;
+	struct io_register reg[IGA1_VER_ADDR_REG_NUM];
+};
+
+/* IGA1 Vertical Blank Start */
+struct iga1_ver_blank_start {
+	int reg_num;
+	struct io_register reg[IGA1_VER_BLANK_START_REG_NUM];
+};
+
+/* IGA1 Vertical Blank End */
+struct iga1_ver_blank_end {
+	int reg_num;
+	struct io_register reg[IGA1_VER_BLANK_END_REG_NUM];
+};
+
+/* IGA1 Vertical Sync Start */
+struct iga1_ver_sync_start {
+	int reg_num;
+	struct io_register reg[IGA1_VER_SYNC_START_REG_NUM];
+};
+
+/* IGA1 Vertical Sync End */
+struct iga1_ver_sync_end {
+	int reg_num;
+	struct io_register reg[IGA1_VER_SYNC_END_REG_NUM];
 };
 
 /*****************************************************
@@ -410,6 +539,82 @@ struct iga2_shadow_ver_sync_start {
 struct iga2_shadow_ver_sync_end {
 	int reg_num;
 	struct io_register reg[IGA2_SHADOW_VER_SYNC_END_REG_NUM];
+};
+
+/*****************************************************
+**      Define IGA2 Display Timing                ****
+******************************************************/
+
+/* IGA2 Horizontal Total */
+struct iga2_hor_total {
+	int reg_num;
+	struct io_register reg[IGA2_HOR_TOTAL_REG_NUM];
+};
+
+/* IGA2 Horizontal Addressable Video */
+struct iga2_hor_addr {
+	int reg_num;
+	struct io_register reg[IGA2_HOR_ADDR_REG_NUM];
+};
+
+/* IGA2 Horizontal Blank Start */
+struct iga2_hor_blank_start {
+	int reg_num;
+	struct io_register reg[IGA2_HOR_BLANK_START_REG_NUM];
+};
+
+/* IGA2 Horizontal Blank End */
+struct iga2_hor_blank_end {
+	int reg_num;
+	struct io_register reg[IGA2_HOR_BLANK_END_REG_NUM];
+};
+
+/* IGA2 Horizontal Sync Start */
+struct iga2_hor_sync_start {
+	int reg_num;
+	struct io_register reg[IGA2_HOR_SYNC_START_REG_NUM];
+};
+
+/* IGA2 Horizontal Sync End */
+struct iga2_hor_sync_end {
+	int reg_num;
+	struct io_register reg[IGA2_HOR_SYNC_END_REG_NUM];
+};
+
+/* IGA2 Vertical Total */
+struct iga2_ver_total {
+	int reg_num;
+	struct io_register reg[IGA2_VER_TOTAL_REG_NUM];
+};
+
+/* IGA2 Vertical Addressable Video */
+struct iga2_ver_addr {
+	int reg_num;
+	struct io_register reg[IGA2_VER_ADDR_REG_NUM];
+};
+
+/* IGA2 Vertical Blank Start */
+struct iga2_ver_blank_start {
+	int reg_num;
+	struct io_register reg[IGA2_VER_BLANK_START_REG_NUM];
+};
+
+/* IGA2 Vertical Blank End */
+struct iga2_ver_blank_end {
+	int reg_num;
+	struct io_register reg[IGA2_VER_BLANK_END_REG_NUM];
+};
+
+/* IGA2 Vertical Sync Start */
+struct iga2_ver_sync_start {
+	int reg_num;
+	struct io_register reg[IGA2_VER_SYNC_START_REG_NUM];
+};
+
+/* IGA2 Vertical Sync End */
+struct iga2_ver_sync_end {
+	int reg_num;
+	struct io_register reg[IGA2_VER_SYNC_END_REG_NUM];
 };
 
 /* IGA1 Fetch Count Register */
@@ -489,11 +694,12 @@ struct _lcd_scaling_factor {
 	struct _lcd_ver_scaling_factor lcd_ver_scaling_factor;
 };
 
-struct pll_limit {
-	u16 multiplier_min;
-	u16 multiplier_max;
-	u8 divisor;
-	u8 rshift;
+struct pll_map {
+	u32 clk;
+	u32 cle266_pll;
+	u32 k800_pll;
+	u32 cx700_pll;
+	u32 vx855_pll;
 };
 
 struct rgbLUT {
@@ -574,6 +780,21 @@ struct display_queue_expire_num {
 	 iga2_display_queue_expire_num_reg;
 };
 
+struct iga1_crtc_timing {
+	struct iga1_hor_total hor_total;
+	struct iga1_hor_addr hor_addr;
+	struct iga1_hor_blank_start hor_blank_start;
+	struct iga1_hor_blank_end hor_blank_end;
+	struct iga1_hor_sync_start hor_sync_start;
+	struct iga1_hor_sync_end hor_sync_end;
+	struct iga1_ver_total ver_total;
+	struct iga1_ver_addr ver_addr;
+	struct iga1_ver_blank_start ver_blank_start;
+	struct iga1_ver_blank_end ver_blank_end;
+	struct iga1_ver_sync_start ver_sync_start;
+	struct iga1_ver_sync_end ver_sync_end;
+};
+
 struct iga2_shadow_crtc_timing {
 	struct iga2_shadow_hor_total hor_total_shadow;
 	struct iga2_shadow_hor_blank_end hor_blank_end_shadow;
@@ -585,9 +806,24 @@ struct iga2_shadow_crtc_timing {
 	struct iga2_shadow_ver_sync_end ver_sync_end_shadow;
 };
 
+struct iga2_crtc_timing {
+	struct iga2_hor_total hor_total;
+	struct iga2_hor_addr hor_addr;
+	struct iga2_hor_blank_start hor_blank_start;
+	struct iga2_hor_blank_end hor_blank_end;
+	struct iga2_hor_sync_start hor_sync_start;
+	struct iga2_hor_sync_end hor_sync_end;
+	struct iga2_ver_total ver_total;
+	struct iga2_ver_addr ver_addr;
+	struct iga2_ver_blank_start ver_blank_start;
+	struct iga2_ver_blank_end ver_blank_end;
+	struct iga2_ver_sync_start ver_sync_start;
+	struct iga2_ver_sync_end ver_sync_end;
+};
+
 /* device ID */
-#define CLE266_FUNCTION3    0x3123
-#define KM400_FUNCTION3     0x3205
+#define CLE266              0x3123
+#define KM400               0x3205
 #define CN400_FUNCTION2     0x2259
 #define CN400_FUNCTION3     0x3259
 /* support VT3314 chipset */
@@ -610,8 +846,8 @@ struct iga2_shadow_crtc_timing {
 #define VX800_FUNCTION3     0x3353
 /* VT3409 chipset*/
 #define VX855_FUNCTION3     0x3409
-/* VT3410 chipset*/
-#define VX900_FUNCTION3     0x3410
+
+#define NUM_TOTAL_PLL_TABLE ARRAY_SIZE(pll_value)
 
 struct IODATA {
 	u8 Index;
@@ -625,11 +861,9 @@ struct pci_device_id_info {
 	u32 chip_index;
 };
 
-struct via_device_mapping {
-	u32 device;
-	const char *name;
-};
-
+extern unsigned int viafb_second_virtual_xres;
+extern unsigned int viafb_second_offset;
+extern int viafb_second_size;
 extern int viafb_SAMM_ON;
 extern int viafb_dual_fb;
 extern int viafb_LCD2_ON;
@@ -637,40 +871,50 @@ extern int viafb_LCD_ON;
 extern int viafb_DVI_ON;
 extern int viafb_hotplug;
 
-struct display_timing var_to_timing(const struct fb_var_screeninfo *var,
-	u16 cxres, u16 cyres);
-void viafb_fill_crtc_timing(const struct fb_var_screeninfo *var,
-	u16 cxres, u16 cyres, int iga);
+void viafb_write_reg_mask(u8 index, int io_port, u8 data, u8 mask);
+void viafb_set_output_path(int device, int set_iga,
+	int output_interface);
+void viafb_fill_crtc_timing(struct crt_mode_table *crt_table,
+		      int mode_index, int bpp_byte, int set_iga);
+
 void viafb_set_vclock(u32 CLK, int set_iga);
 void viafb_load_reg(int timing_value, int viafb_load_reg_num,
 	struct io_register *reg,
 	      int io_type);
-void via_set_source(u32 devices, u8 iga);
-void via_set_state(u32 devices, u8 state);
-void via_set_sync_polarity(u32 devices, u8 polarity);
-u32 via_parse_odev(char *input, char **end);
-void via_odev_to_seq(struct seq_file *m, u32 odev);
+void viafb_crt_disable(void);
+void viafb_crt_enable(void);
 void init_ad9389(void);
 /* Access I/O Function */
+void viafb_write_reg(u8 index, u16 io_port, u8 data);
+u8 viafb_read_reg(int io_port, u8 index);
 void viafb_lock_crt(void);
 void viafb_unlock_crt(void);
 void viafb_load_fetch_count_reg(int h_addr, int bpp_byte, int set_iga);
 void viafb_write_regx(struct io_reg RegTable[], int ItemNum);
+struct VideoModeTable *viafb_get_modetbl_pointer(int Index);
+u32 viafb_get_clk_value(int clk);
 void viafb_load_FIFO_reg(int set_iga, int hor_active, int ver_active);
+void viafb_set_color_depth(int bpp_byte, int set_iga);
 void viafb_set_dpa_gfx(int output_interface, struct GFX_DPA_SETTING\
 					*p_gfx_dpa_setting);
 
-int viafb_setmode(void);
-void viafb_fill_var_timing_info(struct fb_var_screeninfo *var,
-	const struct fb_videomode *mode);
-void __devinit viafb_init_chip_info(int chip_type);
-void __devinit viafb_init_dac(int set_iga);
+int viafb_setmode(int vmode_index, int hor_res, int ver_res,
+	    int video_bpp, int vmode_index1, int hor_res1,
+	    int ver_res1, int video_bpp1);
+void viafb_init_chip_info(struct pci_dev *pdev,
+			  const struct pci_device_id *pdi);
+void viafb_init_dac(int set_iga);
+int viafb_get_pixclock(int hres, int vres, int vmode_refresh);
 int viafb_get_refresh(int hres, int vres, u32 float_refresh);
-void viafb_update_device_setting(int hres, int vres, int bpp, int flag);
+void viafb_update_device_setting(int hres, int vres, int bpp,
+			   int vmode_refresh, int flag);
 
+int viafb_get_fb_size_from_pci(void);
 void viafb_set_iga_path(void);
-void viafb_set_primary_color_register(u8 index, u8 red, u8 green, u8 blue);
-void viafb_set_secondary_color_register(u8 index, u8 red, u8 green, u8 blue);
+void viafb_set_primary_address(u32 addr);
+void viafb_set_secondary_address(u32 addr);
+void viafb_set_primary_pitch(u32 pitch);
+void viafb_set_secondary_pitch(u32 pitch);
 void viafb_get_fb_info(unsigned int *fb_base, unsigned int *fb_len);
 
 #endif /* __HW_H__ */

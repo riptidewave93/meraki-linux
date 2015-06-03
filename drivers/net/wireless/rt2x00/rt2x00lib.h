@@ -1,6 +1,5 @@
 /*
-	Copyright (C) 2004 - 2009 Ivo van Doorn <IvDoorn@gmail.com>
-	Copyright (C) 2004 - 2009 Gertjan van Wingerde <gwingerde@gmail.com>
+	Copyright (C) 2004 - 2009 rt2x00 SourceForge Project
 	<http://rt2x00.serialmonkey.com>
 
 	This program is free software; you can redistribute it and/or modify
@@ -27,13 +26,12 @@
 #ifndef RT2X00LIB_H
 #define RT2X00LIB_H
 
+#include "rt2x00dump.h"
+
 /*
  * Interval defines
  */
-#define WATCHDOG_INTERVAL	round_jiffies_relative(HZ)
 #define LINK_TUNE_INTERVAL	round_jiffies_relative(HZ)
-#define AGC_INTERVAL		round_jiffies_relative(4 * HZ)
-#define VCO_INTERVAL		round_jiffies_relative(10 * HZ) /* 10 sec */
 
 /*
  * rt2x00_rate: Per rate device information
@@ -59,7 +57,7 @@ static inline const struct rt2x00_rate *rt2x00_get_rate(const u16 hw_value)
 }
 
 #define RATE_MCS(__mode, __mcs) \
-	((((__mode) & 0x00ff) << 8) | ((__mcs) & 0x00ff))
+	( (((__mode) & 0x00ff) << 8) | ((__mcs) & 0x00ff) )
 
 static inline int rt2x00_get_rate_mcs(const u16 mcs_value)
 {
@@ -71,6 +69,7 @@ static inline int rt2x00_get_rate_mcs(const u16 mcs_value)
  */
 int rt2x00lib_enable_radio(struct rt2x00_dev *rt2x00dev);
 void rt2x00lib_disable_radio(struct rt2x00_dev *rt2x00dev);
+void rt2x00lib_toggle_rx(struct rt2x00_dev *rt2x00dev, enum dev_state state);
 
 /*
  * Initialization handlers.
@@ -87,8 +86,7 @@ void rt2x00lib_config_intf(struct rt2x00_dev *rt2x00dev,
 			   const u8 *mac, const u8 *bssid);
 void rt2x00lib_config_erp(struct rt2x00_dev *rt2x00dev,
 			  struct rt2x00_intf *intf,
-			  struct ieee80211_bss_conf *conf,
-			  u32 changed);
+			  struct ieee80211_bss_conf *conf);
 void rt2x00lib_config_antenna(struct rt2x00_dev *rt2x00dev,
 			      struct antenna_setup ant);
 void rt2x00lib_config(struct rt2x00_dev *rt2x00dev,
@@ -101,15 +99,25 @@ void rt2x00lib_config(struct rt2x00_dev *rt2x00dev,
 
 /**
  * rt2x00queue_alloc_rxskb - allocate a skb for RX purposes.
- * @entry: The entry for which the skb will be applicable.
+ * @rt2x00dev: Pointer to &struct rt2x00_dev.
+ * @queue: The queue for which the skb will be applicable.
  */
-struct sk_buff *rt2x00queue_alloc_rxskb(struct queue_entry *entry);
+struct sk_buff *rt2x00queue_alloc_rxskb(struct rt2x00_dev *rt2x00dev,
+					struct queue_entry *entry);
+
+/**
+ * rt2x00queue_unmap_skb - Unmap a skb from DMA.
+ * @rt2x00dev: Pointer to &struct rt2x00_dev.
+ * @skb: The skb to unmap.
+ */
+void rt2x00queue_unmap_skb(struct rt2x00_dev *rt2x00dev, struct sk_buff *skb);
 
 /**
  * rt2x00queue_free_skb - free a skb
- * @entry: The entry for which the skb will be applicable.
+ * @rt2x00dev: Pointer to &struct rt2x00_dev.
+ * @skb: The skb to free.
  */
-void rt2x00queue_free_skb(struct queue_entry *entry);
+void rt2x00queue_free_skb(struct rt2x00_dev *rt2x00dev, struct sk_buff *skb);
 
 /**
  * rt2x00queue_align_frame - Align 802.11 frame to 4-byte boundary
@@ -119,6 +127,16 @@ void rt2x00queue_free_skb(struct queue_entry *entry);
  * mean the payload is not aligned properly though.
  */
 void rt2x00queue_align_frame(struct sk_buff *skb);
+
+/**
+ * rt2x00queue_align_payload - Align 802.11 payload to 4-byte boundary
+ * @skb: The skb to align
+ * @header_length: Length of 802.11 header
+ *
+ * Align the 802.11 payload to a 4-byte boundary, this could
+ * mean the header is not aligned properly though.
+ */
+void rt2x00queue_align_payload(struct sk_buff *skb, unsigned int header_length);
 
 /**
  * rt2x00queue_insert_l2pad - Align 802.11 header & payload to 4-byte boundary
@@ -143,47 +161,38 @@ void rt2x00queue_remove_l2pad(struct sk_buff *skb, unsigned int header_length);
  * rt2x00queue_write_tx_frame - Write TX frame to hardware
  * @queue: Queue over which the frame should be send
  * @skb: The skb to send
- * @local: frame is not from mac80211
  */
-int rt2x00queue_write_tx_frame(struct data_queue *queue, struct sk_buff *skb,
-			       bool local);
+int rt2x00queue_write_tx_frame(struct data_queue *queue, struct sk_buff *skb);
 
 /**
- * rt2x00queue_update_beacon - Send new beacon from mac80211
- *	to hardware. Handles locking by itself (mutex).
+ * rt2x00queue_update_beacon - Send new beacon from mac80211 to hardware
  * @rt2x00dev: Pointer to &struct rt2x00_dev.
  * @vif: Interface for which the beacon should be updated.
+ * @enable_beacon: Enable beaconing
  */
 int rt2x00queue_update_beacon(struct rt2x00_dev *rt2x00dev,
-			      struct ieee80211_vif *vif);
-
-/**
- * rt2x00queue_update_beacon_locked - Send new beacon from mac80211
- *	to hardware. Caller needs to ensure locking.
- * @rt2x00dev: Pointer to &struct rt2x00_dev.
- * @vif: Interface for which the beacon should be updated.
- */
-int rt2x00queue_update_beacon_locked(struct rt2x00_dev *rt2x00dev,
-				     struct ieee80211_vif *vif);
-
-/**
- * rt2x00queue_clear_beacon - Clear beacon in hardware
- * @rt2x00dev: Pointer to &struct rt2x00_dev.
- * @vif: Interface for which the beacon should be updated.
- */
-int rt2x00queue_clear_beacon(struct rt2x00_dev *rt2x00dev,
-			     struct ieee80211_vif *vif);
+			      struct ieee80211_vif *vif,
+			      const bool enable_beacon);
 
 /**
  * rt2x00queue_index_inc - Index incrementation function
- * @entry: Queue entry (&struct queue_entry) to perform the action on.
+ * @queue: Queue (&struct data_queue) to perform the action on.
  * @index: Index type (&enum queue_index) to perform the action on.
  *
- * This function will increase the requested index on the entry's queue,
+ * This function will increase the requested index on the queue,
  * it will grab the appropriate locks and handle queue overflow events by
  * resetting the index to the start of the queue.
  */
-void rt2x00queue_index_inc(struct queue_entry *entry, enum queue_index index);
+void rt2x00queue_index_inc(struct data_queue *queue, enum queue_index index);
+
+/**
+ * rt2x00queue_stop_queues - Halt all data queues
+ * @rt2x00dev: Pointer to &struct rt2x00_dev.
+ *
+ * This function will loop through all available queues to stop
+ * any pending outgoing frames.
+ */
+void rt2x00queue_stop_queues(struct rt2x00_dev *rt2x00dev);
 
 /**
  * rt2x00queue_init_queues - Initialize all data queues
@@ -212,6 +221,19 @@ void rt2x00queue_free(struct rt2x00_dev *rt2x00dev);
 void rt2x00link_update_stats(struct rt2x00_dev *rt2x00dev,
 			     struct sk_buff *skb,
 			     struct rxdone_entry_desc *rxdesc);
+
+/**
+ * rt2x00link_calculate_signal - Calculate signal quality
+ * @rt2x00dev: Pointer to &struct rt2x00_dev.
+ * @rssi: RX Frame RSSI
+ *
+ * Calculate the signal quality of a frame based on the rssi
+ * measured during the receiving of the frame and the global
+ * link quality statistics measured since the start of the
+ * link tuning. The result is a value between 0 and 100 which
+ * is an indication of the signal quality.
+ */
+int rt2x00link_calculate_signal(struct rt2x00_dev *rt2x00dev, int rssi);
 
 /**
  * rt2x00link_start_tuner - Start periodic link tuner work
@@ -254,54 +276,11 @@ void rt2x00link_stop_tuner(struct rt2x00_dev *rt2x00dev);
 void rt2x00link_reset_tuner(struct rt2x00_dev *rt2x00dev, bool antenna);
 
 /**
- * rt2x00link_start_watchdog - Start periodic watchdog monitoring
+ * rt2x00link_register - Initialize link tuning functionality
  * @rt2x00dev: Pointer to &struct rt2x00_dev.
  *
- * This start the watchdog periodic work, this work will
- *be executed periodically until &rt2x00link_stop_watchdog has
- * been called.
- */
-void rt2x00link_start_watchdog(struct rt2x00_dev *rt2x00dev);
-
-/**
- * rt2x00link_stop_watchdog - Stop periodic watchdog monitoring
- * @rt2x00dev: Pointer to &struct rt2x00_dev.
- *
- * After this function completed the watchdog monitoring will not
- * be running until &rt2x00link_start_watchdog is called.
- */
-void rt2x00link_stop_watchdog(struct rt2x00_dev *rt2x00dev);
-
-/**
- * rt2x00link_start_agc - Start periodic gain calibration
- * @rt2x00dev: Pointer to &struct rt2x00_dev.
- */
-void rt2x00link_start_agc(struct rt2x00_dev *rt2x00dev);
-
-/**
- * rt2x00link_start_vcocal - Start periodic VCO calibration
- * @rt2x00dev: Pointer to &struct rt2x00_dev.
- */
-void rt2x00link_start_vcocal(struct rt2x00_dev *rt2x00dev);
-
-/**
- * rt2x00link_stop_agc - Stop periodic gain calibration
- * @rt2x00dev: Pointer to &struct rt2x00_dev.
- */
-void rt2x00link_stop_agc(struct rt2x00_dev *rt2x00dev);
-
-/**
- * rt2x00link_stop_vcocal - Stop periodic VCO calibration
- * @rt2x00dev: Pointer to &struct rt2x00_dev.
- */
-void rt2x00link_stop_vcocal(struct rt2x00_dev *rt2x00dev);
-
-/**
- * rt2x00link_register - Initialize link tuning & watchdog functionality
- * @rt2x00dev: Pointer to &struct rt2x00_dev.
- *
- * Initialize work structure and all link tuning and watchdog related
- * parameters. This will not start the periodic work itself.
+ * Initialize work structure and all link tuning related
+ * parameters. This will not start the link tuning process itself.
  */
 void rt2x00link_register(struct rt2x00_dev *rt2x00dev);
 
@@ -327,6 +306,8 @@ static inline void rt2x00lib_free_firmware(struct rt2x00_dev *rt2x00dev)
 #ifdef CONFIG_RT2X00_LIB_DEBUGFS
 void rt2x00debug_register(struct rt2x00_dev *rt2x00dev);
 void rt2x00debug_deregister(struct rt2x00_dev *rt2x00dev);
+void rt2x00debug_dump_frame(struct rt2x00_dev *rt2x00dev,
+			    enum rt2x00_dump_type type, struct sk_buff *skb);
 void rt2x00debug_update_crypto(struct rt2x00_dev *rt2x00dev,
 			       struct rxdone_entry_desc *rxdesc);
 #else
@@ -335,6 +316,12 @@ static inline void rt2x00debug_register(struct rt2x00_dev *rt2x00dev)
 }
 
 static inline void rt2x00debug_deregister(struct rt2x00_dev *rt2x00dev)
+{
+}
+
+static inline void rt2x00debug_dump_frame(struct rt2x00_dev *rt2x00dev,
+					  enum rt2x00_dump_type type,
+					  struct sk_buff *skb)
 {
 }
 
@@ -349,8 +336,7 @@ static inline void rt2x00debug_update_crypto(struct rt2x00_dev *rt2x00dev,
  */
 #ifdef CONFIG_RT2X00_LIB_CRYPTO
 enum cipher rt2x00crypto_key_to_cipher(struct ieee80211_key_conf *key);
-void rt2x00crypto_create_tx_descriptor(struct rt2x00_dev *rt2x00dev,
-				       struct sk_buff *skb,
+void rt2x00crypto_create_tx_descriptor(struct queue_entry *entry,
 				       struct txentry_desc *txdesc);
 unsigned int rt2x00crypto_tx_overhead(struct rt2x00_dev *rt2x00dev,
 				      struct sk_buff *skb);
@@ -368,8 +354,7 @@ static inline enum cipher rt2x00crypto_key_to_cipher(struct ieee80211_key_conf *
 	return CIPHER_NONE;
 }
 
-static inline void rt2x00crypto_create_tx_descriptor(struct rt2x00_dev *rt2x00dev,
-						     struct sk_buff *skb,
+static inline void rt2x00crypto_create_tx_descriptor(struct queue_entry *entry,
 						     struct txentry_desc *txdesc)
 {
 }
@@ -403,17 +388,32 @@ static inline void rt2x00crypto_rx_insert_iv(struct sk_buff *skb,
 #endif /* CONFIG_RT2X00_LIB_CRYPTO */
 
 /*
+ * HT handlers.
+ */
+#ifdef CONFIG_RT2X00_LIB_HT
+void rt2x00ht_create_tx_descriptor(struct queue_entry *entry,
+				   struct txentry_desc *txdesc,
+				   const struct rt2x00_rate *hwrate);
+#else
+static inline void rt2x00ht_create_tx_descriptor(struct queue_entry *entry,
+						 struct txentry_desc *txdesc,
+						 const struct rt2x00_rate *hwrate)
+{
+}
+#endif /* CONFIG_RT2X00_LIB_HT */
+
+/*
  * RFkill handlers.
  */
 static inline void rt2x00rfkill_register(struct rt2x00_dev *rt2x00dev)
 {
-	if (test_bit(CAPABILITY_HW_BUTTON, &rt2x00dev->cap_flags))
+	if (test_bit(CONFIG_SUPPORT_HW_BUTTON, &rt2x00dev->flags))
 		wiphy_rfkill_start_polling(rt2x00dev->hw->wiphy);
 }
 
 static inline void rt2x00rfkill_unregister(struct rt2x00_dev *rt2x00dev)
 {
-	if (test_bit(CAPABILITY_HW_BUTTON, &rt2x00dev->cap_flags))
+	if (test_bit(CONFIG_SUPPORT_HW_BUTTON, &rt2x00dev->flags))
 		wiphy_rfkill_stop_polling(rt2x00dev->hw->wiphy);
 }
 

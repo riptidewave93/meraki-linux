@@ -10,3 +10,7 @@
 	orr	\base, \base, #ioc_base_low
 	.endif
 	.endm
+
+	.macro  arch_ret_to_user, tmp1, tmp2
+	.endm
+

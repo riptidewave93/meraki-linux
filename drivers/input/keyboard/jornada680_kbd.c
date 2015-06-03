@@ -24,7 +24,6 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 
 #include <asm/delay.h>
 #include <asm/io.h>
@@ -139,35 +138,35 @@ static void jornada_scan_keyb(unsigned char *s)
 	}, *y = matrix_PDE;
 
 	/* Save these control reg bits */
-	dc_static = (__raw_readw(PDCR) & (~0xcc0c));
-	ec_static = (__raw_readw(PECR) & (~0xf0cf));
+	dc_static = (ctrl_inw(PDCR) & (~0xcc0c));
+	ec_static = (ctrl_inw(PECR) & (~0xf0cf));
 
 	for (i = 0; i < 8; i++) {
 		/* disable output for all but the one we want to scan */
-		__raw_writew((dc_static | *y++), PDCR);
-		__raw_writew((ec_static | *y++), PECR);
+		ctrl_outw((dc_static | *y++), PDCR);
+		ctrl_outw((ec_static | *y++), PECR);
 		udelay(5);
 
 		/* Get scanline row */
-		__raw_writeb(*t++, PDDR);
-		__raw_writeb(*t++, PEDR);
+		ctrl_outb(*t++, PDDR);
+		ctrl_outb(*t++, PEDR);
 		udelay(50);
 
 		/* Read data */
-		*s++ = __raw_readb(PCDR);
-		*s++ = __raw_readb(PFDR);
+		*s++ = ctrl_inb(PCDR);
+		*s++ = ctrl_inb(PFDR);
 	}
 	/* Scan no lines */
-	__raw_writeb(0xff, PDDR);
-	__raw_writeb(0xff, PEDR);
+	ctrl_outb(0xff, PDDR);
+	ctrl_outb(0xff, PEDR);
 
 	/* Enable all scanlines */
-	__raw_writew((dc_static | (0x5555 & 0xcc0c)),PDCR);
-	__raw_writew((ec_static | (0x5555 & 0xf0cf)),PECR);
+	ctrl_outw((dc_static | (0x5555 & 0xcc0c)),PDCR);
+	ctrl_outw((ec_static | (0x5555 & 0xf0cf)),PECR);
 
 	/* Ignore extra keys and events */
-	*s++ = __raw_readb(PGDR);
-	*s++ = __raw_readb(PHDR);
+	*s++ = ctrl_inb(PGDR);
+	*s++ = ctrl_inb(PHDR);
 }
 
 static void jornadakbd680_poll(struct input_polled_dev *dev)
@@ -260,7 +259,19 @@ static struct platform_driver jornada680kbd_driver = {
 	.probe	= jornada680kbd_probe,
 	.remove	= __devexit_p(jornada680kbd_remove),
 };
-module_platform_driver(jornada680kbd_driver);
+
+static int __init jornada680kbd_init(void)
+{
+	return platform_driver_register(&jornada680kbd_driver);
+}
+
+static void __exit jornada680kbd_exit(void)
+{
+	platform_driver_unregister(&jornada680kbd_driver);
+}
+
+module_init(jornada680kbd_init);
+module_exit(jornada680kbd_exit);
 
 MODULE_AUTHOR("Kristoffer Ericson <kristoffer.ericson@gmail.com>");
 MODULE_DESCRIPTION("HP Jornada 620/660/680/690 Keyboard Driver");

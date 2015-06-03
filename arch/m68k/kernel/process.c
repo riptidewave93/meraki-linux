@@ -15,24 +15,41 @@
 #include <linux/sched.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
-#include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/smp.h>
+#include <linux/smp_lock.h>
 #include <linux/stddef.h>
 #include <linux/unistd.h>
 #include <linux/ptrace.h>
+#include <linux/slab.h>
 #include <linux/user.h>
 #include <linux/reboot.h>
 #include <linux/init_task.h>
 #include <linux/mqueue.h>
-#include <linux/rcupdate.h>
 
 #include <asm/uaccess.h>
+#include <asm/system.h>
 #include <asm/traps.h>
 #include <asm/machdep.h>
 #include <asm/setup.h>
 #include <asm/pgtable.h>
 
+/*
+ * Initial task/thread structure. Make this a per-architecture thing,
+ * because different architectures tend to have different
+ * alignment requirements and potentially different initial
+ * setup.
+ */
+static struct signal_struct init_signals = INIT_SIGNALS(init_signals);
+static struct sighand_struct init_sighand = INIT_SIGHAND(init_sighand);
+union thread_union init_thread_union __init_task_data
+	__attribute__((aligned(THREAD_SIZE))) =
+		{ INIT_THREAD_INFO(init_task) };
+
+/* initial task structure */
+struct task_struct init_task = INIT_TASK(init_task);
+
+EXPORT_SYMBOL(init_task);
 
 asmlinkage void ret_from_fork(void);
 
@@ -76,11 +93,11 @@ void cpu_idle(void)
 {
 	/* endless idle loop with no priority at all */
 	while (1) {
-		rcu_idle_enter();
 		while (!need_resched())
 			idle();
-		rcu_idle_exit();
-		schedule_preempt_disabled();
+		preempt_enable_no_resched();
+		schedule();
+		preempt_disable();
 	}
 }
 
@@ -144,10 +161,8 @@ int kernel_thread(int (*fn)(void *), void * arg, unsigned long flags)
 	   "trap #0\n\t"		/* Linux/m68k system call */
 	   "tstl %0\n\t"		/* child or parent */
 	   "jne 1f\n\t"			/* parent - jump */
-#ifdef CONFIG_MMU
 	   "lea %%sp@(%c7),%6\n\t"	/* reload current */
 	   "movel %6@,%6\n\t"
-#endif
 	   "movel %3,%%sp@-\n\t"	/* push argument */
 	   "jsr %4@\n\t"		/* call fn */
 	   "movel %0,%%d1\n\t"		/* pass exit value */
@@ -170,13 +185,13 @@ EXPORT_SYMBOL(kernel_thread);
 
 void flush_thread(void)
 {
+	unsigned long zero = 0;
+	set_fs(USER_DS);
 	current->thread.fs = __USER_DS;
-#ifdef CONFIG_FPU
-	if (!FPU_IS_EMU) {
-		unsigned long zero = 0;
-		asm volatile("frestore %0": :"m" (zero));
-	}
-#endif
+	if (!FPU_IS_EMU)
+		asm volatile (".chip 68k/68881\n\t"
+			      "frestore %0@\n\t"
+			      ".chip 68k" : : "a" (&zero));
 }
 
 /*
@@ -188,11 +203,7 @@ void flush_thread(void)
 
 asmlinkage int m68k_fork(struct pt_regs *regs)
 {
-#ifdef CONFIG_MMU
 	return do_fork(SIGCHLD, rdusp(), regs, 0, NULL, NULL);
-#else
-	return -EINVAL;
-#endif
 }
 
 asmlinkage int m68k_vfork(struct pt_regs *regs)
@@ -240,53 +251,30 @@ int copy_thread(unsigned long clone_flags, unsigned long usp,
 
 	p->thread.usp = usp;
 	p->thread.ksp = (unsigned long)childstack;
-
-	if (clone_flags & CLONE_SETTLS)
-		task_thread_info(p)->tp_value = regs->d5;
-
 	/*
 	 * Must save the current SFC/DFC value, NOT the value when
 	 * the parent was last descheduled - RGH  10-08-96
 	 */
 	p->thread.fs = get_fs().seg;
 
-#ifdef CONFIG_FPU
 	if (!FPU_IS_EMU) {
 		/* Copy the current fpu state */
 		asm volatile ("fsave %0" : : "m" (p->thread.fpstate[0]) : "memory");
 
-		if (!CPU_IS_060 ? p->thread.fpstate[0] : p->thread.fpstate[2]) {
-			if (CPU_IS_COLDFIRE) {
-				asm volatile ("fmovemd %/fp0-%/fp7,%0\n\t"
-					      "fmovel %/fpiar,%1\n\t"
-					      "fmovel %/fpcr,%2\n\t"
-					      "fmovel %/fpsr,%3"
-					      :
-					      : "m" (p->thread.fp[0]),
-						"m" (p->thread.fpcntl[0]),
-						"m" (p->thread.fpcntl[1]),
-						"m" (p->thread.fpcntl[2])
-					      : "memory");
-			} else {
-				asm volatile ("fmovemx %/fp0-%/fp7,%0\n\t"
-					      "fmoveml %/fpiar/%/fpcr/%/fpsr,%1"
-					      :
-					      : "m" (p->thread.fp[0]),
-						"m" (p->thread.fpcntl[0])
-					      : "memory");
-			}
-		}
-
+		if (!CPU_IS_060 ? p->thread.fpstate[0] : p->thread.fpstate[2])
+		  asm volatile ("fmovemx %/fp0-%/fp7,%0\n\t"
+				"fmoveml %/fpiar/%/fpcr/%/fpsr,%1"
+				: : "m" (p->thread.fp[0]), "m" (p->thread.fpcntl[0])
+				: "memory");
 		/* Restore the state in case the fpu was busy */
 		asm volatile ("frestore %0" : : "m" (p->thread.fpstate[0]));
 	}
-#endif /* CONFIG_FPU */
 
 	return 0;
 }
 
 /* Fill in the fpu structure for a core dump.  */
-#ifdef CONFIG_FPU
+
 int dump_fpu (struct pt_regs *regs, struct user_m68kfp_struct *fpu)
 {
 	char fpustate[216];
@@ -310,50 +298,34 @@ int dump_fpu (struct pt_regs *regs, struct user_m68kfp_struct *fpu)
 	if (!CPU_IS_060 ? !fpustate[0] : !fpustate[2])
 		return 0;
 
-	if (CPU_IS_COLDFIRE) {
-		asm volatile ("fmovel %/fpiar,%0\n\t"
-			      "fmovel %/fpcr,%1\n\t"
-			      "fmovel %/fpsr,%2\n\t"
-			      "fmovemd %/fp0-%/fp7,%3"
-			      :
-			      : "m" (fpu->fpcntl[0]),
-				"m" (fpu->fpcntl[1]),
-				"m" (fpu->fpcntl[2]),
-				"m" (fpu->fpregs[0])
-			      : "memory");
-	} else {
-		asm volatile ("fmovem %/fpiar/%/fpcr/%/fpsr,%0"
-			      :
-			      : "m" (fpu->fpcntl[0])
-			      : "memory");
-		asm volatile ("fmovemx %/fp0-%/fp7,%0"
-			      :
-			      : "m" (fpu->fpregs[0])
-			      : "memory");
-	}
-
+	asm volatile ("fmovem %/fpiar/%/fpcr/%/fpsr,%0"
+		:: "m" (fpu->fpcntl[0])
+		: "memory");
+	asm volatile ("fmovemx %/fp0-%/fp7,%0"
+		:: "m" (fpu->fpregs[0])
+		: "memory");
 	return 1;
 }
 EXPORT_SYMBOL(dump_fpu);
-#endif /* CONFIG_FPU */
 
 /*
  * sys_execve() executes a new program.
  */
-asmlinkage int sys_execve(const char __user *name,
-			  const char __user *const __user *argv,
-			  const char __user *const __user *envp)
+asmlinkage int sys_execve(char __user *name, char __user * __user *argv, char __user * __user *envp)
 {
 	int error;
 	char * filename;
 	struct pt_regs *regs = (struct pt_regs *) &name;
 
+	lock_kernel();
 	filename = getname(name);
 	error = PTR_ERR(filename);
 	if (IS_ERR(filename))
-		return error;
+		goto out;
 	error = do_execve(filename, argv, envp, regs);
 	putname(filename);
+out:
+	unlock_kernel();
 	return error;
 }
 

@@ -13,7 +13,7 @@
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
 #include <linux/init.h>
-#include <linux/export.h>
+#include <linux/smp_lock.h>
 #include <asm/uaccess.h>
 #include <asm/amigahw.h>
 #include <asm/setup.h>
@@ -22,9 +22,8 @@ static loff_t
 proc_bus_zorro_lseek(struct file *file, loff_t off, int whence)
 {
 	loff_t new = -1;
-	struct inode *inode = file->f_path.dentry->d_inode;
 
-	mutex_lock(&inode->i_mutex);
+	lock_kernel();
 	switch (whence) {
 	case 0:
 		new = off;
@@ -36,12 +35,12 @@ proc_bus_zorro_lseek(struct file *file, loff_t off, int whence)
 		new = sizeof(struct ConfigDev) + off;
 		break;
 	}
-	if (new < 0 || new > sizeof(struct ConfigDev))
-		new = -EINVAL;
-	else
-		file->f_pos = new;
-	mutex_unlock(&inode->i_mutex);
-	return new;
+	if (new < 0 || new > sizeof(struct ConfigDev)) {
+		unlock_kernel();
+		return -EINVAL;
+	}
+	unlock_kernel();
+	return (file->f_pos = new);
 }
 
 static ssize_t
@@ -68,7 +67,7 @@ proc_bus_zorro_read(struct file *file, char __user *buf, size_t nbytes, loff_t *
 	cd.cd_BoardAddr = (void *)zorro_resource_start(z);
 	cd.cd_BoardSize = zorro_resource_len(z);
 
-	if (copy_to_user(buf, (void *)&cd + pos, nbytes))
+	if (copy_to_user(buf, &cd, nbytes))
 		return -EFAULT;
 	*ppos += nbytes;
 
@@ -98,7 +97,7 @@ static void zorro_seq_stop(struct seq_file *m, void *v)
 
 static int zorro_seq_show(struct seq_file *m, void *v)
 {
-	unsigned int slot = *(loff_t *)v;
+	u_int slot = *(loff_t *)v;
 	struct zorro_dev *z = &zorro_autocon[slot];
 
 	seq_printf(m, "%02x\t%08x\t%08lx\t%08lx\t%02x\n", slot, z->id,
@@ -130,7 +129,7 @@ static const struct file_operations zorro_devices_proc_fops = {
 
 static struct proc_dir_entry *proc_bus_zorro_dir;
 
-static int __init zorro_proc_attach_device(unsigned int slot)
+static int __init zorro_proc_attach_device(u_int slot)
 {
 	struct proc_dir_entry *entry;
 	char name[4];
@@ -147,7 +146,7 @@ static int __init zorro_proc_attach_device(unsigned int slot)
 
 static int __init zorro_proc_init(void)
 {
-	unsigned int slot;
+	u_int slot;
 
 	if (MACH_IS_AMIGA && AMIGAHW_PRESENT(ZORRO)) {
 		proc_bus_zorro_dir = proc_mkdir("bus/zorro", NULL);

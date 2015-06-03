@@ -4,7 +4,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/gfp.h>
 #include <linux/types.h>
 #include <linux/delay.h>
 #include <linux/module.h>

@@ -11,6 +11,8 @@
 # Copyright (C) 1995-2002 Russell King
 #
 
+MKIMAGE         := $(srctree)/scripts/mkuboot.sh
+
 ifneq ($(MACHINE),)
 include $(srctree)/$(MACHINE)/Makefile.boot
 endif
@@ -57,36 +59,25 @@ $(obj)/zImage:	$(obj)/compressed/vmlinux FORCE
 
 endif
 
-targets += $(dtb-y)
+quiet_cmd_uimage = UIMAGE  $@
+      cmd_uimage = $(CONFIG_SHELL) $(MKIMAGE) -A arm -O linux -T kernel \
+		   -C none -a $(LOADADDR) -e $(STARTADDR) \
+		   -n 'Linux-$(KERNELRELEASE)' -d $< $@
 
-# Rule to build device tree blobs
-$(obj)/%.dtb: $(src)/dts/%.dts FORCE
-	$(call if_changed_dep,dtc)
-
-$(obj)/dtbs: $(addprefix $(obj)/, $(dtb-y))
-
-clean-files := *.dtb
-
-ifneq ($(LOADADDR),)
-  UIMAGE_LOADADDR=$(LOADADDR)
+ifeq ($(CONFIG_ZBOOT_ROM),y)
+$(obj)/uImage: LOADADDR=$(CONFIG_ZBOOT_ROM_TEXT)
 else
-  ifeq ($(CONFIG_ZBOOT_ROM),y)
-    UIMAGE_LOADADDR=$(CONFIG_ZBOOT_ROM_TEXT)
-  else
-    UIMAGE_LOADADDR=$(ZRELADDR)
-  endif
+$(obj)/uImage: LOADADDR=$(ZRELADDR)
 endif
 
-check_for_multiple_loadaddr = \
-if [ $(words $(UIMAGE_LOADADDR)) -gt 1 ]; then \
-	echo 'multiple load addresses: $(UIMAGE_LOADADDR)'; \
-	echo 'This is incompatible with uImages'; \
-	echo 'Specify LOADADDR on the commandline to build an uImage'; \
-	false; \
-fi
+ifeq ($(CONFIG_THUMB2_KERNEL),y)
+# Set bit 0 to 1 so that "mov pc, rx" switches to Thumb-2 mode
+$(obj)/uImage: STARTADDR=$(shell echo $(LOADADDR) | sed -e "s/.$$/1/")
+else
+$(obj)/uImage: STARTADDR=$(LOADADDR)
+endif
 
 $(obj)/uImage:	$(obj)/zImage FORCE
-	@$(check_for_multiple_loadaddr)
 	$(call if_changed,uimage)
 	@echo '  Image $@ is ready'
 
@@ -112,10 +103,6 @@ install: $(obj)/Image
 zinstall: $(obj)/zImage
 	$(CONFIG_SHELL) $(srctree)/$(src)/install.sh $(KERNELRELEASE) \
 	$(obj)/zImage System.map "$(INSTALL_PATH)"
-
-uinstall: $(obj)/uImage
-	$(CONFIG_SHELL) $(srctree)/$(src)/install.sh $(KERNELRELEASE) \
-	$(obj)/uImage System.map "$(INSTALL_PATH)"
 
 zi:
 	$(CONFIG_SHELL) $(srctree)/$(src)/install.sh $(KERNELRELEASE) \

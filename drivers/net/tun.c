@@ -34,8 +34,6 @@
  *    Modifications for 2.3.99-pre5 kernel.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #define DRV_NAME	"tun"
 #define DRV_VERSION	"1.6"
 #define DRV_DESCRIPTION	"Universal TUN/TAP device driver"
@@ -46,6 +44,7 @@
 #include <linux/kernel.h>
 #include <linux/major.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/poll.h>
 #include <linux/fcntl.h>
 #include <linux/init.h>
@@ -55,7 +54,6 @@
 #include <linux/miscdevice.h>
 #include <linux/ethtool.h>
 #include <linux/rtnetlink.h>
-#include <linux/compat.h>
 #include <linux/if.h>
 #include <linux/if_arp.h>
 #include <linux/if_ether.h>
@@ -63,12 +61,12 @@
 #include <linux/crc32.h>
 #include <linux/nsproxy.h>
 #include <linux/virtio_net.h>
-#include <linux/rcupdate.h>
 #include <net/net_namespace.h>
 #include <net/netns/generic.h>
 #include <net/rtnetlink.h>
 #include <net/sock.h>
 
+#include <asm/system.h>
 #include <asm/uaccess.h>
 
 /* Uncomment to enable debugging */
@@ -77,27 +75,11 @@
 #ifdef TUN_DEBUG
 static int debug;
 
-#define tun_debug(level, tun, fmt, args...)			\
-do {								\
-	if (tun->debug)						\
-		netdev_printk(level, tun->dev, fmt, ##args);	\
-} while (0)
-#define DBG1(level, fmt, args...)				\
-do {								\
-	if (debug == 2)						\
-		printk(level fmt, ##args);			\
-} while (0)
+#define DBG  if(tun->debug)printk
+#define DBG1 if(debug==2)printk
 #else
-#define tun_debug(level, tun, fmt, args...)			\
-do {								\
-	if (0)							\
-		netdev_printk(level, tun->dev, fmt, ##args);	\
-} while (0)
-#define DBG1(level, fmt, args...)				\
-do {								\
-	if (0)							\
-		printk(level fmt, ##args);			\
-} while (0)
+#define DBG( a... )
+#define DBG1( a... )
 #endif
 
 #define FLT_EXACT_COUNT 8
@@ -122,16 +104,10 @@ struct tun_struct {
 	gid_t			group;
 
 	struct net_device	*dev;
-	netdev_features_t	set_features;
-#define TUN_USER_FEATURES (NETIF_F_HW_CSUM|NETIF_F_TSO_ECN|NETIF_F_TSO| \
-			  NETIF_F_TSO6|NETIF_F_UFO)
 	struct fasync_struct	*fasync;
 
 	struct tap_filter       txflt;
 	struct socket		socket;
-	struct socket_wq	wq;
-
-	int			vnet_hdr_sz;
 
 #ifdef TUN_DEBUG
 	int debug;
@@ -168,8 +144,6 @@ static int tun_attach(struct tun_struct *tun, struct file *file)
 	err = 0;
 	tfile->tun = tun;
 	tun->tfile = tfile;
-	tun->socket.file = file;
-	netif_carrier_on(tun->dev);
 	dev_hold(tun->dev);
 	sock_hold(tun->socket.sk);
 	atomic_inc(&tfile->count);
@@ -183,7 +157,6 @@ static void __tun_detach(struct tun_struct *tun)
 {
 	/* Detach from net device */
 	netif_tx_lock_bh(tun->dev);
-	netif_carrier_off(tun->dev);
 	tun->tfile = NULL;
 	netif_tx_unlock_bh(tun->dev);
 
@@ -224,7 +197,7 @@ static void tun_put(struct tun_struct *tun)
 		tun_detach(tfile->tun);
 }
 
-/* TAP filtering */
+/* TAP filterting */
 static void addr_hash_set(u32 *mask, const u8 *addr)
 {
 	int n = ether_crc(ETH_ALEN, addr) >> 26;
@@ -347,7 +320,7 @@ static void tun_net_uninit(struct net_device *dev)
 	/* Inform the methods they need to stop using the dev.
 	 */
 	if (tfile) {
-		wake_up_all(&tun->wq.wait);
+		wake_up_all(&tun->socket.wait);
 		if (atomic_dec_and_test(&tfile->count))
 			__tun_detach(tun);
 	}
@@ -357,9 +330,7 @@ static void tun_free_netdev(struct net_device *dev)
 {
 	struct tun_struct *tun = netdev_priv(dev);
 
-	BUG_ON(!test_bit(SOCK_EXTERNALLY_ALLOCATED, &tun->socket.flags));
-
-	sk_release_kernel(tun->socket.sk);
+	sock_put(tun->socket.sk);
 }
 
 /* Net device open. */
@@ -381,7 +352,7 @@ static netdev_tx_t tun_net_xmit(struct sk_buff *skb, struct net_device *dev)
 {
 	struct tun_struct *tun = netdev_priv(dev);
 
-	tun_debug(KERN_INFO, tun, "tun_net_xmit %d\n", skb->len);
+	DBG(KERN_INFO "%s: tun_net_xmit %d\n", tun->dev->name, skb->len);
 
 	/* Drop packet if interface is not attached */
 	if (!tun->tfile)
@@ -391,10 +362,6 @@ static netdev_tx_t tun_net_xmit(struct sk_buff *skb, struct net_device *dev)
 	 * This is a noop if the filter is disabled.
 	 * Filter can be enabled only for the TAP devices. */
 	if (!check_filter(&tun->txflt, skb))
-		goto drop;
-
-	if (tun->socket.sk->sk_filter &&
-	    sk_filter(tun->socket.sk, skb))
 		goto drop;
 
 	if (skb_queue_len(&tun->socket.sk->sk_receive_queue) >= dev->tx_queue_len) {
@@ -413,20 +380,14 @@ static netdev_tx_t tun_net_xmit(struct sk_buff *skb, struct net_device *dev)
 		}
 	}
 
-	/* Orphan the skb - required as we might hang on to it
-	 * for indefinite time. */
-	skb_orphan(skb);
-
-	nf_reset(skb);
-
 	/* Enqueue packet */
 	skb_queue_tail(&tun->socket.sk->sk_receive_queue, skb);
+	dev->trans_start = jiffies;
 
 	/* Notify and wake up reader process */
 	if (tun->flags & TUN_FASYNC)
 		kill_fasync(&tun->fasync, SIGIO, POLL_IN);
-	wake_up_interruptible_poll(&tun->wq.wait, POLLIN |
-				   POLLRDNORM | POLLRDBAND);
+	wake_up_interruptible(&tun->socket.wait);
 	return NETDEV_TX_OK;
 
 drop:
@@ -442,6 +403,7 @@ static void tun_net_mclist(struct net_device *dev)
 	 * _rx_ path and has nothing to do with the _tx_ path.
 	 * In rx path we always accept everything userspace gives us.
 	 */
+	return;
 }
 
 #define MIN_MTU 68
@@ -456,40 +418,12 @@ tun_net_change_mtu(struct net_device *dev, int new_mtu)
 	return 0;
 }
 
-static netdev_features_t tun_net_fix_features(struct net_device *dev,
-	netdev_features_t features)
-{
-	struct tun_struct *tun = netdev_priv(dev);
-
-	return (features & tun->set_features) | (features & ~TUN_USER_FEATURES);
-}
-#ifdef CONFIG_NET_POLL_CONTROLLER
-static void tun_poll_controller(struct net_device *dev)
-{
-	/*
-	 * Tun only receives frames when:
-	 * 1) the char device endpoint gets data from user space
-	 * 2) the tun socket gets a sendmsg call from user space
-	 * Since both of those are syncronous operations, we are guaranteed
-	 * never to have pending data when we poll for it
-	 * so theres nothing to do here but return.
-	 * We need this though so netpoll recognizes us as an interface that
-	 * supports polling, which enables bridge devices in virt setups to
-	 * still use netconsole
-	 */
-	return;
-}
-#endif
 static const struct net_device_ops tun_netdev_ops = {
 	.ndo_uninit		= tun_net_uninit,
 	.ndo_open		= tun_net_open,
 	.ndo_stop		= tun_net_close,
 	.ndo_start_xmit		= tun_net_xmit,
 	.ndo_change_mtu		= tun_net_change_mtu,
-	.ndo_fix_features	= tun_net_fix_features,
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	.ndo_poll_controller	= tun_poll_controller,
-#endif
 };
 
 static const struct net_device_ops tap_netdev_ops = {
@@ -498,13 +432,9 @@ static const struct net_device_ops tap_netdev_ops = {
 	.ndo_stop		= tun_net_close,
 	.ndo_start_xmit		= tun_net_xmit,
 	.ndo_change_mtu		= tun_net_change_mtu,
-	.ndo_fix_features	= tun_net_fix_features,
-	.ndo_set_rx_mode	= tun_net_mclist,
+	.ndo_set_multicast_list	= tun_net_mclist,
 	.ndo_set_mac_address	= eth_mac_addr,
 	.ndo_validate_addr	= eth_validate_addr,
-#ifdef CONFIG_NET_POLL_CONTROLLER
-	.ndo_poll_controller	= tun_poll_controller,
-#endif
 };
 
 /* Initialize net device. */
@@ -531,9 +461,8 @@ static void tun_net_init(struct net_device *dev)
 		dev->netdev_ops = &tap_netdev_ops;
 		/* Ethernet TAP Device */
 		ether_setup(dev);
-		dev->priv_flags &= ~IFF_TX_SKB_SHARING;
 
-		eth_hw_addr_random(dev);
+		random_ether_addr(dev->dev_addr);
 
 		dev->tx_queue_len = TUN_READQ_SIZE;  /* We prefer our own queue length */
 		break;
@@ -555,9 +484,9 @@ static unsigned int tun_chr_poll(struct file *file, poll_table * wait)
 
 	sk = tun->socket.sk;
 
-	tun_debug(KERN_INFO, tun, "tun_chr_poll\n");
+	DBG(KERN_INFO "%s: tun_chr_poll\n", tun->dev->name);
 
-	poll_wait(file, &tun->wq.wait, wait);
+	poll_wait(file, &tun->socket.wait, wait);
 
 	if (!skb_queue_empty(&sk->sk_receive_queue))
 		mask |= POLLIN | POLLRDNORM;
@@ -576,15 +505,13 @@ static unsigned int tun_chr_poll(struct file *file, poll_table * wait)
 
 /* prepad is the amount to reserve at front.  len is length after that.
  * linear is a hint as to how much to copy (usually headers). */
-static struct sk_buff *tun_alloc_skb(struct tun_struct *tun,
-				     size_t prepad, size_t len,
-				     size_t linear, int noblock)
+static inline struct sk_buff *tun_alloc_skb(struct tun_struct *tun,
+					    size_t prepad, size_t len,
+					    size_t linear, int noblock)
 {
 	struct sock *sk = tun->socket.sk;
 	struct sk_buff *skb;
 	int err;
-
-	sock_update_classid(sk);
 
 	/* Under a page?  Don't bother with paged skb. */
 	if (prepad + len < PAGE_SIZE || !linear)
@@ -604,20 +531,19 @@ static struct sk_buff *tun_alloc_skb(struct tun_struct *tun,
 }
 
 /* Get packet from user space buffer */
-static ssize_t tun_get_user(struct tun_struct *tun,
-			    const struct iovec *iv, size_t count,
-			    int noblock)
+static __inline__ ssize_t tun_get_user(struct tun_struct *tun,
+				       const struct iovec *iv, size_t count,
+				       int noblock)
 {
 	struct tun_pi pi = { 0, cpu_to_be16(ETH_P_IP) };
 	struct sk_buff *skb;
-	size_t len = count, align = NET_SKB_PAD;
+	size_t len = count, align = 0;
 	struct virtio_net_hdr gso = { 0 };
 	int offset = 0;
 
 	if (!(tun->flags & TUN_NO_PI)) {
-		if (len < sizeof(pi))
+		if ((len -= sizeof(pi)) > count)
 			return -EINVAL;
-		len -= sizeof(pi);
 
 		if (memcpy_fromiovecend((void *)&pi, iv, 0, sizeof(pi)))
 			return -EFAULT;
@@ -625,9 +551,8 @@ static ssize_t tun_get_user(struct tun_struct *tun,
 	}
 
 	if (tun->flags & TUN_VNET_HDR) {
-		if (len < tun->vnet_hdr_sz)
+		if ((len -= sizeof(gso)) > count)
 			return -EINVAL;
-		len -= tun->vnet_hdr_sz;
 
 		if (memcpy_fromiovecend((void *)&gso, iv, offset, sizeof(gso)))
 			return -EFAULT;
@@ -638,11 +563,11 @@ static ssize_t tun_get_user(struct tun_struct *tun,
 
 		if (gso.hdr_len > len)
 			return -EINVAL;
-		offset += tun->vnet_hdr_sz;
+		offset += sizeof(gso);
 	}
 
 	if ((tun->flags & TUN_TYPE_MASK) == TUN_TAP_DEV) {
-		align += NET_IP_ALIGN;
+		align = NET_IP_ALIGN;
 		if (unlikely(len < ETH_HLEN ||
 			     (gso.hdr_len && gso.hdr_len < ETH_HLEN)))
 			return -EINVAL;
@@ -668,7 +593,8 @@ static ssize_t tun_get_user(struct tun_struct *tun,
 			kfree_skb(skb);
 			return -EINVAL;
 		}
-	}
+	} else if (tun->flags & TUN_NOCHECKSUM)
+		skb->ip_summed = CHECKSUM_UNNECESSARY;
 
 	switch (tun->flags & TUN_TYPE_MASK) {
 	case TUN_TUN_DEV:
@@ -694,7 +620,7 @@ static ssize_t tun_get_user(struct tun_struct *tun,
 	case TUN_TAP_DEV:
 		skb->protocol = eth_type_trans(skb, tun->dev);
 		break;
-	}
+	};
 
 	if (gso.gso_type != VIRTIO_NET_HDR_GSO_NONE) {
 		pr_debug("GSO!\n");
@@ -747,7 +673,7 @@ static ssize_t tun_chr_aio_write(struct kiocb *iocb, const struct iovec *iv,
 	if (!tun)
 		return -EBADFD;
 
-	tun_debug(KERN_INFO, tun, "tun_chr_write %ld\n", count);
+	DBG(KERN_INFO "%s: tun_chr_write %ld\n", tun->dev->name, count);
 
 	result = tun_get_user(tun, iv, iov_length(iv, count),
 			      file->f_flags & O_NONBLOCK);
@@ -757,9 +683,9 @@ static ssize_t tun_chr_aio_write(struct kiocb *iocb, const struct iovec *iv,
 }
 
 /* Put packet to the user space buffer */
-static ssize_t tun_put_user(struct tun_struct *tun,
-			    struct sk_buff *skb,
-			    const struct iovec *iv, int len)
+static __inline__ ssize_t tun_put_user(struct tun_struct *tun,
+				       struct sk_buff *skb,
+				       const struct iovec *iv, int len)
 {
 	struct tun_pi pi = { 0, skb->protocol };
 	ssize_t total = 0;
@@ -780,7 +706,7 @@ static ssize_t tun_put_user(struct tun_struct *tun,
 
 	if (tun->flags & TUN_VNET_HDR) {
 		struct virtio_net_hdr gso = { 0 }; /* no info leak */
-		if ((len -= tun->vnet_hdr_sz) < 0)
+		if ((len -= sizeof(gso)) < 0)
 			return -EINVAL;
 
 		if (skb_is_gso(skb)) {
@@ -795,18 +721,8 @@ static ssize_t tun_put_user(struct tun_struct *tun,
 				gso.gso_type = VIRTIO_NET_HDR_GSO_TCPV6;
 			else if (sinfo->gso_type & SKB_GSO_UDP)
 				gso.gso_type = VIRTIO_NET_HDR_GSO_UDP;
-			else {
-				pr_err("unexpected GSO type: "
-				       "0x%x, gso_size %d, hdr_len %d\n",
-				       sinfo->gso_type, gso.gso_size,
-				       gso.hdr_len);
-				print_hex_dump(KERN_ERR, "tun: ",
-					       DUMP_PREFIX_NONE,
-					       16, 1, skb->head,
-					       min((int)gso.hdr_len, 64), true);
-				WARN_ON_ONCE(1);
-				return -EINVAL;
-			}
+			else
+				BUG();
 			if (sinfo->gso_type & SKB_GSO_TCP_ECN)
 				gso.gso_type |= VIRTIO_NET_HDR_GSO_ECN;
 		} else
@@ -814,22 +730,20 @@ static ssize_t tun_put_user(struct tun_struct *tun,
 
 		if (skb->ip_summed == CHECKSUM_PARTIAL) {
 			gso.flags = VIRTIO_NET_HDR_F_NEEDS_CSUM;
-			gso.csum_start = skb_checksum_start_offset(skb);
+			gso.csum_start = skb->csum_start - skb_headroom(skb);
 			gso.csum_offset = skb->csum_offset;
-		} else if (skb->ip_summed == CHECKSUM_UNNECESSARY) {
-			gso.flags = VIRTIO_NET_HDR_F_DATA_VALID;
 		} /* else everything is zero */
 
 		if (unlikely(memcpy_toiovecend(iv, (void *)&gso, total,
 					       sizeof(gso))))
 			return -EFAULT;
-		total += tun->vnet_hdr_sz;
+		total += sizeof(gso);
 	}
 
 	len = min_t(int, skb->len, len);
 
 	skb_copy_datagram_const_iovec(skb, 0, iv, total, len);
-	total += skb->len;
+	total += len;
 
 	tun->dev->stats.tx_packets++;
 	tun->dev->stats.tx_bytes += len;
@@ -837,24 +751,34 @@ static ssize_t tun_put_user(struct tun_struct *tun,
 	return total;
 }
 
-static ssize_t tun_do_read(struct tun_struct *tun,
-			   struct kiocb *iocb, const struct iovec *iv,
-			   ssize_t len, int noblock)
+static ssize_t tun_chr_aio_read(struct kiocb *iocb, const struct iovec *iv,
+			    unsigned long count, loff_t pos)
 {
+	struct file *file = iocb->ki_filp;
+	struct tun_file *tfile = file->private_data;
+	struct tun_struct *tun = __tun_get(tfile);
 	DECLARE_WAITQUEUE(wait, current);
 	struct sk_buff *skb;
-	ssize_t ret = 0;
+	ssize_t len, ret = 0;
 
-	tun_debug(KERN_INFO, tun, "tun_chr_read\n");
+	if (!tun)
+		return -EBADFD;
 
-	if (unlikely(!noblock))
-		add_wait_queue(&tun->wq.wait, &wait);
+	DBG(KERN_INFO "%s: tun_chr_read\n", tun->dev->name);
+
+	len = iov_length(iv, count);
+	if (len < 0) {
+		ret = -EINVAL;
+		goto out;
+	}
+
+	add_wait_queue(&tun->socket.wait, &wait);
 	while (len) {
 		current->state = TASK_INTERRUPTIBLE;
 
 		/* Read frames from the queue */
 		if (!(skb=skb_dequeue(&tun->socket.sk->sk_receive_queue))) {
-			if (noblock) {
+			if (file->f_flags & O_NONBLOCK) {
 				ret = -EAGAIN;
 				break;
 			}
@@ -879,32 +803,8 @@ static ssize_t tun_do_read(struct tun_struct *tun,
 	}
 
 	current->state = TASK_RUNNING;
-	if (unlikely(!noblock))
-		remove_wait_queue(&tun->wq.wait, &wait);
+	remove_wait_queue(&tun->socket.wait, &wait);
 
-	return ret;
-}
-
-static ssize_t tun_chr_aio_read(struct kiocb *iocb, const struct iovec *iv,
-			    unsigned long count, loff_t pos)
-{
-	struct file *file = iocb->ki_filp;
-	struct tun_file *tfile = file->private_data;
-	struct tun_struct *tun = __tun_get(tfile);
-	ssize_t len, ret;
-
-	if (!tun)
-		return -EBADFD;
-	len = iov_length(iv, count);
-	if (len < 0) {
-		ret = -EINVAL;
-		goto out;
-	}
-
-	ret = tun_do_read(tun, iocb, iv, len, file->f_flags & O_NONBLOCK);
-	ret = min_t(ssize_t, ret, len);
-	if (ret > 0)
-		iocb->ki_pos = ret;
 out:
 	tun_put(tun);
 	return ret;
@@ -939,7 +839,6 @@ static struct rtnl_link_ops tun_link_ops __read_mostly = {
 static void tun_sock_write_space(struct sock *sk)
 {
 	struct tun_struct *tun;
-	wait_queue_head_t *wqueue;
 
 	if (!sock_writeable(sk))
 		return;
@@ -947,58 +846,17 @@ static void tun_sock_write_space(struct sock *sk)
 	if (!test_and_clear_bit(SOCK_ASYNC_NOSPACE, &sk->sk_socket->flags))
 		return;
 
-	wqueue = sk_sleep(sk);
-	if (wqueue && waitqueue_active(wqueue))
-		wake_up_interruptible_sync_poll(wqueue, POLLOUT |
-						POLLWRNORM | POLLWRBAND);
+	if (sk->sk_sleep && waitqueue_active(sk->sk_sleep))
+		wake_up_interruptible_sync(sk->sk_sleep);
 
-	tun = tun_sk(sk)->tun;
+	tun = container_of(sk, struct tun_sock, sk)->tun;
 	kill_fasync(&tun->fasync, SIGIO, POLL_OUT);
 }
 
 static void tun_sock_destruct(struct sock *sk)
 {
-	free_netdev(tun_sk(sk)->tun->dev);
+	free_netdev(container_of(sk, struct tun_sock, sk)->tun->dev);
 }
-
-static int tun_sendmsg(struct kiocb *iocb, struct socket *sock,
-		       struct msghdr *m, size_t total_len)
-{
-	struct tun_struct *tun = container_of(sock, struct tun_struct, socket);
-	return tun_get_user(tun, m->msg_iov, total_len,
-			    m->msg_flags & MSG_DONTWAIT);
-}
-
-static int tun_recvmsg(struct kiocb *iocb, struct socket *sock,
-		       struct msghdr *m, size_t total_len,
-		       int flags)
-{
-	struct tun_struct *tun = container_of(sock, struct tun_struct, socket);
-	int ret;
-	if (flags & ~(MSG_DONTWAIT|MSG_TRUNC))
-		return -EINVAL;
-	ret = tun_do_read(tun, iocb, m->msg_iov, total_len,
-			  flags & MSG_DONTWAIT);
-	if (ret > total_len) {
-		m->msg_flags |= MSG_TRUNC;
-		ret = flags & MSG_TRUNC ? ret : total_len;
-	}
-	return ret;
-}
-
-static int tun_release(struct socket *sock)
-{
-	if (sock->sk)
-		sock_put(sock->sk);
-	return 0;
-}
-
-/* Ops structure to mimic raw sockets with tun */
-static const struct proto_ops tun_socket_ops = {
-	.sendmsg = tun_sendmsg,
-	.recvmsg = tun_recvmsg,
-	.release = tun_release,
-};
 
 static struct proto tun_proto = {
 	.name		= "tun",
@@ -1121,40 +979,38 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 		tun->dev = dev;
 		tun->flags = flags;
 		tun->txflt.count = 0;
-		tun->vnet_hdr_sz = sizeof(struct virtio_net_hdr);
-		set_bit(SOCK_EXTERNALLY_ALLOCATED, &tun->socket.flags);
 
 		err = -ENOMEM;
-		sk = sk_alloc(&init_net, AF_UNSPEC, GFP_KERNEL, &tun_proto);
+		sk = sk_alloc(net, AF_UNSPEC, GFP_KERNEL, &tun_proto);
 		if (!sk)
 			goto err_free_dev;
 
-		sk_change_net(sk, net);
-		tun->socket.wq = &tun->wq;
-		init_waitqueue_head(&tun->wq.wait);
-		tun->socket.ops = &tun_socket_ops;
+		init_waitqueue_head(&tun->socket.wait);
 		sock_init_data(&tun->socket, sk);
 		sk->sk_write_space = tun_sock_write_space;
 		sk->sk_sndbuf = INT_MAX;
 
-		tun_sk(sk)->tun = tun;
+		container_of(sk, struct tun_sock, sk)->tun = tun;
 
 		security_tun_dev_post_create(sk);
 
 		tun_net_init(dev);
 
-		dev->hw_features = NETIF_F_SG | NETIF_F_FRAGLIST |
-			TUN_USER_FEATURES;
-		dev->features = dev->hw_features;
+		if (strchr(dev->name, '%')) {
+			err = dev_alloc_name(dev, dev->name);
+			if (err < 0)
+				goto err_free_sk;
+		}
 
 		err = register_netdevice(tun->dev);
 		if (err < 0)
 			goto err_free_sk;
 
-		if (device_create_file(&tun->dev->dev, &dev_attr_tun_flags) ||
+		if (!net_eq(dev_net(tun->dev), &init_net) ||
+		    device_create_file(&tun->dev->dev, &dev_attr_tun_flags) ||
 		    device_create_file(&tun->dev->dev, &dev_attr_owner) ||
 		    device_create_file(&tun->dev->dev, &dev_attr_group))
-			pr_err("Failed to create tun sysfs files\n");
+			printk(KERN_ERR "Failed to create tun sysfs files\n");
 
 		sk->sk_destruct = tun_sock_destruct;
 
@@ -1163,7 +1019,7 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 			goto failed;
 	}
 
-	tun_debug(KERN_INFO, tun, "tun_set_iff\n");
+	DBG(KERN_INFO "%s: tun_set_iff\n", tun->dev->name);
 
 	if (ifr->ifr_flags & IFF_NO_PI)
 		tun->flags |= TUN_NO_PI;
@@ -1190,7 +1046,7 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 	return 0;
 
  err_free_sk:
-	tun_free_netdev(dev);
+	sock_put(sk);
  err_free_dev:
 	free_netdev(dev);
  failed:
@@ -1200,7 +1056,7 @@ static int tun_set_iff(struct net *net, struct file *file, struct ifreq *ifr)
 static int tun_get_iff(struct net *net, struct tun_struct *tun,
 		       struct ifreq *ifr)
 {
-	tun_debug(KERN_INFO, tun, "tun_get_iff\n");
+	DBG(KERN_INFO "%s: tun_get_iff\n", tun->dev->name);
 
 	strcpy(ifr->ifr_name, tun->dev->name);
 
@@ -1211,12 +1067,18 @@ static int tun_get_iff(struct net *net, struct tun_struct *tun,
 
 /* This is like a cut-down ethtool ops, except done via tun fd so no
  * privs required. */
-static int set_offload(struct tun_struct *tun, unsigned long arg)
+static int set_offload(struct net_device *dev, unsigned long arg)
 {
-	netdev_features_t features = 0;
+	unsigned int old_features, features;
+
+	old_features = dev->features;
+	/* Unset features, set them as we chew on the arg. */
+	features = (old_features & ~(NETIF_F_HW_CSUM|NETIF_F_SG|NETIF_F_FRAGLIST
+				    |NETIF_F_TSO_ECN|NETIF_F_TSO|NETIF_F_TSO6
+				    |NETIF_F_UFO));
 
 	if (arg & TUN_F_CSUM) {
-		features |= NETIF_F_HW_CSUM;
+		features |= NETIF_F_HW_CSUM|NETIF_F_SG|NETIF_F_FRAGLIST;
 		arg &= ~TUN_F_CSUM;
 
 		if (arg & (TUN_F_TSO4|TUN_F_TSO6)) {
@@ -1242,26 +1104,25 @@ static int set_offload(struct tun_struct *tun, unsigned long arg)
 	if (arg)
 		return -EINVAL;
 
-	tun->set_features = features;
-	netdev_update_features(tun->dev);
+	dev->features = features;
+	if (old_features != dev->features)
+		netdev_features_change(dev);
 
 	return 0;
 }
 
-static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
-			    unsigned long arg, int ifreq_len)
+static long tun_chr_ioctl(struct file *file, unsigned int cmd,
+			  unsigned long arg)
 {
 	struct tun_file *tfile = file->private_data;
 	struct tun_struct *tun;
 	void __user* argp = (void __user*)arg;
-	struct sock_fprog fprog;
 	struct ifreq ifr;
 	int sndbuf;
-	int vnet_hdr_sz;
 	int ret;
 
 	if (cmd == TUNSETIFF || _IOC_TYPE(cmd) == 0x89) {
-		if (copy_from_user(&ifr, argp, ifreq_len))
+		if (copy_from_user(&ifr, argp, sizeof ifr))
 			return -EFAULT;
 	} else {
 		memset(&ifr, 0, sizeof(ifr));
@@ -1286,7 +1147,7 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 		if (ret)
 			goto unlock;
 
-		if (copy_to_user(argp, &ifr, ifreq_len))
+		if (copy_to_user(argp, &ifr, sizeof(ifr)))
 			ret = -EFAULT;
 		goto unlock;
 	}
@@ -1295,7 +1156,7 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 	if (!tun)
 		goto unlock;
 
-	tun_debug(KERN_INFO, tun, "tun_chr_ioctl cmd %d\n", cmd);
+	DBG(KERN_INFO "%s: tun_chr_ioctl cmd %d\n", tun->dev->name, cmd);
 
 	ret = 0;
 	switch (cmd) {
@@ -1304,16 +1165,19 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 		if (ret)
 			break;
 
-		if (copy_to_user(argp, &ifr, ifreq_len))
+		if (copy_to_user(argp, &ifr, sizeof(ifr)))
 			ret = -EFAULT;
 		break;
 
 	case TUNSETNOCSUM:
 		/* Disable/Enable checksum */
+		if (arg)
+			tun->flags |= TUN_NOCHECKSUM;
+		else
+			tun->flags &= ~TUN_NOCHECKSUM;
 
-		/* [unimplemented] */
-		tun_debug(KERN_INFO, tun, "ignored: set checksum %s\n",
-			  arg ? "disabled" : "enabled");
+		DBG(KERN_INFO "%s: checksum %s\n",
+		    tun->dev->name, arg ? "disabled" : "enabled");
 		break;
 
 	case TUNSETPERSIST:
@@ -1323,34 +1187,33 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 		else
 			tun->flags &= ~TUN_PERSIST;
 
-		tun_debug(KERN_INFO, tun, "persist %s\n",
-			  arg ? "enabled" : "disabled");
+		DBG(KERN_INFO "%s: persist %s\n",
+		    tun->dev->name, arg ? "enabled" : "disabled");
 		break;
 
 	case TUNSETOWNER:
 		/* Set owner of the device */
 		tun->owner = (uid_t) arg;
 
-		tun_debug(KERN_INFO, tun, "owner set to %d\n", tun->owner);
+		DBG(KERN_INFO "%s: owner set to %d\n", tun->dev->name, tun->owner);
 		break;
 
 	case TUNSETGROUP:
 		/* Set group of the device */
 		tun->group= (gid_t) arg;
 
-		tun_debug(KERN_INFO, tun, "group set to %d\n", tun->group);
+		DBG(KERN_INFO "%s: group set to %d\n", tun->dev->name, tun->group);
 		break;
 
 	case TUNSETLINK:
 		/* Only allow setting the type when the interface is down */
 		if (tun->dev->flags & IFF_UP) {
-			tun_debug(KERN_INFO, tun,
-				  "Linktype set failed because interface is up\n");
+			DBG(KERN_INFO "%s: Linktype set failed because interface is up\n",
+				tun->dev->name);
 			ret = -EBUSY;
 		} else {
 			tun->dev->type = (int) arg;
-			tun_debug(KERN_INFO, tun, "linktype set to %d\n",
-				  tun->dev->type);
+			DBG(KERN_INFO "%s: linktype set to %d\n", tun->dev->name, tun->dev->type);
 			ret = 0;
 		}
 		break;
@@ -1361,7 +1224,7 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 		break;
 #endif
 	case TUNSETOFFLOAD:
-		ret = set_offload(tun, arg);
+		ret = set_offload(tun->dev, arg);
 		break;
 
 	case TUNSETTXFILTER:
@@ -1373,17 +1236,17 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 		break;
 
 	case SIOCGIFHWADDR:
-		/* Get hw address */
+		/* Get hw addres */
 		memcpy(ifr.ifr_hwaddr.sa_data, tun->dev->dev_addr, ETH_ALEN);
 		ifr.ifr_hwaddr.sa_family = tun->dev->type;
-		if (copy_to_user(argp, &ifr, ifreq_len))
+		if (copy_to_user(argp, &ifr, sizeof ifr))
 			ret = -EFAULT;
 		break;
 
 	case SIOCSIFHWADDR:
 		/* Set hw address */
-		tun_debug(KERN_DEBUG, tun, "set hw address: %pM\n",
-			  ifr.ifr_hwaddr.sa_data);
+		DBG(KERN_DEBUG "%s: set hw address: %pM\n",
+			tun->dev->name, ifr.ifr_hwaddr.sa_data);
 
 		ret = dev_set_mac_address(tun->dev, &ifr.ifr_hwaddr);
 		break;
@@ -1403,49 +1266,10 @@ static long __tun_chr_ioctl(struct file *file, unsigned int cmd,
 		tun->socket.sk->sk_sndbuf = sndbuf;
 		break;
 
-	case TUNGETVNETHDRSZ:
-		vnet_hdr_sz = tun->vnet_hdr_sz;
-		if (copy_to_user(argp, &vnet_hdr_sz, sizeof(vnet_hdr_sz)))
-			ret = -EFAULT;
-		break;
-
-	case TUNSETVNETHDRSZ:
-		if (copy_from_user(&vnet_hdr_sz, argp, sizeof(vnet_hdr_sz))) {
-			ret = -EFAULT;
-			break;
-		}
-		if (vnet_hdr_sz < (int)sizeof(struct virtio_net_hdr)) {
-			ret = -EINVAL;
-			break;
-		}
-
-		tun->vnet_hdr_sz = vnet_hdr_sz;
-		break;
-
-	case TUNATTACHFILTER:
-		/* Can be set only for TAPs */
-		ret = -EINVAL;
-		if ((tun->flags & TUN_TYPE_MASK) != TUN_TAP_DEV)
-			break;
-		ret = -EFAULT;
-		if (copy_from_user(&fprog, argp, sizeof(fprog)))
-			break;
-
-		ret = sk_attach_filter(&fprog, tun->socket.sk);
-		break;
-
-	case TUNDETACHFILTER:
-		/* Can be set only for TAPs */
-		ret = -EINVAL;
-		if ((tun->flags & TUN_TYPE_MASK) != TUN_TAP_DEV)
-			break;
-		ret = sk_detach_filter(tun->socket.sk);
-		break;
-
 	default:
 		ret = -EINVAL;
 		break;
-	}
+	};
 
 unlock:
 	rtnl_unlock();
@@ -1453,41 +1277,6 @@ unlock:
 		tun_put(tun);
 	return ret;
 }
-
-static long tun_chr_ioctl(struct file *file,
-			  unsigned int cmd, unsigned long arg)
-{
-	return __tun_chr_ioctl(file, cmd, arg, sizeof (struct ifreq));
-}
-
-#ifdef CONFIG_COMPAT
-static long tun_chr_compat_ioctl(struct file *file,
-			 unsigned int cmd, unsigned long arg)
-{
-	switch (cmd) {
-	case TUNSETIFF:
-	case TUNGETIFF:
-	case TUNSETTXFILTER:
-	case TUNGETSNDBUF:
-	case TUNSETSNDBUF:
-	case SIOCGIFHWADDR:
-	case SIOCSIFHWADDR:
-		arg = (unsigned long)compat_ptr(arg);
-		break;
-	default:
-		arg = (compat_ulong_t)arg;
-		break;
-	}
-
-	/*
-	 * compat_ifreq is shorter than ifreq, so we must not access beyond
-	 * the end of that structure. All fields that are used in this
-	 * driver are compatible though, we don't need to convert the
-	 * contents.
-	 */
-	return __tun_chr_ioctl(file, cmd, arg, sizeof(struct compat_ifreq));
-}
-#endif /* CONFIG_COMPAT */
 
 static int tun_chr_fasync(int fd, struct file *file, int on)
 {
@@ -1497,8 +1286,9 @@ static int tun_chr_fasync(int fd, struct file *file, int on)
 	if (!tun)
 		return -EBADFD;
 
-	tun_debug(KERN_INFO, tun, "tun_chr_fasync %d\n", on);
+	DBG(KERN_INFO "%s: tun_chr_fasync %d\n", tun->dev->name, on);
 
+	lock_kernel();
 	if ((ret = fasync_helper(fd, file, on, &tun->fasync)) < 0)
 		goto out;
 
@@ -1511,6 +1301,7 @@ static int tun_chr_fasync(int fd, struct file *file, int on)
 		tun->flags &= ~TUN_FASYNC;
 	ret = 0;
 out:
+	unlock_kernel();
 	tun_put(tun);
 	return ret;
 }
@@ -1518,8 +1309,8 @@ out:
 static int tun_chr_open(struct inode *inode, struct file * file)
 {
 	struct tun_file *tfile;
-
-	DBG1(KERN_INFO, "tunX: tun_chr_open\n");
+	cycle_kernel_lock();
+	DBG1(KERN_INFO "tunX: tun_chr_open\n");
 
 	tfile = kmalloc(sizeof(*tfile), GFP_KERNEL);
 	if (!tfile)
@@ -1540,11 +1331,11 @@ static int tun_chr_close(struct inode *inode, struct file *file)
 	if (tun) {
 		struct net_device *dev = tun->dev;
 
-		tun_debug(KERN_INFO, tun, "tun_chr_close\n");
+		DBG(KERN_INFO "%s: tun_chr_close\n", dev->name);
 
 		__tun_detach(tun);
 
-		/* If desirable, unregister the netdevice. */
+		/* If desireable, unregister the netdevice. */
 		if (!(tun->flags & TUN_PERSIST)) {
 			rtnl_lock();
 			if (dev->reg_state == NETREG_REGISTERED)
@@ -1571,10 +1362,7 @@ static const struct file_operations tun_fops = {
 	.write = do_sync_write,
 	.aio_write = tun_chr_aio_write,
 	.poll	= tun_chr_poll,
-	.unlocked_ioctl	= tun_chr_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl = tun_chr_compat_ioctl,
-#endif
+	.unlocked_ioctl = tun_chr_ioctl,
 	.open	= tun_chr_open,
 	.release = tun_chr_close,
 	.fasync = tun_chr_fasync
@@ -1593,7 +1381,7 @@ static int tun_get_settings(struct net_device *dev, struct ethtool_cmd *cmd)
 {
 	cmd->supported		= 0;
 	cmd->advertising	= 0;
-	ethtool_cmd_speed_set(cmd, SPEED_10);
+	cmd->speed		= SPEED_10;
 	cmd->duplex		= DUPLEX_FULL;
 	cmd->port		= PORT_TP;
 	cmd->phy_address	= 0;
@@ -1608,15 +1396,16 @@ static void tun_get_drvinfo(struct net_device *dev, struct ethtool_drvinfo *info
 {
 	struct tun_struct *tun = netdev_priv(dev);
 
-	strlcpy(info->driver, DRV_NAME, sizeof(info->driver));
-	strlcpy(info->version, DRV_VERSION, sizeof(info->version));
+	strcpy(info->driver, DRV_NAME);
+	strcpy(info->version, DRV_VERSION);
+	strcpy(info->fw_version, "N/A");
 
 	switch (tun->flags & TUN_TYPE_MASK) {
 	case TUN_TUN_DEV:
-		strlcpy(info->bus_info, "tun", sizeof(info->bus_info));
+		strcpy(info->bus_info, "tun");
 		break;
 	case TUN_TAP_DEV:
-		strlcpy(info->bus_info, "tap", sizeof(info->bus_info));
+		strcpy(info->bus_info, "tap");
 		break;
 	}
 }
@@ -1639,12 +1428,36 @@ static void tun_set_msglevel(struct net_device *dev, u32 value)
 #endif
 }
 
+static u32 tun_get_link(struct net_device *dev)
+{
+	struct tun_struct *tun = netdev_priv(dev);
+	return !!tun->tfile;
+}
+
+static u32 tun_get_rx_csum(struct net_device *dev)
+{
+	struct tun_struct *tun = netdev_priv(dev);
+	return (tun->flags & TUN_NOCHECKSUM) == 0;
+}
+
+static int tun_set_rx_csum(struct net_device *dev, u32 data)
+{
+	struct tun_struct *tun = netdev_priv(dev);
+	if (data)
+		tun->flags &= ~TUN_NOCHECKSUM;
+	else
+		tun->flags |= TUN_NOCHECKSUM;
+	return 0;
+}
+
 static const struct ethtool_ops tun_ethtool_ops = {
 	.get_settings	= tun_get_settings,
 	.get_drvinfo	= tun_get_drvinfo,
 	.get_msglevel	= tun_get_msglevel,
 	.set_msglevel	= tun_set_msglevel,
-	.get_link	= ethtool_op_get_link,
+	.get_link	= tun_get_link,
+	.get_rx_csum	= tun_get_rx_csum,
+	.set_rx_csum	= tun_set_rx_csum
 };
 
 
@@ -1652,18 +1465,18 @@ static int __init tun_init(void)
 {
 	int ret = 0;
 
-	pr_info("%s, %s\n", DRV_DESCRIPTION, DRV_VERSION);
-	pr_info("%s\n", DRV_COPYRIGHT);
+	printk(KERN_INFO "tun: %s, %s\n", DRV_DESCRIPTION, DRV_VERSION);
+	printk(KERN_INFO "tun: %s\n", DRV_COPYRIGHT);
 
 	ret = rtnl_link_register(&tun_link_ops);
 	if (ret) {
-		pr_err("Can't register link_ops\n");
+		printk(KERN_ERR "tun: Can't register link_ops\n");
 		goto err_linkops;
 	}
 
 	ret = misc_register(&tun_miscdev);
 	if (ret) {
-		pr_err("Can't register misc device %d\n", TUN_MINOR);
+		printk(KERN_ERR "tun: Can't register misc device %d\n", TUN_MINOR);
 		goto err_misc;
 	}
 	return  0;
@@ -1679,27 +1492,9 @@ static void tun_cleanup(void)
 	rtnl_link_unregister(&tun_link_ops);
 }
 
-/* Get an underlying socket object from tun file.  Returns error unless file is
- * attached to a device.  The returned object works like a packet socket, it
- * can be used for sock_sendmsg/sock_recvmsg.  The caller is responsible for
- * holding a reference to the file for as long as the socket is in use. */
-struct socket *tun_get_socket(struct file *file)
-{
-	struct tun_struct *tun;
-	if (file->f_op != &tun_fops)
-		return ERR_PTR(-EINVAL);
-	tun = tun_get(file);
-	if (!tun)
-		return ERR_PTR(-EBADFD);
-	tun_put(tun);
-	return &tun->socket;
-}
-EXPORT_SYMBOL_GPL(tun_get_socket);
-
 module_init(tun_init);
 module_exit(tun_cleanup);
 MODULE_DESCRIPTION(DRV_DESCRIPTION);
 MODULE_AUTHOR(DRV_COPYRIGHT);
 MODULE_LICENSE("GPL");
 MODULE_ALIAS_MISCDEV(TUN_MINOR);
-MODULE_ALIAS("devname:net/tun");

@@ -19,7 +19,6 @@
  *
  */
 
-#include <linux/slab.h>
 #include "pvrusb2-eeprom.h"
 #include "pvrusb2-hdw-internal.h"
 #include "pvrusb2-debug.h"
@@ -32,7 +31,7 @@
 
    Read and analyze data in the eeprom.  Use tveeprom to figure out
    the packet structure, since this is another Hauppauge device and
-   internally it has a family resemblance to ivtv-type devices
+   internally it has a family resemblence to ivtv-type devices
 
 */
 

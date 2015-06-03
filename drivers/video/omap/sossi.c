@@ -2,7 +2,7 @@
  * OMAP1 Special OptimiSed Screen Interface support
  *
  * Copyright (C) 2004-2005 Nokia Corporation
- * Author: Juha YrjÃ¶lÃ¤ <juha.yrjola@nokia.com>
+ * Author: Juha Yrjölä <juha.yrjola@nokia.com>
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -23,11 +23,10 @@
 #include <linux/clk.h>
 #include <linux/irq.h>
 #include <linux/io.h>
-#include <linux/interrupt.h>
 
-#include <plat/dma.h>
+#include <mach/dma.h>
+#include <mach/omapfb.h>
 
-#include "omapfb.h"
 #include "lcdc.h"
 
 #define MODULE_NAME		"omapfb-sossi"

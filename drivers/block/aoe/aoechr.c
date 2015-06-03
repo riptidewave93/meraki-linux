@@ -8,10 +8,8 @@
 #include <linux/blkdev.h>
 #include <linux/completion.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/skbuff.h>
-#include <linux/export.h>
 #include "aoe.h"
 
 enum {
@@ -38,7 +36,6 @@ struct ErrMsg {
 	char *msg;
 };
 
-static DEFINE_MUTEX(aoechr_mutex);
 static struct ErrMsg emsgs[NMSG];
 static int emsgs_head_idx, emsgs_tail_idx;
 static struct completion emsgs_comp;
@@ -185,16 +182,16 @@ aoechr_open(struct inode *inode, struct file *filp)
 {
 	int n, i;
 
-	mutex_lock(&aoechr_mutex);
+	lock_kernel();
 	n = iminor(inode);
 	filp->private_data = (void *) (unsigned long) n;
 
 	for (i = 0; i < ARRAY_SIZE(chardevs); ++i)
 		if (chardevs[i].minor == n) {
-			mutex_unlock(&aoechr_mutex);
+			unlock_kernel();
 			return 0;
 		}
-	mutex_unlock(&aoechr_mutex);
+	unlock_kernel();
 	return -EINVAL;
 }
 
@@ -267,10 +264,9 @@ static const struct file_operations aoe_fops = {
 	.open = aoechr_open,
 	.release = aoechr_rel,
 	.owner = THIS_MODULE,
-	.llseek = noop_llseek,
 };
 
-static char *aoe_devnode(struct device *dev, umode_t *mode)
+static char *aoe_devnode(struct device *dev, mode_t *mode)
 {
 	return kasprintf(GFP_KERNEL, "etherd/%s", dev_name(dev));
 }

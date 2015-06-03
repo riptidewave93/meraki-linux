@@ -25,8 +25,10 @@
 
 #include <linux/fs.h>
 #include <linux/types.h>
+#include <linux/slab.h>
 #include <linux/highmem.h>
 
+#define MLOG_MASK_PREFIX ML_INODE
 #include <cluster/masklog.h>
 
 #include "ocfs2.h"
@@ -43,6 +45,11 @@ static struct inode * _ocfs2_get_system_file_inode(struct ocfs2_super *osb,
 						   int type,
 						   u32 slot);
 
+static inline int is_global_system_inode(int type);
+static inline int is_in_system_inode_array(struct ocfs2_super *osb,
+					   int type,
+					   u32 slot);
+
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 static struct lock_class_key ocfs2_sysfile_cluster_lock_key[NUM_SYSTEM_INODES];
 #endif
@@ -53,52 +60,11 @@ static inline int is_global_system_inode(int type)
 		type <= OCFS2_LAST_GLOBAL_SYSTEM_INODE;
 }
 
-static struct inode **get_local_system_inode(struct ocfs2_super *osb,
-					     int type,
-					     u32 slot)
+static inline int is_in_system_inode_array(struct ocfs2_super *osb,
+					   int type,
+					   u32 slot)
 {
-	int index;
-	struct inode **local_system_inodes, **free = NULL;
-
-	BUG_ON(slot == OCFS2_INVALID_SLOT);
-	BUG_ON(type < OCFS2_FIRST_LOCAL_SYSTEM_INODE ||
-	       type > OCFS2_LAST_LOCAL_SYSTEM_INODE);
-
-	spin_lock(&osb->osb_lock);
-	local_system_inodes = osb->local_system_inodes;
-	spin_unlock(&osb->osb_lock);
-
-	if (unlikely(!local_system_inodes)) {
-		local_system_inodes = kzalloc(sizeof(struct inode *) *
-					      NUM_LOCAL_SYSTEM_INODES *
-					      osb->max_slots,
-					      GFP_NOFS);
-		if (!local_system_inodes) {
-			mlog_errno(-ENOMEM);
-			/*
-			 * return NULL here so that ocfs2_get_sytem_file_inodes
-			 * will try to create an inode and use it. We will try
-			 * to initialize local_system_inodes next time.
-			 */
-			return NULL;
-		}
-
-		spin_lock(&osb->osb_lock);
-		if (osb->local_system_inodes) {
-			/* Someone has initialized it for us. */
-			free = local_system_inodes;
-			local_system_inodes = osb->local_system_inodes;
-		} else
-			osb->local_system_inodes = local_system_inodes;
-		spin_unlock(&osb->osb_lock);
-		if (unlikely(free))
-			kfree(free);
-	}
-
-	index = (slot * NUM_LOCAL_SYSTEM_INODES) +
-		(type - OCFS2_FIRST_LOCAL_SYSTEM_INODE);
-
-	return &local_system_inodes[index];
+	return slot == osb->slot_num || is_global_system_inode(type);
 }
 
 struct inode *ocfs2_get_system_file_inode(struct ocfs2_super *osb,
@@ -109,10 +75,8 @@ struct inode *ocfs2_get_system_file_inode(struct ocfs2_super *osb,
 	struct inode **arr = NULL;
 
 	/* avoid the lookup if cached in local system file array */
-	if (is_global_system_inode(type)) {
-		arr = &(osb->global_system_inodes[type]);
-	} else
-		arr = get_local_system_inode(osb, type, slot);
+	if (is_in_system_inode_array(osb, type, slot))
+		arr = &(osb->system_inodes[type]);
 
 	if (arr && ((inode = *arr) != NULL)) {
 		/* get a ref in addition to the array ref */

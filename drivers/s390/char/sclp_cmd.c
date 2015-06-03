@@ -21,7 +21,6 @@
 #include <asm/chpid.h>
 #include <asm/sclp.h>
 #include <asm/setup.h>
-#include <asm/ctl_reg.h>
 
 #include "sclp.h"
 
@@ -62,8 +61,8 @@ static int __init sclp_cmd_sync_early(sclp_cmdw_t cmd, void *sccb)
 	rc = sclp_service_call(cmd, sccb);
 	if (rc)
 		goto out;
-	__load_psw_mask(PSW_DEFAULT_KEY | PSW_MASK_BASE | PSW_MASK_EA |
-			PSW_MASK_BA | PSW_MASK_EXT | PSW_MASK_WAIT);
+	__load_psw_mask(PSW_BASE_BITS | PSW_MASK_EXT |
+			PSW_MASK_WAIT | PSW_DEFAULT_KEY);
 	local_irq_disable();
 out:
 	/* Contents of the sccb might have changed. */
@@ -85,7 +84,6 @@ static void __init sclp_read_info_early(void)
 		do {
 			memset(sccb, 0, sizeof(*sccb));
 			sccb->header.length = sizeof(*sccb);
-			sccb->header.function_code = 0x80;
 			sccb->header.control_mask[2] = 0x80;
 			rc = sclp_cmd_sync_early(commands[i], sccb);
 		} while (rc == -EBUSY);
@@ -309,13 +307,6 @@ struct assign_storage_sccb {
 	u16 rn;
 } __packed;
 
-int arch_get_memory_phys_device(unsigned long start_pfn)
-{
-	if (!rzm)
-		return 0;
-	return PFN_PHYS(start_pfn) >> ilog2(rzm);
-}
-
 static unsigned long long rn2addr(u16 rn)
 {
 	return (unsigned long long) (rn - 1) * rzm;
@@ -384,10 +375,8 @@ static int sclp_attach_storage(u8 id)
 	switch (sccb->header.response_code) {
 	case 0x0020:
 		set_bit(id, sclp_storage_ids);
-		for (i = 0; i < sccb->assigned; i++) {
-			if (sccb->entries[i])
-				sclp_unassign_storage(sccb->entries[i] >> 16);
-		}
+		for (i = 0; i < sccb->assigned; i++)
+			sclp_unassign_storage(sccb->entries[i] >> 16);
 		break;
 	default:
 		rc = -EIO;
@@ -442,8 +431,9 @@ static int sclp_mem_notifier(struct notifier_block *nb,
 	start = arg->start_pfn << PAGE_SHIFT;
 	size = arg->nr_pages << PAGE_SHIFT;
 	mutex_lock(&sclp_mem_mutex);
-	for_each_clear_bit(id, sclp_storage_ids, sclp_max_storage_id + 1)
-		sclp_attach_storage(id);
+	for (id = 0; id <= sclp_max_storage_id; id++)
+		if (!test_bit(id, sclp_storage_ids))
+			sclp_attach_storage(id);
 	switch (action) {
 	case MEM_ONLINE:
 	case MEM_GOING_OFFLINE:
@@ -509,8 +499,6 @@ static void __init sclp_add_standby_memory(void)
 	add_memory_merged(0);
 }
 
-#define MEM_SCT_SIZE (1UL << SECTION_SIZE_BITS)
-
 static void __init insert_increment(u16 rn, int standby, int assigned)
 {
 	struct memory_increment *incr, *new_incr;
@@ -522,8 +510,6 @@ static void __init insert_increment(u16 rn, int standby, int assigned)
 		return;
 	new_incr->rn = rn;
 	new_incr->standby = standby;
-	if (!standby)
-		new_incr->usecount = rzm > MEM_SCT_SIZE ? rzm/MEM_SCT_SIZE : 1;
 	last_rn = 0;
 	prev = &sclp_mem_list;
 	list_for_each_entry(incr, &sclp_mem_list, list) {
@@ -560,7 +546,7 @@ struct read_storage_sccb {
 	u32 entries[0];
 } __packed;
 
-static const struct dev_pm_ops sclp_mem_pm_ops = {
+static struct dev_pm_ops sclp_mem_pm_ops = {
 	.freeze		= sclp_mem_freeze,
 };
 

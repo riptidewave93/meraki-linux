@@ -18,7 +18,6 @@
  *  Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
 
-#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/dvb/frontend.h>
 #include <asm/types.h>
@@ -61,9 +60,9 @@ struct dvb_pll_desc {
 	u32  min;
 	u32  max;
 	u32  iffreq;
-	void (*set)(struct dvb_frontend *fe, u8 *buf);
+	void (*set)(struct dvb_frontend *fe, u8 *buf,
+		    const struct dvb_frontend_parameters *params);
 	u8   *initdata;
-	u8   *initdata2;
 	u8   *sleepdata;
 	int  count;
 	struct {
@@ -92,10 +91,10 @@ static struct dvb_pll_desc dvb_pll_thomson_dtt7579 = {
 	},
 };
 
-static void thomson_dtt759x_bw(struct dvb_frontend *fe, u8 *buf)
+static void thomson_dtt759x_bw(struct dvb_frontend *fe, u8 *buf,
+			       const struct dvb_frontend_parameters *params)
 {
-	u32 bw = fe->dtv_property_cache.bandwidth_hz;
-	if (bw == 7000000)
+	if (BANDWIDTH_7_MHZ == params->u.ofdm.bandwidth)
 		buf[3] |= 0x10;
 }
 
@@ -185,10 +184,10 @@ static struct dvb_pll_desc dvb_pll_env57h1xd5 = {
 /* Philips TDA6650/TDA6651
  * used in Panasonic ENV77H11D5
  */
-static void tda665x_bw(struct dvb_frontend *fe, u8 *buf)
+static void tda665x_bw(struct dvb_frontend *fe, u8 *buf,
+		       const struct dvb_frontend_parameters *params)
 {
-	u32 bw = fe->dtv_property_cache.bandwidth_hz;
-	if (bw == 8000000)
+	if (params->u.ofdm.bandwidth == BANDWIDTH_8_MHZ)
 		buf[3] |= 0x08;
 }
 
@@ -219,10 +218,10 @@ static struct dvb_pll_desc dvb_pll_tda665x = {
 /* Infineon TUA6034
  * used in LG TDTP E102P
  */
-static void tua6034_bw(struct dvb_frontend *fe, u8 *buf)
+static void tua6034_bw(struct dvb_frontend *fe, u8 *buf,
+		       const struct dvb_frontend_parameters *params)
 {
-	u32 bw = fe->dtv_property_cache.bandwidth_hz;
-	if (bw == 7000000)
+	if (BANDWIDTH_7_MHZ != params->u.ofdm.bandwidth)
 		buf[3] |= 0x08;
 }
 
@@ -243,10 +242,10 @@ static struct dvb_pll_desc dvb_pll_tua6034 = {
 /* ALPS TDED4
  * used in Nebula-Cards and USB boxes
  */
-static void tded4_bw(struct dvb_frontend *fe, u8 *buf)
+static void tded4_bw(struct dvb_frontend *fe, u8 *buf,
+		     const struct dvb_frontend_parameters *params)
 {
-	u32 bw = fe->dtv_property_cache.bandwidth_hz;
-	if (bw == 8000000)
+	if (params->u.ofdm.bandwidth == BANDWIDTH_8_MHZ)
 		buf[3] |= 0x04;
 }
 
@@ -318,80 +317,34 @@ static struct dvb_pll_desc dvb_pll_philips_sd1878_tda8261 = {
 	},
 };
 
-static void opera1_bw(struct dvb_frontend *fe, u8 *buf)
+static void opera1_bw(struct dvb_frontend *fe, u8 *buf,
+		      const struct dvb_frontend_parameters *params)
 {
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
-	struct dvb_pll_priv *priv = fe->tuner_priv;
-	u32 b_w  = (c->symbol_rate * 27) / 32000;
-	struct i2c_msg msg = {
-		.addr = priv->pll_i2c_address,
-		.flags = 0,
-		.buf = buf,
-		.len = 4
-	};
-	int result;
-	u8 lpf;
-
-	if (fe->ops.i2c_gate_ctrl)
-		fe->ops.i2c_gate_ctrl(fe, 1);
-
-	result = i2c_transfer(priv->i2c, &msg, 1);
-	if (result != 1)
-		printk(KERN_ERR "%s: i2c_transfer failed:%d",
-			__func__, result);
-
-	if (b_w <= 10000)
-		lpf = 0xc;
-	else if (b_w <= 12000)
-		lpf = 0x2;
-	else if (b_w <= 14000)
-		lpf = 0xa;
-	else if (b_w <= 16000)
-		lpf = 0x6;
-	else if (b_w <= 18000)
-		lpf = 0xe;
-	else if (b_w <= 20000)
-		lpf = 0x1;
-	else if (b_w <= 22000)
-		lpf = 0x9;
-	else if (b_w <= 24000)
-		lpf = 0x5;
-	else if (b_w <= 26000)
-		lpf = 0xd;
-	else if (b_w <= 28000)
-		lpf = 0x3;
-		else
-		lpf = 0xb;
-	buf[2] ^= 0x1c; /* Flip bits 3-5 */
-	/* Set lpf */
-	buf[2] |= ((lpf >> 2) & 0x3) << 3;
-	buf[3] |= (lpf & 0x3) << 2;
-
-	return;
+	if (params->u.ofdm.bandwidth == BANDWIDTH_8_MHZ)
+		buf[2] |= 0x08;
 }
 
 static struct dvb_pll_desc dvb_pll_opera1 = {
 	.name  = "Opera Tuner",
 	.min   =  900000,
 	.max   = 2250000,
-	.initdata = (u8[]){ 4, 0x08, 0xe5, 0xe1, 0x00 },
-	.initdata2 = (u8[]){ 4, 0x08, 0xe5, 0xe5, 0x00 },
 	.iffreq= 0,
 	.set   = opera1_bw,
 	.count = 8,
 	.entries = {
-		{ 1064000, 500, 0xf9, 0xc2 },
-		{ 1169000, 500, 0xf9, 0xe2 },
-		{ 1299000, 500, 0xf9, 0x20 },
-		{ 1444000, 500, 0xf9, 0x40 },
-		{ 1606000, 500, 0xf9, 0x60 },
-		{ 1777000, 500, 0xf9, 0x80 },
-		{ 1941000, 500, 0xf9, 0xa0 },
-		{ 2250000, 500, 0xf9, 0xc0 },
+		{ 1064000, 500, 0xe5, 0xc6 },
+		{ 1169000, 500, 0xe5, 0xe6 },
+		{ 1299000, 500, 0xe5, 0x24 },
+		{ 1444000, 500, 0xe5, 0x44 },
+		{ 1606000, 500, 0xe5, 0x64 },
+		{ 1777000, 500, 0xe5, 0x84 },
+		{ 1941000, 500, 0xe5, 0xa4 },
+		{ 2250000, 500, 0xe5, 0xc4 },
 	}
 };
 
-static void samsung_dtos403ih102a_set(struct dvb_frontend *fe, u8 *buf)
+static void samsung_dtos403ih102a_set(struct dvb_frontend *fe, u8 *buf,
+		       const struct dvb_frontend_parameters *params)
 {
 	struct dvb_pll_priv *priv = fe->tuner_priv;
 	struct i2c_msg msg = {
@@ -535,29 +488,30 @@ static struct dvb_pll_desc *pll_list[] = {
 /* code                                                        */
 
 static int dvb_pll_configure(struct dvb_frontend *fe, u8 *buf,
-			     const u32 frequency)
+			     const struct dvb_frontend_parameters *params)
 {
 	struct dvb_pll_priv *priv = fe->tuner_priv;
 	struct dvb_pll_desc *desc = priv->pll_desc;
 	u32 div;
 	int i;
 
-	if (frequency && (frequency < desc->min || frequency > desc->max))
+	if (params->frequency != 0 && (params->frequency < desc->min ||
+				       params->frequency > desc->max))
 		return -EINVAL;
 
 	for (i = 0; i < desc->count; i++) {
-		if (frequency > desc->entries[i].limit)
+		if (params->frequency > desc->entries[i].limit)
 			continue;
 		break;
 	}
 
 	if (debug)
 		printk("pll: %s: freq=%d | i=%d/%d\n", desc->name,
-		       frequency, i, desc->count);
+		       params->frequency, i, desc->count);
 	if (i == desc->count)
 		return -EINVAL;
 
-	div = (frequency + desc->iffreq +
+	div = (params->frequency + desc->iffreq +
 	       desc->entries[i].stepsize/2) / desc->entries[i].stepsize;
 	buf[0] = div >> 8;
 	buf[1] = div & 0xff;
@@ -565,7 +519,7 @@ static int dvb_pll_configure(struct dvb_frontend *fe, u8 *buf,
 	buf[3] = desc->entries[i].cb;
 
 	if (desc->set)
-		desc->set(fe, buf);
+		desc->set(fe, buf, params);
 
 	if (debug)
 		printk("pll: %s: div=%d | buf=0x%02x,0x%02x,0x%02x,0x%02x\n",
@@ -608,9 +562,9 @@ static int dvb_pll_sleep(struct dvb_frontend *fe)
 	return -EINVAL;
 }
 
-static int dvb_pll_set_params(struct dvb_frontend *fe)
+static int dvb_pll_set_params(struct dvb_frontend *fe,
+			      struct dvb_frontend_parameters *params)
 {
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct dvb_pll_priv *priv = fe->tuner_priv;
 	u8 buf[4];
 	struct i2c_msg msg =
@@ -622,8 +576,7 @@ static int dvb_pll_set_params(struct dvb_frontend *fe)
 	if (priv->i2c == NULL)
 		return -EINVAL;
 
-	result = dvb_pll_configure(fe, buf, c->frequency);
-	if (result < 0)
+	if ((result = dvb_pll_configure(fe, buf, params)) < 0)
 		return result;
 	else
 		frequency = result;
@@ -635,15 +588,15 @@ static int dvb_pll_set_params(struct dvb_frontend *fe)
 	}
 
 	priv->frequency = frequency;
-	priv->bandwidth = c->bandwidth_hz;
+	priv->bandwidth = (fe->ops.info.type == FE_OFDM) ? params->u.ofdm.bandwidth : 0;
 
 	return 0;
 }
 
 static int dvb_pll_calc_regs(struct dvb_frontend *fe,
+			     struct dvb_frontend_parameters *params,
 			     u8 *buf, int buf_len)
 {
-	struct dtv_frontend_properties *c = &fe->dtv_property_cache;
 	struct dvb_pll_priv *priv = fe->tuner_priv;
 	int result;
 	u32 frequency = 0;
@@ -651,8 +604,7 @@ static int dvb_pll_calc_regs(struct dvb_frontend *fe,
 	if (buf_len < 5)
 		return -EINVAL;
 
-	result = dvb_pll_configure(fe, buf + 1, c->frequency);
-	if (result < 0)
+	if ((result = dvb_pll_configure(fe, buf+1, params)) < 0)
 		return result;
 	else
 		frequency = result;
@@ -660,7 +612,7 @@ static int dvb_pll_calc_regs(struct dvb_frontend *fe,
 	buf[0] = priv->pll_i2c_address;
 
 	priv->frequency = frequency;
-	priv->bandwidth = c->bandwidth_hz;
+	priv->bandwidth = (fe->ops.info.type == FE_OFDM) ? params->u.ofdm.bandwidth : 0;
 
 	return 5;
 }
@@ -695,17 +647,8 @@ static int dvb_pll_init(struct dvb_frontend *fe)
 		int result;
 		if (fe->ops.i2c_gate_ctrl)
 			fe->ops.i2c_gate_ctrl(fe, 1);
-		result = i2c_transfer(priv->i2c, &msg, 1);
-		if (result != 1)
+		if ((result = i2c_transfer(priv->i2c, &msg, 1)) != 1) {
 			return result;
-		if (priv->pll_desc->initdata2) {
-			msg.buf = priv->pll_desc->initdata2 + 1;
-			msg.len = priv->pll_desc->initdata2[0];
-			if (fe->ops.i2c_gate_ctrl)
-				fe->ops.i2c_gate_ctrl(fe, 1);
-			result = i2c_transfer(priv->i2c, &msg, 1);
-			if (result != 1)
-				return result;
 		}
 		return 0;
 	}

@@ -33,12 +33,10 @@
 #include <linux/init.h>
 #include <linux/module.h>
 #include <linux/fs.h>
-#include <linux/slab.h>
 #include <linux/sched.h>
 #include <linux/seq_file.h>
 #include <linux/termios.h>
 #include <linux/tty.h>
-#include <linux/tty_flip.h>
 #include <linux/interrupt.h>
 #include <linux/device.h>		/* for MODULE_ALIAS_CHARDEV_MAJOR */
 
@@ -122,6 +120,7 @@ static int __init ircomm_tty_init(void)
 		return -ENOMEM;
 	}
 
+	driver->owner		= THIS_MODULE;
 	driver->driver_name     = "ircomm";
 	driver->name            = "ircomm";
 	driver->major           = IRCOMM_TTY_MAJOR;
@@ -365,11 +364,15 @@ static int ircomm_tty_block_til_ready(struct ircomm_tty_cb *self,
 static int ircomm_tty_open(struct tty_struct *tty, struct file *filp)
 {
 	struct ircomm_tty_cb *self;
-	unsigned int line = tty->index;
+	unsigned int line;
 	unsigned long	flags;
 	int ret;
 
 	IRDA_DEBUG(2, "%s()\n", __func__ );
+
+	line = tty->index;
+	if (line >= IRCOMM_TTY_PORTS)
+		return -ENODEV;
 
 	/* Check if instance already exists */
 	self = hashbin_lock_find(ircomm_tty, line, NULL);
@@ -445,8 +448,8 @@ static int ircomm_tty_open(struct tty_struct *tty, struct file *filp)
 		}
 
 #ifdef SERIAL_DO_RESTART
-		return (self->flags & ASYNC_HUP_NOTIFY) ?
-			-EAGAIN : -ERESTARTSYS;
+		return ((self->flags & ASYNC_HUP_NOTIFY) ?
+			-EAGAIN : -ERESTARTSYS);
 #else
 		return -EAGAIN;
 #endif
@@ -492,6 +495,9 @@ static void ircomm_tty_close(struct tty_struct *tty, struct file *filp)
 	unsigned long flags;
 
 	IRDA_DEBUG(0, "%s()\n", __func__ );
+
+	if (!tty)
+		return;
 
 	IRDA_ASSERT(self != NULL, return;);
 	IRDA_ASSERT(self->magic == IRCOMM_TTY_MAGIC, return;);
@@ -546,7 +552,7 @@ static void ircomm_tty_close(struct tty_struct *tty, struct file *filp)
 	 */
 	tty->closing = 1;
 	if (self->closing_wait != ASYNC_CLOSING_WAIT_NONE)
-		tty_wait_until_sent_from_close(tty, self->closing_wait);
+		tty_wait_until_sent(tty, self->closing_wait);
 
 	ircomm_tty_shutdown(self);
 
@@ -1001,6 +1007,9 @@ static void ircomm_tty_hangup(struct tty_struct *tty)
 	IRDA_ASSERT(self != NULL, return;);
 	IRDA_ASSERT(self->magic == IRCOMM_TTY_MAGIC, return;);
 
+	if (!tty)
+		return;
+
 	/* ircomm_tty_flush_buffer(tty); */
 	ircomm_tty_shutdown(self);
 
@@ -1128,6 +1137,7 @@ static int ircomm_tty_data_indication(void *instance, void *sap,
 				      struct sk_buff *skb)
 {
 	struct ircomm_tty_cb *self = (struct ircomm_tty_cb *) instance;
+	struct tty_ldisc *ld;
 
 	IRDA_DEBUG(2, "%s()\n", __func__ );
 
@@ -1156,11 +1166,15 @@ static int ircomm_tty_data_indication(void *instance, void *sap,
 	}
 
 	/*
-	 * Use flip buffer functions since the code may be called from interrupt
-	 * context
+	 * Just give it over to the line discipline. There is no need to
+	 * involve the flip buffers, since we are not running in an interrupt
+	 * handler
 	 */
-	tty_insert_flip_string(self->tty, skb->data, skb->len);
-	tty_flip_buffer_push(self->tty);
+
+	ld = tty_ldisc_ref(self->tty);
+	if (ld)
+		ld->ops->receive_buf(self->tty, skb->data, NULL, skb->len);
+	tty_ldisc_deref(ld);
 
 	/* No need to kfree_skb - see ircomm_ttp_data_indication() */
 

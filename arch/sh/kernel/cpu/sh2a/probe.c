@@ -13,7 +13,7 @@
 #include <asm/processor.h>
 #include <asm/cache.h>
 
-void __cpuinit cpu_probe(void)
+int __init detect_cpu_and_cache_system(void)
 {
 	boot_cpu_data.family			= CPU_FAMILY_SH2A;
 
@@ -51,4 +51,6 @@ void __cpuinit cpu_probe(void)
 	 * on the cache info.
 	 */
 	boot_cpu_data.icache		= boot_cpu_data.dcache;
+
+	return 0;
 }

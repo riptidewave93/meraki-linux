@@ -117,17 +117,18 @@ static int reset_and_configure (struct l64781_state* state)
 	return (i2c_transfer(state->i2c, &msg, 1) == 1) ? 0 : -ENODEV;
 }
 
-static int apply_frontend_param(struct dvb_frontend *fe)
+static int apply_frontend_param (struct dvb_frontend* fe, struct dvb_frontend_parameters *param)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct l64781_state* state = fe->demodulator_priv;
 	/* The coderates for FEC_NONE, FEC_4_5 and FEC_FEC_6_7 are arbitrary */
 	static const u8 fec_tab[] = { 7, 0, 1, 2, 9, 3, 10, 4 };
 	/* QPSK, QAM_16, QAM_64 */
 	static const u8 qam_tab [] = { 2, 4, 0, 6 };
+	static const u8 bw_tab [] = { 8, 7, 6 };  /* 8Mhz, 7MHz, 6MHz */
 	static const u8 guard_tab [] = { 1, 2, 4, 8 };
 	/* The Grundig 29504-401.04 Tuner comes with 18.432MHz crystal. */
 	static const u32 ppm = 8000;
+	struct dvb_ofdm_parameters *p = &param->u.ofdm;
 	u32 ddfs_offset_fixed;
 /*	u32 ddfs_offset_variable = 0x6000-((1000000UL+ppm)/ */
 /*			bw_tab[p->bandWidth]<<10)/15625; */
@@ -136,29 +137,18 @@ static int apply_frontend_param(struct dvb_frontend *fe)
 	u8 val0x04;
 	u8 val0x05;
 	u8 val0x06;
-	int bw;
-
-	switch (p->bandwidth_hz) {
-	case 8000000:
-		bw = 8;
-		break;
-	case 7000000:
-		bw = 7;
-		break;
-	case 6000000:
-		bw = 6;
-		break;
-	default:
-		return -EINVAL;
-	}
+	int bw = p->bandwidth - BANDWIDTH_8_MHZ;
 
 	if (fe->ops.tuner_ops.set_params) {
-		fe->ops.tuner_ops.set_params(fe);
+		fe->ops.tuner_ops.set_params(fe, param);
 		if (fe->ops.i2c_gate_ctrl) fe->ops.i2c_gate_ctrl(fe, 0);
 	}
 
-	if (p->inversion != INVERSION_ON &&
-	    p->inversion != INVERSION_OFF)
+	if (param->inversion != INVERSION_ON &&
+	    param->inversion != INVERSION_OFF)
+		return -EINVAL;
+
+	if (bw < 0 || bw > 2)
 		return -EINVAL;
 
 	if (p->code_rate_HP != FEC_1_2 && p->code_rate_HP != FEC_2_3 &&
@@ -166,14 +156,14 @@ static int apply_frontend_param(struct dvb_frontend *fe)
 	    p->code_rate_HP != FEC_7_8)
 		return -EINVAL;
 
-	if (p->hierarchy != HIERARCHY_NONE &&
+	if (p->hierarchy_information != HIERARCHY_NONE &&
 	    (p->code_rate_LP != FEC_1_2 && p->code_rate_LP != FEC_2_3 &&
 	     p->code_rate_LP != FEC_3_4 && p->code_rate_LP != FEC_5_6 &&
 	     p->code_rate_LP != FEC_7_8))
 		return -EINVAL;
 
-	if (p->modulation != QPSK && p->modulation != QAM_16 &&
-	    p->modulation != QAM_64)
+	if (p->constellation != QPSK && p->constellation != QAM_16 &&
+	    p->constellation != QAM_64)
 		return -EINVAL;
 
 	if (p->transmission_mode != TRANSMISSION_MODE_2K &&
@@ -184,22 +174,22 @@ static int apply_frontend_param(struct dvb_frontend *fe)
 	    p->guard_interval > GUARD_INTERVAL_1_4)
 		return -EINVAL;
 
-	if (p->hierarchy < HIERARCHY_NONE ||
-	    p->hierarchy > HIERARCHY_4)
+	if (p->hierarchy_information < HIERARCHY_NONE ||
+	    p->hierarchy_information > HIERARCHY_4)
 		return -EINVAL;
 
-	ddfs_offset_fixed = 0x4000-(ppm<<16)/bw/1000000;
+	ddfs_offset_fixed = 0x4000-(ppm<<16)/bw_tab[p->bandwidth]/1000000;
 
 	/* This works up to 20000 ppm, it overflows if too large ppm! */
 	init_freq = (((8UL<<25) + (8UL<<19) / 25*ppm / (15625/25)) /
-			bw & 0xFFFFFF);
+			bw_tab[p->bandwidth] & 0xFFFFFF);
 
 	/* SPI bias calculation is slightly modified to fit in 32bit */
 	/* will work for high ppm only... */
 	spi_bias = 378 * (1 << 10);
 	spi_bias *= 16;
-	spi_bias *= bw;
-	spi_bias *= qam_tab[p->modulation];
+	spi_bias *= bw_tab[p->bandwidth];
+	spi_bias *= qam_tab[p->constellation];
 	spi_bias /= p->code_rate_HP + 1;
 	spi_bias /= (guard_tab[p->guard_interval] + 32);
 	spi_bias *= 1000;
@@ -209,10 +199,10 @@ static int apply_frontend_param(struct dvb_frontend *fe)
 	val0x04 = (p->transmission_mode << 2) | p->guard_interval;
 	val0x05 = fec_tab[p->code_rate_HP];
 
-	if (p->hierarchy != HIERARCHY_NONE)
+	if (p->hierarchy_information != HIERARCHY_NONE)
 		val0x05 |= (p->code_rate_LP - FEC_1_2) << 3;
 
-	val0x06 = (p->hierarchy << 2) | p->modulation;
+	val0x06 = (p->hierarchy_information << 2) | p->constellation;
 
 	l64781_writereg (state, 0x04, val0x04);
 	l64781_writereg (state, 0x05, val0x05);
@@ -230,7 +220,7 @@ static int apply_frontend_param(struct dvb_frontend *fe)
 	l64781_writereg (state, 0x1b, spi_bias & 0xff);
 	l64781_writereg (state, 0x1c, (spi_bias >> 8) & 0xff);
 	l64781_writereg (state, 0x1d, ((spi_bias >> 16) & 0x7f) |
-		(p->inversion == INVERSION_ON ? 0x80 : 0x00));
+		(param->inversion == INVERSION_ON ? 0x80 : 0x00));
 
 	l64781_writereg (state, 0x22, ddfs_offset_fixed & 0xff);
 	l64781_writereg (state, 0x23, (ddfs_offset_fixed >> 8) & 0x3f);
@@ -243,9 +233,8 @@ static int apply_frontend_param(struct dvb_frontend *fe)
 	return 0;
 }
 
-static int get_frontend(struct dvb_frontend *fe)
+static int get_frontend(struct dvb_frontend* fe, struct dvb_frontend_parameters* param)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct l64781_state* state = fe->demodulator_priv;
 	int tmp;
 
@@ -253,95 +242,98 @@ static int get_frontend(struct dvb_frontend *fe)
 	tmp = l64781_readreg(state, 0x04);
 	switch(tmp & 3) {
 	case 0:
-		p->guard_interval = GUARD_INTERVAL_1_32;
+		param->u.ofdm.guard_interval = GUARD_INTERVAL_1_32;
 		break;
 	case 1:
-		p->guard_interval = GUARD_INTERVAL_1_16;
+		param->u.ofdm.guard_interval = GUARD_INTERVAL_1_16;
 		break;
 	case 2:
-		p->guard_interval = GUARD_INTERVAL_1_8;
+		param->u.ofdm.guard_interval = GUARD_INTERVAL_1_8;
 		break;
 	case 3:
-		p->guard_interval = GUARD_INTERVAL_1_4;
+		param->u.ofdm.guard_interval = GUARD_INTERVAL_1_4;
 		break;
 	}
 	switch((tmp >> 2) & 3) {
 	case 0:
-		p->transmission_mode = TRANSMISSION_MODE_2K;
+		param->u.ofdm.transmission_mode = TRANSMISSION_MODE_2K;
 		break;
 	case 1:
-		p->transmission_mode = TRANSMISSION_MODE_8K;
+		param->u.ofdm.transmission_mode = TRANSMISSION_MODE_8K;
 		break;
 	default:
-		printk(KERN_WARNING "Unexpected value for transmission_mode\n");
+		printk("Unexpected value for transmission_mode\n");
 	}
+
+
 
 	tmp = l64781_readreg(state, 0x05);
 	switch(tmp & 7) {
 	case 0:
-		p->code_rate_HP = FEC_1_2;
+		param->u.ofdm.code_rate_HP = FEC_1_2;
 		break;
 	case 1:
-		p->code_rate_HP = FEC_2_3;
+		param->u.ofdm.code_rate_HP = FEC_2_3;
 		break;
 	case 2:
-		p->code_rate_HP = FEC_3_4;
+		param->u.ofdm.code_rate_HP = FEC_3_4;
 		break;
 	case 3:
-		p->code_rate_HP = FEC_5_6;
+		param->u.ofdm.code_rate_HP = FEC_5_6;
 		break;
 	case 4:
-		p->code_rate_HP = FEC_7_8;
+		param->u.ofdm.code_rate_HP = FEC_7_8;
 		break;
 	default:
 		printk("Unexpected value for code_rate_HP\n");
 	}
 	switch((tmp >> 3) & 7) {
 	case 0:
-		p->code_rate_LP = FEC_1_2;
+		param->u.ofdm.code_rate_LP = FEC_1_2;
 		break;
 	case 1:
-		p->code_rate_LP = FEC_2_3;
+		param->u.ofdm.code_rate_LP = FEC_2_3;
 		break;
 	case 2:
-		p->code_rate_LP = FEC_3_4;
+		param->u.ofdm.code_rate_LP = FEC_3_4;
 		break;
 	case 3:
-		p->code_rate_LP = FEC_5_6;
+		param->u.ofdm.code_rate_LP = FEC_5_6;
 		break;
 	case 4:
-		p->code_rate_LP = FEC_7_8;
+		param->u.ofdm.code_rate_LP = FEC_7_8;
 		break;
 	default:
 		printk("Unexpected value for code_rate_LP\n");
 	}
 
+
 	tmp = l64781_readreg(state, 0x06);
 	switch(tmp & 3) {
 	case 0:
-		p->modulation = QPSK;
+		param->u.ofdm.constellation = QPSK;
 		break;
 	case 1:
-		p->modulation = QAM_16;
+		param->u.ofdm.constellation = QAM_16;
 		break;
 	case 2:
-		p->modulation = QAM_64;
+		param->u.ofdm.constellation = QAM_64;
 		break;
 	default:
-		printk(KERN_WARNING "Unexpected value for modulation\n");
+		printk("Unexpected value for constellation\n");
 	}
 	switch((tmp >> 2) & 7) {
 	case 0:
-		p->hierarchy = HIERARCHY_NONE;
+		param->u.ofdm.hierarchy_information = HIERARCHY_NONE;
 		break;
 	case 1:
-		p->hierarchy = HIERARCHY_1;
+		param->u.ofdm.hierarchy_information = HIERARCHY_1;
 		break;
 	case 2:
-		p->hierarchy = HIERARCHY_2;
+		param->u.ofdm.hierarchy_information = HIERARCHY_2;
 		break;
 	case 3:
-		p->hierarchy = HIERARCHY_4;
+		param->u.ofdm.hierarchy_information = HIERARCHY_4;
 		break;
 	default:
 		printk("Unexpected value for hierarchy\n");
@@ -349,12 +341,12 @@ static int get_frontend(struct dvb_frontend *fe)
 
 
 	tmp = l64781_readreg (state, 0x1d);
-	p->inversion = (tmp & 0x80) ? INVERSION_ON : INVERSION_OFF;
+	param->inversion = (tmp & 0x80) ? INVERSION_ON : INVERSION_OFF;
 
 	tmp = (int) (l64781_readreg (state, 0x08) |
 		     (l64781_readreg (state, 0x09) << 8) |
 		     (l64781_readreg (state, 0x0a) << 16));
-	p->frequency += tmp;
+	param->frequency += tmp;
 
 	return 0;
 }
@@ -572,9 +564,10 @@ error:
 }
 
 static struct dvb_frontend_ops l64781_ops = {
-	.delsys = { SYS_DVBT },
+
 	.info = {
 		.name = "LSI L64781 DVB-T",
+		.type = FE_OFDM,
 	/*	.frequency_min = ???,*/
 	/*	.frequency_max = ???,*/
 		.frequency_stepsize = 166666,

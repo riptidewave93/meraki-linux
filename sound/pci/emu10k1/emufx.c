@@ -35,7 +35,6 @@
 #include <linux/vmalloc.h>
 #include <linux/init.h>
 #include <linux/mutex.h>
-#include <linux/moduleparam.h>
 
 #include <sound/core.h>
 #include <sound/tlv.h>
@@ -50,10 +49,6 @@
 #if 0		/* for testing purposes - feed the front signal to Center/LFE outputs */
 #define EMU10K1_CENTER_LFE_FROM_FRONT
 #endif
-
-static bool high_res_gpr_volume;
-module_param(high_res_gpr_volume, bool, 0444);
-MODULE_PARM_DESC(high_res_gpr_volume, "GPR mixer controls use 31-bit range.");
 
 /*
  *  Tables
@@ -301,10 +296,6 @@ static const u32 db_table[101] = {
 
 /* EMU10k1/EMU10k2 DSP control db gain */
 static const DECLARE_TLV_DB_SCALE(snd_emu10k1_db_scale1, -4000, 40, 1);
-static const DECLARE_TLV_DB_LINEAR(snd_emu10k1_db_linear, TLV_DB_GAIN_MUTE, 0);
-
-/* EMU10K1 bass/treble db gain */
-static const DECLARE_TLV_DB_SCALE(snd_emu10k1_bass_treble_db_scale, -1200, 60, 0);
 
 static const u32 onoff_table[2] = {
 	0x00000000, 0x00000001
@@ -1081,17 +1072,10 @@ snd_emu10k1_init_mono_control(struct snd_emu10k1_fx8010_control_gpr *ctl,
 	strcpy(ctl->id.name, name);
 	ctl->vcount = ctl->count = 1;
 	ctl->gpr[0] = gpr + 0; ctl->value[0] = defval;
-	if (high_res_gpr_volume) {
-		ctl->min = 0;
-		ctl->max = 0x7fffffff;
-		ctl->tlv = snd_emu10k1_db_linear;
-		ctl->translation = EMU10K1_GPR_TRANSLATION_NONE;
-	} else {
-		ctl->min = 0;
-		ctl->max = 100;
-		ctl->tlv = snd_emu10k1_db_scale1;
-		ctl->translation = EMU10K1_GPR_TRANSLATION_TABLE100;
-	}
+	ctl->min = 0;
+	ctl->max = 100;
+	ctl->tlv = snd_emu10k1_db_scale1;
+	ctl->translation = EMU10K1_GPR_TRANSLATION_TABLE100;	
 }
 
 static void __devinit
@@ -1103,17 +1087,10 @@ snd_emu10k1_init_stereo_control(struct snd_emu10k1_fx8010_control_gpr *ctl,
 	ctl->vcount = ctl->count = 2;
 	ctl->gpr[0] = gpr + 0; ctl->value[0] = defval;
 	ctl->gpr[1] = gpr + 1; ctl->value[1] = defval;
-	if (high_res_gpr_volume) {
-		ctl->min = 0;
-		ctl->max = 0x7fffffff;
-		ctl->tlv = snd_emu10k1_db_linear;
-		ctl->translation = EMU10K1_GPR_TRANSLATION_NONE;
-	} else {
-		ctl->min = 0;
-		ctl->max = 100;
-		ctl->tlv = snd_emu10k1_db_scale1;
-		ctl->translation = EMU10K1_GPR_TRANSLATION_TABLE100;
-	}
+	ctl->min = 0;
+	ctl->max = 100;
+	ctl->tlv = snd_emu10k1_db_scale1;
+	ctl->translation = EMU10K1_GPR_TRANSLATION_TABLE100;
 }
 
 static void __devinit
@@ -2166,7 +2143,6 @@ static int __devinit _snd_emu10k1_init_efx(struct snd_emu10k1 *emu)
 	ctl->min = 0;
 	ctl->max = 40;
 	ctl->value[0] = ctl->value[1] = 20;
-	ctl->tlv = snd_emu10k1_bass_treble_db_scale;
 	ctl->translation = EMU10K1_GPR_TRANSLATION_BASS;
 	ctl = &controls[i + 1];
 	ctl->id.iface = SNDRV_CTL_ELEM_IFACE_MIXER;
@@ -2176,7 +2152,6 @@ static int __devinit _snd_emu10k1_init_efx(struct snd_emu10k1 *emu)
 	ctl->min = 0;
 	ctl->max = 40;
 	ctl->value[0] = ctl->value[1] = 20;
-	ctl->tlv = snd_emu10k1_bass_treble_db_scale;
 	ctl->translation = EMU10K1_GPR_TRANSLATION_TREBLE;
 
 #define BASS_GPR	0x8c

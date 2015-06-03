@@ -18,10 +18,8 @@
 #undef DEBUG
 
 #include <linux/init.h>
-#include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/string.h>
-#include <linux/vmalloc.h>
 
 #include <asm/pci-bridge.h>
 #include <linux/mutex.h>
@@ -159,7 +157,7 @@ static void dlpar_pci_add_bus(struct device_node *dn)
 	/* Scan below the new bridge */
 	if (dev->hdr_type == PCI_HEADER_TYPE_BRIDGE ||
 	    dev->hdr_type == PCI_HEADER_TYPE_CARDBUS)
-		of_scan_pci_bridge(dev);
+		of_scan_pci_bridge(dn, dev);
 
 	/* Map IO space for child bus, which may or may not succeed */
 	pcibios_map_io_space(dev->subordinate);
@@ -389,7 +387,7 @@ int dlpar_remove_pci_slot(char *drc_name, struct device_node *dn)
 	BUG_ON(!bus->self);
 	pr_debug("PCI: Now removing bridge device %s\n", pci_name(bus->self));
 	eeh_remove_bus_device(bus->self);
-	pci_stop_and_remove_bus_device(bus->self);
+	pci_remove_bus_device(bus->self);
 
 	return 0;
 }
@@ -432,8 +430,6 @@ int dlpar_remove_slot(char *drc_name)
 			rc = dlpar_remove_pci_slot(drc_name, dn);
 			break;
 	}
-	vm_unmap_aliases();
-
 	printk(KERN_INFO "%s: slot %s removed\n", DLPAR_MODULE_NAME, drc_name);
 exit:
 	mutex_unlock(&rpadlpar_mutex);

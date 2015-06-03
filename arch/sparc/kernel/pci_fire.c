@@ -7,7 +7,6 @@
 #include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/msi.h>
-#include <linux/export.h>
 #include <linux/irq.h>
 #include <linux/of_device.h>
 
@@ -215,9 +214,11 @@ static int pci_fire_msi_setup(struct pci_pbm_info *pbm, unsigned long msiqid,
 
 static int pci_fire_msi_teardown(struct pci_pbm_info *pbm, unsigned long msi)
 {
+	unsigned long msiqid;
 	u64 val;
 
 	val = upa_readq(pbm->pbm_regs + MSI_MAP(msi));
+	msiqid = (val & MSI_MAP_EQNUM);
 
 	val &= ~MSI_MAP_VALID;
 
@@ -276,7 +277,7 @@ static int pci_fire_msiq_build_irq(struct pci_pbm_info *pbm,
 {
 	unsigned long cregs = (unsigned long) pbm->pbm_regs;
 	unsigned long imap_reg, iclr_reg, int_ctrlr;
-	unsigned int irq;
+	unsigned int virt_irq;
 	int fixup;
 	u64 val;
 
@@ -292,14 +293,14 @@ static int pci_fire_msiq_build_irq(struct pci_pbm_info *pbm,
 
 	fixup = ((pbm->portid << 6) | devino) - int_ctrlr;
 
-	irq = build_irq(fixup, iclr_reg, imap_reg);
-	if (!irq)
+	virt_irq = build_irq(fixup, iclr_reg, imap_reg);
+	if (!virt_irq)
 		return -ENOMEM;
 
 	upa_writeq(EVENT_QUEUE_CONTROL_SET_EN,
 		   pbm->pbm_regs + EVENT_QUEUE_CONTROL_SET(msiqid));
 
-	return irq;
+	return virt_irq;
 }
 
 static const struct sparc64_msiq_ops pci_fire_msiq_ops = {
@@ -409,10 +410,10 @@ static void pci_fire_hw_init(struct pci_pbm_info *pbm)
 }
 
 static int __devinit pci_fire_pbm_init(struct pci_pbm_info *pbm,
-				       struct platform_device *op, u32 portid)
+				       struct of_device *op, u32 portid)
 {
 	const struct linux_prom64_registers *regs;
-	struct device_node *dp = op->dev.of_node;
+	struct device_node *dp = op->node;
 	int err;
 
 	pbm->numa_node = -1;
@@ -454,9 +455,10 @@ static int __devinit pci_fire_pbm_init(struct pci_pbm_info *pbm,
 	return 0;
 }
 
-static int __devinit fire_probe(struct platform_device *op)
+static int __devinit fire_probe(struct of_device *op,
+				const struct of_device_id *match)
 {
-	struct device_node *dp = op->dev.of_node;
+	struct device_node *dp = op->node;
 	struct pci_pbm_info *pbm;
 	struct iommu *iommu;
 	u32 portid;
@@ -497,7 +499,7 @@ out_err:
 	return err;
 }
 
-static const struct of_device_id fire_match[] = {
+static struct of_device_id __initdata fire_match[] = {
 	{
 		.name = "pci",
 		.compatible = "pciex108e,80f0",
@@ -505,18 +507,15 @@ static const struct of_device_id fire_match[] = {
 	{},
 };
 
-static struct platform_driver fire_driver = {
-	.driver = {
-		.name = DRIVER_NAME,
-		.owner = THIS_MODULE,
-		.of_match_table = fire_match,
-	},
+static struct of_platform_driver fire_driver = {
+	.name		= DRIVER_NAME,
+	.match_table	= fire_match,
 	.probe		= fire_probe,
 };
 
 static int __init fire_init(void)
 {
-	return platform_driver_register(&fire_driver);
+	return of_register_driver(&fire_driver, &of_bus_type);
 }
 
 subsys_initcall(fire_init);

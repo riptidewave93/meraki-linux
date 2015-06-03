@@ -40,8 +40,6 @@
 * 1998/08/08	acme		Initial version.
 */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/stddef.h>	/* offsetof(), etc. */
 #include <linux/errno.h>	/* return codes */
 #include <linux/string.h>	/* inline memset(), etc. */
@@ -52,7 +50,6 @@
 #include <linux/wanrouter.h>	/* WAN router definitions */
 #include <linux/cyclomx.h>	/* cyclomx common user API definitions */
 #include <linux/init.h>         /* __init (when not using as a module) */
-#include <linux/interrupt.h>
 
 unsigned int cycx_debug;
 
@@ -84,9 +81,9 @@ static irqreturn_t cycx_isr(int irq, void *dev_id);
  */
 
 /* private data */
-static const char cycx_drvname[] = "cyclomx";
-static const char cycx_fullname[] = "CYCLOM 2X(tm) Sync Card Driver";
-static const char cycx_copyright[] = "(c) 1998-2003 Arnaldo Carvalho de Melo "
+static char cycx_drvname[] = "cyclomx";
+static char cycx_fullname[] = "CYCLOM 2X(tm) Sync Card Driver";
+static char cycx_copyright[] = "(c) 1998-2003 Arnaldo Carvalho de Melo "
 			  "<acme@conectiva.com.br>";
 static int cycx_ncards = CONFIG_CYCX_CARDS;
 static struct cycx_device *cycx_card_array;	/* adapter data space */
@@ -109,7 +106,7 @@ static int __init cycx_init(void)
 {
 	int cnt, err = -ENOMEM;
 
-	pr_info("%s v%u.%u %s\n",
+	printk(KERN_INFO "%s v%u.%u %s\n",
 		cycx_fullname, CYCX_DRV_VERSION, CYCX_DRV_RELEASE,
 		cycx_copyright);
 
@@ -135,8 +132,9 @@ static int __init cycx_init(void)
 		err = register_wan_device(wandev);
 
 		if (err) {
-			pr_err("%s registration failed with error %d!\n",
-			       card->devname, err);
+			printk(KERN_ERR "%s: %s registration failed with "
+					"error %d!\n",
+					cycx_drvname, card->devname, err);
 			break;
 		}
 	}
@@ -199,13 +197,14 @@ static int cycx_wan_setup(struct wan_device *wandev, wandev_conf_t *conf)
 
 	rc = -EINVAL;
 	if (!conf->data_size || !conf->data) {
-		pr_err("%s: firmware not found in configuration data!\n",
-		       wandev->name);
+		printk(KERN_ERR "%s: firmware not found in configuration "
+				"data!\n", wandev->name);
 		goto out;
 	}
 
 	if (conf->irq <= 0) {
-		pr_err("%s: can't configure without IRQ!\n", wandev->name);
+		printk(KERN_ERR "%s: can't configure without IRQ!\n",
+				wandev->name);
 		goto out;
 	}
 
@@ -213,7 +212,8 @@ static int cycx_wan_setup(struct wan_device *wandev, wandev_conf_t *conf)
 	irq = conf->irq == 2 ? 9 : conf->irq;	/* IRQ2 -> IRQ9 */
 
 	if (request_irq(irq, cycx_isr, 0, wandev->name, card)) {
-		pr_err("%s: can't reserve IRQ %d!\n", wandev->name, irq);
+		printk(KERN_ERR "%s: can't reserve IRQ %d!\n",
+				wandev->name, irq);
 		goto out;
 	}
 
@@ -245,7 +245,8 @@ static int cycx_wan_setup(struct wan_device *wandev, wandev_conf_t *conf)
 		break;
 #endif
 	default:
-		pr_err("%s: this firmware is not supported!\n", wandev->name);
+		printk(KERN_ERR "%s: this firmware is not supported!\n",
+				wandev->name);
 		rc = -EINVAL;
 	}
 
@@ -286,7 +287,8 @@ static int cycx_wan_shutdown(struct wan_device *wandev)
 	card = wandev->private;
 	wandev->state = WAN_UNCONFIGURED;
 	cycx_down(&card->hw);
-	pr_info("%s: irq %d being freed!\n", wandev->name, wandev->irq);
+	printk(KERN_INFO "%s: irq %d being freed!\n", wandev->name,
+			wandev->irq);
 	free_irq(wandev->irq, card);
 out:	return ret;
 }
@@ -305,8 +307,8 @@ static irqreturn_t cycx_isr(int irq, void *dev_id)
 		goto out;
 
 	if (card->in_isr) {
-		pr_warn("%s: interrupt re-entrancy on IRQ %d!\n",
-			card->devname, card->wandev.irq);
+		printk(KERN_WARNING "%s: interrupt re-entrancy on IRQ %d!\n",
+				    card->devname, card->wandev.irq);
 		goto out;
 	}
 
@@ -334,7 +336,7 @@ void cycx_set_state(struct cycx_device *card, int state)
 			string_state = "disconnected!";
 			break;
 		}
-		pr_info("%s: link %s\n", card->devname, string_state);
+		printk(KERN_INFO "%s: link %s\n", card->devname, string_state);
 		card->wandev.state = state;
 	}
 

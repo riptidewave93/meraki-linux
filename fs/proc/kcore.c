@@ -19,7 +19,6 @@
 #include <linux/highmem.h>
 #include <linux/bootmem.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
 #include <linux/list.h>
@@ -157,8 +156,7 @@ static int kcore_update_ram(void)
 
 #ifdef CONFIG_SPARSEMEM_VMEMMAP
 /* calculate vmemmap's address from given system ram pfn and register it */
-static int
-get_sparsemem_vmemmap_info(struct kcore_list *ent, struct list_head *head)
+int get_sparsemem_vmemmap_info(struct kcore_list *ent, struct list_head *head)
 {
 	unsigned long pfn = __pa(ent->addr) >> PAGE_SHIFT;
 	unsigned long nr_pages = ent->size >> PAGE_SHIFT;
@@ -190,8 +188,7 @@ get_sparsemem_vmemmap_info(struct kcore_list *ent, struct list_head *head)
 
 }
 #else
-static int
-get_sparsemem_vmemmap_info(struct kcore_list *ent, struct list_head *head)
+int get_sparsemem_vmemmap_info(struct kcore_list *ent, struct list_head *head)
 {
 	return 1;
 }
@@ -515,7 +512,7 @@ read_kcore(struct file *file, char __user *buffer, size_t buflen, loff_t *fpos)
 
 				n = copy_to_user(buffer, (char *)start, tsz);
 				/*
-				 * We cannot distinguish between fault on source
+				 * We cannot distingush between fault on source
 				 * and fault on destination. When this happens
 				 * we clear too and hope it will trigger the
 				 * EFAULT again.
@@ -560,7 +557,6 @@ static int open_kcore(struct inode *inode, struct file *filp)
 static const struct file_operations proc_kcore_operations = {
 	.read		= read_kcore,
 	.open		= open_kcore,
-	.llseek		= default_llseek,
 };
 
 #ifdef CONFIG_MEMORY_HOTPLUG
@@ -590,7 +586,7 @@ static struct kcore_list kcore_text;
  */
 static void __init proc_kcore_text_init(void)
 {
-	kclist_add(&kcore_text, _text, _end - _text, KCORE_TEXT);
+	kclist_add(&kcore_text, _stext, _end - _stext, KCORE_TEXT);
 }
 #else
 static void __init proc_kcore_text_init(void)

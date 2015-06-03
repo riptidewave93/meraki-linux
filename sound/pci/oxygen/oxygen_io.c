@@ -19,7 +19,6 @@
 
 #include <linux/delay.h>
 #include <linux/sched.h>
-#include <linux/export.h>
 #include <sound/core.h>
 #include <sound/mpu401.h>
 #include <asm/io.h>
@@ -198,11 +197,11 @@ void oxygen_write_spi(struct oxygen *chip, u8 control, unsigned int data)
 {
 	unsigned int count;
 
-	/* should not need more than 30.72 us (24 * 1.28 us) */
+	/* should not need more than 7.68 us (24 * 320 ns) */
 	count = 10;
 	while ((oxygen_read8(chip, OXYGEN_SPI_CONTROL) & OXYGEN_SPI_BUSY)
 	       && count > 0) {
-		udelay(4);
+		udelay(1);
 		--count;
 	}
 

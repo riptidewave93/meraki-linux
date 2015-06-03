@@ -40,23 +40,22 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
  * DAMAGE.
  *
+ * Send feedback to <socketcan-users@lists.berlios.de>
+ *
  */
 
 #ifndef SJA1000_DEV_H
 #define SJA1000_DEV_H
 
-#include <linux/irqreturn.h>
 #include <linux/can/dev.h>
 #include <linux/can/platform/sja1000.h>
-
-#define SJA1000_ECHO_SKB_MAX	1 /* the SJA1000 has one TX buffer object */
 
 #define SJA1000_MAX_IRQ 20	/* max. number of interrupts handled in ISR */
 
 /* SJA1000 registers - manual section 6.4 (Pelican Mode) */
 #define REG_MOD		0x00
 #define REG_CMR		0x01
-#define SJA1000_REG_SR		0x02
+#define REG_SR		0x02
 #define REG_IR		0x03
 #define REG_IER		0x04
 #define REG_ALC		0x0B

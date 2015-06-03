@@ -1,3 +1,10 @@
+#
+# For a description of the syntax of this configuration file,
+# see Documentation/kbuild/kconfig-language.txt.
+#
+
+mainmenu "Linux/M32R Kernel Configuration"
+
 config M32R
 	bool
 	default y
@@ -7,10 +14,6 @@ config M32R
 	select HAVE_KERNEL_GZIP
 	select HAVE_KERNEL_BZIP2
 	select HAVE_KERNEL_LZMA
-	select HAVE_GENERIC_HARDIRQS
-	select GENERIC_IRQ_PROBE
-	select GENERIC_IRQ_SHOW
-	select GENERIC_ATOMIC64
 
 config SBUS
 	bool
@@ -23,6 +26,14 @@ config ZONE_DMA
 	bool
 	default y
 
+config GENERIC_HARDIRQS
+	bool
+	default y
+
+config GENERIC_IRQ_PROBE
+	bool
+	default y
+
 config NO_IOPORT
 	def_bool y
 
@@ -32,6 +43,9 @@ config NO_DMA
 config HZ
 	int
 	default 100
+
+config GENERIC_TIME
+	def_bool y
 
 config ARCH_USES_GETTIMEOFFSET
 	def_bool y
@@ -257,6 +271,10 @@ config ARCH_HAS_ILOG2_U64
 	bool
 	default n
 
+config GENERIC_FIND_NEXT_BIT
+	bool
+	default y
+
 config GENERIC_HWEIGHT
 	bool
 	default y
@@ -269,7 +287,17 @@ config SCHED_OMIT_FRAME_POINTER
         bool
         default y
 
-source "kernel/Kconfig.preempt"
+config PREEMPT
+	bool "Preemptible Kernel"
+	help
+	  This option reduces the latency of the kernel when reacting to
+	  real-time or interactive events by allowing a low priority process to
+	  be preempted even if it is in kernel mode executing a system call.
+	  This allows applications to run more reliably even when the system is
+	  under load.
+
+	  Say Y here if you are building a kernel for a desktop, embedded
+	  or real-time system.  Say N if you are unsure.
 
 config SMP
 	bool "Symmetric multi-processing support"
@@ -290,7 +318,7 @@ config SMP
 	  Management" code will be disabled if you say Y here.
 
 	  See also the SMP-HOWTO available at
-	  <http://tldp.org/HOWTO/SMP-HOWTO.html>.
+	  <http://www.linuxdoc.org/docs.html#howto>.
 
 	  If you don't know what to do here, say N.
 
@@ -322,6 +350,13 @@ config NODES_SHIFT
 	int
 	default "1"
 	depends on NEED_MULTIPLE_NODES
+
+# turning this on wastes a bunch of space.
+# Summit needs it only when NUMA is on
+config BOOT_IOREMAP
+	bool
+	depends on NUMA
+	default n
 
 endmenu
 

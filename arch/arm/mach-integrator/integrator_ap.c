@@ -24,34 +24,24 @@
 #include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/string.h>
-#include <linux/syscore_ops.h>
+#include <linux/sysdev.h>
 #include <linux/amba/bus.h>
 #include <linux/amba/kmi.h>
-#include <linux/clocksource.h>
-#include <linux/clockchips.h>
-#include <linux/interrupt.h>
 #include <linux/io.h>
-#include <linux/mtd/physmap.h>
-#include <linux/clk.h>
-#include <video/vga.h>
 
 #include <mach/hardware.h>
-#include <mach/platform.h>
-#include <asm/hardware/arm_timer.h>
+#include <asm/irq.h>
 #include <asm/setup.h>
 #include <asm/param.h>		/* HZ */
 #include <asm/mach-types.h>
-#include <asm/sched_clock.h>
 
 #include <mach/lm.h>
-#include <mach/irqs.h>
 
 #include <asm/mach/arch.h>
+#include <asm/mach/flash.h>
 #include <asm/mach/irq.h>
 #include <asm/mach/map.h>
 #include <asm/mach/time.h>
-
-#include <plat/fpga-irq.h>
 
 #include "common.h"
 
@@ -62,10 +52,10 @@
  * Setup a VA for the Integrator interrupt controller (for header #0,
  * just for now).
  */
-#define VA_IC_BASE	__io_address(INTEGRATOR_IC_BASE)
-#define VA_SC_BASE	__io_address(INTEGRATOR_SC_BASE)
-#define VA_EBI_BASE	__io_address(INTEGRATOR_EBI_BASE)
-#define VA_CMIC_BASE	__io_address(INTEGRATOR_HDR_IC)
+#define VA_IC_BASE	IO_ADDRESS(INTEGRATOR_IC_BASE) 
+#define VA_SC_BASE	IO_ADDRESS(INTEGRATOR_SC_BASE)
+#define VA_EBI_BASE	IO_ADDRESS(INTEGRATOR_EBI_BASE)
+#define VA_CMIC_BASE	IO_ADDRESS(INTEGRATOR_HDR_BASE) + INTEGRATOR_HDR_IC_OFFSET
 
 /*
  * Logical      Physical
@@ -127,8 +117,8 @@ static struct map_desc ap_io_desc[] __initdata = {
 		.length		= SZ_4K,
 		.type		= MT_DEVICE
 	}, {
-		.virtual	= IO_ADDRESS(INTEGRATOR_AP_GPIO_BASE),
-		.pfn		= __phys_to_pfn(INTEGRATOR_AP_GPIO_BASE),
+		.virtual	= IO_ADDRESS(INTEGRATOR_GPIO_BASE),
+		.pfn		= __phys_to_pfn(INTEGRATOR_GPIO_BASE),
 		.length		= SZ_4K,
 		.type		= MT_DEVICE
 	}, {
@@ -157,19 +147,31 @@ static struct map_desc ap_io_desc[] __initdata = {
 static void __init ap_map_io(void)
 {
 	iotable_init(ap_io_desc, ARRAY_SIZE(ap_io_desc));
-	vga_base = PCI_MEMORY_VADDR;
 }
 
 #define INTEGRATOR_SC_VALID_INT	0x003fffff
 
-static struct fpga_irq_data sc_irq_data = {
-	.base		= VA_IC_BASE,
-	.irq_start	= 0,
-	.chip.name	= "SC",
+static void sc_mask_irq(unsigned int irq)
+{
+	writel(1 << irq, VA_IC_BASE + IRQ_ENABLE_CLEAR);
+}
+
+static void sc_unmask_irq(unsigned int irq)
+{
+	writel(1 << irq, VA_IC_BASE + IRQ_ENABLE_SET);
+}
+
+static struct irq_chip sc_chip = {
+	.name	= "SC",
+	.ack	= sc_mask_irq,
+	.mask	= sc_mask_irq,
+	.unmask = sc_unmask_irq,
 };
 
 static void __init ap_init_irq(void)
 {
+	unsigned int i;
+
 	/* Disable all interrupts initially. */
 	/* Do the core module ones */
 	writel(-1, VA_CMIC_BASE + IRQ_ENABLE_CLEAR);
@@ -178,19 +180,25 @@ static void __init ap_init_irq(void)
 	writel(-1, VA_IC_BASE + IRQ_ENABLE_CLEAR);
 	writel(-1, VA_IC_BASE + FIQ_ENABLE_CLEAR);
 
-	fpga_irq_init(-1, INTEGRATOR_SC_VALID_INT, &sc_irq_data);
+	for (i = 0; i < NR_IRQS; i++) {
+		if (((1 << i) & INTEGRATOR_SC_VALID_INT) != 0) {
+			set_irq_chip(i, &sc_chip);
+			set_irq_handler(i, handle_level_irq);
+			set_irq_flags(i, IRQF_VALID | IRQF_PROBE);
+		}
+	}
 }
 
 #ifdef CONFIG_PM
 static unsigned long ic_irq_enable;
 
-static int irq_suspend(void)
+static int irq_suspend(struct sys_device *dev, pm_message_t state)
 {
 	ic_irq_enable = readl(VA_IC_BASE + IRQ_ENABLE);
 	return 0;
 }
 
-static void irq_resume(void)
+static int irq_resume(struct sys_device *dev)
 {
 	/* disable all irq sources */
 	writel(-1, VA_CMIC_BASE + IRQ_ENABLE_CLEAR);
@@ -198,25 +206,33 @@ static void irq_resume(void)
 	writel(-1, VA_IC_BASE + FIQ_ENABLE_CLEAR);
 
 	writel(ic_irq_enable, VA_IC_BASE + IRQ_ENABLE_SET);
+	return 0;
 }
 #else
 #define irq_suspend NULL
 #define irq_resume NULL
 #endif
 
-static struct syscore_ops irq_syscore_ops = {
+static struct sysdev_class irq_class = {
+	.name		= "irq",
 	.suspend	= irq_suspend,
 	.resume		= irq_resume,
 };
 
-static int __init irq_syscore_init(void)
-{
-	register_syscore_ops(&irq_syscore_ops);
+static struct sys_device irq_device = {
+	.id	= 0,
+	.cls	= &irq_class,
+};
 
-	return 0;
+static int __init irq_init_sysfs(void)
+{
+	int ret = sysdev_class_register(&irq_class);
+	if (ret == 0)
+		ret = sysdev_register(&irq_device);
+	return ret;
 }
 
-device_initcall(irq_syscore_init);
+device_initcall(irq_init_sysfs);
 
 /*
  * Flash handling.
@@ -226,7 +242,7 @@ device_initcall(irq_syscore_init);
 #define EBI_CSR1 (VA_EBI_BASE + INTEGRATOR_EBI_CSR1_OFFSET)
 #define EBI_LOCK (VA_EBI_BASE + INTEGRATOR_EBI_LOCK_OFFSET)
 
-static int ap_flash_init(struct platform_device *dev)
+static int ap_flash_init(void)
 {
 	u32 tmp;
 
@@ -243,7 +259,7 @@ static int ap_flash_init(struct platform_device *dev)
 	return 0;
 }
 
-static void ap_flash_exit(struct platform_device *dev)
+static void ap_flash_exit(void)
 {
 	u32 tmp;
 
@@ -259,14 +275,15 @@ static void ap_flash_exit(struct platform_device *dev)
 	}
 }
 
-static void ap_flash_set_vpp(struct platform_device *pdev, int on)
+static void ap_flash_set_vpp(int on)
 {
-	void __iomem *reg = on ? SC_CTRLS : SC_CTRLC;
+	unsigned long reg = on ? SC_CTRLS : SC_CTRLC;
 
 	writel(INTEGRATOR_SC_CTRL_nFLVPPEN, reg);
 }
 
-static struct physmap_flash_data ap_flash_data = {
+static struct flash_platform_data ap_flash_data = {
+	.map_name	= "cfi_probe",
 	.width		= 4,
 	.init		= ap_flash_init,
 	.exit		= ap_flash_exit,
@@ -280,7 +297,7 @@ static struct resource cfi_flash_resource = {
 };
 
 static struct platform_device cfi_flash_device = {
-	.name		= "physmap-flash",
+	.name		= "armflash",
 	.id		= 0,
 	.dev		= {
 		.platform_data	= &ap_flash_data,
@@ -317,168 +334,23 @@ static void __init ap_init(void)
 	}
 }
 
-/*
- * Where is the timer (VA)?
- */
-#define TIMER0_VA_BASE IO_ADDRESS(INTEGRATOR_TIMER0_BASE)
-#define TIMER1_VA_BASE IO_ADDRESS(INTEGRATOR_TIMER1_BASE)
-#define TIMER2_VA_BASE IO_ADDRESS(INTEGRATOR_TIMER2_BASE)
-
-static unsigned long timer_reload;
-
-static u32 notrace integrator_read_sched_clock(void)
-{
-	return -readl((void __iomem *) TIMER2_VA_BASE + TIMER_VALUE);
-}
-
-static void integrator_clocksource_init(unsigned long inrate)
-{
-	void __iomem *base = (void __iomem *)TIMER2_VA_BASE;
-	u32 ctrl = TIMER_CTRL_ENABLE | TIMER_CTRL_PERIODIC;
-	unsigned long rate = inrate;
-
-	if (rate >= 1500000) {
-		rate /= 16;
-		ctrl |= TIMER_CTRL_DIV16;
-	}
-
-	writel(0xffff, base + TIMER_LOAD);
-	writel(ctrl, base + TIMER_CTRL);
-
-	clocksource_mmio_init(base + TIMER_VALUE, "timer2",
-			rate, 200, 16, clocksource_mmio_readl_down);
-	setup_sched_clock(integrator_read_sched_clock, 16, rate);
-}
-
-static void __iomem * const clkevt_base = (void __iomem *)TIMER1_VA_BASE;
-
-/*
- * IRQ handler for the timer
- */
-static irqreturn_t integrator_timer_interrupt(int irq, void *dev_id)
-{
-	struct clock_event_device *evt = dev_id;
-
-	/* clear the interrupt */
-	writel(1, clkevt_base + TIMER_INTCLR);
-
-	evt->event_handler(evt);
-
-	return IRQ_HANDLED;
-}
-
-static void clkevt_set_mode(enum clock_event_mode mode, struct clock_event_device *evt)
-{
-	u32 ctrl = readl(clkevt_base + TIMER_CTRL) & ~TIMER_CTRL_ENABLE;
-
-	/* Disable timer */
-	writel(ctrl, clkevt_base + TIMER_CTRL);
-
-	switch (mode) {
-	case CLOCK_EVT_MODE_PERIODIC:
-		/* Enable the timer and start the periodic tick */
-		writel(timer_reload, clkevt_base + TIMER_LOAD);
-		ctrl |= TIMER_CTRL_PERIODIC | TIMER_CTRL_ENABLE;
-		writel(ctrl, clkevt_base + TIMER_CTRL);
-		break;
-	case CLOCK_EVT_MODE_ONESHOT:
-		/* Leave the timer disabled, .set_next_event will enable it */
-		ctrl &= ~TIMER_CTRL_PERIODIC;
-		writel(ctrl, clkevt_base + TIMER_CTRL);
-		break;
-	case CLOCK_EVT_MODE_UNUSED:
-	case CLOCK_EVT_MODE_SHUTDOWN:
-	case CLOCK_EVT_MODE_RESUME:
-	default:
-		/* Just leave in disabled state */
-		break;
-	}
-
-}
-
-static int clkevt_set_next_event(unsigned long next, struct clock_event_device *evt)
-{
-	unsigned long ctrl = readl(clkevt_base + TIMER_CTRL);
-
-	writel(ctrl & ~TIMER_CTRL_ENABLE, clkevt_base + TIMER_CTRL);
-	writel(next, clkevt_base + TIMER_LOAD);
-	writel(ctrl | TIMER_CTRL_ENABLE, clkevt_base + TIMER_CTRL);
-
-	return 0;
-}
-
-static struct clock_event_device integrator_clockevent = {
-	.name		= "timer1",
-	.features	= CLOCK_EVT_FEAT_PERIODIC | CLOCK_EVT_FEAT_ONESHOT,
-	.set_mode	= clkevt_set_mode,
-	.set_next_event	= clkevt_set_next_event,
-	.rating		= 300,
-};
-
-static struct irqaction integrator_timer_irq = {
-	.name		= "timer",
-	.flags		= IRQF_DISABLED | IRQF_TIMER | IRQF_IRQPOLL,
-	.handler	= integrator_timer_interrupt,
-	.dev_id		= &integrator_clockevent,
-};
-
-static void integrator_clockevent_init(unsigned long inrate)
-{
-	unsigned long rate = inrate;
-	unsigned int ctrl = 0;
-
-	/* Calculate and program a divisor */
-	if (rate > 0x100000 * HZ) {
-		rate /= 256;
-		ctrl |= TIMER_CTRL_DIV256;
-	} else if (rate > 0x10000 * HZ) {
-		rate /= 16;
-		ctrl |= TIMER_CTRL_DIV16;
-	}
-	timer_reload = rate / HZ;
-	writel(ctrl, clkevt_base + TIMER_CTRL);
-
-	setup_irq(IRQ_TIMERINT1, &integrator_timer_irq);
-	clockevents_config_and_register(&integrator_clockevent,
-					rate,
-					1,
-					0xffffU);
-}
-
-/*
- * Set up timer(s).
- */
 static void __init ap_init_timer(void)
 {
-	struct clk *clk;
-	unsigned long rate;
-
-	clk = clk_get_sys("ap_timer", NULL);
-	BUG_ON(IS_ERR(clk));
-	clk_enable(clk);
-	rate = clk_get_rate(clk);
-
-	writel(0, TIMER0_VA_BASE + TIMER_CTRL);
-	writel(0, TIMER1_VA_BASE + TIMER_CTRL);
-	writel(0, TIMER2_VA_BASE + TIMER_CTRL);
-
-	integrator_clocksource_init(rate);
-	integrator_clockevent_init(rate);
+	integrator_time_init(1000000 * TICKS_PER_uSEC / HZ, 0);
 }
 
 static struct sys_timer ap_timer = {
 	.init		= ap_init_timer,
+	.offset		= integrator_gettimeoffset,
 };
 
 MACHINE_START(INTEGRATOR, "ARM-Integrator")
 	/* Maintainer: ARM Ltd/Deep Blue Solutions Ltd */
-	.atag_offset	= 0x100,
-	.reserve	= integrator_reserve,
+	.phys_io	= 0x16000000,
+	.io_pg_offst	= ((0xf1600000) >> 18) & 0xfffc,
+	.boot_params	= 0x00000100,
 	.map_io		= ap_map_io,
-	.nr_irqs	= NR_IRQS_INTEGRATOR_AP,
-	.init_early	= integrator_init_early,
 	.init_irq	= ap_init_irq,
 	.timer		= &ap_timer,
 	.init_machine	= ap_init,
-	.restart	= integrator_restart,
 MACHINE_END

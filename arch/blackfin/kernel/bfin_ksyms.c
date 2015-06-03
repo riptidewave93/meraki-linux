@@ -11,7 +11,6 @@
 
 #include <asm/cacheflush.h>
 #include <asm/io.h>
-#include <asm/irq_handler.h>
 
 /* Allow people to have their own Blackfin exception handler in a module */
 EXPORT_SYMBOL(bfin_return_from_exception);
@@ -32,18 +31,6 @@ EXPORT_SYMBOL(memset);
 EXPORT_SYMBOL(memcmp);
 EXPORT_SYMBOL(memmove);
 EXPORT_SYMBOL(memchr);
-
-/*
- * Because string functions are both inline and exported functions and
- * folder arch/blackfin/lib is configured as a library path in Makefile,
- * symbols exported in folder lib  is not linked into built-in.o but
- * inlined only. In order to export string symbols to kernel module
- * properly, they should be exported here.
- */
-EXPORT_SYMBOL(strcpy);
-EXPORT_SYMBOL(strncpy);
-EXPORT_SYMBOL(strcmp);
-EXPORT_SYMBOL(strncmp);
 
 /*
  * libgcc functions - functions that are used internally by the

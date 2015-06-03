@@ -11,8 +11,6 @@
 #include <linux/skbuff.h>
 #include <linux/etherdevice.h>
 #include <linux/llc.h>
-#include <linux/slab.h>
-#include <linux/module.h>
 #include <net/llc.h>
 #include <net/llc_pdu.h>
 #include <net/stp.h>
@@ -22,8 +20,8 @@
 #define GARP_ADDR_MAX	0x2F
 #define GARP_ADDR_RANGE	(GARP_ADDR_MAX - GARP_ADDR_MIN)
 
-static const struct stp_proto __rcu *garp_protos[GARP_ADDR_RANGE + 1] __read_mostly;
-static const struct stp_proto __rcu *stp_proto __read_mostly;
+static const struct stp_proto *garp_protos[GARP_ADDR_RANGE + 1] __read_mostly;
+static const struct stp_proto *stp_proto __read_mostly;
 
 static struct llc_sap *sap __read_mostly;
 static unsigned int sap_registered;
@@ -89,9 +87,9 @@ void stp_proto_unregister(const struct stp_proto *proto)
 {
 	mutex_lock(&stp_proto_mutex);
 	if (is_zero_ether_addr(proto->group_address))
-		RCU_INIT_POINTER(stp_proto, NULL);
+		rcu_assign_pointer(stp_proto, NULL);
 	else
-		RCU_INIT_POINTER(garp_protos[proto->group_address[5] -
+		rcu_assign_pointer(garp_protos[proto->group_address[5] -
 					       GARP_ADDR_MIN], NULL);
 	synchronize_rcu();
 

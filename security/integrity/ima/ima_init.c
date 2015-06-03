@@ -16,7 +16,6 @@
  */
 #include <linux/module.h>
 #include <linux/scatterlist.h>
-#include <linux/slab.h>
 #include <linux/err.h>
 #include "ima.h"
 
@@ -83,7 +82,7 @@ int __init ima_init(void)
 		ima_used_chip = 1;
 
 	if (!ima_used_chip)
-		pr_info("IMA: No TPM chip found, activating TPM-bypass!\n");
+		pr_info("No TPM chip found, activating TPM-bypass!\n");
 
 	ima_add_boot_aggregate();	/* boot aggregate must be first entry */
 	ima_init_policy();

@@ -11,13 +11,11 @@
 #include <linux/device.h>
 #include <linux/kernel.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
 #include <linux/gpio.h>
 #include <linux/lcd.h>
 
 #include <linux/spi/spi.h>
 #include <linux/spi/lms283gf05.h>
-#include <linux/module.h>
 
 struct lms283gf05_state {
 	struct spi_device	*spi;
@@ -130,7 +128,7 @@ static int lms283gf05_power_set(struct lcd_device *ld, int power)
 	struct spi_device *spi = st->spi;
 	struct lms283gf05_pdata *pdata = spi->dev.platform_data;
 
-	if (power <= FB_BLANK_NORMAL) {
+	if (power) {
 		if (pdata)
 			lms283gf05_reset(pdata->reset_gpio,
 					pdata->reset_inverted);
@@ -226,7 +224,18 @@ static struct spi_driver lms283gf05_driver = {
 	.remove		= __devexit_p(lms283gf05_remove),
 };
 
-module_spi_driver(lms283gf05_driver);
+static __init int lms283gf05_init(void)
+{
+	return spi_register_driver(&lms283gf05_driver);
+}
+
+static __exit void lms283gf05_exit(void)
+{
+	spi_unregister_driver(&lms283gf05_driver);
+}
+
+module_init(lms283gf05_init);
+module_exit(lms283gf05_exit);
 
 MODULE_AUTHOR("Marek Vasut <marek.vasut@gmail.com>");
 MODULE_DESCRIPTION("LCD283GF05 LCD");

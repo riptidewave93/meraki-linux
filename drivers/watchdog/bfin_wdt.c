@@ -11,8 +11,6 @@
  * Licensed under the GPL-2 or later.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/platform_device.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -21,17 +19,25 @@
 #include <linux/miscdevice.h>
 #include <linux/watchdog.h>
 #include <linux/fs.h>
+#include <linux/notifier.h>
+#include <linux/reboot.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/uaccess.h>
 #include <asm/blackfin.h>
-#include <asm/bfin_watchdog.h>
 
 #define stamp(fmt, args...) \
 	pr_debug("%s:%i: " fmt "\n", __func__, __LINE__, ## args)
 #define stampit() stamp("here i am")
+#define pr_devinit(fmt, args...) \
+	({ static const __devinitconst char __fmt[] = fmt; \
+	printk(__fmt, ## args); })
+#define pr_init(fmt, args...) \
+	({ static const __initconst char __fmt[] = fmt; \
+	printk(__fmt, ## args); })
 
 #define WATCHDOG_NAME "bfin-wdt"
+#define PFX WATCHDOG_NAME ": "
 
 /* The BF561 has two watchdogs (one per core), but since Linux
  * only runs on core A, we'll just work with that one.
@@ -45,12 +51,30 @@
 # define bfin_write_WDOG_STAT(x) bfin_write_WDOGA_STAT(x)
 #endif
 
+/* Bit in SWRST that indicates boot caused by watchdog */
+#define SWRST_RESET_WDOG 0x4000
+
+/* Bit in WDOG_CTL that indicates watchdog has expired (WDR0) */
+#define WDOG_EXPIRED 0x8000
+
+/* Masks for WDEV field in WDOG_CTL register */
+#define ICTL_RESET   0x0
+#define ICTL_NMI     0x2
+#define ICTL_GPI     0x4
+#define ICTL_NONE    0x6
+#define ICTL_MASK    0x6
+
+/* Masks for WDEN field in WDOG_CTL register */
+#define WDEN_MASK    0x0FF0
+#define WDEN_ENABLE  0x0000
+#define WDEN_DISABLE 0x0AD0
+
 /* some defaults */
 #define WATCHDOG_TIMEOUT 20
 
 static unsigned int timeout = WATCHDOG_TIMEOUT;
-static bool nowayout = WATCHDOG_NOWAYOUT;
-static const struct watchdog_info bfin_wdt_info;
+static int nowayout = WATCHDOG_NOWAYOUT;
+static struct watchdog_info bfin_wdt_info;
 static unsigned long open_check;
 static char expect_close;
 static DEFINE_SPINLOCK(bfin_wdt_spinlock);
@@ -58,7 +82,7 @@ static DEFINE_SPINLOCK(bfin_wdt_spinlock);
 /**
  *	bfin_wdt_keepalive - Keep the Userspace Watchdog Alive
  *
- *	The Userspace watchdog got a KeepAlive: schedule the next timeout.
+ * 	The Userspace watchdog got a KeepAlive: schedule the next timeout.
  */
 static int bfin_wdt_keepalive(void)
 {
@@ -121,7 +145,7 @@ static int bfin_wdt_set_timeout(unsigned long t)
 	stamp("maxtimeout=%us newtimeout=%lus (cnt=%#x)", max_t, t, cnt);
 
 	if (t > max_t) {
-		pr_warn("timeout value is too large\n");
+		printk(KERN_WARNING PFX "timeout value is too large\n");
 		return -EINVAL;
 	}
 
@@ -177,7 +201,8 @@ static int bfin_wdt_release(struct inode *inode, struct file *file)
 	if (expect_close == 42)
 		bfin_wdt_stop();
 	else {
-		pr_crit("Unexpected close, not stopping watchdog!\n");
+		printk(KERN_CRIT PFX
+			"Unexpected close, not stopping watchdog!\n");
 		bfin_wdt_keepalive();
 	}
 	expect_close = 0;
@@ -284,6 +309,26 @@ static long bfin_wdt_ioctl(struct file *file,
 	}
 }
 
+/**
+ *	bfin_wdt_notify_sys - Notifier Handler
+ *	@this: notifier block
+ *	@code: notifier event
+ *	@unused: unused
+ *
+ *	Handles specific events, such as turning off the watchdog during a
+ *	shutdown event.
+ */
+static int bfin_wdt_notify_sys(struct notifier_block *this,
+					unsigned long code, void *unused)
+{
+	stampit();
+
+	if (code == SYS_DOWN || code == SYS_HALT)
+		bfin_wdt_stop();
+
+	return NOTIFY_DONE;
+}
+
 #ifdef CONFIG_PM
 static int state_before_suspend;
 
@@ -331,7 +376,7 @@ static int bfin_wdt_resume(struct platform_device *pdev)
 static const struct file_operations bfin_wdt_fops = {
 	.owner		= THIS_MODULE,
 	.llseek		= no_llseek,
-	.write		= bfin_wdt_write,
+	.write    	= bfin_wdt_write,
 	.unlocked_ioctl	= bfin_wdt_ioctl,
 	.open		= bfin_wdt_open,
 	.release	= bfin_wdt_release,
@@ -343,32 +388,45 @@ static struct miscdevice bfin_wdt_miscdev = {
 	.fops     = &bfin_wdt_fops,
 };
 
-static const struct watchdog_info bfin_wdt_info = {
+static struct watchdog_info bfin_wdt_info = {
 	.identity = "Blackfin Watchdog",
 	.options  = WDIOF_SETTIMEOUT |
 		    WDIOF_KEEPALIVEPING |
 		    WDIOF_MAGICCLOSE,
 };
 
+static struct notifier_block bfin_wdt_notifier = {
+	.notifier_call = bfin_wdt_notify_sys,
+};
+
 /**
  *	bfin_wdt_probe - Initialize module
  *
- *	Registers the misc device.  Actual device
+ *	Registers the misc device and notifier handler.  Actual device
  *	initialization is handled by bfin_wdt_open().
  */
 static int __devinit bfin_wdt_probe(struct platform_device *pdev)
 {
 	int ret;
 
-	ret = misc_register(&bfin_wdt_miscdev);
+	ret = register_reboot_notifier(&bfin_wdt_notifier);
 	if (ret) {
-		pr_err("cannot register miscdev on minor=%d (err=%d)\n",
-		       WATCHDOG_MINOR, ret);
+		pr_devinit(KERN_ERR PFX
+			"cannot register reboot notifier (err=%d)\n", ret);
 		return ret;
 	}
 
-	pr_info("initialized: timeout=%d sec (nowayout=%d)\n",
-		timeout, nowayout);
+	ret = misc_register(&bfin_wdt_miscdev);
+	if (ret) {
+		pr_devinit(KERN_ERR PFX
+			"cannot register miscdev on minor=%d (err=%d)\n",
+				WATCHDOG_MINOR, ret);
+		unregister_reboot_notifier(&bfin_wdt_notifier);
+		return ret;
+	}
+
+	pr_devinit(KERN_INFO PFX "initialized: timeout=%d sec (nowayout=%d)\n",
+	       timeout, nowayout);
 
 	return 0;
 }
@@ -376,25 +434,14 @@ static int __devinit bfin_wdt_probe(struct platform_device *pdev)
 /**
  *	bfin_wdt_remove - Initialize module
  *
- *	Unregisters the misc device.  Actual device
+ *	Unregisters the misc device and notifier handler.  Actual device
  *	deinitialization is handled by bfin_wdt_close().
  */
 static int __devexit bfin_wdt_remove(struct platform_device *pdev)
 {
 	misc_deregister(&bfin_wdt_miscdev);
+	unregister_reboot_notifier(&bfin_wdt_notifier);
 	return 0;
-}
-
-/**
- *	bfin_wdt_shutdown - Soft Shutdown Handler
- *
- *	Handles the soft shutdown event.
- */
-static void bfin_wdt_shutdown(struct platform_device *pdev)
-{
-	stampit();
-
-	bfin_wdt_stop();
 }
 
 static struct platform_device *bfin_wdt_device;
@@ -402,7 +449,6 @@ static struct platform_device *bfin_wdt_device;
 static struct platform_driver bfin_wdt_driver = {
 	.probe     = bfin_wdt_probe,
 	.remove    = __devexit_p(bfin_wdt_remove),
-	.shutdown  = bfin_wdt_shutdown,
 	.suspend   = bfin_wdt_suspend,
 	.resume    = bfin_wdt_resume,
 	.driver    = {
@@ -432,14 +478,14 @@ static int __init bfin_wdt_init(void)
 	 */
 	ret = platform_driver_register(&bfin_wdt_driver);
 	if (ret) {
-		pr_err("unable to register driver\n");
+		pr_init(KERN_ERR PFX "unable to register driver\n");
 		return ret;
 	}
 
 	bfin_wdt_device = platform_device_register_simple(WATCHDOG_NAME,
 								-1, NULL, 0);
 	if (IS_ERR(bfin_wdt_device)) {
-		pr_err("unable to register device\n");
+		pr_init(KERN_ERR PFX "unable to register device\n");
 		platform_driver_unregister(&bfin_wdt_driver);
 		return PTR_ERR(bfin_wdt_device);
 	}
@@ -472,7 +518,7 @@ MODULE_PARM_DESC(timeout,
 	"Watchdog timeout in seconds. (1<=timeout<=((2^32)/SCLK), default="
 		__MODULE_STRING(WATCHDOG_TIMEOUT) ")");
 
-module_param(nowayout, bool, 0);
+module_param(nowayout, int, 0);
 MODULE_PARM_DESC(nowayout,
 	"Watchdog cannot be stopped once started (default="
 		__MODULE_STRING(WATCHDOG_NOWAYOUT) ")");

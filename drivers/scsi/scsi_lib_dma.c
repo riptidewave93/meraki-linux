@@ -4,7 +4,6 @@
 
 #include <linux/blkdev.h>
 #include <linux/device.h>
-#include <linux/export.h>
 #include <linux/kernel.h>
 
 #include <scsi/scsi.h>

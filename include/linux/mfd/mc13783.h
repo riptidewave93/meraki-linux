@@ -1,91 +1,84 @@
 /*
- * Copyright 2010 Yong Shen <yong.shen@linaro.org>
- * Copyright 2009-2010 Pengutronix
- * Uwe Kleine-Koenig <u.kleine-koenig@pengutronix.de>
+ * Copyright 2009 Pengutronix, Sascha Hauer <s.hauer@pengutronix.de>
  *
- * This program is free software; you can redistribute it and/or modify it under
- * the terms of the GNU General Public License version 2 as published by the
- * Free Software Foundation.
+ * Initial development of this code was funded by
+ * Phytec Messtechnik GmbH, http://www.phytec.de
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License as published by
+ * the Free Software Foundation; either version 2 of the License, or
+ * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 675 Mass Ave, Cambridge, MA 02139, USA.
  */
-#ifndef __LINUX_MFD_MC13783_H
-#define __LINUX_MFD_MC13783_H
 
-#include <linux/mfd/mc13xxx.h>
+#ifndef __INCLUDE_LINUX_MFD_MC13783_H
+#define __INCLUDE_LINUX_MFD_MC13783_H
 
-#define	MC13783_REG_SW1A		0
-#define	MC13783_REG_SW1B		1
-#define	MC13783_REG_SW2A		2
-#define	MC13783_REG_SW2B		3
-#define	MC13783_REG_SW3		4
-#define	MC13783_REG_PLL		5
-#define	MC13783_REG_VAUDIO	6
-#define	MC13783_REG_VIOHI	7
-#define	MC13783_REG_VIOLO	8
-#define	MC13783_REG_VDIG	9
-#define	MC13783_REG_VGEN	10
-#define	MC13783_REG_VRFDIG	11
-#define	MC13783_REG_VRFREF	12
-#define	MC13783_REG_VRFCP	13
-#define	MC13783_REG_VSIM	14
-#define	MC13783_REG_VESIM	15
-#define	MC13783_REG_VCAM	16
-#define	MC13783_REG_VRFBG	17
-#define	MC13783_REG_VVIB	18
-#define	MC13783_REG_VRF1	19
-#define	MC13783_REG_VRF2	20
-#define	MC13783_REG_VMMC1	21
-#define	MC13783_REG_VMMC2	22
-#define	MC13783_REG_GPO1	23
-#define	MC13783_REG_GPO2	24
-#define	MC13783_REG_GPO3	25
-#define	MC13783_REG_GPO4	26
-#define	MC13783_REG_V1		27
-#define	MC13783_REG_V2		28
-#define	MC13783_REG_V3		29
-#define	MC13783_REG_V4		30
-#define	MC13783_REG_PWGT1SPI	31
-#define	MC13783_REG_PWGT2SPI	32
+struct mc13783;
+struct regulator_init_data;
 
-#define MC13783_IRQ_ADCDONE	MC13XXX_IRQ_ADCDONE
-#define MC13783_IRQ_ADCBISDONE	MC13XXX_IRQ_ADCBISDONE
-#define MC13783_IRQ_TS		MC13XXX_IRQ_TS
-#define MC13783_IRQ_WHIGH	3
-#define MC13783_IRQ_WLOW	4
-#define MC13783_IRQ_CHGDET	MC13XXX_IRQ_CHGDET
-#define MC13783_IRQ_CHGOV	7
-#define MC13783_IRQ_CHGREV	MC13XXX_IRQ_CHGREV
-#define MC13783_IRQ_CHGSHORT	MC13XXX_IRQ_CHGSHORT
-#define MC13783_IRQ_CCCV	MC13XXX_IRQ_CCCV
-#define MC13783_IRQ_CHGCURR	MC13XXX_IRQ_CHGCURR
-#define MC13783_IRQ_BPON	MC13XXX_IRQ_BPON
-#define MC13783_IRQ_LOBATL	MC13XXX_IRQ_LOBATL
-#define MC13783_IRQ_LOBATH	MC13XXX_IRQ_LOBATH
-#define MC13783_IRQ_UDP		15
-#define MC13783_IRQ_USB		16
-#define MC13783_IRQ_ID		19
-#define MC13783_IRQ_SE1		21
-#define MC13783_IRQ_CKDET	22
-#define MC13783_IRQ_UDM		23
-#define MC13783_IRQ_1HZ		MC13XXX_IRQ_1HZ
-#define MC13783_IRQ_TODA	MC13XXX_IRQ_TODA
-#define MC13783_IRQ_ONOFD1	27
-#define MC13783_IRQ_ONOFD2	28
-#define MC13783_IRQ_ONOFD3	29
-#define MC13783_IRQ_SYSRST	MC13XXX_IRQ_SYSRST
-#define MC13783_IRQ_RTCRST	MC13XXX_IRQ_RTCRST
-#define MC13783_IRQ_PC		MC13XXX_IRQ_PC
-#define MC13783_IRQ_WARM	MC13XXX_IRQ_WARM
-#define MC13783_IRQ_MEMHLD	MC13XXX_IRQ_MEMHLD
-#define MC13783_IRQ_PWRRDY	35
-#define MC13783_IRQ_THWARNL	MC13XXX_IRQ_THWARNL
-#define MC13783_IRQ_THWARNH	MC13XXX_IRQ_THWARNH
-#define MC13783_IRQ_CLK		MC13XXX_IRQ_CLK
-#define MC13783_IRQ_SEMAF	39
-#define MC13783_IRQ_MC2B	41
-#define MC13783_IRQ_HSDET	42
-#define MC13783_IRQ_HSL		43
-#define MC13783_IRQ_ALSPTH	44
-#define MC13783_IRQ_AHSSHORT	45
-#define MC13783_NUM_IRQ		MC13XXX_NUM_IRQ
+struct mc13783_regulator_init_data {
+	int id;
+	struct regulator_init_data *init_data;
+};
 
-#endif /* ifndef __LINUX_MFD_MC13783_H */
+struct mc13783_platform_data {
+	struct mc13783_regulator_init_data *regulators;
+	int num_regulators;
+	unsigned int flags;
+};
+
+/* mc13783_platform_data flags */
+#define MC13783_USE_TOUCHSCREEN (1 << 0)
+#define MC13783_USE_CODEC	(1 << 1)
+#define MC13783_USE_ADC		(1 << 2)
+#define MC13783_USE_RTC		(1 << 3)
+#define MC13783_USE_REGULATOR	(1 << 4)
+
+int mc13783_adc_do_conversion(struct mc13783 *mc13783, unsigned int mode,
+		unsigned int channel, unsigned int *sample);
+
+void mc13783_adc_set_ts_status(struct mc13783 *mc13783, unsigned int status);
+
+#define	MC13783_SW_SW1A		0
+#define	MC13783_SW_SW1B		1
+#define	MC13783_SW_SW2A		2
+#define	MC13783_SW_SW2B		3
+#define	MC13783_SW_SW3		4
+#define	MC13783_SW_PLL		5
+#define	MC13783_REGU_VAUDIO	6
+#define	MC13783_REGU_VIOHI	7
+#define	MC13783_REGU_VIOLO	8
+#define	MC13783_REGU_VDIG	9
+#define	MC13783_REGU_VGEN	10
+#define	MC13783_REGU_VRFDIG	11
+#define	MC13783_REGU_VRFREF	12
+#define	MC13783_REGU_VRFCP	13
+#define	MC13783_REGU_VSIM	14
+#define	MC13783_REGU_VESIM	15
+#define	MC13783_REGU_VCAM	16
+#define	MC13783_REGU_VRFBG	17
+#define	MC13783_REGU_VVIB	18
+#define	MC13783_REGU_VRF1	19
+#define	MC13783_REGU_VRF2	20
+#define	MC13783_REGU_VMMC1	21
+#define	MC13783_REGU_VMMC2	22
+#define	MC13783_REGU_GPO1	23
+#define	MC13783_REGU_GPO2	24
+#define	MC13783_REGU_GPO3	25
+#define	MC13783_REGU_GPO4	26
+#define	MC13783_REGU_V1		27
+#define	MC13783_REGU_V2		28
+#define	MC13783_REGU_V3		29
+#define	MC13783_REGU_V4		30
+
+#endif /* __INCLUDE_LINUX_MFD_MC13783_H */
+

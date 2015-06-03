@@ -2,7 +2,7 @@
  * ECC algorithm for M-systems disk on chip. We use the excellent Reed
  * Solmon code of Phil Karn (karn@ka9q.ampr.org) available under the
  * GNU GPL License. The rest is simply to convert the disk on chip
- * syndrome into a standard syndome.
+ * syndrom into a standard syndom.
  *
  * Author: Fabrice Bellard (fabrice.bellard@netgem.com)
  * Copyright (C) 2000 Netgem S.A.

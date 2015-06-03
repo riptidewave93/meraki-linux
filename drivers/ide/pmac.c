@@ -28,13 +28,11 @@
 #include <linux/delay.h>
 #include <linux/ide.h>
 #include <linux/notifier.h>
-#include <linux/module.h>
 #include <linux/reboot.h>
 #include <linux/pci.h>
 #include <linux/adb.h>
 #include <linux/pmu.h>
 #include <linux/scatterlist.h>
-#include <linux/slab.h>
 
 #include <asm/prom.h>
 #include <asm/io.h>
@@ -45,7 +43,10 @@
 #include <asm/pmac_feature.h>
 #include <asm/sections.h>
 #include <asm/irq.h>
+
+#ifndef CONFIG_PPC64
 #include <asm/mediabay.h>
+#endif
 
 #define DRV_NAME "ide-pmac"
 
@@ -58,14 +59,13 @@ typedef struct pmac_ide_hwif {
 	int				irq;
 	int				kind;
 	int				aapl_bus_id;
+	unsigned			mediabay : 1;
 	unsigned			broken_dma : 1;
 	unsigned			broken_dma_warn : 1;
 	struct device_node*		node;
 	struct macio_dev		*mdev;
 	u32				timings[4];
 	volatile u32 __iomem *		*kauai_fcr;
-	ide_hwif_t			*hwif;
-
 	/* Those fields are duplicating what is in hwif. We currently
 	 * can't use the hwif ones because of some assumptions that are
 	 * beeing done by the generic code about the kind of dma controller
@@ -498,11 +498,12 @@ static void pmac_write_devctl(ide_hwif_t *hwif, u8 ctl)
 /*
  * Old tuning functions (called on hdparm -p), sets up drive PIO timings
  */
-static void pmac_ide_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void
+pmac_ide_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
+	ide_hwif_t *hwif = drive->hwif;
 	pmac_ide_hwif_t *pmif =
 		(pmac_ide_hwif_t *)dev_get_drvdata(hwif->gendev.parent);
-	const u8 pio = drive->pio_mode - XFER_PIO_0;
 	struct ide_timing *tim = ide_timing_find_mode(XFER_PIO_0 + pio);
 	u32 *timings, t;
 	unsigned accessTicks, recTicks;
@@ -779,14 +780,14 @@ set_timings_mdma(ide_drive_t *drive, int intf_type, u32 *timings, u32 *timings2,
 #endif	
 }
 
-static void pmac_ide_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void pmac_ide_set_dma_mode(ide_drive_t *drive, const u8 speed)
 {
+	ide_hwif_t *hwif = drive->hwif;
 	pmac_ide_hwif_t *pmif =
 		(pmac_ide_hwif_t *)dev_get_drvdata(hwif->gendev.parent);
 	int ret = 0;
 	u32 *timings, *timings2, tl[2];
 	u8 unit = drive->dn & 1;
-	const u8 speed = drive->dma_mode;
 
 	timings = &pmif->timings[unit];
 	timings2 = &pmif->timings[unit+2];
@@ -853,11 +854,6 @@ sanitize_timings(pmac_ide_hwif_t *pmif)
 	pmif->timings[2] = pmif->timings[3] = value2;
 }
 
-static int on_media_bay(pmac_ide_hwif_t *pmif)
-{
-	return pmif->mdev && pmif->mdev->media_bay != NULL;
-}
-
 /* Suspend call back, should be called after the child devices
  * have actually been suspended
  */
@@ -870,7 +866,7 @@ static int pmac_ide_do_suspend(pmac_ide_hwif_t *pmif)
 	disable_irq(pmif->irq);
 
 	/* The media bay will handle itself just fine */
-	if (on_media_bay(pmif))
+	if (pmif->mediabay)
 		return 0;
 	
 	/* Kauai has bus control FCRs directly here */
@@ -893,7 +889,7 @@ static int pmac_ide_do_suspend(pmac_ide_hwif_t *pmif)
 static int pmac_ide_do_resume(pmac_ide_hwif_t *pmif)
 {
 	/* Hard reset & re-enable controller (do we really need to reset ? -BenH) */
-	if (!on_media_bay(pmif)) {
+	if (!pmif->mediabay) {
 		ppc_md.feature_call(PMAC_FTR_IDE_RESET, pmif->node, pmif->aapl_bus_id, 1);
 		ppc_md.feature_call(PMAC_FTR_IDE_ENABLE, pmif->node, pmif->aapl_bus_id, 1);
 		msleep(10);
@@ -954,11 +950,13 @@ static void pmac_ide_init_dev(ide_drive_t *drive)
 	pmac_ide_hwif_t *pmif =
 		(pmac_ide_hwif_t *)dev_get_drvdata(hwif->gendev.parent);
 
-	if (on_media_bay(pmif)) {
-		if (check_media_bay(pmif->mdev->media_bay) == MB_CD) {
+	if (pmif->mediabay) {
+#ifdef CONFIG_PMAC_MEDIABAY
+		if (check_media_bay_by_base(pmif->regbase, MB_CD) == 0) {
 			drive->dev_flags &= ~IDE_DFLAG_NOPROBE;
 			return;
 		}
+#endif
 		drive->dev_flags |= IDE_DFLAG_NOPROBE;
 	}
 }
@@ -1074,23 +1072,26 @@ static int __devinit pmac_ide_setup_device(pmac_ide_hwif_t *pmif,
 		writel(KAUAI_FCR_UATA_MAGIC |
 		       KAUAI_FCR_UATA_RESET_N |
 		       KAUAI_FCR_UATA_ENABLE, pmif->kauai_fcr);
+
+	pmif->mediabay = 0;
 	
 	/* Make sure we have sane timings */
 	sanitize_timings(pmif);
 
-	/* If we are on a media bay, wait for it to settle and lock it */
-	if (pmif->mdev)
-		lock_media_bay(pmif->mdev->media_bay);
-
 	host = ide_host_alloc(&d, hws, 1);
-	if (host == NULL) {
-		rc = -ENOMEM;
-		goto bail;
-	}
-	hwif = pmif->hwif = host->ports[0];
+	if (host == NULL)
+		return -ENOMEM;
+	hwif = host->ports[0];
 
-	if (on_media_bay(pmif)) {
-		/* Fixup bus ID for media bay */
+#ifndef CONFIG_PPC64
+	/* XXX FIXME: Media bay stuff need re-organizing */
+	if (np->parent && np->parent->name
+	    && strcasecmp(np->parent->name, "media-bay") == 0) {
+#ifdef CONFIG_PMAC_MEDIABAY
+		media_bay_set_ide_infos(np->parent, pmif->regbase, pmif->irq,
+					hwif);
+#endif /* CONFIG_PMAC_MEDIABAY */
+		pmif->mediabay = 1;
 		if (!bidp)
 			pmif->aapl_bus_id = 1;
 	} else if (pmif->kind == controller_ohare) {
@@ -1099,7 +1100,9 @@ static int __devinit pmac_ide_setup_device(pmac_ide_hwif_t *pmif,
 		 * units, I keep the old way
 		 */
 		ppc_md.feature_call(PMAC_FTR_IDE_ENABLE, np, 0, 1);
-	} else {
+	} else
+#endif
+	{
  		/* This is necessary to enable IDE when net-booting */
 		ppc_md.feature_call(PMAC_FTR_IDE_RESET, np, pmif->aapl_bus_id, 1);
 		ppc_md.feature_call(PMAC_FTR_IDE_ENABLE, np, pmif->aapl_bus_id, 1);
@@ -1109,21 +1112,17 @@ static int __devinit pmac_ide_setup_device(pmac_ide_hwif_t *pmif,
 	}
 
 	printk(KERN_INFO DRV_NAME ": Found Apple %s controller (%s), "
-	       "bus ID %d%s, irq %d\n", model_name[pmif->kind],
-	       pmif->mdev ? "macio" : "PCI", pmif->aapl_bus_id,
-	       on_media_bay(pmif) ? " (mediabay)" : "", hw->irq);
+			 "bus ID %d%s, irq %d\n", model_name[pmif->kind],
+			 pmif->mdev ? "macio" : "PCI", pmif->aapl_bus_id,
+			 pmif->mediabay ? " (mediabay)" : "", hw->irq);
 
 	rc = ide_host_register(host, &d, hws);
-	if (rc)
-		pmif->hwif = NULL;
-
-	if (pmif->mdev)
-		unlock_media_bay(pmif->mdev->media_bay);
-
- bail:
-	if (rc && host)
+	if (rc) {
 		ide_host_free(host);
-	return rc;
+		return rc;
+	}
+
+	return 0;
 }
 
 static void __devinit pmac_ide_init_ports(struct ide_hw *hw, unsigned long base)
@@ -1154,7 +1153,7 @@ pmac_ide_macio_attach(struct macio_dev *mdev, const struct of_device_id *match)
 
 	if (macio_resource_count(mdev) == 0) {
 		printk(KERN_WARNING "ide-pmac: no address for %s\n",
-				    mdev->ofdev.dev.of_node->full_name);
+				    mdev->ofdev.node->full_name);
 		rc = -ENXIO;
 		goto out_free_pmif;
 	}
@@ -1162,7 +1161,7 @@ pmac_ide_macio_attach(struct macio_dev *mdev, const struct of_device_id *match)
 	/* Request memory resource for IO ports */
 	if (macio_request_resource(mdev, 0, "ide-pmac (ports)")) {
 		printk(KERN_ERR "ide-pmac: can't request MMIO resource for "
-				"%s!\n", mdev->ofdev.dev.of_node->full_name);
+				"%s!\n", mdev->ofdev.node->full_name);
 		rc = -EBUSY;
 		goto out_free_pmif;
 	}
@@ -1174,7 +1173,7 @@ pmac_ide_macio_attach(struct macio_dev *mdev, const struct of_device_id *match)
 	 */
 	if (macio_irq_count(mdev) == 0) {
 		printk(KERN_WARNING "ide-pmac: no intrs for device %s, using "
-				    "13\n", mdev->ofdev.dev.of_node->full_name);
+				    "13\n", mdev->ofdev.node->full_name);
 		irq = irq_create_mapping(NULL, 13);
 	} else
 		irq = macio_irq(mdev, 0);
@@ -1183,7 +1182,7 @@ pmac_ide_macio_attach(struct macio_dev *mdev, const struct of_device_id *match)
 	regbase = (unsigned long) base;
 
 	pmif->mdev = mdev;
-	pmif->node = mdev->ofdev.dev.of_node;
+	pmif->node = mdev->ofdev.node;
 	pmif->regbase = regbase;
 	pmif->irq = irq;
 	pmif->kauai_fcr = NULL;
@@ -1192,7 +1191,7 @@ pmac_ide_macio_attach(struct macio_dev *mdev, const struct of_device_id *match)
 		if (macio_request_resource(mdev, 1, "ide-pmac (dma)"))
 			printk(KERN_WARNING "ide-pmac: can't request DMA "
 					    "resource for %s!\n",
-					    mdev->ofdev.dev.of_node->full_name);
+					    mdev->ofdev.node->full_name);
 		else
 			pmif->dma_regs = ioremap(macio_resource_start(mdev, 1), 0x1000);
 	} else
@@ -1335,7 +1334,7 @@ out_free_pmif:
 static int
 pmac_ide_pci_suspend(struct pci_dev *pdev, pm_message_t mesg)
 {
-	pmac_ide_hwif_t *pmif = pci_get_drvdata(pdev);
+	pmac_ide_hwif_t *pmif = (pmac_ide_hwif_t *)pci_get_drvdata(pdev);
 	int rc = 0;
 
 	if (mesg.event != pdev->dev.power.power_state.event
@@ -1351,7 +1350,7 @@ pmac_ide_pci_suspend(struct pci_dev *pdev, pm_message_t mesg)
 static int
 pmac_ide_pci_resume(struct pci_dev *pdev)
 {
-	pmac_ide_hwif_t *pmif = pci_get_drvdata(pdev);
+	pmac_ide_hwif_t *pmif = (pmac_ide_hwif_t *)pci_get_drvdata(pdev);
 	int rc = 0;
 
 	if (pdev->dev.power.power_state.event != PM_EVENT_ON) {
@@ -1362,25 +1361,6 @@ pmac_ide_pci_resume(struct pci_dev *pdev)
 
 	return rc;
 }
-
-#ifdef CONFIG_PMAC_MEDIABAY
-static void pmac_ide_macio_mb_event(struct macio_dev* mdev, int mb_state)
-{
-	pmac_ide_hwif_t *pmif =
-		(pmac_ide_hwif_t *)dev_get_drvdata(&mdev->ofdev.dev);
-
-	switch(mb_state) {
-	case MB_CD:
-		if (!pmif->hwif->present)
-			ide_port_scan(pmif->hwif);
-		break;
-	default:
-		if (pmif->hwif->present)
-			ide_port_unregister_devices(pmif->hwif);
-	}
-}
-#endif /* CONFIG_PMAC_MEDIABAY */
-
 
 static struct of_device_id pmac_ide_macio_match[] = 
 {
@@ -1401,17 +1381,11 @@ static struct of_device_id pmac_ide_macio_match[] =
 
 static struct macio_driver pmac_ide_macio_driver = 
 {
-	.driver = {
-		.name 		= "ide-pmac",
-		.owner		= THIS_MODULE,
-		.of_match_table	= pmac_ide_macio_match,
-	},
+	.name 		= "ide-pmac",
+	.match_table	= pmac_ide_macio_match,
 	.probe		= pmac_ide_macio_attach,
 	.suspend	= pmac_ide_macio_suspend,
 	.resume		= pmac_ide_macio_resume,
-#ifdef CONFIG_PMAC_MEDIABAY
-	.mediabay_event	= pmac_ide_macio_mb_event,
-#endif
 };
 
 static const struct pci_device_id pmac_ide_pci_match[] = {
@@ -1655,8 +1629,8 @@ pmac_ide_dma_test_irq (ide_drive_t *drive)
 		if ((status & FLUSH) == 0)
 			break;
 		if (++timeout > 100) {
-			printk(KERN_WARNING "ide%d, ide_dma_test_irq timeout flushing channel\n",
-			       hwif->index);
+			printk(KERN_WARNING "ide%d, ide_dma_test_irq \
+			timeout flushing channel\n", hwif->index);
 			break;
 		}
 	}	

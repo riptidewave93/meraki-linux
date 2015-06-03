@@ -9,7 +9,6 @@
 #include <linux/pagemap.h>
 #include <linux/syscalls.h>
 #include <linux/mempolicy.h>
-#include <linux/page-isolation.h>
 #include <linux/hugetlb.h>
 #include <linux/sched.h>
 #include <linux/ksm.h>
@@ -66,21 +65,9 @@ static long madvise_behavior(struct vm_area_struct * vma,
 		}
 		new_flags &= ~VM_DONTCOPY;
 		break;
-	case MADV_DONTDUMP:
-		new_flags |= VM_NODUMP;
-		break;
-	case MADV_DODUMP:
-		new_flags &= ~VM_NODUMP;
-		break;
 	case MADV_MERGEABLE:
 	case MADV_UNMERGEABLE:
 		error = ksm_madvise(vma, start, end, behavior, &new_flags);
-		if (error)
-			goto out;
-		break;
-	case MADV_HUGEPAGE:
-	case MADV_NOHUGEPAGE:
-		error = hugepage_madvise(vma, &new_flags, behavior);
 		if (error)
 			goto out;
 		break;
@@ -228,10 +215,10 @@ static long madvise_remove(struct vm_area_struct *vma,
 			+ ((loff_t)vma->vm_pgoff << PAGE_SHIFT);
 
 	/*
-	 * vmtruncate_range may need to take i_mutex.  We need to
-	 * explicitly grab a reference because the vma (and hence the
-	 * vma's reference to the file) can go away as soon as we drop
-	 * mmap_sem.
+	 * vmtruncate_range may need to take i_mutex and i_alloc_sem.
+	 * We need to explicitly grab a reference because the vma (and
+	 * hence the vma's reference to the file) can go away as soon as
+	 * we drop mmap_sem.
 	 */
 	get_file(f);
 	up_read(&current->mm->mmap_sem);
@@ -245,7 +232,7 @@ static long madvise_remove(struct vm_area_struct *vma,
 /*
  * Error injection support for memory error handling.
  */
-static int madvise_hwpoison(int bhv, unsigned long start, unsigned long end)
+static int madvise_hwpoison(unsigned long start, unsigned long end)
 {
 	int ret = 0;
 
@@ -253,21 +240,15 @@ static int madvise_hwpoison(int bhv, unsigned long start, unsigned long end)
 		return -EPERM;
 	for (; start < end; start += PAGE_SIZE) {
 		struct page *p;
-		int ret = get_user_pages_fast(start, 1, 0, &p);
+		int ret = get_user_pages(current, current->mm, start, 1,
+						0, 0, &p, NULL);
 		if (ret != 1)
 			return ret;
-		if (bhv == MADV_SOFT_OFFLINE) {
-			printk(KERN_INFO "Soft offlining page %lx at %lx\n",
-				page_to_pfn(p), start);
-			ret = soft_offline_page(p, MF_COUNT_INCREASED);
-			if (ret)
-				break;
-			continue;
-		}
 		printk(KERN_INFO "Injecting memory failure for page %lx at %lx\n",
 		       page_to_pfn(p), start);
 		/* Ignore return value for now */
-		memory_failure(page_to_pfn(p), 0, MF_COUNT_INCREASED);
+		__memory_failure(page_to_pfn(p), 0, 1);
+		put_page(p);
 	}
 	return ret;
 }
@@ -305,12 +286,6 @@ madvise_behavior_valid(int behavior)
 	case MADV_MERGEABLE:
 	case MADV_UNMERGEABLE:
 #endif
-#ifdef CONFIG_TRANSPARENT_HUGEPAGE
-	case MADV_HUGEPAGE:
-	case MADV_NOHUGEPAGE:
-#endif
-	case MADV_DONTDUMP:
-	case MADV_DODUMP:
 		return 1;
 
 	default:
@@ -370,8 +345,8 @@ SYSCALL_DEFINE3(madvise, unsigned long, start, size_t, len_in, int, behavior)
 	size_t len;
 
 #ifdef CONFIG_MEMORY_FAILURE
-	if (behavior == MADV_HWPOISON || behavior == MADV_SOFT_OFFLINE)
-		return madvise_hwpoison(behavior, start, start+len_in);
+	if (behavior == MADV_HWPOISON)
+		return madvise_hwpoison(start, start+len_in);
 #endif
 	if (!madvise_behavior_valid(behavior))
 		return error;

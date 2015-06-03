@@ -110,7 +110,7 @@ Module use:
 -----------
 
 In order to automatically load the sonypi module on use, you can put those
-lines a configuration file in /etc/modprobe.d/:
+lines in your /etc/modprobe.conf file:
 
 	alias char-major-10-250 sonypi
 	options sonypi minor=250

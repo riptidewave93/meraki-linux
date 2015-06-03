@@ -19,6 +19,7 @@
 #include <linux/pci.h>
 #include <linux/pm.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 #include <linux/serial_core.h>
 #include <linux/serial_8250.h>
 #include <linux/mtd/physmap.h>
@@ -46,6 +47,7 @@ static void __init glantank_timer_init(void)
 
 static struct sys_timer glantank_timer = {
 	.init		= glantank_timer_init,
+	.offset		= iop_gettimeoffset,
 };
 
 
@@ -77,7 +79,7 @@ void __init glantank_map_io(void)
 #define INTD	IRQ_IOP32X_XINT3
 
 static int __init
-glantank_pci_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+glantank_pci_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	static int pci_irq_table[][4] = {
 		/*
@@ -207,10 +209,11 @@ static void __init glantank_init_machine(void)
 
 MACHINE_START(GLANTANK, "GLAN Tank")
 	/* Maintainer: Lennert Buytenhek <buytenh@wantstofly.org> */
-	.atag_offset	= 0x100,
+	.phys_io	= GLANTANK_UART,
+	.io_pg_offst	= ((GLANTANK_UART) >> 18) & 0xfffc,
+	.boot_params	= 0xa0000100,
 	.map_io		= glantank_map_io,
 	.init_irq	= iop32x_init_irq,
 	.timer		= &glantank_timer,
 	.init_machine	= glantank_init_machine,
-	.restart	= iop3xx_restart,
 MACHINE_END

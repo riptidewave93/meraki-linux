@@ -8,7 +8,7 @@
 
 #define LAUNCHSTACK_SIZE 256
 
-static __cpuinitdata arch_spinlock_t launch_lock = __ARCH_SPIN_LOCK_UNLOCKED;
+static __cpuinitdata DEFINE_SPINLOCK(launch_lock);
 
 static unsigned long secondary_sp __cpuinitdata;
 static unsigned long secondary_gp __cpuinitdata;
@@ -20,7 +20,7 @@ static void __init prom_smp_bootstrap(void)
 {
 	local_irq_disable();
 
-	while (arch_spin_is_locked(&launch_lock));
+	while (spin_is_locked(&launch_lock));
 
 	__asm__ __volatile__(
 	"	move	$sp, %0		\n"
@@ -37,7 +37,7 @@ static void __init prom_smp_bootstrap(void)
  */
 void __init prom_grab_secondary(void)
 {
-	arch_spin_lock(&launch_lock);
+	spin_lock(&launch_lock);
 
 	pmon_cpustart(1, &prom_smp_bootstrap,
 	              launchstack + LAUNCHSTACK_SIZE, 0);
@@ -55,8 +55,6 @@ void titan_mailbox_irq(void)
 
 		if (status & 0x2)
 			smp_call_function_interrupt();
-		if (status & 0x4)
-			scheduler_ipi();
 		break;
 
 	case 1:
@@ -65,8 +63,6 @@ void titan_mailbox_irq(void)
 
 		if (status & 0x2)
 			smp_call_function_interrupt();
-		if (status & 0x4)
-			scheduler_ipi();
 		break;
 	}
 }
@@ -142,11 +138,11 @@ static void __cpuinit yos_boot_secondary(int cpu, struct task_struct *idle)
 	secondary_sp = sp;
 	secondary_gp = gp;
 
-	arch_spin_unlock(&launch_lock);
+	spin_unlock(&launch_lock);
 }
 
 /*
- * Detect available CPUs, populate cpu_possible_mask before smp_init
+ * Detect available CPUs, populate cpu_possible_map before smp_init
  *
  * We don't want to start the secondary CPU yet nor do we have a nice probing
  * feature in PMON so we just assume presence of the secondary core.
@@ -155,10 +151,10 @@ static void __init yos_smp_setup(void)
 {
 	int i;
 
-	init_cpu_possible(cpu_none_mask);
+	cpus_clear(cpu_possible_map);
 
 	for (i = 0; i < 2; i++) {
-		set_cpu_possible(i, true);
+		cpu_set(i, cpu_possible_map);
 		__cpu_number_map[i]	= i;
 		__cpu_logical_map[i]	= i;
 	}
@@ -169,7 +165,7 @@ static void __init yos_prepare_cpus(unsigned int max_cpus)
 	/*
 	 * Be paranoid.  Enable the IPI only if we're really about to go SMP.
 	 */
-	if (num_possible_cpus())
+	if (cpus_weight(cpu_possible_map))
 		set_c0_status(STATUSF_IP5);
 }
 

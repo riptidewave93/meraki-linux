@@ -33,21 +33,22 @@
 
 #define SKEW_BASE	0x10000	/* 16bit shift */
 
-static void snd_seq_timer_set_tick_resolution(struct snd_seq_timer *tmr)
+static void snd_seq_timer_set_tick_resolution(struct snd_seq_timer_tick *tick,
+					      int tempo, int ppq)
 {
-	if (tmr->tempo < 1000000)
-		tmr->tick.resolution = (tmr->tempo * 1000) / tmr->ppq;
+	if (tempo < 1000000)
+		tick->resolution = (tempo * 1000) / ppq;
 	else {
 		/* might overflow.. */
 		unsigned int s;
-		s = tmr->tempo % tmr->ppq;
-		s = (s * 1000) / tmr->ppq;
-		tmr->tick.resolution = (tmr->tempo / tmr->ppq) * 1000;
-		tmr->tick.resolution += s;
+		s = tempo % ppq;
+		s = (s * 1000) / ppq;
+		tick->resolution = (tempo / ppq) * 1000;
+		tick->resolution += s;
 	}
-	if (tmr->tick.resolution <= 0)
-		tmr->tick.resolution = 1;
-	snd_seq_timer_update_tick(&tmr->tick, 0);
+	if (tick->resolution <= 0)
+		tick->resolution = 1;
+	snd_seq_timer_update_tick(tick, 0);
 }
 
 /* create new timer (constructor) */
@@ -95,7 +96,7 @@ void snd_seq_timer_defaults(struct snd_seq_timer * tmr)
 	/* setup defaults */
 	tmr->ppq = 96;		/* 96 PPQ */
 	tmr->tempo = 500000;	/* 120 BPM */
-	snd_seq_timer_set_tick_resolution(tmr);
+	snd_seq_timer_set_tick_resolution(&tmr->tick, tmr->tempo, tmr->ppq);
 	tmr->running = 0;
 
 	tmr->type = SNDRV_SEQ_TIMER_ALSA;
@@ -179,7 +180,7 @@ int snd_seq_timer_set_tempo(struct snd_seq_timer * tmr, int tempo)
 	spin_lock_irqsave(&tmr->lock, flags);
 	if ((unsigned int)tempo != tmr->tempo) {
 		tmr->tempo = tempo;
-		snd_seq_timer_set_tick_resolution(tmr);
+		snd_seq_timer_set_tick_resolution(&tmr->tick, tmr->tempo, tmr->ppq);
 	}
 	spin_unlock_irqrestore(&tmr->lock, flags);
 	return 0;
@@ -204,7 +205,7 @@ int snd_seq_timer_set_ppq(struct snd_seq_timer * tmr, int ppq)
 	}
 
 	tmr->ppq = ppq;
-	snd_seq_timer_set_tick_resolution(tmr);
+	snd_seq_timer_set_tick_resolution(&tmr->tick, tmr->tempo, tmr->ppq);
 	spin_unlock_irqrestore(&tmr->lock, flags);
 	return 0;
 }

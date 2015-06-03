@@ -6,18 +6,6 @@
  *
  * This file is released under GPL v2.
  *
- * **** WARNING ****
- *
- * This driver never worked properly and unfortunately data corruption is
- * relatively common.  There isn't anyone working on the driver and there's
- * no support from the vendor.  Do not use this driver in any production
- * environment.
- *
- * http://thread.gmane.org/gmane.linux.debian.devel.bugs.rc/378525/focus=54491
- * https://bugzilla.kernel.org/show_bug.cgi?id=60565
- *
- * *****************
- *
  * This controller is eccentric and easily locks up if something isn't
  * right.  Documentation is available at initio's website but it only
  * documents registers (not programming model).
@@ -51,7 +39,6 @@
  * happy to assist.
  */
 
-#include <linux/gfp.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/pci.h>
@@ -408,8 +395,9 @@ static void inic_host_intr(struct ata_port *ap)
 	}
 
  spurious:
-	ata_port_warn(ap, "unhandled interrupt: cmd=0x%x irq_stat=0x%x idma_stat=0x%x\n",
-		      qc ? qc->tf.command : 0xff, irq_stat, idma_stat);
+	ata_port_printk(ap, KERN_WARNING, "unhandled interrupt: "
+			"cmd=0x%x irq_stat=0x%x idma_stat=0x%x\n",
+			qc ? qc->tf.command : 0xff, irq_stat, idma_stat);
 }
 
 static irqreturn_t inic_interrupt(int irq, void *dev_instance)
@@ -426,11 +414,22 @@ static irqreturn_t inic_interrupt(int irq, void *dev_instance)
 
 	spin_lock(&host->lock);
 
-	for (i = 0; i < NR_PORTS; i++)
-		if (host_irq_stat & (HIRQ_PORT0 << i)) {
-			inic_host_intr(host->ports[i]);
+	for (i = 0; i < NR_PORTS; i++) {
+		struct ata_port *ap = host->ports[i];
+
+		if (!(host_irq_stat & (HIRQ_PORT0 << i)))
+			continue;
+
+		if (likely(ap && !(ap->flags & ATA_FLAG_DISABLED))) {
+			inic_host_intr(ap);
 			handled++;
+		} else {
+			if (ata_ratelimit())
+				dev_printk(KERN_ERR, host->dev, "interrupt "
+					   "from disabled port %d (0x%x)\n",
+					   i, host_irq_stat);
 		}
+	}
 
 	spin_unlock(&host->lock);
 
@@ -625,14 +624,13 @@ static int inic_hardreset(struct ata_link *link, unsigned int *class,
 
 	writew(IDMA_CTL_RST_ATA, idma_ctl);
 	readw(idma_ctl);	/* flush */
-	ata_msleep(ap, 1);
+	msleep(1);
 	writew(0, idma_ctl);
 
 	rc = sata_link_resume(link, timing, deadline);
 	if (rc) {
-		ata_link_warn(link,
-			      "failed to resume link after reset (errno=%d)\n",
-			      rc);
+		ata_link_printk(link, KERN_WARNING, "failed to resume "
+				"link after reset (errno=%d)\n", rc);
 		return rc;
 	}
 
@@ -644,9 +642,8 @@ static int inic_hardreset(struct ata_link *link, unsigned int *class,
 		rc = ata_wait_after_reset(link, deadline, inic_check_ready);
 		/* link occupied, -ENODEV too is an error */
 		if (rc) {
-			ata_link_warn(link,
-				      "device not ready after hardreset (errno=%d)\n",
-				      rc);
+			ata_link_printk(link, KERN_WARNING, "device not ready "
+					"after hardreset (errno=%d)\n", rc);
 			return rc;
 		}
 
@@ -681,7 +678,8 @@ static void init_port(struct ata_port *ap)
 	memset(pp->pkt, 0, sizeof(struct inic_pkt));
 	memset(pp->cpb_tbl, 0, IDMA_CPB_TBL_SIZE);
 
-	/* setup CPB lookup table addresses */
+	/* setup PRD and CPB lookup table addresses */
+	writel(ap->prd_dma, port_base + PORT_PRD_ADDR);
 	writel(pp->cpb_tbl_dma, port_base + PORT_CPB_CPBLAR);
 }
 
@@ -695,6 +693,7 @@ static int inic_port_start(struct ata_port *ap)
 {
 	struct device *dev = ap->host->dev;
 	struct inic_port_priv *pp;
+	int rc;
 
 	/* alloc and initialize private data */
 	pp = devm_kzalloc(dev, sizeof(*pp), GFP_KERNEL);
@@ -703,6 +702,10 @@ static int inic_port_start(struct ata_port *ap)
 	ap->private_data = pp;
 
 	/* Alloc resources */
+	rc = ata_port_start(ap);
+	if (rc)
+		return rc;
+
 	pp->pkt = dmam_alloc_coherent(dev, sizeof(struct inic_pkt),
 				      &pp->pkt_dma, GFP_KERNEL);
 	if (!pp->pkt)
@@ -812,6 +815,7 @@ static int inic_pci_device_resume(struct pci_dev *pdev)
 
 static int inic_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 {
+	static int printed_version;
 	const struct ata_port_info *ppi[] = { &inic_port_info, NULL };
 	struct ata_host *host;
 	struct inic_host_priv *hpriv;
@@ -819,9 +823,8 @@ static int inic_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	int mmio_bar;
 	int i, rc;
 
-	ata_print_version_once(&pdev->dev, DRV_VERSION);
-
-	dev_alert(&pdev->dev, "inic162x support is broken with common data corruption issues and will be disabled by default, contact linux-ide@vger.kernel.org if in production use\n");
+	if (!printed_version++)
+		dev_printk(KERN_DEBUG, &pdev->dev, "version " DRV_VERSION "\n");
 
 	/* alloc host */
 	host = ata_host_alloc_pinfo(&pdev->dev, ppi, NR_PORTS);
@@ -860,13 +863,15 @@ static int inic_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	/* Set dma_mask.  This devices doesn't support 64bit addressing. */
 	rc = pci_set_dma_mask(pdev, DMA_BIT_MASK(32));
 	if (rc) {
-		dev_err(&pdev->dev, "32-bit DMA enable failed\n");
+		dev_printk(KERN_ERR, &pdev->dev,
+			   "32-bit DMA enable failed\n");
 		return rc;
 	}
 
 	rc = pci_set_consistent_dma_mask(pdev, DMA_BIT_MASK(32));
 	if (rc) {
-		dev_err(&pdev->dev, "32-bit consistent DMA enable failed\n");
+		dev_printk(KERN_ERR, &pdev->dev,
+			   "32-bit consistent DMA enable failed\n");
 		return rc;
 	}
 
@@ -877,13 +882,15 @@ static int inic_init_one(struct pci_dev *pdev, const struct pci_device_id *ent)
 	 */
 	rc = pci_set_dma_max_seg_size(pdev, 65536 - 512);
 	if (rc) {
-		dev_err(&pdev->dev, "failed to set the maximum segment size\n");
+		dev_printk(KERN_ERR, &pdev->dev,
+			   "failed to set the maximum segment size.\n");
 		return rc;
 	}
 
 	rc = init_controller(hpriv->mmio_base, hpriv->cached_hctl);
 	if (rc) {
-		dev_err(&pdev->dev, "failed to initialize controller\n");
+		dev_printk(KERN_ERR, &pdev->dev,
+			   "failed to initialize controller\n");
 		return rc;
 	}
 

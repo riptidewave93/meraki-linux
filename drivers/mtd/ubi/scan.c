@@ -395,7 +395,7 @@ static int compare_lebs(struct ubi_device *ubi, const struct ubi_scan_leb *seb,
 	}
 
 	err = ubi_io_read_data(ubi, buf, pnum, 0, len);
-	if (err && err != UBI_IO_BITFLIPS && !mtd_is_eccerr(err))
+	if (err && err != UBI_IO_BITFLIPS && err != -EBADMSG)
 		goto out_free_buf;
 
 	data_crc = be32_to_cpu(vid_hdr->data_crc);
@@ -789,11 +789,11 @@ static int check_corruption(struct ubi_device *ubi, struct ubi_vid_hdr *vid_hdr,
 	int err;
 
 	mutex_lock(&ubi->buf_mutex);
-	memset(ubi->peb_buf, 0x00, ubi->leb_size);
+	memset(ubi->peb_buf1, 0x00, ubi->leb_size);
 
-	err = ubi_io_read(ubi, ubi->peb_buf, pnum, ubi->leb_start,
+	err = ubi_io_read(ubi, ubi->peb_buf1, pnum, ubi->leb_start,
 			  ubi->leb_size);
-	if (err == UBI_IO_BITFLIPS || mtd_is_eccerr(err)) {
+	if (err == UBI_IO_BITFLIPS || err == -EBADMSG) {
 		/*
 		 * Bit-flips or integrity errors while reading the data area.
 		 * It is difficult to say for sure what type of corruption is
@@ -808,7 +808,7 @@ static int check_corruption(struct ubi_device *ubi, struct ubi_vid_hdr *vid_hdr,
 	if (err)
 		goto out_unlock;
 
-	if (ubi_check_pattern(ubi->peb_buf, 0xFF, ubi->leb_size))
+	if (ubi_check_pattern(ubi->peb_buf1, 0xFF, ubi->leb_size))
 		goto out_unlock;
 
 	ubi_err("PEB %d contains corrupted VID header, and the data does not "
@@ -818,7 +818,7 @@ static int check_corruption(struct ubi_device *ubi, struct ubi_vid_hdr *vid_hdr,
 	dbg_msg("hexdump of PEB %d offset %d, length %d",
 		pnum, ubi->leb_start, ubi->leb_size);
 	ubi_dbg_print_hex_dump(KERN_DEBUG, "", DUMP_PREFIX_OFFSET, 32, 1,
-			       ubi->peb_buf, ubi->leb_size, 1);
+			       ubi->peb_buf1, ubi->leb_size, 1);
 	err = 1;
 
 out_unlock:
@@ -892,6 +892,7 @@ static int process_eb(struct ubi_device *ubi, struct ubi_scan_info *si,
 
 	if (!ec_err) {
 		int image_seq;
+		int peb_size;
 
 		/* Make sure UBI version is OK */
 		if (ech->version != UBI_VERSION) {
@@ -933,6 +934,21 @@ static int process_eb(struct ubi_device *ubi, struct ubi_scan_info *si,
 		    ubi->image_seq != image_seq) {
 			ubi_err("bad image sequence number %d in PEB %d, "
 				"expected %d", image_seq, pnum, ubi->image_seq);
+			ubi_dbg_dump_ec_hdr(ech);
+			return -EINVAL;
+		}
+
+		/*
+		 * Make sure that all PEBs have the same PEB size. This
+		 * is a validity check similar in function to the image
+		 * sequence number. As this field was also added after the
+		 * on-FLASH format, a value of zero is acceptable here.
+		 */
+
+		peb_size = be32_to_cpu(ech->peb_size);
+		if (peb_size && (peb_size != ubi->peb_size)) {
+			ubi_err("bad peb size %d in PEB %d, "
+				"expected %d", peb_size, pnum, ubi->peb_size);
 			ubi_dbg_dump_ec_hdr(ech);
 			return -EINVAL;
 		}
@@ -997,7 +1013,7 @@ static int process_eb(struct ubi_device *ubi, struct ubi_scan_info *si,
 			return err;
 		goto adjust_mean_ec;
 	case UBI_IO_FF:
-		if (ec_err || bitflips)
+		if (ec_err)
 			err = add_to_list(si, pnum, ec, 1, &si->erase);
 		else
 			err = add_to_list(si, pnum, ec, 0, &si->free);
@@ -1174,7 +1190,7 @@ struct ubi_scan_info *ubi_scan(struct ubi_device *ubi)
 
 	ech = kzalloc(ubi->ec_hdr_alsize, GFP_KERNEL);
 	if (!ech)
-		goto out_si;
+		goto out_slab;
 
 	vidh = ubi_zalloc_vid_hdr(ubi, GFP_KERNEL);
 	if (!vidh)
@@ -1235,6 +1251,8 @@ out_vidh:
 	ubi_free_vid_hdr(ubi, vidh);
 out_ech:
 	kfree(ech);
+out_slab:
+	kmem_cache_destroy(si->scan_leb_slab);
 out_si:
 	ubi_scan_destroy_si(si);
 	return ERR_PTR(err);
@@ -1323,9 +1341,7 @@ void ubi_scan_destroy_si(struct ubi_scan_info *si)
 		}
 	}
 
-	if (si->scan_leb_slab)
-		kmem_cache_destroy(si->scan_leb_slab);
-
+	kmem_cache_destroy(si->scan_leb_slab);
 	kfree(si);
 }
 
@@ -1347,7 +1363,7 @@ static int paranoid_check_si(struct ubi_device *ubi, struct ubi_scan_info *si)
 	struct ubi_scan_leb *seb, *last_seb;
 	uint8_t *buf;
 
-	if (!ubi->dbg->chk_gen)
+	if (!(ubi_chk_flags & UBI_CHK_GEN))
 		return 0;
 
 	/*

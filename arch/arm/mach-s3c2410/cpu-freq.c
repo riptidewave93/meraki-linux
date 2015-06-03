@@ -1,6 +1,6 @@
 /* linux/arch/arm/mach-s3c2410/cpu-freq.c
  *
- * Copyright (c) 2006-2008 Simtec Electronics
+ * Copyright (c) 2006,2008 Simtec Electronics
  *	http://armlinux.simtec.co.uk/
  *	Ben Dooks <ben@simtec.co.uk>
  *
@@ -16,7 +16,7 @@
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/cpufreq.h>
-#include <linux/device.h>
+#include <linux/sysdev.h>
 #include <linux/clk.h>
 #include <linux/err.h>
 #include <linux/io.h>
@@ -115,27 +115,24 @@ static struct s3c_cpufreq_info s3c2410_cpufreq_info = {
 	.debug_io_show	= s3c_cpufreq_debugfs_call(s3c2410_iotiming_debugfs),
 };
 
-static int s3c2410_cpufreq_add(struct device *dev,
-			       struct subsys_interface *sif)
+static int s3c2410_cpufreq_add(struct sys_device *sysdev)
 {
 	return s3c_cpufreq_register(&s3c2410_cpufreq_info);
 }
 
-static struct subsys_interface s3c2410_cpufreq_interface = {
-	.name		= "s3c2410_cpufreq",
-	.subsys		= &s3c2410_subsys,
-	.add_dev	= s3c2410_cpufreq_add,
+static struct sysdev_driver s3c2410_cpufreq_driver = {
+	.add		= s3c2410_cpufreq_add,
 };
 
 static int __init s3c2410_cpufreq_init(void)
 {
-	return subsys_interface_register(&s3c2410_cpufreq_interface);
+	return sysdev_driver_register(&s3c2410_sysclass,
+				      &s3c2410_cpufreq_driver);
 }
 
 arch_initcall(s3c2410_cpufreq_init);
 
-static int s3c2410a_cpufreq_add(struct device *dev,
-				struct subsys_interface *sif)
+static int s3c2410a_cpufreq_add(struct sys_device *sysdev)
 {
 	/* alter the maximum freq settings for S3C2410A. If a board knows
 	 * it only has a maximum of 200, then it should register its own
@@ -146,18 +143,17 @@ static int s3c2410a_cpufreq_add(struct device *dev,
 	s3c2410_cpufreq_info.max.pclk =  66500000;
 	s3c2410_cpufreq_info.name = "s3c2410a";
 
-	return s3c2410_cpufreq_add(dev, sif);
+	return s3c2410_cpufreq_add(sysdev);
 }
 
-static struct subsys_interface s3c2410a_cpufreq_interface = {
-	.name		= "s3c2410a_cpufreq",
-	.subsys		= &s3c2410a_subsys,
-	.add_dev	= s3c2410a_cpufreq_add,
+static struct sysdev_driver s3c2410a_cpufreq_driver = {
+	.add		= s3c2410a_cpufreq_add,
 };
 
 static int __init s3c2410a_cpufreq_init(void)
 {
-	return subsys_interface_register(&s3c2410a_cpufreq_interface);
+	return sysdev_driver_register(&s3c2410a_sysclass,
+				      &s3c2410a_cpufreq_driver);
 }
 
 arch_initcall(s3c2410a_cpufreq_init);

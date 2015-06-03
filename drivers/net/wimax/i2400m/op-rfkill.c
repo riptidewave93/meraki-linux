@@ -27,14 +27,13 @@
  * - report changes in the HW RF Kill switch [with
  *   wimax_rfkill_{sw,hw}_report(), which happens when we detect those
  *   indications coming through hardware reports]. We also do it on
- *   initialization to let the stack know the initial HW state.
+ *   initialization to let the stack know the intial HW state.
  *
  * - implement indications from the stack to change the SW RF Kill
  *   switch (coming from sysfs, the wimax stack or user space).
  */
 #include "i2400m.h"
 #include <linux/wimax/i2400m.h>
-#include <linux/slab.h>
 
 
 
@@ -73,7 +72,7 @@ int i2400m_radio_is(struct i2400m *i2400m, enum wimax_rf_state state)
  * Generic Netlink will call this function when a message is sent from
  * userspace to change the software RF-Kill switch status.
  *
- * This function will set the device's software RF-Kill switch state to
+ * This function will set the device's sofware RF-Kill switch state to
  * match what is requested.
  *
  * NOTE: the i2400m has a strict state machine; we can only set the
@@ -91,7 +90,7 @@ int i2400m_op_rfkill_sw_toggle(struct wimax_dev *wimax_dev,
 	struct {
 		struct i2400m_l3l4_hdr hdr;
 		struct i2400m_tlv_rf_operation sw_rf;
-	} __packed *cmd;
+	} __attribute__((packed)) *cmd;
 	char strerr[32];
 
 	d_fnstart(4, dev, "(wimax_dev %p state %d)\n", wimax_dev, state);

@@ -19,6 +19,7 @@
 
 #include <asm/io.h>
 #include <asm/machdep.h>
+#include <asm/system.h>
 #include <asm/time.h>
 #include <asm/8xx_immap.h>
 #include <asm/cpm1.h>

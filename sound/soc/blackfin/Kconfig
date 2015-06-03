@@ -1,7 +1,6 @@
 config SND_BF5XX_I2S
 	tristate "SoC I2S Audio for the ADI BF5xx chip"
 	depends on BLACKFIN
-	select SND_BF5XX_SOC_SPORT
 	help
 	  Say Y or M if you want to add support for codecs attached to
 	  the Blackfin SPORT (synchronous serial ports) interface in I2S
@@ -10,48 +9,12 @@ config SND_BF5XX_I2S
 
 config SND_BF5XX_SOC_SSM2602
 	tristate "SoC SSM2602 Audio support for BF52x ezkit"
-	depends on SND_BF5XX_I2S && (SPI_MASTER || I2C)
-	select SND_BF5XX_SOC_I2S
-	select SND_SOC_SSM2602
-	help
-	  Say Y if you want to add support for SoC audio on BF527-EZKIT.
-
-config SND_SOC_BFIN_EVAL_ADAU1701
-	tristate "Support for the EVAL-ADAU1701MINIZ board on Blackfin eval boards"
 	depends on SND_BF5XX_I2S
 	select SND_BF5XX_SOC_I2S
-	select SND_SOC_ADAU1701
+	select SND_SOC_SSM2602
 	select I2C
 	help
-	  Say Y if you want to add support for the Analog Devices EVAL-ADAU1701MINIZ
-	  board connected to one of the Blackfin evaluation boards like the
-	  BF5XX-STAMP or BF5XX-EZKIT.
-
-config SND_SOC_BFIN_EVAL_ADAU1373
-	tristate "Support for the EVAL-ADAU1373 board on Blackfin eval boards"
-	depends on SND_BF5XX_I2S && I2C
-	select SND_BF5XX_SOC_I2S
-	select SND_SOC_ADAU1373
-	help
-	  Say Y if you want to add support for the Analog Devices EVAL-ADAU1373
-	  board connected to one of the Blackfin evaluation boards like the
-	  BF5XX-STAMP or BF5XX-EZKIT.
-
-	  Note: This driver assumes that first ADAU1373 DAI is connected to the
-	  first SPORT port on the BF5XX board.
-
-config SND_SOC_BFIN_EVAL_ADAV80X
-	tristate "Support for the EVAL-ADAV80X boards on Blackfin eval boards"
-	depends on SND_BF5XX_I2S && (SPI_MASTER || I2C)
-	select SND_BF5XX_SOC_I2S
-	select SND_SOC_ADAV80X
-	help
-	  Say Y if you want to add support for the Analog Devices EVAL-ADAV801 or
-	  EVAL-ADAV803 board connected to one of the Blackfin evaluation boards
-	  like the BF5XX-STAMP or BF5XX-EZKIT.
-
-	  Note: This driver assumes that the ADAV80X digital record and playback
-	  interfaces are connected to the first SPORT port on the BF5XX board.
+	  Say Y if you want to add support for SoC audio on BF527-EZKIT.
 
 config SND_BF5XX_SOC_AD73311
 	tristate "SoC AD73311 Audio support for Blackfin"
@@ -72,7 +35,6 @@ config SND_BFIN_AD73311_SE
 config SND_BF5XX_TDM
 	tristate "SoC I2S(TDM mode) Audio for the ADI BF5xx chip"
 	depends on (BLACKFIN && SND_SOC)
-	select SND_BF5XX_SOC_SPORT
 	help
 	  Say Y or M if you want to add support for codecs attached to
 	  the Blackfin SPORT (synchronous serial ports) interface in TDM
@@ -87,22 +49,17 @@ config SND_BF5XX_SOC_AD1836
 	help
 	  Say Y if you want to add support for SoC audio on BF5xx STAMP/EZKIT.
 
-config SND_BF5XX_SOC_AD193X
-	tristate "SoC AD193X Audio support for Blackfin"
+config SND_BF5XX_SOC_AD1938
+	tristate "SoC AD1938 Audio support for Blackfin"
 	depends on SND_BF5XX_TDM
 	select SND_BF5XX_SOC_TDM
-	select SND_SOC_AD193X
+	select SND_SOC_AD1938
 	help
-	  Say Y if you want to add support for AD193X codec on Blackfin.
-	  This driver supports AD1936, AD1937, AD1938 and AD1939.
+	  Say Y if you want to add support for AD1938 codec on Blackfin.
 
 config SND_BF5XX_AC97
 	tristate "SoC AC97 Audio for the ADI BF5xx chip"
 	depends on BLACKFIN
-	select AC97_BUS
-	select SND_SOC_AC97_BUS
-	select SND_BF5XX_SOC_SPORT
-	select SND_BF5XX_SOC_AC97
 	help
 	  Say Y or M if you want to add support for codecs attached to
 	  the Blackfin SPORT (synchronous serial ports) interface in slot 16
@@ -147,29 +104,29 @@ config SND_BF5XX_RESET_GPIO_NUM
 	  Set the correct GPIO for RESET the sound chip.
 
 config SND_BF5XX_SOC_AD1980
-	tristate "SoC AD1980/1 Audio support for BF5xx (Obsolete)"
+	tristate "SoC AD1980/1 Audio support for BF5xx"
 	depends on SND_BF5XX_AC97
 	select SND_BF5XX_SOC_AC97
 	select SND_SOC_AD1980
 	help
 	  Say Y if you want to add support for SoC audio on BF5xx STAMP/EZKIT.
 
-	  Warning:
-	  Because Analog Devices Inc. discontinued the ad1980 sound chip since
-	  Sep. 2009, this ad1980 driver is not maintained, tested and supported
-	  by ADI now.
-
 config SND_BF5XX_SOC_SPORT
 	tristate
 
 config SND_BF5XX_SOC_I2S
 	tristate
+	select SND_BF5XX_SOC_SPORT
 
 config SND_BF5XX_SOC_TDM
 	tristate
+	select SND_BF5XX_SOC_SPORT
 
 config SND_BF5XX_SOC_AC97
 	tristate
+	select AC97_BUS
+	select SND_SOC_AC97_BUS
+	select SND_BF5XX_SOC_SPORT
 
 config SND_BF5XX_SPORT_NUM
 	int "Set a SPORT for Sound chip"

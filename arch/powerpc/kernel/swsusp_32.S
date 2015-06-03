@@ -143,7 +143,7 @@ END_FTR_SECTION_IFSET(CPU_FTR_ALTIVEC)
 
 	/* Disable MSR:DR to make sure we don't take a TLB or
 	 * hash miss during the copy, as our hash table will
-	 * for a while be unusable. For .text, we assume we are
+	 * for a while be unuseable. For .text, we assume we are
 	 * covered by a BAT. This works only for non-G5 at this
 	 * point. G5 will need a better approach, possibly using
 	 * a small temporary hash table filled with large mappings,
@@ -303,7 +303,7 @@ END_MMU_FTR_SECTION_IFSET(MMU_FTR_USE_HIGH_BATS)
 	lis	r4,0x1000
 1:	addic.	r4,r4,-0x1000
 	tlbie	r4
-	bgt	1b
+	blt	1b
 	sync
 
 	/* restore the MSR and turn on the MMU */

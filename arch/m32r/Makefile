@@ -12,8 +12,8 @@ OBJCOPYFLAGS	:= -O binary -R .note -R .comment -S
 LDFLAGS_vmlinux	:=
 
 KBUILD_CFLAGS += -pipe -fno-schedule-insns
-KBUILD_CFLAGS_KERNEL += -mmodel=medium
-KBUILD_CFLAGS_MODULE += -mmodel=large
+CFLAGS_KERNEL += -mmodel=medium
+CFLAGS_MODULE += -mmodel=large
 
 ifdef CONFIG_CHIP_VDEC2
 cflags-$(CONFIG_ISA_M32R2)	+= -DNO_FPU -Wa,-bitinst
@@ -31,7 +31,7 @@ KBUILD_AFLAGS += $(aflags-y)
 
 CHECKFLAGS	+= -D__m32r__ -D__BIG_ENDIAN__=1
 
-head-y	:= arch/m32r/kernel/head.o
+head-y	:= arch/m32r/kernel/head.o arch/m32r/kernel/init_task.o
 
 LIBGCC	:= $(shell $(CC) $(KBUILD_CFLAGS) -print-libgcc-file-name)
 

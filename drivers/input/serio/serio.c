@@ -26,16 +26,16 @@
  * Vojtech Pavlik, Simunkova 1594, Prague 8, 182 00 Czech Republic
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/stddef.h>
 #include <linux/module.h>
 #include <linux/serio.h>
 #include <linux/errno.h>
+#include <linux/wait.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
-#include <linux/workqueue.h>
+#include <linux/kthread.h>
 #include <linux/mutex.h>
+#include <linux/freezer.h>
 
 MODULE_AUTHOR("Vojtech Pavlik <vojtech@ucw.cz>");
 MODULE_DESCRIPTION("Serio abstraction core");
@@ -43,7 +43,7 @@ MODULE_LICENSE("GPL");
 
 /*
  * serio_mutex protects entire serio subsystem and is taken every time
- * serio port or driver registered or unregistered.
+ * serio port or driver registrered or unregistered.
  */
 static DEFINE_MUTEX(serio_mutex);
 
@@ -54,7 +54,7 @@ static struct bus_type serio_bus;
 static void serio_add_port(struct serio *serio);
 static int serio_reconnect_port(struct serio *serio);
 static void serio_disconnect_port(struct serio *serio);
-static void serio_reconnect_subtree(struct serio *serio);
+static void serio_reconnect_chain(struct serio *serio);
 static void serio_attach_driver(struct serio_driver *drv);
 
 static int serio_connect_driver(struct serio *serio, struct serio_driver *drv)
@@ -119,10 +119,11 @@ static int serio_bind_driver(struct serio *serio, struct serio_driver *drv)
 
 		error = device_bind_driver(&serio->dev);
 		if (error) {
-			dev_warn(&serio->dev,
-				 "device_bind_driver() failed for %s (%s) and %s, error: %d\n",
-				 serio->phys, serio->name,
-				 drv->description, error);
+			printk(KERN_WARNING
+				"serio: device_bind_driver() failed "
+				"for %s (%s) and %s, error: %d\n",
+				serio->phys, serio->name,
+				drv->description, error);
 			serio_disconnect_driver(serio);
 			serio->dev.driver = NULL;
 			return error;
@@ -137,9 +138,9 @@ static void serio_find_driver(struct serio *serio)
 
 	error = device_attach(&serio->dev);
 	if (error < 0)
-		dev_warn(&serio->dev,
-			 "device_attach() failed for %s (%s), error: %d\n",
-			 serio->phys, serio->name, error);
+		printk(KERN_WARNING
+			"serio: device_attach() failed for %s (%s), error: %d\n",
+			serio->phys, serio->name, error);
 }
 
 
@@ -150,7 +151,7 @@ static void serio_find_driver(struct serio *serio)
 enum serio_event_type {
 	SERIO_RESCAN_PORT,
 	SERIO_RECONNECT_PORT,
-	SERIO_RECONNECT_SUBTREE,
+	SERIO_RECONNECT_CHAIN,
 	SERIO_REGISTER_PORT,
 	SERIO_ATTACH_DRIVER,
 };
@@ -164,96 +165,8 @@ struct serio_event {
 
 static DEFINE_SPINLOCK(serio_event_lock);	/* protects serio_event_list */
 static LIST_HEAD(serio_event_list);
-
-static struct serio_event *serio_get_event(void)
-{
-	struct serio_event *event = NULL;
-	unsigned long flags;
-
-	spin_lock_irqsave(&serio_event_lock, flags);
-
-	if (!list_empty(&serio_event_list)) {
-		event = list_first_entry(&serio_event_list,
-					 struct serio_event, node);
-		list_del_init(&event->node);
-	}
-
-	spin_unlock_irqrestore(&serio_event_lock, flags);
-	return event;
-}
-
-static void serio_free_event(struct serio_event *event)
-{
-	module_put(event->owner);
-	kfree(event);
-}
-
-static void serio_remove_duplicate_events(void *object,
-					  enum serio_event_type type)
-{
-	struct serio_event *e, *next;
-	unsigned long flags;
-
-	spin_lock_irqsave(&serio_event_lock, flags);
-
-	list_for_each_entry_safe(e, next, &serio_event_list, node) {
-		if (object == e->object) {
-			/*
-			 * If this event is of different type we should not
-			 * look further - we only suppress duplicate events
-			 * that were sent back-to-back.
-			 */
-			if (type != e->type)
-				break;
-
-			list_del_init(&e->node);
-			serio_free_event(e);
-		}
-	}
-
-	spin_unlock_irqrestore(&serio_event_lock, flags);
-}
-
-static void serio_handle_event(struct work_struct *work)
-{
-	struct serio_event *event;
-
-	mutex_lock(&serio_mutex);
-
-	while ((event = serio_get_event())) {
-
-		switch (event->type) {
-
-		case SERIO_REGISTER_PORT:
-			serio_add_port(event->object);
-			break;
-
-		case SERIO_RECONNECT_PORT:
-			serio_reconnect_port(event->object);
-			break;
-
-		case SERIO_RESCAN_PORT:
-			serio_disconnect_port(event->object);
-			serio_find_driver(event->object);
-			break;
-
-		case SERIO_RECONNECT_SUBTREE:
-			serio_reconnect_subtree(event->object);
-			break;
-
-		case SERIO_ATTACH_DRIVER:
-			serio_attach_driver(event->object);
-			break;
-		}
-
-		serio_remove_duplicate_events(event->object, event->type);
-		serio_free_event(event);
-	}
-
-	mutex_unlock(&serio_mutex);
-}
-
-static DECLARE_WORK(serio_event_work, serio_handle_event);
+static DECLARE_WAIT_QUEUE_HEAD(serio_wait);
+static struct task_struct *serio_task;
 
 static int serio_queue_event(void *object, struct module *owner,
 			     enum serio_event_type event_type)
@@ -281,14 +194,17 @@ static int serio_queue_event(void *object, struct module *owner,
 
 	event = kmalloc(sizeof(struct serio_event), GFP_ATOMIC);
 	if (!event) {
-		pr_err("Not enough memory to queue event %d\n", event_type);
+		printk(KERN_ERR
+			"serio: Not enough memory to queue event %d\n",
+			event_type);
 		retval = -ENOMEM;
 		goto out;
 	}
 
 	if (!try_module_get(owner)) {
-		pr_warning("Can't get module reference, dropping event %d\n",
-			   event_type);
+		printk(KERN_WARNING
+			"serio: Can't get module reference, dropping event %d\n",
+			event_type);
 		kfree(event);
 		retval = -EINVAL;
 		goto out;
@@ -299,11 +215,114 @@ static int serio_queue_event(void *object, struct module *owner,
 	event->owner = owner;
 
 	list_add_tail(&event->node, &serio_event_list);
-	queue_work(system_long_wq, &serio_event_work);
+	wake_up(&serio_wait);
 
 out:
 	spin_unlock_irqrestore(&serio_event_lock, flags);
 	return retval;
+}
+
+static void serio_free_event(struct serio_event *event)
+{
+	module_put(event->owner);
+	kfree(event);
+}
+
+static void serio_remove_duplicate_events(struct serio_event *event)
+{
+	struct list_head *node, *next;
+	struct serio_event *e;
+	unsigned long flags;
+
+	spin_lock_irqsave(&serio_event_lock, flags);
+
+	list_for_each_safe(node, next, &serio_event_list) {
+		e = list_entry(node, struct serio_event, node);
+		if (event->object == e->object) {
+			/*
+			 * If this event is of different type we should not
+			 * look further - we only suppress duplicate events
+			 * that were sent back-to-back.
+			 */
+			if (event->type != e->type)
+				break;
+
+			list_del_init(node);
+			serio_free_event(e);
+		}
+	}
+
+	spin_unlock_irqrestore(&serio_event_lock, flags);
+}
+
+
+static struct serio_event *serio_get_event(void)
+{
+	struct serio_event *event;
+	struct list_head *node;
+	unsigned long flags;
+
+	spin_lock_irqsave(&serio_event_lock, flags);
+
+	if (list_empty(&serio_event_list)) {
+		spin_unlock_irqrestore(&serio_event_lock, flags);
+		return NULL;
+	}
+
+	node = serio_event_list.next;
+	event = list_entry(node, struct serio_event, node);
+	list_del_init(node);
+
+	spin_unlock_irqrestore(&serio_event_lock, flags);
+
+	return event;
+}
+
+static void serio_handle_event(void)
+{
+	struct serio_event *event;
+
+	mutex_lock(&serio_mutex);
+
+	/*
+	 * Note that we handle only one event here to give swsusp
+	 * a chance to freeze kseriod thread. Serio events should
+	 * be pretty rare so we are not concerned about taking
+	 * performance hit.
+	 */
+	if ((event = serio_get_event())) {
+
+		switch (event->type) {
+			case SERIO_REGISTER_PORT:
+				serio_add_port(event->object);
+				break;
+
+			case SERIO_RECONNECT_PORT:
+				serio_reconnect_port(event->object);
+				break;
+
+			case SERIO_RESCAN_PORT:
+				serio_disconnect_port(event->object);
+				serio_find_driver(event->object);
+				break;
+
+			case SERIO_RECONNECT_CHAIN:
+				serio_reconnect_chain(event->object);
+				break;
+
+			case SERIO_ATTACH_DRIVER:
+				serio_attach_driver(event->object);
+				break;
+
+			default:
+				break;
+		}
+
+		serio_remove_duplicate_events(event);
+		serio_free_event(event);
+	}
+
+	mutex_unlock(&serio_mutex);
 }
 
 /*
@@ -312,14 +331,16 @@ out:
  */
 static void serio_remove_pending_events(void *object)
 {
-	struct serio_event *event, *next;
+	struct list_head *node, *next;
+	struct serio_event *event;
 	unsigned long flags;
 
 	spin_lock_irqsave(&serio_event_lock, flags);
 
-	list_for_each_entry_safe(event, next, &serio_event_list, node) {
+	list_for_each_safe(node, next, &serio_event_list) {
+		event = list_entry(node, struct serio_event, node);
 		if (event->object == object) {
-			list_del_init(&event->node);
+			list_del_init(node);
 			serio_free_event(event);
 		}
 	}
@@ -328,10 +349,12 @@ static void serio_remove_pending_events(void *object)
 }
 
 /*
- * Locate child serio port (if any) that has not been fully registered yet.
+ * Destroy child serio port (if any) that has not been fully registered yet.
  *
- * Children are registered by driver's connect() handler so there can't be a
- * grandchild pending registration together with a child.
+ * Note that we rely on the fact that port can have only one child and therefore
+ * only one child registration request can be pending. Additionally, children
+ * are registered by driver's connect() handler so there can't be a grandchild
+ * pending registration together with a child.
  */
 static struct serio *serio_get_pending_child(struct serio *parent)
 {
@@ -354,6 +377,20 @@ static struct serio *serio_get_pending_child(struct serio *parent)
 	spin_unlock_irqrestore(&serio_event_lock, flags);
 	return child;
 }
+
+static int serio_thread(void *nothing)
+{
+	set_freezable();
+	do {
+		serio_handle_event();
+		wait_event_freezable(serio_wait,
+			kthread_should_stop() || !list_empty(&serio_event_list));
+	} while (!kthread_should_stop());
+
+	printk(KERN_DEBUG "serio: kseriod exiting\n");
+	return 0;
+}
+
 
 /*
  * Serio port operations
@@ -415,11 +452,6 @@ static struct attribute_group serio_id_attr_group = {
 	.attrs	= serio_device_id_attrs,
 };
 
-static const struct attribute_group *serio_device_attr_groups[] = {
-	&serio_id_attr_group,
-	NULL
-};
-
 static ssize_t serio_rebind_driver(struct device *dev, struct device_attribute *attr, const char *buf, size_t count)
 {
 	struct serio *serio = to_serio_port(dev);
@@ -433,15 +465,14 @@ static ssize_t serio_rebind_driver(struct device *dev, struct device_attribute *
 	if (!strncmp(buf, "none", count)) {
 		serio_disconnect_port(serio);
 	} else if (!strncmp(buf, "reconnect", count)) {
-		serio_reconnect_subtree(serio);
+		serio_reconnect_chain(serio);
 	} else if (!strncmp(buf, "rescan", count)) {
 		serio_disconnect_port(serio);
 		serio_find_driver(serio);
-		serio_remove_duplicate_events(serio, SERIO_RESCAN_PORT);
 	} else if ((drv = driver_find(buf, &serio_bus)) != NULL) {
 		serio_disconnect_port(serio);
 		error = serio_bind_driver(serio, to_serio_driver(drv));
-		serio_remove_duplicate_events(serio, SERIO_RESCAN_PORT);
+		put_driver(drv);
 	} else {
 		error = -EINVAL;
 	}
@@ -501,8 +532,6 @@ static void serio_init_port(struct serio *serio)
 	__module_get(THIS_MODULE);
 
 	INIT_LIST_HEAD(&serio->node);
-	INIT_LIST_HEAD(&serio->child_node);
-	INIT_LIST_HEAD(&serio->children);
 	spin_lock_init(&serio->lock);
 	mutex_init(&serio->drv_mutex);
 	device_initialize(&serio->dev);
@@ -510,7 +539,6 @@ static void serio_init_port(struct serio *serio)
 			(long)atomic_inc_return(&serio_no) - 1);
 	serio->dev.bus = &serio_bus;
 	serio->dev.release = serio_release_port;
-	serio->dev.groups = serio_device_attr_groups;
 	if (serio->parent) {
 		serio->dev.parent = &serio->parent->dev;
 		serio->depth = serio->parent->depth + 1;
@@ -525,36 +553,42 @@ static void serio_init_port(struct serio *serio)
  */
 static void serio_add_port(struct serio *serio)
 {
-	struct serio *parent = serio->parent;
 	int error;
 
-	if (parent) {
-		serio_pause_rx(parent);
-		list_add_tail(&serio->child_node, &parent->children);
-		serio_continue_rx(parent);
+	if (serio->parent) {
+		serio_pause_rx(serio->parent);
+		serio->parent->child = serio;
+		serio_continue_rx(serio->parent);
 	}
 
 	list_add_tail(&serio->node, &serio_list);
-
 	if (serio->start)
 		serio->start(serio);
-
 	error = device_add(&serio->dev);
 	if (error)
-		dev_err(&serio->dev,
-			"device_add() failed for %s (%s), error: %d\n",
+		printk(KERN_ERR
+			"serio: device_add() failed for %s (%s), error: %d\n",
 			serio->phys, serio->name, error);
+	else {
+		serio->registered = true;
+		error = sysfs_create_group(&serio->dev.kobj, &serio_id_attr_group);
+		if (error)
+			printk(KERN_ERR
+				"serio: sysfs_create_group() failed for %s (%s), error: %d\n",
+				serio->phys, serio->name, error);
+	}
 }
 
 /*
- * serio_destroy_port() completes unregistration process and removes
+ * serio_destroy_port() completes deregistration process and removes
  * port from the system
  */
 static void serio_destroy_port(struct serio *serio)
 {
 	struct serio *child;
 
-	while ((child = serio_get_pending_child(serio)) != NULL) {
+	child = serio_get_pending_child(serio);
+	if (child) {
 		serio_remove_pending_events(child);
 		put_device(&child->dev);
 	}
@@ -564,13 +598,16 @@ static void serio_destroy_port(struct serio *serio)
 
 	if (serio->parent) {
 		serio_pause_rx(serio->parent);
-		list_del_init(&serio->child_node);
+		serio->parent->child = NULL;
 		serio_continue_rx(serio->parent);
 		serio->parent = NULL;
 	}
 
-	if (device_is_registered(&serio->dev))
+	if (serio->registered) {
+		sysfs_remove_group(&serio->dev.kobj, &serio_id_attr_group);
 		device_del(&serio->dev);
+		serio->registered = false;
+	}
 
 	list_del_init(&serio->node);
 	serio_remove_pending_events(serio);
@@ -596,82 +633,46 @@ static int serio_reconnect_port(struct serio *serio)
 }
 
 /*
- * Reconnect serio port and all its children (re-initialize attached
- * devices).
+ * Reconnect serio port and all its children (re-initialize attached devices)
  */
-static void serio_reconnect_subtree(struct serio *root)
+static void serio_reconnect_chain(struct serio *serio)
 {
-	struct serio *s = root;
-	int error;
-
 	do {
-		error = serio_reconnect_port(s);
-		if (!error) {
-			/*
-			 * Reconnect was successful, move on to do the
-			 * first child.
-			 */
-			if (!list_empty(&s->children)) {
-				s = list_first_entry(&s->children,
-						     struct serio, child_node);
-				continue;
-			}
+		if (serio_reconnect_port(serio)) {
+			/* Ok, old children are now gone, we are done */
+			break;
 		}
-
-		/*
-		 * Either it was a leaf node or reconnect failed and it
-		 * became a leaf node. Continue reconnecting starting with
-		 * the next sibling of the parent node.
-		 */
-		while (s != root) {
-			struct serio *parent = s->parent;
-
-			if (!list_is_last(&s->child_node, &parent->children)) {
-				s = list_entry(s->child_node.next,
-					       struct serio, child_node);
-				break;
-			}
-
-			s = parent;
-		}
-	} while (s != root);
+		serio = serio->child;
+	} while (serio);
 }
 
 /*
  * serio_disconnect_port() unbinds a port from its driver. As a side effect
- * all children ports are unbound and destroyed.
+ * all child ports are unbound and destroyed.
  */
 static void serio_disconnect_port(struct serio *serio)
 {
-	struct serio *s = serio;
+	struct serio *s, *parent;
 
-	/*
-	 * Children ports should be disconnected and destroyed
-	 * first; we travel the tree in depth-first order.
-	 */
-	while (!list_empty(&serio->children)) {
-
-		/* Locate a leaf */
-		while (!list_empty(&s->children))
-			s = list_first_entry(&s->children,
-					     struct serio, child_node);
-
+	if (serio->child) {
 		/*
-		 * Prune this leaf node unless it is the one we
-		 * started with.
+		 * Children ports should be disconnected and destroyed
+		 * first, staring with the leaf one, since we don't want
+		 * to do recursion
 		 */
-		if (s != serio) {
-			struct serio *parent = s->parent;
+		for (s = serio; s->child; s = s->child)
+			/* empty */;
+
+		do {
+			parent = s->parent;
 
 			device_release_driver(&s->dev);
 			serio_destroy_port(s);
-
-			s = parent;
-		}
+		} while ((s = parent) != serio);
 	}
 
 	/*
-	 * OK, no children left, now disconnect this port.
+	 * Ok, no children left, now disconnect this port
 	 */
 	device_release_driver(&serio->dev);
 }
@@ -684,7 +685,7 @@ EXPORT_SYMBOL(serio_rescan);
 
 void serio_reconnect(struct serio *serio)
 {
-	serio_queue_event(serio, NULL, SERIO_RECONNECT_SUBTREE);
+	serio_queue_event(serio, NULL, SERIO_RECONNECT_CHAIN);
 }
 EXPORT_SYMBOL(serio_reconnect);
 
@@ -712,16 +713,14 @@ void serio_unregister_port(struct serio *serio)
 EXPORT_SYMBOL(serio_unregister_port);
 
 /*
- * Safely unregisters children ports if they are present.
+ * Safely unregisters child port if one is present.
  */
 void serio_unregister_child_port(struct serio *serio)
 {
-	struct serio *s, *next;
-
 	mutex_lock(&serio_mutex);
-	list_for_each_entry_safe(s, next, &serio->children, child_node) {
-		serio_disconnect_port(s);
-		serio_destroy_port(s);
+	if (serio->child) {
+		serio_disconnect_port(serio->child);
+		serio_destroy_port(serio->child);
 	}
 	mutex_unlock(&serio_mutex);
 }
@@ -806,8 +805,9 @@ static void serio_attach_driver(struct serio_driver *drv)
 
 	error = driver_attach(&drv->driver);
 	if (error)
-		pr_warning("driver_attach() failed for %s with error %d\n",
-			   drv->driver.name, error);
+		printk(KERN_WARNING
+			"serio: driver_attach() failed for %s with error %d\n",
+			drv->driver.name, error);
 }
 
 int __serio_register_driver(struct serio_driver *drv, struct module *owner, const char *mod_name)
@@ -827,7 +827,8 @@ int __serio_register_driver(struct serio_driver *drv, struct module *owner, cons
 
 	error = driver_register(&drv->driver);
 	if (error) {
-		pr_err("driver_register() failed for %s, error: %d\n",
+		printk(KERN_ERR
+			"serio: driver_register() failed for %s, error: %d\n",
 			drv->driver.name, error);
 		return error;
 	}
@@ -993,7 +994,7 @@ irqreturn_t serio_interrupt(struct serio *serio,
 
         if (likely(serio->drv)) {
                 ret = serio->drv->interrupt(serio, data, dfl);
-	} else if (!dfl && device_is_registered(&serio->dev)) {
+	} else if (!dfl && serio->registered) {
 		serio_rescan(serio);
 		ret = IRQ_HANDLED;
 	}
@@ -1024,7 +1025,15 @@ static int __init serio_init(void)
 
 	error = bus_register(&serio_bus);
 	if (error) {
-		pr_err("Failed to register serio bus, error: %d\n", error);
+		printk(KERN_ERR "serio: failed to register serio bus, error: %d\n", error);
+		return error;
+	}
+
+	serio_task = kthread_run(serio_thread, NULL, "kseriod");
+	if (IS_ERR(serio_task)) {
+		bus_unregister(&serio_bus);
+		error = PTR_ERR(serio_task);
+		printk(KERN_ERR "serio: Failed to start kseriod, error: %d\n", error);
 		return error;
 	}
 
@@ -1034,12 +1043,7 @@ static int __init serio_init(void)
 static void __exit serio_exit(void)
 {
 	bus_unregister(&serio_bus);
-
-	/*
-	 * There should not be any outstanding events but work may
-	 * still be scheduled so simply cancel it.
-	 */
-	cancel_work_sync(&serio_event_work);
+	kthread_stop(serio_task);
 }
 
 subsys_initcall(serio_init);

@@ -7,7 +7,6 @@
 #include "linux/interrupt.h"
 #include "linux/list.h"
 #include "linux/mutex.h"
-#include "linux/slab.h"
 #include "linux/workqueue.h"
 #include "asm/atomic.h"
 #include "init.h"
@@ -100,7 +99,7 @@ static int port_accept(struct port_list *port)
 		  .port 	= port });
 
 	if (um_request_irq(TELNETD_IRQ, socket[0], IRQ_READ, pipe_interrupt,
-			  IRQF_SHARED | IRQF_SAMPLE_RANDOM,
+			  IRQF_DISABLED | IRQF_SHARED | IRQF_SAMPLE_RANDOM,
 			  "telnetd", conn)) {
 		printk(KERN_ERR "port_accept : failed to get IRQ for "
 		       "telnetd\n");
@@ -184,7 +183,7 @@ void *port_data(int port_num)
 	}
 
 	if (um_request_irq(ACCEPT_IRQ, fd, IRQ_READ, port_interrupt,
-			  IRQF_SHARED | IRQF_SAMPLE_RANDOM,
+			  IRQF_DISABLED | IRQF_SHARED | IRQF_SAMPLE_RANDOM,
 			  "port", port)) {
 		printk(KERN_ERR "Failed to get IRQ for port %d\n", port_num);
 		goto out_close;

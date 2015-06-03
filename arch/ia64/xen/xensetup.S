@@ -7,13 +7,14 @@
 #include <asm/processor.h>
 #include <asm/asmmacro.h>
 #include <asm/pgtable.h>
+#include <asm/system.h>
 #include <asm/paravirt.h>
 #include <asm/xen/privop.h>
 #include <linux/elfnote.h>
 #include <linux/init.h>
 #include <xen/interface/elfnote.h>
 
-	.section .data..read_mostly
+	.section .data.read_mostly
 	.align 8
 	.global xen_domain_type
 xen_domain_type:

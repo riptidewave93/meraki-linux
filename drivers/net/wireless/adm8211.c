@@ -16,16 +16,13 @@
  */
 
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/if.h>
 #include <linux/skbuff.h>
-#include <linux/slab.h>
 #include <linux/etherdevice.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/crc32.h>
 #include <linux/eeprom_93cx6.h>
-#include <linux/module.h>
 #include <net/mac80211.h>
 
 #include "adm8211.h"
@@ -42,7 +39,7 @@ static unsigned int rx_ring_size __read_mostly = 16;
 module_param(tx_ring_size, uint, 0);
 module_param(rx_ring_size, uint, 0);
 
-static DEFINE_PCI_DEVICE_TABLE(adm8211_pci_id_table) = {
+static struct pci_device_id adm8211_pci_id_table[] __devinitdata = {
 	/* ADMtek ADM8211 */
 	{ PCI_DEVICE(0x10B7, 0x6000) }, /* 3Com 3CRSHPW796 */
 	{ PCI_DEVICE(0x1200, 0x8201) }, /* ? */
@@ -305,6 +302,18 @@ static int adm8211_get_stats(struct ieee80211_hw *dev,
 	return 0;
 }
 
+static int adm8211_get_tx_stats(struct ieee80211_hw *dev,
+				struct ieee80211_tx_queue_stats *stats)
+{
+	struct adm8211_priv *priv = dev->priv;
+
+	stats[0].len = priv->cur_tx - priv->dirty_tx;
+	stats[0].limit = priv->tx_ring_size - 2;
+	stats[0].count = priv->dirty_tx;
+
+	return 0;
+}
+
 static void adm8211_interrupt_tci(struct ieee80211_hw *dev)
 {
 	struct adm8211_priv *priv = dev->priv;
@@ -375,8 +384,8 @@ static void adm8211_interrupt_rci(struct ieee80211_hw *dev)
 		pktlen = status & RDES0_STATUS_FL;
 		if (pktlen > RX_PKT_SIZE) {
 			if (net_ratelimit())
-				wiphy_debug(dev->wiphy, "frame too long (%d)\n",
-					    pktlen);
+				printk(KERN_DEBUG "%s: frame too long (%d)\n",
+				       wiphy_name(dev->wiphy), pktlen);
 			pktlen = RX_PKT_SIZE;
 		}
 
@@ -456,10 +465,10 @@ static void adm8211_interrupt_rci(struct ieee80211_hw *dev)
 
 static irqreturn_t adm8211_interrupt(int irq, void *dev_id)
 {
-#define ADM8211_INT(x)						\
-do {								\
-	if (unlikely(stsr & ADM8211_STSR_ ## x))		\
-		wiphy_debug(dev->wiphy, "%s\n", #x);		\
+#define ADM8211_INT(x)							   \
+do {									   \
+	if (unlikely(stsr & ADM8211_STSR_ ## x))			   \
+		printk(KERN_DEBUG "%s: " #x "\n", wiphy_name(dev->wiphy)); \
 } while (0)
 
 	struct ieee80211_hw *dev = dev_id;
@@ -572,9 +581,9 @@ static int adm8211_write_bbp(struct ieee80211_hw *dev, u8 addr, u8 data)
 	}
 
 	if (timeout == 0) {
-		wiphy_debug(dev->wiphy,
-			    "adm8211_write_bbp(%d,%d) failed prewrite (reg=0x%08x)\n",
-			    addr, data, reg);
+		printk(KERN_DEBUG "%s: adm8211_write_bbp(%d,%d) failed"
+		       " prewrite (reg=0x%08x)\n",
+		       wiphy_name(dev->wiphy), addr, data, reg);
 		return -ETIMEDOUT;
 	}
 
@@ -607,9 +616,9 @@ static int adm8211_write_bbp(struct ieee80211_hw *dev, u8 addr, u8 data)
 	if (timeout == 0) {
 		ADM8211_CSR_WRITE(BBPCTL, ADM8211_CSR_READ(BBPCTL) &
 				  ~ADM8211_BBPCTL_WR);
-		wiphy_debug(dev->wiphy,
-			    "adm8211_write_bbp(%d,%d) failed postwrite (reg=0x%08x)\n",
-			    addr, data, reg);
+		printk(KERN_DEBUG "%s: adm8211_write_bbp(%d,%d) failed"
+		       " postwrite (reg=0x%08x)\n",
+		       wiphy_name(dev->wiphy), addr, data, reg);
 		return -ETIMEDOUT;
 	}
 
@@ -677,8 +686,8 @@ static int adm8211_rf_set_channel(struct ieee80211_hw *dev, unsigned int chan)
 		break;
 
 	default:
-		wiphy_debug(dev->wiphy, "unsupported transceiver type %d\n",
-			    priv->transceiver_type);
+		printk(KERN_DEBUG "%s: unsupported transceiver type %d\n",
+		       wiphy_name(dev->wiphy), priv->transceiver_type);
 		break;
 	}
 
@@ -734,8 +743,8 @@ static int adm8211_rf_set_channel(struct ieee80211_hw *dev, unsigned int chan)
 
 	/* Nothing to do for ADMtek BBP */
 	} else if (priv->bbp_type != ADM8211_TYPE_ADMTEK)
-		wiphy_debug(dev->wiphy, "unsupported BBP type %d\n",
-			    priv->bbp_type);
+		printk(KERN_DEBUG "%s: unsupported BBP type %d\n",
+		       wiphy_name(dev->wiphy), priv->bbp_type);
 
 	ADM8211_RESTORE();
 
@@ -1029,12 +1038,13 @@ static int adm8211_hw_init_bbp(struct ieee80211_hw *dev)
 			break;
 
 		default:
-			wiphy_debug(dev->wiphy, "unsupported transceiver %d\n",
-				    priv->transceiver_type);
+			printk(KERN_DEBUG "%s: unsupported transceiver %d\n",
+			       wiphy_name(dev->wiphy), priv->transceiver_type);
 			break;
 		}
 	} else
-		wiphy_debug(dev->wiphy, "unsupported BBP %d\n", priv->bbp_type);
+		printk(KERN_DEBUG "%s: unsupported BBP %d\n",
+		       wiphy_name(dev->wiphy), priv->bbp_type);
 
 	ADM8211_CSR_WRITE(SYNRF, 0);
 
@@ -1250,8 +1260,7 @@ static int adm8211_hw_reset(struct ieee80211_hw *dev)
 	return 0;
 }
 
-static u64 adm8211_get_tsft(struct ieee80211_hw *dev,
-			    struct ieee80211_vif *vif)
+static u64 adm8211_get_tsft(struct ieee80211_hw *dev)
 {
 	struct adm8211_priv *priv = dev->priv;
 	u32 tsftl;
@@ -1320,19 +1329,21 @@ static void adm8211_bss_info_changed(struct ieee80211_hw *dev,
 }
 
 static u64 adm8211_prepare_multicast(struct ieee80211_hw *hw,
-				     struct netdev_hw_addr_list *mc_list)
+				     int mc_count, struct dev_addr_list *mclist)
 {
-	unsigned int bit_nr;
+	unsigned int bit_nr, i;
 	u32 mc_filter[2];
-	struct netdev_hw_addr *ha;
 
 	mc_filter[1] = mc_filter[0] = 0;
 
-	netdev_hw_addr_list_for_each(ha, mc_list) {
-		bit_nr = ether_crc(ETH_ALEN, ha->addr) >> 26;
+	for (i = 0; i < mc_count; i++) {
+		if (!mclist)
+			break;
+		bit_nr = ether_crc(ETH_ALEN, mclist->dmi_addr) >> 26;
 
 		bit_nr &= 0x3F;
 		mc_filter[bit_nr >> 5] |= 1 << (bit_nr & 31);
+		mclist = mclist->next;
 	}
 
 	return mc_filter[0] | ((u64)(mc_filter[1]) << 32);
@@ -1389,15 +1400,15 @@ static void adm8211_configure_filter(struct ieee80211_hw *dev,
 }
 
 static int adm8211_add_interface(struct ieee80211_hw *dev,
-				 struct ieee80211_vif *vif)
+				 struct ieee80211_if_init_conf *conf)
 {
 	struct adm8211_priv *priv = dev->priv;
 	if (priv->mode != NL80211_IFTYPE_MONITOR)
 		return -EOPNOTSUPP;
 
-	switch (vif->type) {
+	switch (conf->type) {
 	case NL80211_IFTYPE_STATION:
-		priv->mode = vif->type;
+		priv->mode = conf->type;
 		break;
 	default:
 		return -EOPNOTSUPP;
@@ -1405,8 +1416,8 @@ static int adm8211_add_interface(struct ieee80211_hw *dev,
 
 	ADM8211_IDLE();
 
-	ADM8211_CSR_WRITE(PAR0, le32_to_cpu(*(__le32 *)vif->addr));
-	ADM8211_CSR_WRITE(PAR1, le16_to_cpu(*(__le16 *)(vif->addr + 4)));
+	ADM8211_CSR_WRITE(PAR0, le32_to_cpu(*(__le32 *)conf->mac_addr));
+	ADM8211_CSR_WRITE(PAR1, le16_to_cpu(*(__le16 *)(conf->mac_addr + 4)));
 
 	adm8211_update_mode(dev);
 
@@ -1416,7 +1427,7 @@ static int adm8211_add_interface(struct ieee80211_hw *dev,
 }
 
 static void adm8211_remove_interface(struct ieee80211_hw *dev,
-				     struct ieee80211_vif *vif)
+				     struct ieee80211_if_init_conf *conf)
 {
 	struct adm8211_priv *priv = dev->priv;
 	priv->mode = NL80211_IFTYPE_MONITOR;
@@ -1511,13 +1522,15 @@ static int adm8211_start(struct ieee80211_hw *dev)
 	/* Power up MAC and RF chips */
 	retval = adm8211_hw_reset(dev);
 	if (retval) {
-		wiphy_err(dev->wiphy, "hardware reset failed\n");
+		printk(KERN_ERR "%s: hardware reset failed\n",
+		       wiphy_name(dev->wiphy));
 		goto fail;
 	}
 
 	retval = adm8211_init_rings(dev);
 	if (retval) {
-		wiphy_err(dev->wiphy, "failed to initialize rings\n");
+		printk(KERN_ERR "%s: failed to initialize rings\n",
+		       wiphy_name(dev->wiphy));
 		goto fail;
 	}
 
@@ -1525,10 +1538,11 @@ static int adm8211_start(struct ieee80211_hw *dev)
 	adm8211_hw_init(dev);
 	adm8211_rf_set_channel(dev, priv->channel);
 
-	retval = request_irq(priv->pdev->irq, adm8211_interrupt,
+	retval = request_irq(priv->pdev->irq, &adm8211_interrupt,
 			     IRQF_SHARED, "adm8211", dev);
 	if (retval) {
-		wiphy_err(dev->wiphy, "failed to register IRQ handler\n");
+		printk(KERN_ERR "%s: failed to register IRQ handler\n",
+		       wiphy_name(dev->wiphy));
 		goto fail;
 	}
 
@@ -1661,7 +1675,7 @@ static void adm8211_tx_raw(struct ieee80211_hw *dev, struct sk_buff *skb,
 }
 
 /* Put adm8211_tx_hdr on skb and transmit */
-static void adm8211_tx(struct ieee80211_hw *dev, struct sk_buff *skb)
+static int adm8211_tx(struct ieee80211_hw *dev, struct sk_buff *skb)
 {
 	struct adm8211_tx_hdr *txhdr;
 	size_t payload_len, hdrlen;
@@ -1710,6 +1724,8 @@ static void adm8211_tx(struct ieee80211_hw *dev, struct sk_buff *skb)
 	txhdr->retry_limit = info->control.rates[0].count;
 
 	adm8211_tx_raw(dev, skb, plcp_signal, hdrlen);
+
+	return NETDEV_TX_OK;
 }
 
 static int adm8211_alloc_rings(struct ieee80211_hw *dev)
@@ -1757,6 +1773,7 @@ static const struct ieee80211_ops adm8211_ops = {
 	.prepare_multicast	= adm8211_prepare_multicast,
 	.configure_filter	= adm8211_configure_filter,
 	.get_stats		= adm8211_get_stats,
+	.get_tx_stats		= adm8211_get_tx_stats,
 	.get_tsf		= adm8211_get_tsft
 };
 
@@ -1900,16 +1917,14 @@ static int __devinit adm8211_probe(struct pci_dev *pdev,
 	if (err) {
 		printk(KERN_ERR "%s (adm8211): Cannot register device\n",
 		       pci_name(pdev));
-		goto err_free_eeprom;
+		goto err_free_desc;
 	}
 
-	wiphy_info(dev->wiphy, "hwaddr %pM, Rev 0x%02x\n",
-		   dev->wiphy->perm_addr, pdev->revision);
+	printk(KERN_INFO "%s: hwaddr %pM, Rev 0x%02x\n",
+	       wiphy_name(dev->wiphy), dev->wiphy->perm_addr,
+	       pdev->revision);
 
 	return 0;
-
- err_free_eeprom:
-	kfree(priv->eeprom);
 
  err_free_desc:
 	pci_free_consistent(pdev,

@@ -20,7 +20,6 @@ struct tcf_common {
 	struct gnet_stats_queue		tcfc_qstats;
 	struct gnet_stats_rate_est	tcfc_rate_est;
 	spinlock_t			tcfc_lock;
-	struct rcu_head			tcfc_rcu;
 };
 #define tcf_next	common.tcfc_next
 #define tcf_index	common.tcfc_index
@@ -33,7 +32,6 @@ struct tcf_common {
 #define tcf_qstats	common.tcfc_qstats
 #define tcf_rate_est	common.tcfc_rate_est
 #define tcf_lock	common.tcfc_lock
-#define tcf_rcu		common.tcfc_rcu
 
 struct tcf_police {
 	struct tcf_common	common;
@@ -72,7 +70,7 @@ struct tcf_act_hdr {
 
 struct tc_action {
 	void			*priv;
-	const struct tc_action_ops	*ops;
+	struct tc_action_ops	*ops;
 	__u32			type; /* for backward compat(TCA_OLD_COMPAT) */
 	__u32			order;
 	struct tc_action	*next;
@@ -86,7 +84,7 @@ struct tc_action_ops {
 	__u32   type; /* TBD to match kind */
 	__u32 	capab;  /* capabilities includes 4 bit version */
 	struct module		*owner;
-	int     (*act)(struct sk_buff *, const struct tc_action *, struct tcf_result *);
+	int     (*act)(struct sk_buff *, struct tc_action *, struct tcf_result *);
 	int     (*get_stats)(struct sk_buff *, struct tc_action *);
 	int     (*dump)(struct sk_buff *, struct tc_action *, int, int);
 	int     (*cleanup)(struct tc_action *, int bind);
@@ -115,7 +113,7 @@ extern void tcf_hash_insert(struct tcf_common *p, struct tcf_hashinfo *hinfo);
 extern int tcf_register_action(struct tc_action_ops *a);
 extern int tcf_unregister_action(struct tc_action_ops *a);
 extern void tcf_action_destroy(struct tc_action *a, int bind);
-extern int tcf_action_exec(struct sk_buff *skb, const struct tc_action *a, struct tcf_result *res);
+extern int tcf_action_exec(struct sk_buff *skb, struct tc_action *a, struct tcf_result *res);
 extern struct tc_action *tcf_action_init(struct nlattr *nla, struct nlattr *est, char *n, int ovr, int bind);
 extern struct tc_action *tcf_action_init_1(struct nlattr *nla, struct nlattr *est, char *n, int ovr, int bind);
 extern int tcf_action_dump(struct sk_buff *skb, struct tc_action *a, int, int);

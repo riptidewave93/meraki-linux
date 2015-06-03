@@ -10,10 +10,8 @@
  */
 
 #include <linux/tifm.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/idr.h>
-#include <linux/module.h>
 
 #define DRIVER_NAME "tifm_core"
 #define DRIVER_VERSION "0.8"
@@ -330,7 +328,7 @@ static int __init tifm_init(void)
 {
 	int rc;
 
-	workqueue = create_freezable_workqueue("tifm");
+	workqueue = create_freezeable_workqueue("tifm");
 	if (!workqueue)
 		return -ENOMEM;
 

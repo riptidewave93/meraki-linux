@@ -6,6 +6,7 @@
 #include <linux/errno.h>
 #include <linux/compiler.h>
 #include <linux/thread_info.h>
+#include <linux/prefetch.h>
 #include <linux/string.h>
 #include <asm/asm.h>
 #include <asm/page.h>
@@ -462,7 +463,7 @@ struct __large_struct { unsigned long buf[100]; };
 	barrier();
 
 #define uaccess_catch(err)						\
-	(err) |= (current_thread_info()->uaccess_err ? -EFAULT : 0);	\
+	(err) |= current_thread_info()->uaccess_err;			\
 	current_thread_info()->uaccess_err = prev_err;			\
 } while (0)
 
@@ -555,11 +556,6 @@ struct __large_struct { unsigned long buf[100]; };
 
 #endif /* CONFIG_X86_WP_WORKS_OK */
 
-extern unsigned long
-copy_from_user_nmi(void *to, const void __user *from, unsigned long n);
-extern __must_check long
-strncpy_from_user(char *dst, const char __user *src, long count);
-
 /*
  * movsl can be slow when source and dest are not both 8-byte aligned
  */
@@ -574,6 +570,7 @@ extern struct movsl_mask {
 #ifdef CONFIG_X86_32
 # include "uaccess_32.h"
 #else
+# define ARCH_HAS_SEARCH_EXTABLE
 # include "uaccess_64.h"
 #endif
 

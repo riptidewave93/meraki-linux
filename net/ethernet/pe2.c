@@ -3,7 +3,6 @@
 #include <linux/module.h>
 #include <linux/netdevice.h>
 #include <linux/skbuff.h>
-#include <linux/slab.h>
 
 #include <net/datalink.h>
 
@@ -28,10 +27,11 @@ struct datalink_proto *make_EII_client(void)
 
 	return proto;
 }
-EXPORT_SYMBOL(make_EII_client);
 
 void destroy_EII_client(struct datalink_proto *dl)
 {
 	kfree(dl);
 }
+
 EXPORT_SYMBOL(destroy_EII_client);
+EXPORT_SYMBOL(make_EII_client);

@@ -67,11 +67,9 @@
  *
  * NEC	MegaRAID PCI Express ROMB	1000	0408	1033	8287
  *
- * For history of changes, see Documentation/scsi/ChangeLog.megaraid
+ * For history of changes, see Documentation/ChangeLog.megaraid
  */
 
-#include <linux/slab.h>
-#include <linux/module.h>
 #include "megaraid_mbox.h"
 
 static int megaraid_init(void);
@@ -114,7 +112,8 @@ static int megaraid_mbox_fire_sync_cmd(adapter_t *);
 static void megaraid_mbox_display_scb(adapter_t *, scb_t *);
 static void megaraid_mbox_setup_device_map(adapter_t *);
 
-static int megaraid_queue_command(struct Scsi_Host *, struct scsi_cmnd *);
+static int megaraid_queue_command(struct scsi_cmnd *,
+		void (*)(struct scsi_cmnd *));
 static scb_t *megaraid_mbox_build_cmd(adapter_t *, struct scsi_cmnd *, int *);
 static void megaraid_mbox_runpendq(adapter_t *, scb_t *);
 static void megaraid_mbox_prepare_pthru(adapter_t *, scb_t *,
@@ -336,17 +335,12 @@ static struct device_attribute *megaraid_sdev_attrs[] = {
  * megaraid_change_queue_depth - Change the device's queue depth
  * @sdev:	scsi device struct
  * @qdepth:	depth to set
- * @reason:	calling context
  *
  * Return value:
  * 	actual depth set
  */
-static int megaraid_change_queue_depth(struct scsi_device *sdev, int qdepth,
-				       int reason)
+static int megaraid_change_queue_depth(struct scsi_device *sdev, int qdepth)
 {
-	if (reason != SCSI_QDEPTH_DEFAULT)
-		return -EOPNOTSUPP;
-
 	if (qdepth > MBOX_MAX_SCSI_CMDS)
 		qdepth = MBOX_MAX_SCSI_CMDS;
 	scsi_adjust_queue_depth(sdev, 0, qdepth);
@@ -1484,7 +1478,7 @@ mbox_post_cmd(adapter_t *adapter, scb_t *scb)
  * Queue entry point for mailbox based controllers.
  */
 static int
-megaraid_queue_command_lck(struct scsi_cmnd *scp, void (*done)(struct scsi_cmnd *))
+megaraid_queue_command(struct scsi_cmnd *scp, void (*done)(struct scsi_cmnd *))
 {
 	adapter_t	*adapter;
 	scb_t		*scb;
@@ -1512,8 +1506,6 @@ megaraid_queue_command_lck(struct scsi_cmnd *scp, void (*done)(struct scsi_cmnd 
 	megaraid_mbox_runpendq(adapter, scb);
 	return if_busy;
 }
-
-static DEF_SCSI_QCMD(megaraid_queue_command)
 
 /**
  * megaraid_mbox_build_cmd - transform the mid-layer scsi commands
@@ -2316,8 +2308,8 @@ megaraid_mbox_dpc(unsigned long devp)
 		// Was an abort issued for this command earlier
 		if (scb->state & SCB_ABORT) {
 			con_log(CL_ANN, (KERN_NOTICE
-			"megaraid: aborted cmd [%x] completed\n",
-				scb->sno));
+			"megaraid: aborted cmd %lx[%x] completed\n",
+				scp->serial_number, scb->sno));
 		}
 
 		/*
@@ -2473,8 +2465,8 @@ megaraid_abort_handler(struct scsi_cmnd *scp)
 	raid_dev	= ADAP2RAIDDEV(adapter);
 
 	con_log(CL_ANN, (KERN_WARNING
-		"megaraid: aborting cmd=%x <c=%d t=%d l=%d>\n",
-		scp->cmnd[0], SCP2CHANNEL(scp),
+		"megaraid: aborting-%ld cmd=%x <c=%d t=%d l=%d>\n",
+		scp->serial_number, scp->cmnd[0], SCP2CHANNEL(scp),
 		SCP2TARGET(scp), SCP2LUN(scp)));
 
 	// If FW has stopped responding, simply return failure
@@ -2497,8 +2489,9 @@ megaraid_abort_handler(struct scsi_cmnd *scp)
 			list_del_init(&scb->list);	// from completed list
 
 			con_log(CL_ANN, (KERN_WARNING
-			"megaraid: %d[%d:%d], abort from completed list\n",
-				scb->sno, scb->dev_channel, scb->dev_target));
+			"megaraid: %ld:%d[%d:%d], abort from completed list\n",
+				scp->serial_number, scb->sno,
+				scb->dev_channel, scb->dev_target));
 
 			scp->result = (DID_ABORT << 16);
 			scp->scsi_done(scp);
@@ -2527,8 +2520,9 @@ megaraid_abort_handler(struct scsi_cmnd *scp)
 			ASSERT(!(scb->state & SCB_ISSUED));
 
 			con_log(CL_ANN, (KERN_WARNING
-				"megaraid abort: [%d:%d], driver owner\n",
-				scb->dev_channel, scb->dev_target));
+				"megaraid abort: %ld[%d:%d], driver owner\n",
+				scp->serial_number, scb->dev_channel,
+				scb->dev_target));
 
 			scp->result = (DID_ABORT << 16);
 			scp->scsi_done(scp);
@@ -2559,21 +2553,25 @@ megaraid_abort_handler(struct scsi_cmnd *scp)
 
 			if (!(scb->state & SCB_ISSUED)) {
 				con_log(CL_ANN, (KERN_WARNING
-				"megaraid abort: %d[%d:%d], invalid state\n",
-				scb->sno, scb->dev_channel, scb->dev_target));
+				"megaraid abort: %ld%d[%d:%d], invalid state\n",
+				scp->serial_number, scb->sno, scb->dev_channel,
+				scb->dev_target));
 				BUG();
 			}
 			else {
 				con_log(CL_ANN, (KERN_WARNING
-				"megaraid abort: %d[%d:%d], fw owner\n",
-				scb->sno, scb->dev_channel, scb->dev_target));
+				"megaraid abort: %ld:%d[%d:%d], fw owner\n",
+				scp->serial_number, scb->sno, scb->dev_channel,
+				scb->dev_target));
 			}
 		}
 	}
 	spin_unlock_irq(&adapter->lock);
 
 	if (!found) {
-		con_log(CL_ANN, (KERN_WARNING "megaraid abort: do now own\n"));
+		con_log(CL_ANN, (KERN_WARNING
+			"megaraid abort: scsi cmd:%ld, do now own\n",
+			scp->serial_number));
 
 		// FIXME: Should there be a callback for this command?
 		return SUCCESS;
@@ -2644,8 +2642,9 @@ megaraid_reset_handler(struct scsi_cmnd *scp)
 		} else {
 			if (scb->scp == scp) {	// Found command
 				con_log(CL_ANN, (KERN_WARNING
-					"megaraid: %d[%d:%d], reset from pending list\n",
-					scb->sno, scb->dev_channel, scb->dev_target));
+					"megaraid: %ld:%d[%d:%d], reset from pending list\n",
+					scp->serial_number, scb->sno,
+					scb->dev_channel, scb->dev_target));
 			} else {
 				con_log(CL_ANN, (KERN_WARNING
 				"megaraid: IO packet with %d[%d:%d] being reset\n",
@@ -2683,7 +2682,7 @@ megaraid_reset_handler(struct scsi_cmnd *scp)
 				(MBOX_RESET_WAIT + MBOX_RESET_EXT_WAIT) - i));
 		}
 
-		// bailout if no recovery happened in reset time
+		// bailout if no recovery happended in reset time
 		if (adapter->outstanding_cmds == 0) {
 			break;
 		}
@@ -2705,7 +2704,7 @@ megaraid_reset_handler(struct scsi_cmnd *scp)
 	}
 	else {
 		con_log(CL_ANN, (KERN_NOTICE
-		"megaraid mbox: reset sequence completed successfully\n"));
+		"megaraid mbox: reset sequence completed sucessfully\n"));
 	}
 
 
@@ -3446,7 +3445,7 @@ megaraid_mbox_display_scb(adapter_t *adapter, scb_t *scb)
  * megaraid_mbox_setup_device_map - manage device ids
  * @adapter	: Driver's soft state
  *
- * Manange the device ids to have an appropriate mapping between the kernel
+ * Manange the device ids to have an appropraite mapping between the kernel
  * scsi addresses and megaraid scsi and logical drive addresses. We export
  * scsi devices on their actual addresses, whereas the logical drives are
  * exported on a virtual scsi channel.
@@ -3967,7 +3966,7 @@ megaraid_sysfs_get_ldmap_timeout(unsigned long data)
  * NOTE: The commands issuance functionality is not generalized and
  * implemented in context of "get ld map" command only. If required, the
  * command issuance logical can be trivially pulled out and implemented as a
- * standalone library. For now, this should suffice since there is no other
+ * standalone libary. For now, this should suffice since there is no other
  * user of this interface.
  *
  * Return 0 on success.

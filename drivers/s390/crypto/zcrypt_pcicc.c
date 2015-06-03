@@ -28,9 +28,8 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
-#include <linux/gfp.h>
 #include <linux/err.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/uaccess.h>
 
 #include "ap_bus.h"
@@ -65,11 +64,13 @@ static struct ap_device_id zcrypt_pcicc_ids[] = {
 	{ /* end of list */ },
 };
 
+#ifndef CONFIG_ZCRYPT_MONOLITHIC
 MODULE_DEVICE_TABLE(ap, zcrypt_pcicc_ids);
 MODULE_AUTHOR("IBM Corporation");
 MODULE_DESCRIPTION("PCICC Cryptographic Coprocessor device driver, "
 		   "Copyright 2001, 2006 IBM Corporation");
 MODULE_LICENSE("GPL");
+#endif
 
 static int zcrypt_pcicc_probe(struct ap_device *ap_dev);
 static void zcrypt_pcicc_remove(struct ap_device *ap_dev);
@@ -484,7 +485,6 @@ static long zcrypt_pcicc_modexpo(struct zcrypt_device *zdev,
 	struct completion work;
 	int rc;
 
-	ap_init_message(&ap_msg);
 	ap_msg.message = (void *) get_zeroed_page(GFP_KERNEL);
 	if (!ap_msg.message)
 		return -ENOMEM;
@@ -523,7 +523,6 @@ static long zcrypt_pcicc_modexpo_crt(struct zcrypt_device *zdev,
 	struct completion work;
 	int rc;
 
-	ap_init_message(&ap_msg);
 	ap_msg.message = (void *) get_zeroed_page(GFP_KERNEL);
 	if (!ap_msg.message)
 		return -ENOMEM;
@@ -577,7 +576,6 @@ static int zcrypt_pcicc_probe(struct ap_device *ap_dev)
 	zdev->min_mod_size = PCICC_MIN_MOD_SIZE;
 	zdev->max_mod_size = PCICC_MAX_MOD_SIZE;
 	zdev->speed_rating = PCICC_SPEED_RATING;
-	zdev->max_exp_bit_length = PCICC_MAX_MOD_SIZE;
 	ap_dev->reply = &zdev->reply;
 	ap_dev->private = zdev;
 	rc = zcrypt_device_register(zdev);
@@ -612,5 +610,7 @@ void zcrypt_pcicc_exit(void)
 	ap_driver_unregister(&zcrypt_pcicc_driver);
 }
 
+#ifndef CONFIG_ZCRYPT_MONOLITHIC
 module_init(zcrypt_pcicc_init);
 module_exit(zcrypt_pcicc_exit);
+#endif

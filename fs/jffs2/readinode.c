@@ -9,8 +9,6 @@
  *
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/kernel.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
@@ -26,7 +24,7 @@
  *
  * Returns: 0 if the data CRC is correct;
  * 	    1 - if incorrect;
- *	    error code if an error occurred.
+ *	    error code if an error occured.
  */
 static int check_node_data(struct jffs2_sb_info *c, struct jffs2_tmp_dnode_info *tn)
 {
@@ -64,15 +62,17 @@ static int check_node_data(struct jffs2_sb_info *c, struct jffs2_tmp_dnode_info 
 #ifndef __ECOS
 	/* TODO: instead, incapsulate point() stuff to jffs2_flash_read(),
 	 * adding and jffs2_flash_read_end() interface. */
-	err = mtd_point(c->mtd, ofs, len, &retlen, (void **)&buffer, NULL);
-	if (!err && retlen < len) {
-		JFFS2_WARNING("MTD point returned len too short: %zu instead of %u.\n", retlen, tn->csize);
-		mtd_unpoint(c->mtd, ofs, retlen);
-	} else if (err) {
-		if (err != -EOPNOTSUPP)
+	if (c->mtd->point) {
+		err = c->mtd->point(c->mtd, ofs, len, &retlen,
+				    (void **)&buffer, NULL);
+		if (!err && retlen < len) {
+			JFFS2_WARNING("MTD point returned len too short: %zu instead of %u.\n", retlen, tn->csize);
+			c->mtd->unpoint(c->mtd, ofs, retlen);
+		} else if (err)
 			JFFS2_WARNING("MTD point failed: error code %d.\n", err);
-	} else
-		pointed = 1; /* succefully pointed to device */
+		else
+			pointed = 1; /* succefully pointed to device */
+	}
 #endif
 
 	if (!pointed) {
@@ -101,7 +101,7 @@ static int check_node_data(struct jffs2_sb_info *c, struct jffs2_tmp_dnode_info 
 		kfree(buffer);
 #ifndef __ECOS
 	else
-		mtd_unpoint(c->mtd, ofs, len);
+		c->mtd->unpoint(c->mtd, ofs, len);
 #endif
 
 	if (crc != tn->data_crc) {
@@ -137,7 +137,7 @@ free_out:
 		kfree(buffer);
 #ifndef __ECOS
 	else
-		mtd_unpoint(c->mtd, ofs, len);
+		c->mtd->unpoint(c->mtd, ofs, len);
 #endif
 	return err;
 }
@@ -567,7 +567,7 @@ static void jffs2_free_tmp_dnode_info_list(struct rb_root *list)
 			else BUG();
 		}
 	}
-	*list = RB_ROOT;
+	list->rb_node = NULL;
 }
 
 static void jffs2_free_full_dirent_list(struct jffs2_full_dirent *fd)
@@ -931,7 +931,7 @@ static inline int read_unknown(struct jffs2_sb_info *c, struct jffs2_raw_node_re
  * Helper function for jffs2_get_inode_nodes().
  * The function detects whether more data should be read and reads it if yes.
  *
- * Returns: 0 on success;
+ * Returns: 0 on succes;
  * 	    negative error code on failure.
  */
 static int read_more(struct jffs2_sb_info *c, struct jffs2_raw_node_ref *ref,
@@ -1041,7 +1041,7 @@ static int jffs2_get_inode_nodes(struct jffs2_sb_info *c, struct jffs2_inode_inf
 		/* FIXME: point() */
 		err = jffs2_flash_read(c, ref_offset(ref), len, &retlen, buf);
 		if (err) {
-			JFFS2_ERROR("can not read %d bytes from 0x%08x, error code: %d.\n", len, ref_offset(ref), err);
+			JFFS2_ERROR("can not read %d bytes from 0x%08x, " "error code: %d.\n", len, ref_offset(ref), err);
 			goto free_out;
 		}
 

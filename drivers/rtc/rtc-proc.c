@@ -69,14 +69,6 @@ static int rtc_proc_show(struct seq_file *seq, void *offset)
 				alrm.enabled ? "yes" : "no");
 		seq_printf(seq, "alrm_pending\t: %s\n",
 				alrm.pending ? "yes" : "no");
-		seq_printf(seq, "update IRQ enabled\t: %s\n",
-			(rtc->uie_rtctimer.enabled) ? "yes" : "no");
-		seq_printf(seq, "periodic IRQ enabled\t: %s\n",
-			(rtc->pie_enabled) ? "yes" : "no");
-		seq_printf(seq, "periodic IRQ frequency\t: %d\n",
-			rtc->irq_freq);
-		seq_printf(seq, "max user IRQ frequency\t: %d\n",
-			rtc->max_user_freq);
 	}
 
 	seq_printf(seq, "24hr\t\t: yes\n");
@@ -89,16 +81,12 @@ static int rtc_proc_show(struct seq_file *seq, void *offset)
 
 static int rtc_proc_open(struct inode *inode, struct file *file)
 {
-	int ret;
 	struct rtc_device *rtc = PDE(inode)->data;
 
 	if (!try_module_get(THIS_MODULE))
 		return -ENODEV;
 
-	ret = single_open(file, rtc_proc_show, rtc);
-	if (ret)
-		module_put(THIS_MODULE);
-	return ret;
+	return single_open(file, rtc_proc_show, rtc);
 }
 
 static int rtc_proc_release(struct inode *inode, struct file *file)

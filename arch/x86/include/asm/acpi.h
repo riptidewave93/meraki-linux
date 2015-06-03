@@ -29,7 +29,6 @@
 #include <asm/processor.h>
 #include <asm/mmu.h>
 #include <asm/mpspec.h>
-#include <asm/trampoline.h>
 
 #define COMPILER_DEPENDENT_INT64   long long
 #define COMPILER_DEPENDENT_UINT64  unsigned long long
@@ -86,6 +85,7 @@ extern int acpi_ioapic;
 extern int acpi_noirq;
 extern int acpi_strict;
 extern int acpi_disabled;
+extern int acpi_ht;
 extern int acpi_pci_disabled;
 extern int acpi_skip_timer_override;
 extern int acpi_use_timer_override;
@@ -95,12 +95,10 @@ extern u8 acpi_sci_flags;
 extern int acpi_sci_override_gsi;
 void acpi_pic_sci_set_trigger(unsigned int, u16);
 
-extern int (*__acpi_register_gsi)(struct device *dev, u32 gsi,
-				  int trigger, int polarity);
-
 static inline void disable_acpi(void)
 {
 	acpi_disabled = 1;
+	acpi_ht = 0;
 	acpi_pci_disabled = 1;
 	acpi_noirq = 1;
 }
@@ -114,14 +112,14 @@ static inline void acpi_disable_pci(void)
 	acpi_noirq_set();
 }
 
-/* Low-level suspend routine. */
-extern int acpi_suspend_lowlevel(void);
+/* routines for saving/restoring kernel state */
+extern int acpi_save_state_mem(void);
+extern void acpi_restore_state_mem(void);
 
-extern const unsigned char acpi_wakeup_code[];
-#define acpi_wakeup_address (__pa(TRAMPOLINE_SYM(acpi_wakeup_code)))
+extern unsigned long acpi_wakeup_address;
 
 /* early initialization routine */
-extern void acpi_reserve_wakeup_memory(void);
+extern void acpi_reserve_bootmem(void);
 
 /*
  * Check if the CPU can handle C2 and deeper
@@ -139,36 +137,10 @@ static inline unsigned int acpi_processor_cstate_check(unsigned int max_cstate)
 	    boot_cpu_data.x86_model <= 0x05 &&
 	    boot_cpu_data.x86_mask < 0x0A)
 		return 1;
-	else if (amd_e400_c1e_detected)
+	else if (boot_cpu_has(X86_FEATURE_AMDC1E))
 		return 1;
 	else
 		return max_cstate;
-}
-
-static inline bool arch_has_acpi_pdc(void)
-{
-	struct cpuinfo_x86 *c = &cpu_data(0);
-	return (c->x86_vendor == X86_VENDOR_INTEL ||
-		c->x86_vendor == X86_VENDOR_CENTAUR);
-}
-
-static inline void arch_acpi_set_pdc_bits(u32 *buf)
-{
-	struct cpuinfo_x86 *c = &cpu_data(0);
-
-	buf[2] |= ACPI_PDC_C_CAPABILITY_SMP;
-
-	if (cpu_has(c, X86_FEATURE_EST))
-		buf[2] |= ACPI_PDC_EST_CAPABILITY_SWSMP;
-
-	if (cpu_has(c, X86_FEATURE_ACPI))
-		buf[2] |= ACPI_PDC_T_FFH;
-
-	/*
-	 * If mwait/monitor is unsupported, C2/C3_FFH will be disabled
-	 */
-	if (!cpu_has(c, X86_FEATURE_MWAIT))
-		buf[2] &= ~(ACPI_PDC_C_C2C3_FFH);
 }
 
 #else /* !CONFIG_ACPI */
@@ -183,10 +155,20 @@ static inline void disable_acpi(void) { }
 
 #define ARCH_HAS_POWER_INIT	1
 
+struct bootnode;
+
 #ifdef CONFIG_ACPI_NUMA
 extern int acpi_numa;
-extern int x86_acpi_numa_init(void);
-#endif /* CONFIG_ACPI_NUMA */
+extern int acpi_scan_nodes(unsigned long start, unsigned long end);
+#define NR_NODE_MEMBLKS (MAX_NUMNODES*2)
+extern void acpi_fake_nodes(const struct bootnode *fake_nodes,
+				   int num_nodes);
+#else
+static inline void acpi_fake_nodes(const struct bootnode *fake_nodes,
+				   int num_nodes)
+{
+}
+#endif
 
 #define acpi_unlazy_tlb(x)	leave_mm(x)
 

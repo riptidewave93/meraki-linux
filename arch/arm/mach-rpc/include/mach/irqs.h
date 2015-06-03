@@ -42,4 +42,6 @@
  */
 #define FIQ_START		64
 
+#define IRQ_TIMER		IRQ_TIMER0
+
 #define NR_IRQS			128

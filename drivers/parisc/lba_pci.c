@@ -43,6 +43,7 @@
 #include <asm/pdc.h>
 #include <asm/pdcpat.h>
 #include <asm/page.h>
+#include <asm/system.h>
 
 #include <asm/ropes.h>
 #include <asm/hardware.h>	/* for register_parisc_driver() stuff */
@@ -634,6 +635,7 @@ lba_fixup_bus(struct pci_bus *bus)
 	u16 status;
 #endif
 	struct lba_device *ldev = LBA_DEV(parisc_walk_tree(bus->bridge));
+	int lba_portbase = HBA_PORT_BASE(ldev->hba.hba_num);
 
 	DBG("lba_fixup_bus(0x%p) bus %d platform_data 0x%p\n",
 		bus, bus->secondary, bus->bridge->platform_data);
@@ -651,7 +653,7 @@ lba_fixup_bus(struct pci_bus *bus)
 		}
 	} else {
 		/* Host-PCI Bridge */
-		int err;
+		int err, i;
 
 		DBG("lba_fixup_bus() %s [%lx/%lx]/%lx\n",
 			ldev->hba.io_space.name,
@@ -667,6 +669,9 @@ lba_fixup_bus(struct pci_bus *bus)
 			lba_dump_res(&ioport_resource, 2);
 			BUG();
 		}
+		/* advertize Host bridge resources to PCI bus */
+		bus->resource[0] = &(ldev->hba.io_space);
+		i = 1;
 
 		if (ldev->hba.elmmio_space.start) {
 			err = request_resource(&iomem_resource,
@@ -680,17 +685,35 @@ lba_fixup_bus(struct pci_bus *bus)
 
 				/* lba_dump_res(&iomem_resource, 2); */
 				/* BUG(); */
-			}
+			} else
+				bus->resource[i++] = &(ldev->hba.elmmio_space);
 		}
 
-		if (ldev->hba.lmmio_space.flags) {
+
+		/*   Overlaps with elmmio can (and should) fail here.
+		 *   We will prune (or ignore) the distributed range.
+		 *
+		 *   FIXME: SBA code should register all elmmio ranges first.
+		 *      that would take care of elmmio ranges routed
+		 *	to a different rope (already discovered) from
+		 *	getting registered *after* LBA code has already
+		 *	registered it's distributed lmmio range.
+		 */
+		if (truncate_pat_collision(&iomem_resource,
+				       	&(ldev->hba.lmmio_space))) {
+
+			printk(KERN_WARNING "LBA: lmmio_space [%lx/%lx] duplicate!\n",
+					(long)ldev->hba.lmmio_space.start,
+					(long)ldev->hba.lmmio_space.end);
+		} else {
 			err = request_resource(&iomem_resource, &(ldev->hba.lmmio_space));
 			if (err < 0) {
 				printk(KERN_ERR "FAILED: lba_fixup_bus() request for "
 					"lmmio_space [%lx/%lx]\n",
 					(long)ldev->hba.lmmio_space.start,
 					(long)ldev->hba.lmmio_space.end);
-			}
+			} else
+				bus->resource[i++] = &(ldev->hba.lmmio_space);
 		}
 
 #ifdef CONFIG_64BIT
@@ -705,6 +728,7 @@ lba_fixup_bus(struct pci_bus *bus)
 				lba_dump_res(&iomem_resource, 2);
 				BUG();
 			}
+			bus->resource[i++] = &(ldev->hba.gmmio_space);
 		}
 #endif
 
@@ -723,6 +747,27 @@ lba_fixup_bus(struct pci_bus *bus)
 			/* If resource not allocated - skip it */
 			if (!res->start)
 				continue;
+
+			if (res->flags & IORESOURCE_IO) {
+				DBG("lba_fixup_bus() I/O Ports [%lx/%lx] -> ",
+					res->start, res->end);
+				res->start |= lba_portbase;
+				res->end   |= lba_portbase;
+				DBG("[%lx/%lx]\n", res->start, res->end);
+			} else if (res->flags & IORESOURCE_MEM) {
+				/*
+				** Convert PCI (IO_VIEW) addresses to
+				** processor (PA_VIEW) addresses
+				 */
+				DBG("lba_fixup_bus() MMIO [%lx/%lx] -> ",
+					res->start, res->end);
+				res->start = PCI_HOST_ADDR(HBA_DATA(ldev), res->start);
+				res->end   = PCI_HOST_ADDR(HBA_DATA(ldev), res->end);
+				DBG("[%lx/%lx]\n", res->start, res->end);
+			} else {
+				DBG("lba_fixup_bus() WTF? 0x%lx [%lx/%lx] XXX",
+					res->flags, res->start, res->end);
+			}
 
 			/*
 			** FIXME: this will result in whinging for devices
@@ -1359,7 +1404,6 @@ static int __init
 lba_driver_probe(struct parisc_device *dev)
 {
 	struct lba_device *lba_dev;
-	LIST_HEAD(resources);
 	struct pci_bus *lba_bus;
 	struct pci_ops *cfg_ops;
 	u32 func_class;
@@ -1474,44 +1518,10 @@ lba_driver_probe(struct parisc_device *dev)
 	if (lba_dev->hba.bus_num.start < lba_next_bus)
 		lba_dev->hba.bus_num.start = lba_next_bus;
 
-	/*   Overlaps with elmmio can (and should) fail here.
-	 *   We will prune (or ignore) the distributed range.
-	 *
-	 *   FIXME: SBA code should register all elmmio ranges first.
-	 *      that would take care of elmmio ranges routed
-	 *	to a different rope (already discovered) from
-	 *	getting registered *after* LBA code has already
-	 *	registered it's distributed lmmio range.
-	 */
-	if (truncate_pat_collision(&iomem_resource,
-				   &(lba_dev->hba.lmmio_space))) {
-		printk(KERN_WARNING "LBA: lmmio_space [%lx/%lx] duplicate!\n",
-				(long)lba_dev->hba.lmmio_space.start,
-				(long)lba_dev->hba.lmmio_space.end);
-		lba_dev->hba.lmmio_space.flags = 0;
-	}
-
-	pci_add_resource_offset(&resources, &lba_dev->hba.io_space,
-				HBA_PORT_BASE(lba_dev->hba.hba_num));
-	if (lba_dev->hba.elmmio_space.start)
-		pci_add_resource_offset(&resources, &lba_dev->hba.elmmio_space,
-					lba_dev->hba.lmmio_space_offset);
-	if (lba_dev->hba.lmmio_space.flags)
-		pci_add_resource_offset(&resources, &lba_dev->hba.lmmio_space,
-					lba_dev->hba.lmmio_space_offset);
-	if (lba_dev->hba.gmmio_space.flags)
-		pci_add_resource(&resources, &lba_dev->hba.gmmio_space);
-
 	dev->dev.platform_data = lba_dev;
 	lba_bus = lba_dev->hba.hba_bus =
-		pci_create_root_bus(&dev->dev, lba_dev->hba.bus_num.start,
-				    cfg_ops, NULL, &resources);
-	if (!lba_bus) {
-		pci_free_resource_list(&resources);
-		return 0;
-	}
-
-	lba_bus->subordinate = pci_scan_child_bus(lba_bus);
+		pci_scan_bus_parented(&dev->dev, lba_dev->hba.bus_num.start,
+				cfg_ops, NULL);
 
 	/* This is in lieu of calling pci_assign_unassigned_resources() */
 	if (is_pdc_pat()) {
@@ -1541,8 +1551,10 @@ lba_driver_probe(struct parisc_device *dev)
 		lba_dev->flags |= LBA_FLAG_SKIP_PROBE;
 	}
 
-	lba_next_bus = lba_bus->subordinate + 1;
-	pci_bus_add_devices(lba_bus);
+	if (lba_bus) {
+		lba_next_bus = lba_bus->subordinate + 1;
+		pci_bus_add_devices(lba_bus);
+	}
 
 	/* Whew! Finally done! Tell services we got this one covered. */
 	return 0;

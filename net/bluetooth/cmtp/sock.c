@@ -20,12 +20,13 @@
    SOFTWARE IS DISCLAIMED.
 */
 
-#include <linux/export.h>
+#include <linux/module.h>
 
 #include <linux/types.h>
 #include <linux/capability.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
+#include <linux/slab.h>
 #include <linux/poll.h>
 #include <linux/fcntl.h>
 #include <linux/skbuff.h>
@@ -33,18 +34,14 @@
 #include <linux/ioctl.h>
 #include <linux/file.h>
 #include <linux/compat.h>
-#include <linux/gfp.h>
-#include <linux/uaccess.h>
 #include <net/sock.h>
 
 #include <linux/isdn/capilli.h>
 
+#include <asm/system.h>
+#include <asm/uaccess.h>
 
 #include "cmtp.h"
-
-static struct bt_sock_list cmtp_sk_list = {
-	.lock = __RW_LOCK_UNLOCKED(cmtp_sk_list.lock)
-};
 
 static int cmtp_sock_release(struct socket *sock)
 {
@@ -54,8 +51,6 @@ static int cmtp_sock_release(struct socket *sock)
 
 	if (!sk)
 		return 0;
-
-	bt_sock_unlink(&cmtp_sk_list, sk);
 
 	sock_orphan(sk);
 	sock_put(sk);
@@ -78,7 +73,7 @@ static int cmtp_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 	switch (cmd) {
 	case CMTPCONNADD:
 		if (!capable(CAP_NET_ADMIN))
-			return -EPERM;
+			return -EACCES;
 
 		if (copy_from_user(&ca, argp, sizeof(ca)))
 			return -EFAULT;
@@ -103,7 +98,7 @@ static int cmtp_sock_ioctl(struct socket *sock, unsigned int cmd, unsigned long 
 
 	case CMTPCONNDEL:
 		if (!capable(CAP_NET_ADMIN))
-			return -EPERM;
+			return -EACCES;
 
 		if (copy_from_user(&cd, argp, sizeof(cd)))
 			return -EFAULT;
@@ -142,10 +137,10 @@ static int cmtp_sock_compat_ioctl(struct socket *sock, unsigned int cmd, unsigne
 {
 	if (cmd == CMTPGETCONNLIST) {
 		struct cmtp_connlist_req cl;
-		u32 uci;
+		uint32_t uci;
 		int err;
 
-		if (get_user(cl.cnum, (u32 __user *) arg) ||
+		if (get_user(cl.cnum, (uint32_t __user *) arg) ||
 				get_user(uci, (u32 __user *) (arg + 4)))
 			return -EFAULT;
 
@@ -156,7 +151,7 @@ static int cmtp_sock_compat_ioctl(struct socket *sock, unsigned int cmd, unsigne
 
 		err = cmtp_get_connlist(&cl);
 
-		if (!err && put_user(cl.cnum, (u32 __user *) arg))
+		if (!err && put_user(cl.cnum, (uint32_t __user *) arg))
 			err = -EFAULT;
 
 		return err;
@@ -195,8 +190,7 @@ static struct proto cmtp_proto = {
 	.obj_size	= sizeof(struct bt_sock)
 };
 
-static int cmtp_sock_create(struct net *net, struct socket *sock, int protocol,
-			    int kern)
+static int cmtp_sock_create(struct net *net, struct socket *sock, int protocol)
 {
 	struct sock *sk;
 
@@ -220,12 +214,10 @@ static int cmtp_sock_create(struct net *net, struct socket *sock, int protocol,
 	sk->sk_protocol = protocol;
 	sk->sk_state    = BT_OPEN;
 
-	bt_sock_link(&cmtp_sk_list, sk);
-
 	return 0;
 }
 
-static const struct net_proto_family cmtp_sock_family_ops = {
+static struct net_proto_family cmtp_sock_family_ops = {
 	.family	= PF_BLUETOOTH,
 	.owner	= THIS_MODULE,
 	.create	= cmtp_sock_create
@@ -240,30 +232,19 @@ int cmtp_init_sockets(void)
 		return err;
 
 	err = bt_sock_register(BTPROTO_CMTP, &cmtp_sock_family_ops);
-	if (err < 0) {
-		BT_ERR("Can't register CMTP socket");
+	if (err < 0)
 		goto error;
-	}
-
-	err = bt_procfs_init(THIS_MODULE, &init_net, "cmtp", &cmtp_sk_list, NULL);
-	if (err < 0) {
-		BT_ERR("Failed to create CMTP proc file");
-		bt_sock_unregister(BTPROTO_HIDP);
-		goto error;
-	}
-
-	BT_INFO("CMTP socket layer initialized");
 
 	return 0;
 
 error:
+	BT_ERR("Can't register CMTP socket");
 	proto_unregister(&cmtp_proto);
 	return err;
 }
 
 void cmtp_cleanup_sockets(void)
 {
-	bt_procfs_cleanup(&init_net, "cmtp");
 	if (bt_sock_unregister(BTPROTO_CMTP) < 0)
 		BT_ERR("Can't unregister CMTP socket");
 

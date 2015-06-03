@@ -3,7 +3,7 @@
 #include <linux/nodemask.h>
 #include <linux/spinlock.h>
 #include <linux/smp.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/sn/types.h>
 #include <asm/sn/addrs.h>
 #include <asm/sn/nmi.h>
@@ -17,10 +17,11 @@
 #endif
 
 #define CNODEID_NONE (cnodeid_t)-1
+#define enter_panic_mode()	spin_lock(&nmi_lock)
 
 typedef unsigned long machreg_t;
 
-static arch_spinlock_t nmi_lock = __ARCH_SPIN_LOCK_UNLOCKED;
+DEFINE_SPINLOCK(nmi_lock);
 
 /*
  * Lets see what else we need to do here. Set up sp, gp?
@@ -192,9 +193,9 @@ cont_nmi_dump(void)
 	atomic_inc(&nmied_cpus);
 #endif
 	/*
-	 * Only allow 1 cpu to proceed
+	 * Use enter_panic_mode to allow only 1 cpu to proceed
 	 */
-	arch_spin_lock(&nmi_lock);
+	enter_panic_mode();
 
 #ifdef REAL_NMI_SIGNAL
 	/*

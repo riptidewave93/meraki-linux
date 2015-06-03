@@ -6,7 +6,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -91,12 +91,14 @@
 
 /* Values for Flag byte above */
 
-#define AOPOBJ_AML_CONSTANT         0x01	/* Integer is an AML constant */
-#define AOPOBJ_STATIC_POINTER       0x02	/* Data is part of an ACPI table, don't delete */
-#define AOPOBJ_DATA_VALID           0x04	/* Object is initialized and data is valid */
-#define AOPOBJ_OBJECT_INITIALIZED   0x08	/* Region is initialized, _REG was run */
-#define AOPOBJ_SETUP_COMPLETE       0x10	/* Region setup is complete */
-#define AOPOBJ_INVALID              0x20	/* Host OS won't allow a Region address */
+#define AOPOBJ_AML_CONSTANT         0x01
+#define AOPOBJ_STATIC_POINTER       0x02
+#define AOPOBJ_DATA_VALID           0x04
+#define AOPOBJ_OBJECT_INITIALIZED   0x08
+#define AOPOBJ_SETUP_COMPLETE       0x10
+#define AOPOBJ_SINGLE_DATUM         0x20
+#define AOPOBJ_INVALID              0x40	/* Used if host OS won't allow an op_region address */
+#define AOPOBJ_MODULE_LEVEL         0x80
 
 /******************************************************************************
  *
@@ -109,7 +111,7 @@ ACPI_OBJECT_COMMON_HEADER};
 
 struct acpi_object_integer {
 	ACPI_OBJECT_COMMON_HEADER u8 fill[3];	/* Prevent warning on some compilers */
-	u64 value;
+	acpi_integer value;
 };
 
 /*
@@ -173,28 +175,16 @@ struct acpi_object_region {
 };
 
 struct acpi_object_method {
-	ACPI_OBJECT_COMMON_HEADER u8 info_flags;
+	ACPI_OBJECT_COMMON_HEADER u8 method_flags;
 	u8 param_count;
 	u8 sync_level;
 	union acpi_operand_object *mutex;
 	u8 *aml_start;
-	union {
-		ACPI_INTERNAL_METHOD implementation;
-		union acpi_operand_object *handler;
-	} dispatch;
-
+	ACPI_INTERNAL_METHOD implementation;
 	u32 aml_length;
 	u8 thread_count;
 	acpi_owner_id owner_id;
 };
-
-/* Flags for info_flags field above */
-
-#define ACPI_METHOD_MODULE_LEVEL        0x01	/* Method is actually module-level code */
-#define ACPI_METHOD_INTERNAL_ONLY       0x02	/* Method is implemented internally (_OSI) */
-#define ACPI_METHOD_SERIALIZED          0x04	/* Method is serialized */
-#define ACPI_METHOD_SERIALIZED_PENDING  0x08	/* Method is to be marked serialized */
-#define ACPI_METHOD_MODIFIED_NAMESPACE  0x10	/* Method modified the namespace */
 
 /******************************************************************************
  *
@@ -254,17 +244,14 @@ ACPI_OBJECT_COMMON_HEADER ACPI_COMMON_NOTIFY_INFO};
 	u32                             base_byte_offset;   /* Byte offset within containing object */\
 	u32                             value;              /* Value to store into the Bank or Index register */\
 	u8                              start_field_bit_offset;/* Bit offset within first field datum (0-63) */\
-	u8                              access_length;	/* For serial regions/fields */
-
+	u8                              access_bit_width;	/* Read/Write size in bits (8-64) */
 
 struct acpi_object_field_common {	/* COMMON FIELD (for BUFFER, REGION, BANK, and INDEX fields) */
 	ACPI_OBJECT_COMMON_HEADER ACPI_COMMON_FIELD_INFO union acpi_operand_object *region_obj;	/* Parent Operation Region object (REGION/BANK fields only) */
 };
 
 struct acpi_object_region_field {
-	ACPI_OBJECT_COMMON_HEADER ACPI_COMMON_FIELD_INFO u16 resource_length;
-	union acpi_operand_object *region_obj;	/* Containing op_region object */
-	u8 *resource_buffer;	/* resource_template for serial regions/fields */
+	ACPI_OBJECT_COMMON_HEADER ACPI_COMMON_FIELD_INFO union acpi_operand_object *region_obj;	/* Containing op_region object */
 };
 
 struct acpi_object_bank_field {
@@ -296,10 +283,8 @@ struct acpi_object_buffer_field {
 
 struct acpi_object_notify_handler {
 	ACPI_OBJECT_COMMON_HEADER struct acpi_namespace_node *node;	/* Parent device */
-	u32 handler_type;
 	acpi_notify_handler handler;
 	void *context;
-	struct acpi_object_notify_handler *next;
 };
 
 struct acpi_object_addr_handler {
@@ -361,7 +346,6 @@ typedef enum {
  */
 struct acpi_object_extra {
 	ACPI_OBJECT_COMMON_HEADER struct acpi_namespace_node *method_REG;	/* _REG method for this region (if any) */
-	struct acpi_namespace_node *scope_node;
 	void *region_context;	/* Region-specific data */
 	u8 *aml_start;
 	u32 aml_length;

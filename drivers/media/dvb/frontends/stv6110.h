@@ -41,7 +41,6 @@
 struct stv6110_config {
 	u8 i2c_address;
 	u32 mclk;
-	u8 gain;
 	u8 clk_div;	/* divisor value for the output clock */
 };
 

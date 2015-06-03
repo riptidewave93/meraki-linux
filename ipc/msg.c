@@ -23,6 +23,7 @@
  */
 
 #include <linux/capability.h>
+#include <linux/slab.h>
 #include <linux/msg.h>
 #include <linux/spinlock.h>
 #include <linux/init.h>
@@ -296,9 +297,7 @@ static void freeque(struct ipc_namespace *ns, struct kern_ipc_perm *ipcp)
 	}
 	atomic_sub(msq->q_cbytes, &ns->msg_bytes);
 	security_msg_queue_free(msq);
-	ipc_lock_by_ptr(&msq->q_perm);
 	ipc_rcu_putref(msq);
-	ipc_unlock(&msq->q_perm);
 }
 
 /*
@@ -347,19 +346,19 @@ copy_msqid_to_user(void __user *buf, struct msqid64_ds *in, int version)
 		out.msg_rtime		= in->msg_rtime;
 		out.msg_ctime		= in->msg_ctime;
 
-		if (in->msg_cbytes > USHRT_MAX)
-			out.msg_cbytes	= USHRT_MAX;
+		if (in->msg_cbytes > USHORT_MAX)
+			out.msg_cbytes	= USHORT_MAX;
 		else
 			out.msg_cbytes	= in->msg_cbytes;
 		out.msg_lcbytes		= in->msg_cbytes;
 
-		if (in->msg_qnum > USHRT_MAX)
-			out.msg_qnum	= USHRT_MAX;
+		if (in->msg_qnum > USHORT_MAX)
+			out.msg_qnum	= USHORT_MAX;
 		else
 			out.msg_qnum	= in->msg_qnum;
 
-		if (in->msg_qbytes > USHRT_MAX)
-			out.msg_qbytes	= USHRT_MAX;
+		if (in->msg_qbytes > USHORT_MAX)
+			out.msg_qbytes	= USHORT_MAX;
 		else
 			out.msg_qbytes	= in->msg_qbytes;
 		out.msg_lqbytes		= in->msg_qbytes;
@@ -405,6 +404,11 @@ copy_msqid_from_user(struct msqid64_ds *out, void __user *buf, int version)
 	}
 }
 
+/* Tell gcc not to warn about uninitialized variable */
+#if defined(__GNUC__)
+	#pragma GCC diagnostic ignored "-Wuninitialized"
+#endif	
+
 /*
  * This function handles some msgctl commands which require the rw_mutex
  * to be held in write mode.
@@ -414,7 +418,7 @@ static int msgctl_down(struct ipc_namespace *ns, int msqid, int cmd,
 		       struct msqid_ds __user *buf, int version)
 {
 	struct kern_ipc_perm *ipcp;
-	struct msqid64_ds uninitialized_var(msqid64);
+	struct msqid64_ds msqid64;
 	struct msg_queue *msq;
 	int err;
 
@@ -423,7 +427,7 @@ static int msgctl_down(struct ipc_namespace *ns, int msqid, int cmd,
 			return -EFAULT;
 	}
 
-	ipcp = ipcctl_pre_down(ns, &msg_ids(ns), msqid, cmd,
+	ipcp = ipcctl_pre_down(&msg_ids(ns), msqid, cmd,
 			       &msqid64.msg_perm, msqid64.msg_qbytes);
 	if (IS_ERR(ipcp))
 		return PTR_ERR(ipcp);
@@ -541,7 +545,7 @@ SYSCALL_DEFINE3(msgctl, int, msqid, int, cmd, struct msqid_ds __user *, buf)
 			success_return = 0;
 		}
 		err = -EACCES;
-		if (ipcperms(ns, &msq->q_perm, S_IRUGO))
+		if (ipcperms(&msq->q_perm, S_IRUGO))
 			goto out_unlock;
 
 		err = security_msg_queue_msgctl(msq, cmd);
@@ -666,7 +670,7 @@ long do_msgsnd(int msqid, long mtype, void __user *mtext,
 		struct msg_sender s;
 
 		err = -EACCES;
-		if (ipcperms(ns, &msq->q_perm, S_IWUGO))
+		if (ipcperms(&msq->q_perm, S_IWUGO))
 			goto out_unlock_free;
 
 		err = security_msg_queue_msgsnd(msq, msg, msgflg);
@@ -706,7 +710,7 @@ long do_msgsnd(int msqid, long mtype, void __user *mtext,
 	msq->q_stime = get_seconds();
 
 	if (!pipelined_send(msq, msg)) {
-		/* no one is waiting for this message, enqueue it */
+		/* noone is waiting for this message, enqueue it */
 		list_add_tail(&msg->m_list, &msq->q_messages);
 		msq->q_cbytes += msgsz;
 		msq->q_qnum++;
@@ -776,7 +780,7 @@ long do_msgrcv(int msqid, long *pmtype, void __user *mtext,
 		struct list_head *tmp;
 
 		msg = ERR_PTR(-EACCES);
-		if (ipcperms(ns, &msq->q_perm, S_IRUGO))
+		if (ipcperms(&msq->q_perm, S_IRUGO))
 			goto out_unlock;
 
 		msg = ERR_PTR(-EAGAIN);
@@ -844,7 +848,7 @@ long do_msgrcv(int msqid, long *pmtype, void __user *mtext,
 		 * Disable preemption.  We don't hold a reference to the queue
 		 * and getting a reference would defeat the idea of a lockless
 		 * operation, thus the code relies on rcu to guarantee the
-		 * existence of msq:
+		 * existance of msq:
 		 * Prior to destruction, expunge_all(-EIRDM) changes r_msg.
 		 * Thus if r_msg is -EAGAIN, then the queue not yet destroyed.
 		 * rcu_read_lock() prevents preemption between reading r_msg

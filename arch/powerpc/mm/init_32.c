@@ -30,10 +30,7 @@
 #include <linux/highmem.h>
 #include <linux/initrd.h>
 #include <linux/pagemap.h>
-#include <linux/memblock.h>
-#include <linux/gfp.h>
-#include <linux/slab.h>
-#include <linux/hugetlb.h>
+#include <linux/lmb.h>
 
 #include <asm/pgalloc.h>
 #include <asm/prom.h>
@@ -45,12 +42,12 @@
 #include <asm/btext.h>
 #include <asm/tlb.h>
 #include <asm/sections.h>
-#include <asm/hugetlb.h>
+#include <asm/system.h>
 
 #include "mmu_decl.h"
 
 #if defined(CONFIG_KERNEL_START_BOOL) || defined(CONFIG_LOWMEM_SIZE_BOOL)
-/* The amount of lowmem must be within 0xF0000000 - KERNELBASE. */
+/* The ammount of lowmem must be within 0xF0000000 - KERNELBASE. */
 #if (CONFIG_LOWMEM_SIZE > (0xF0000000 - PAGE_OFFSET))
 #error "You must adjust CONFIG_LOWMEM_SIZE or CONFIG_START_KERNEL"
 #endif
@@ -64,13 +61,6 @@ phys_addr_t memstart_addr = (phys_addr_t)~0ull;
 EXPORT_SYMBOL(memstart_addr);
 phys_addr_t kernstart_addr;
 EXPORT_SYMBOL(kernstart_addr);
-
-#ifdef CONFIG_RELOCATABLE_PPC32
-/* Used in __va()/__pa() */
-long long virt_phys_offset;
-EXPORT_SYMBOL(virt_phys_offset);
-#endif
-
 phys_addr_t lowmem_end_addr;
 
 int boot_mapsize;
@@ -92,13 +82,21 @@ extern struct task_struct *current_set[NR_CPUS];
 int __map_without_bats;
 int __map_without_ltlbs;
 
-/*
- * This tells the system to allow ioremapping memory marked as reserved.
- */
-int __allow_ioremap_reserved;
-
 /* max amount of low RAM to map in */
 unsigned long __max_low_memory = MAX_LOW_MEM;
+
+/*
+ * address of the limit of what is accessible with initial MMU setup -
+ * 256MB usually, but only 16MB on 601.
+ */
+phys_addr_t __initial_memory_limit_addr = (phys_addr_t)0x10000000;
+
+#if defined(CONFIG_FAST_MEMSET)
+#define NR_MAX_PIN_PAGES        16
+static unsigned int nr_pinned_pages=0;
+static unsigned long pin_pages[NR_MAX_PIN_PAGES];
+#endif	/* CONFIG_FAST_MEMSET */
+
 
 /*
  * Check for command-line options that affect what MMU_init will do.
@@ -119,6 +117,39 @@ void MMU_setup(void)
 #endif
 }
 
+
+#if defined(CONFIG_FAST_MEMSET)
+int check_if_ram_page(unsigned long page_addr)
+{
+	int i;
+	for(i=0; i < nr_pinned_pages; i++) {
+		if(page_addr == pin_pages[i])
+			return 1;
+	}
+	return 0;
+}
+
+
+void __init stash_pinned_pages(void)
+{
+	int i;
+
+	for (i = 0; i < PPC44x_TLB_SIZE; i++) {
+		unsigned long w0,w1,w2;
+		asm volatile("tlbre  %0,%1,0" : "=r" (w0) : "r" (i));
+		asm volatile("tlbre  %0,%1,1" : "=r" (w1) : "r" (i));
+		asm volatile("tlbre  %0,%1,2" : "=r" (w2) : "r" (i));
+		if((w0 & PPC44x_TLB_VALID) && (w0 & PPC44x_TLB_256M) ) {
+			if(w2 & PPC44x_TLB_I)
+				continue;
+			else
+				pin_pages[nr_pinned_pages++] = w0 & PPC44x_TLB_EPN_MASK;
+		}
+	}
+}
+#endif	/* CONFIG_FAST_MEMSET */ 
+
+
 /*
  * MMU_init sets up the basic memory mappings for the kernel,
  * including both RAM and possibly some I/O regions,
@@ -129,25 +160,23 @@ void __init MMU_init(void)
 	if (ppc_md.progress)
 		ppc_md.progress("MMU:enter", 0x111);
 
+	/* 601 can only access 16MB at the moment */
+	if (PVR_VER(mfspr(SPRN_PVR)) == 1)
+		__initial_memory_limit_addr = 0x01000000;
+	/* 8xx can only access 8MB at the moment */
+	if (PVR_VER(mfspr(SPRN_PVR)) == 0x50)
+		__initial_memory_limit_addr = 0x00800000;
+
 	/* parse args from command line */
 	MMU_setup();
 
-	/*
-	 * Reserve gigantic pages for hugetlb.  This MUST occur before
-	 * lowmem_end_addr is initialized below.
-	 */
-	reserve_hugetlb_gpages();
-
-	if (memblock.memory.cnt > 1) {
-#ifndef CONFIG_WII
-		memblock_enforce_memory_limit(memblock.memory.regions[0].size);
+	if (lmb.memory.cnt > 1) {
+		lmb.memory.cnt = 1;
+		lmb_analyze();
 		printk(KERN_WARNING "Only using first contiguous memory region");
-#else
-		wii_memory_fixups();
-#endif
 	}
 
-	total_lowmem = total_memory = memblock_end_of_DRAM() - memstart_addr;
+	total_lowmem = total_memory = lmb_end_of_DRAM() - memstart_addr;
 	lowmem_end_addr = memstart_addr + total_lowmem;
 
 #ifdef CONFIG_FSL_BOOKE
@@ -162,7 +191,8 @@ void __init MMU_init(void)
 		lowmem_end_addr = memstart_addr + total_lowmem;
 #ifndef CONFIG_HIGHMEM
 		total_memory = total_lowmem;
-		memblock_enforce_memory_limit(total_lowmem);
+		lmb_enforce_memory_limit(lowmem_end_addr);
+		lmb_analyze();
 #endif /* CONFIG_HIGHMEM */
 	}
 
@@ -183,6 +213,10 @@ void __init MMU_init(void)
 	if (ppc_md.progress)
 		ppc_md.progress("MMU:setio", 0x302);
 
+#if defined(CONFIG_FAST_MEMSET)
+	stash_pinned_pages();
+#endif	/* CONFIG_FAST_MEMSET */
+
 	if (ppc_md.progress)
 		ppc_md.progress("MMU:exit", 0x211);
 
@@ -190,30 +224,65 @@ void __init MMU_init(void)
 #ifdef CONFIG_BOOTX_TEXT
 	btext_unmap();
 #endif
-
-	/* Shortly after that, the entire linear mapping will be available */
-	memblock_set_current_limit(lowmem_end_addr);
 }
 
 /* This is only called until mem_init is done. */
 void __init *early_get_page(void)
 {
-	if (init_bootmem_done)
-		return alloc_bootmem_pages(PAGE_SIZE);
-	else
-		return __va(memblock_alloc(PAGE_SIZE, PAGE_SIZE));
+	void *p;
+
+	if (init_bootmem_done) {
+		p = alloc_bootmem_pages(PAGE_SIZE);
+	} else {
+		p = __va(lmb_alloc_base(PAGE_SIZE, PAGE_SIZE,
+					__initial_memory_limit_addr));
+	}
+	return p;
 }
 
-#ifdef CONFIG_8xx /* No 8xx specific .c file to put that in ... */
-void setup_initial_memory_limit(phys_addr_t first_memblock_base,
-				phys_addr_t first_memblock_size)
+/* Free up now-unused memory */
+static void free_sec(unsigned long start, unsigned long end, const char *name)
 {
-	/* We don't currently support the first MEMBLOCK not mapping 0
-	 * physical on those processors
-	 */
-	BUG_ON(first_memblock_base != 0);
+	unsigned long cnt = 0;
 
-	/* 8xx can only access 8MB at the moment */
-	memblock_set_current_limit(min_t(u64, first_memblock_size, 0x00800000));
+	while (start < end) {
+		ClearPageReserved(virt_to_page(start));
+		init_page_count(virt_to_page(start));
+		free_page(start);
+		cnt++;
+		start += PAGE_SIZE;
+ 	}
+	if (cnt) {
+		printk(" %ldk %s", cnt << (PAGE_SHIFT - 10), name);
+		totalram_pages += cnt;
+	}
 }
-#endif /* CONFIG_8xx */
+
+void free_initmem(void)
+{
+#define FREESEC(TYPE) \
+	free_sec((unsigned long)(&__ ## TYPE ## _begin), \
+		 (unsigned long)(&__ ## TYPE ## _end), \
+		 #TYPE);
+
+	printk ("Freeing unused kernel memory:");
+	FREESEC(init);
+ 	printk("\n");
+	ppc_md.progress = NULL;
+#undef FREESEC
+}
+
+#ifdef CONFIG_BLK_DEV_INITRD
+void free_initrd_mem(unsigned long start, unsigned long end)
+{
+	if (start < end)
+		printk ("Freeing initrd memory: %ldk freed\n", (end - start) >> 10);
+	for (; start < end; start += PAGE_SIZE) {
+		ClearPageReserved(virt_to_page(start));
+		init_page_count(virt_to_page(start));
+		free_page(start);
+		totalram_pages++;
+	}
+}
+#endif
+

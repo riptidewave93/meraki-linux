@@ -1,3 +1,2 @@
-void integrator_init_early(void);
-void integrator_reserve(void);
-void integrator_restart(char, const char *);
+extern void integrator_time_init(unsigned long, unsigned int);
+extern unsigned long integrator_gettimeoffset(void);

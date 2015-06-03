@@ -7,6 +7,7 @@
  */
 
 #include <asm/uaccess.h>
+#include <asm/system.h>
 
 #include <linux/time.h>
 #include <linux/kernel.h>
@@ -14,14 +15,17 @@
 #include <linux/fcntl.h>
 #include <linux/stat.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/sched.h>
+#include <linux/smp_lock.h>
 
-#include "ncp_fs.h"
+#include <linux/ncp_fs.h>
+#include "ncplib_kernel.h"
 
-static int ncp_fsync(struct file *file, loff_t start, loff_t end, int datasync)
+static int ncp_fsync(struct file *file, struct dentry *dentry, int datasync)
 {
-	return filemap_write_and_wait_range(file->f_mapping, start, end);
+	return 0;
 }
 
 /*
@@ -110,6 +114,9 @@ ncp_file_read(struct file *file, char __user *buf, size_t count, loff_t *ppos)
 	DPRINTK("ncp_file_read: enter %s/%s\n",
 		dentry->d_parent->d_name.name, dentry->d_name.name);
 
+	if (!ncp_conn_valid(NCP_SERVER(inode)))
+		return -EIO;
+
 	pos = *ppos;
 
 	if ((ssize_t) count < 0) {
@@ -186,11 +193,13 @@ ncp_file_write(struct file *file, const char __user *buf, size_t count, loff_t *
 
 	DPRINTK("ncp_file_write: enter %s/%s\n",
 		dentry->d_parent->d_name.name, dentry->d_name.name);
+	if (!ncp_conn_valid(NCP_SERVER(inode)))
+		return -EIO;
 	if ((ssize_t) count < 0)
 		return -EINVAL;
 	pos = *ppos;
 	if (file->f_flags & O_APPEND) {
-		pos = i_size_read(inode);
+		pos = inode->i_size;
 	}
 
 	if (pos + count > MAX_NON_LFS && !(file->f_flags&O_LARGEFILE)) {
@@ -256,11 +265,8 @@ ncp_file_write(struct file *file, const char __user *buf, size_t count, loff_t *
 
 	*ppos = pos;
 
-	if (pos > i_size_read(inode)) {
-		mutex_lock(&inode->i_mutex);
-		if (pos > i_size_read(inode))
-			i_size_write(inode, pos);
-		mutex_unlock(&inode->i_mutex);
+	if (pos > inode->i_size) {
+		inode->i_size = pos;
 	}
 	DPRINTK("ncp_file_write: exit %s/%s\n",
 		dentry->d_parent->d_name.name, dentry->d_name.name);
@@ -276,12 +282,21 @@ static int ncp_release(struct inode *inode, struct file *file) {
 	return 0;
 }
 
+static loff_t ncp_remote_llseek(struct file *file, loff_t offset, int origin)
+{
+	loff_t ret;
+	lock_kernel();
+	ret = generic_file_llseek_unlocked(file, offset, origin);
+	unlock_kernel();
+	return ret;
+}
+
 const struct file_operations ncp_file_operations =
 {
-	.llseek		= generic_file_llseek,
+	.llseek 	= ncp_remote_llseek,
 	.read		= ncp_file_read,
 	.write		= ncp_file_write,
-	.unlocked_ioctl	= ncp_ioctl,
+	.ioctl		= ncp_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl	= ncp_compat_ioctl,
 #endif

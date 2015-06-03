@@ -23,9 +23,9 @@
 #include <linux/module.h>
 #include <linux/platform_device.h>
 
-#include <asm/gpio.h>
-#include <plat/mux.h>
-#include "omapfb.h"
+#include <mach/gpio.h>
+#include <mach/mux.h>
+#include <mach/omapfb.h>
 
 static int osk_panel_init(struct lcd_panel *panel, struct omapfb_device *fbdev)
 {
@@ -116,7 +116,7 @@ static int osk_panel_resume(struct platform_device *pdev)
 	return 0;
 }
 
-static struct platform_driver osk_panel_driver = {
+struct platform_driver osk_panel_driver = {
 	.probe		= osk_panel_probe,
 	.remove		= osk_panel_remove,
 	.suspend	= osk_panel_suspend,
@@ -127,4 +127,16 @@ static struct platform_driver osk_panel_driver = {
 	},
 };
 
-module_platform_driver(osk_panel_driver);
+static int __init osk_panel_drv_init(void)
+{
+	return platform_driver_register(&osk_panel_driver);
+}
+
+static void __exit osk_panel_drv_cleanup(void)
+{
+	platform_driver_unregister(&osk_panel_driver);
+}
+
+module_init(osk_panel_drv_init);
+module_exit(osk_panel_drv_cleanup);
+

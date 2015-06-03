@@ -84,15 +84,25 @@ static void do_acct_process(struct bsd_acct_struct *acct,
  * the cache line to have the data after getting the lock.
  */
 struct bsd_acct_struct {
-	int			active;
-	unsigned long		needcheck;
+	volatile int		active;
+	volatile int		needcheck;
 	struct file		*file;
 	struct pid_namespace	*ns;
+	struct timer_list	timer;
 	struct list_head	list;
 };
 
 static DEFINE_SPINLOCK(acct_lock);
 static LIST_HEAD(acct_list);
+
+/*
+ * Called whenever the timer says to check the free space.
+ */
+static void acct_timeout(unsigned long x)
+{
+	struct bsd_acct_struct *acct = (struct bsd_acct_struct *)x;
+	acct->needcheck = 1;
+}
 
 /*
  * Check the amount of free space and suspend/resume accordingly.
@@ -102,23 +112,23 @@ static int check_free_space(struct bsd_acct_struct *acct, struct file *file)
 	struct kstatfs sbuf;
 	int res;
 	int act;
-	u64 resume;
-	u64 suspend;
+	sector_t resume;
+	sector_t suspend;
 
 	spin_lock(&acct_lock);
 	res = acct->active;
-	if (!file || time_is_before_jiffies(acct->needcheck))
+	if (!file || !acct->needcheck)
 		goto out;
 	spin_unlock(&acct_lock);
 
 	/* May block */
-	if (vfs_statfs(&file->f_path, &sbuf))
+	if (vfs_statfs(file->f_path.dentry, &sbuf))
 		return res;
 	suspend = sbuf.f_blocks * SUSPEND;
 	resume = sbuf.f_blocks * RESUME;
 
-	do_div(suspend, 100);
-	do_div(resume, 100);
+	sector_div(suspend, 100);
+	sector_div(resume, 100);
 
 	if (sbuf.f_bavail <= suspend)
 		act = -1;
@@ -150,7 +160,10 @@ static int check_free_space(struct bsd_acct_struct *acct, struct file *file)
 		}
 	}
 
-	acct->needcheck = jiffies + ACCT_TIMEOUT*HZ;
+	del_timer(&acct->timer);
+	acct->needcheck = 0;
+	acct->timer.expires = jiffies + ACCT_TIMEOUT*HZ;
+	add_timer(&acct->timer);
 	res = acct->active;
 out:
 	spin_unlock(&acct_lock);
@@ -172,7 +185,9 @@ static void acct_file_reopen(struct bsd_acct_struct *acct, struct file *file,
 	if (acct->file) {
 		old_acct = acct->file;
 		old_ns = acct->ns;
+		del_timer(&acct->timer);
 		acct->active = 0;
+		acct->needcheck = 0;
 		acct->file = NULL;
 		acct->ns = NULL;
 		list_del(&acct->list);
@@ -180,9 +195,13 @@ static void acct_file_reopen(struct bsd_acct_struct *acct, struct file *file,
 	if (file) {
 		acct->file = file;
 		acct->ns = ns;
-		acct->needcheck = jiffies + ACCT_TIMEOUT*HZ;
+		acct->needcheck = 0;
 		acct->active = 1;
 		list_add(&acct->list, &acct_list);
+		/* It's been deleted if it was used before so this is safe */
+		setup_timer(&acct->timer, acct_timeout, (unsigned long)acct);
+		acct->timer.expires = jiffies + ACCT_TIMEOUT*HZ;
+		add_timer(&acct->timer);
 	}
 	if (old_acct) {
 		mnt_unpin(old_acct->f_path.mnt);
@@ -197,6 +216,7 @@ static int acct_on(char *name)
 {
 	struct file *file;
 	struct vfsmount *mnt;
+	int error;
 	struct pid_namespace *ns;
 	struct bsd_acct_struct *acct = NULL;
 
@@ -222,6 +242,13 @@ static int acct_on(char *name)
 			filp_close(file, NULL);
 			return -ENOMEM;
 		}
+	}
+
+	error = security_acct(file);
+	if (error) {
+		kfree(acct);
+		filp_close(file, NULL);
+		return error;
 	}
 
 	spin_lock(&acct_lock);
@@ -254,7 +281,7 @@ static int acct_on(char *name)
  */
 SYSCALL_DEFINE1(acct, const char __user *, name)
 {
-	int error = 0;
+	int error;
 
 	if (!capable(CAP_SYS_PACCT))
 		return -EPERM;
@@ -272,11 +299,13 @@ SYSCALL_DEFINE1(acct, const char __user *, name)
 		if (acct == NULL)
 			return 0;
 
-		spin_lock(&acct_lock);
-		acct_file_reopen(acct, NULL, NULL);
-		spin_unlock(&acct_lock);
+		error = security_acct(NULL);
+		if (!error) {
+			spin_lock(&acct_lock);
+			acct_file_reopen(acct, NULL, NULL);
+			spin_unlock(&acct_lock);
+		}
 	}
-
 	return error;
 }
 
@@ -315,7 +344,7 @@ void acct_auto_close(struct super_block *sb)
 	spin_lock(&acct_lock);
 restart:
 	list_for_each_entry(acct, &acct_list, list)
-		if (acct->file && acct->file->f_path.dentry->d_sb == sb) {
+		if (acct->file && acct->file->f_path.mnt->mnt_sb == sb) {
 			acct_file_reopen(acct, NULL, NULL);
 			goto restart;
 		}
@@ -324,17 +353,17 @@ restart:
 
 void acct_exit_ns(struct pid_namespace *ns)
 {
-	struct bsd_acct_struct *acct = ns->bacct;
-
-	if (acct == NULL)
-		return;
+	struct bsd_acct_struct *acct;
 
 	spin_lock(&acct_lock);
-	if (acct->file != NULL)
-		acct_file_reopen(acct, NULL, NULL);
-	spin_unlock(&acct_lock);
+	acct = ns->bacct;
+	if (acct != NULL) {
+		if (acct->file != NULL)
+			acct_file_reopen(acct, NULL, NULL);
 
-	kfree(acct);
+		kfree(acct);
+	}
+	spin_unlock(&acct_lock);
 }
 
 /*
@@ -478,7 +507,7 @@ static void do_acct_process(struct bsd_acct_struct *acct,
 	 * Fill the accounting struct with the needed info as recorded
 	 * by the different kernel functions.
 	 */
-	memset(&ac, 0, sizeof(acct_t));
+	memset((caddr_t)&ac, 0, sizeof(acct_t));
 
 	ac.ac_version = ACCT_VERSION | ACCT_BYTEORDER;
 	strlcpy(ac.ac_comm, current->comm, sizeof(ac.ac_comm));
@@ -559,6 +588,16 @@ out:
 }
 
 /**
+ * acct_init_pacct - initialize a new pacct_struct
+ * @pacct: per-process accounting info struct to initialize
+ */
+void acct_init_pacct(struct pacct_struct *pacct)
+{
+	memset(pacct, 0, sizeof(struct pacct_struct));
+	pacct->ac_utime = pacct->ac_stime = cputime_zero;
+}
+
+/**
  * acct_collect - collect accounting information into pacct_struct
  * @exitcode: task exit code
  * @group_dead: not 0, if this thread is the last one in the process.
@@ -593,8 +632,8 @@ void acct_collect(long exitcode, int group_dead)
 		pacct->ac_flag |= ACORE;
 	if (current->flags & PF_SIGNALED)
 		pacct->ac_flag |= AXSIG;
-	pacct->ac_utime += current->utime;
-	pacct->ac_stime += current->stime;
+	pacct->ac_utime = cputime_add(pacct->ac_utime, current->utime);
+	pacct->ac_stime = cputime_add(pacct->ac_stime, current->stime);
 	pacct->ac_minflt += current->min_flt;
 	pacct->ac_majflt += current->maj_flt;
 	spin_unlock_irq(&current->sighand->siglock);

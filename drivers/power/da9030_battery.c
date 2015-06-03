@@ -10,7 +10,6 @@
  */
 
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/types.h>
 #include <linux/device.h>
@@ -510,7 +509,7 @@ static int da9030_battery_probe(struct platform_device *pdev)
 
 	charger->master = pdev->dev.parent;
 
-	/* 10 seconds between monitor runs unless platform defines other
+	/* 10 seconds between monotor runs unless platfrom defines other
 	   interval */
 	charger->interval = msecs_to_jiffies(
 		(pdata->batmon_interval ? : 10) * 1000);
@@ -588,7 +587,18 @@ static struct platform_driver da903x_battery_driver = {
 	.remove = da9030_battery_remove,
 };
 
-module_platform_driver(da903x_battery_driver);
+static int da903x_battery_init(void)
+{
+	return platform_driver_register(&da903x_battery_driver);
+}
+
+static void da903x_battery_exit(void)
+{
+	platform_driver_unregister(&da903x_battery_driver);
+}
+
+module_init(da903x_battery_init);
+module_exit(da903x_battery_exit);
 
 MODULE_DESCRIPTION("DA9030 battery charger driver");
 MODULE_AUTHOR("Mike Rapoport, CompuLab");

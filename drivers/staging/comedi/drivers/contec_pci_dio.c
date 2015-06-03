@@ -57,9 +57,10 @@ static const struct contec_board contec_boards[] = {
 
 #define PCI_DEVICE_ID_PIO1616L 0x8172
 static DEFINE_PCI_DEVICE_TABLE(contec_pci_table) = {
-	{ PCI_DEVICE(PCI_VENDOR_ID_CONTEC, PCI_DEVICE_ID_PIO1616L),
-		.driver_data = PIO1616L },
-	{0}
+	{
+	PCI_VENDOR_ID_CONTEC, PCI_DEVICE_ID_PIO1616L, PCI_ANY_ID,
+		    PCI_ANY_ID, 0, 0, PIO1616L}, {
+	0}
 };
 
 MODULE_DEVICE_TABLE(pci, contec_pci_table);
@@ -102,7 +103,7 @@ static int contec_ns_to_timer(unsigned int *ns, int round);
 
 static int contec_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 {
-	struct pci_dev *pcidev = NULL;
+	struct pci_dev *pcidev;
 	struct comedi_subdevice *s;
 
 	printk("comedi%d: contec: ", dev->minor);
@@ -115,7 +116,10 @@ static int contec_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	if (alloc_subdevices(dev, 2) < 0)
 		return -ENOMEM;
 
-	for_each_pci_dev(pcidev) {
+	for (pcidev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, NULL);
+	     pcidev != NULL;
+	     pcidev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, pcidev)) {
+
 		if (pcidev->vendor == PCI_VENDOR_ID_CONTEC &&
 		    pcidev->device == PCI_DEVICE_ID_PIO1616L) {
 			if (it->options[0] || it->options[1]) {
@@ -169,8 +173,9 @@ static int contec_detach(struct comedi_device *dev)
 	printk("comedi%d: contec: remove\n", dev->minor);
 
 	if (devpriv && devpriv->pci_dev) {
-		if (dev->iobase)
+		if (dev->iobase) {
 			comedi_pci_disable(devpriv->pci_dev);
+		}
 		pci_dev_put(devpriv->pci_dev);
 	}
 
@@ -196,8 +201,8 @@ static int contec_do_insn_bits(struct comedi_device *dev,
 			       struct comedi_insn *insn, unsigned int *data)
 {
 
-	dev_dbg(dev->hw_dev, "contec_do_insn_bits called\n");
-	dev_dbg(dev->hw_dev, "data: %d %d\n", data[0], data[1]);
+	printk("contec_do_insn_bits called\n");
+	printk(" data: %d %d\n", data[0], data[1]);
 
 	if (insn->n != 2)
 		return -EINVAL;
@@ -205,8 +210,8 @@ static int contec_do_insn_bits(struct comedi_device *dev,
 	if (data[0]) {
 		s->state &= ~data[0];
 		s->state |= data[0] & data[1];
-		dev_dbg(dev->hw_dev, "out: %d on %lx\n", s->state,
-			dev->iobase + thisboard->out_offs);
+		printk("  out: %d on %lx\n", s->state,
+		       dev->iobase + thisboard->out_offs);
 		outw(s->state, dev->iobase + thisboard->out_offs);
 	}
 	return 2;
@@ -217,8 +222,8 @@ static int contec_di_insn_bits(struct comedi_device *dev,
 			       struct comedi_insn *insn, unsigned int *data)
 {
 
-	dev_dbg(dev->hw_dev, "contec_di_insn_bits called\n");
-	dev_dbg(dev->hw_dev, "data: %d %d\n", data[0], data[1]);
+	printk("contec_di_insn_bits called\n");
+	printk(" data: %d %d\n", data[0], data[1]);
 
 	if (insn->n != 2)
 		return -EINVAL;
@@ -228,44 +233,4 @@ static int contec_di_insn_bits(struct comedi_device *dev,
 	return 2;
 }
 
-static int __devinit driver_contec_pci_probe(struct pci_dev *dev,
-					     const struct pci_device_id *ent)
-{
-	return comedi_pci_auto_config(dev, driver_contec.driver_name);
-}
-
-static void __devexit driver_contec_pci_remove(struct pci_dev *dev)
-{
-	comedi_pci_auto_unconfig(dev);
-}
-
-static struct pci_driver driver_contec_pci_driver = {
-	.id_table = contec_pci_table,
-	.probe = &driver_contec_pci_probe,
-	.remove = __devexit_p(&driver_contec_pci_remove)
-};
-
-static int __init driver_contec_init_module(void)
-{
-	int retval;
-
-	retval = comedi_driver_register(&driver_contec);
-	if (retval < 0)
-		return retval;
-
-	driver_contec_pci_driver.name = (char *)driver_contec.driver_name;
-	return pci_register_driver(&driver_contec_pci_driver);
-}
-
-static void __exit driver_contec_cleanup_module(void)
-{
-	pci_unregister_driver(&driver_contec_pci_driver);
-	comedi_driver_unregister(&driver_contec);
-}
-
-module_init(driver_contec_init_module);
-module_exit(driver_contec_cleanup_module);
-
-MODULE_AUTHOR("Comedi http://www.comedi.org");
-MODULE_DESCRIPTION("Comedi low-level driver");
-MODULE_LICENSE("GPL");
+COMEDI_PCI_INITCLEANUP(driver_contec, contec_pci_table);

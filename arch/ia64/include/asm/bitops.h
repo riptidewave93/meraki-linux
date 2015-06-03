@@ -127,7 +127,7 @@ clear_bit_unlock (int nr, volatile void *addr)
  * @addr: Address to start counting from
  *
  * Similarly to clear_bit_unlock, the implementation uses a store
- * with release semantics. See also arch_spin_unlock().
+ * with release semantics. See also __raw_spin_unlock().
  */
 static __inline__ void
 __clear_bit_unlock(int nr, void *addr)
@@ -437,18 +437,17 @@ __fls (unsigned long x)
  * hweightN: returns the hamming weight (i.e. the number
  * of bits set) of a N-bit word
  */
-static __inline__ unsigned long __arch_hweight64(unsigned long x)
+static __inline__ unsigned long
+hweight64 (unsigned long x)
 {
 	unsigned long result;
 	result = ia64_popcnt(x);
 	return result;
 }
 
-#define __arch_hweight32(x) ((unsigned int) __arch_hweight64((x) & 0xfffffffful))
-#define __arch_hweight16(x) ((unsigned int) __arch_hweight64((x) & 0xfffful))
-#define __arch_hweight8(x)  ((unsigned int) __arch_hweight64((x) & 0xfful))
-
-#include <asm-generic/bitops/const_hweight.h>
+#define hweight32(x)	(unsigned int) hweight64((x) & 0xfffffffful)
+#define hweight16(x)	(unsigned int) hweight64((x) & 0xfffful)
+#define hweight8(x)	(unsigned int) hweight64((x) & 0xfful)
 
 #endif /* __KERNEL__ */
 
@@ -456,10 +455,12 @@ static __inline__ unsigned long __arch_hweight64(unsigned long x)
 
 #ifdef __KERNEL__
 
-#include <asm-generic/bitops/le.h>
+#include <asm-generic/bitops/ext2-non-atomic.h>
 
-#include <asm-generic/bitops/ext2-atomic-setbit.h>
+#define ext2_set_bit_atomic(l,n,a)	test_and_set_bit(n,a)
+#define ext2_clear_bit_atomic(l,n,a)	test_and_clear_bit(n,a)
 
+#include <asm-generic/bitops/minix.h>
 #include <asm-generic/bitops/sched.h>
 
 #endif /* __KERNEL__ */

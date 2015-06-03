@@ -26,7 +26,7 @@
 **********************************************************************/
 #include <linux/kernel.h>
 #include <linux/netdevice.h>
-#include <linux/ratelimit.h>
+#include <linux/mii.h>
 #include <net/dst.h>
 
 #include <asm/octeon/octeon.h>
@@ -35,9 +35,9 @@
 #include "octeon-ethernet.h"
 #include "ethernet-util.h"
 
-#include <asm/octeon/cvmx-helper.h>
+#include "cvmx-helper.h"
 
-#include <asm/octeon/cvmx-gmxx-defs.h>
+#include "cvmx-gmxx-defs.h"
 
 int cvm_oct_xaui_open(struct net_device *dev)
 {
@@ -90,21 +90,20 @@ static void cvm_oct_xaui_poll(struct net_device *dev)
 		if (!netif_carrier_ok(dev))
 			netif_carrier_on(dev);
 		if (priv->queue != -1)
-			printk_ratelimited
-				("%s: %u Mbps %s duplex, port %2d, queue %2d\n",
-				 dev->name, link_info.s.speed,
-				 (link_info.s.full_duplex) ? "Full" : "Half",
-				 priv->port, priv->queue);
+			DEBUGPRINT
+			    ("%s: %u Mbps %s duplex, port %2d, queue %2d\n",
+			     dev->name, link_info.s.speed,
+			     (link_info.s.full_duplex) ? "Full" : "Half",
+			     priv->port, priv->queue);
 		else
-			printk_ratelimited
-				("%s: %u Mbps %s duplex, port %2d, POW\n",
-				 dev->name, link_info.s.speed,
-				 (link_info.s.full_duplex) ? "Full" : "Half",
-				 priv->port);
+			DEBUGPRINT("%s: %u Mbps %s duplex, port %2d, POW\n",
+				   dev->name, link_info.s.speed,
+				   (link_info.s.full_duplex) ? "Full" : "Half",
+				   priv->port);
 	} else {
 		if (netif_carrier_ok(dev))
 			netif_carrier_off(dev);
-		printk_ratelimited("%s: Link down\n", dev->name);
+		DEBUGPRINT("%s: Link down\n", dev->name);
 	}
 }
 
@@ -113,7 +112,7 @@ int cvm_oct_xaui_init(struct net_device *dev)
 	struct octeon_ethernet *priv = netdev_priv(dev);
 	cvm_oct_common_init(dev);
 	dev->netdev_ops->ndo_stop(dev);
-	if (!octeon_is_simulation() && priv->phydev == NULL)
+	if (!octeon_is_simulation())
 		priv->poll = cvm_oct_xaui_poll;
 
 	return 0;

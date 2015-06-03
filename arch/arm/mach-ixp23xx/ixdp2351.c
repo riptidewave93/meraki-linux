@@ -36,6 +36,7 @@
 #include <asm/memory.h>
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
+#include <asm/system.h>
 #include <asm/tlbflush.h>
 #include <asm/pgtable.h>
 
@@ -47,14 +48,14 @@
 /*
  * IXDP2351 Interrupt Handling
  */
-static void ixdp2351_inta_mask(struct irq_data *d)
+static void ixdp2351_inta_mask(unsigned int irq)
 {
-	*IXDP2351_CPLD_INTA_MASK_SET_REG = IXDP2351_INTA_IRQ_MASK(d->irq);
+	*IXDP2351_CPLD_INTA_MASK_SET_REG = IXDP2351_INTA_IRQ_MASK(irq);
 }
 
-static void ixdp2351_inta_unmask(struct irq_data *d)
+static void ixdp2351_inta_unmask(unsigned int irq)
 {
-	*IXDP2351_CPLD_INTA_MASK_CLR_REG = IXDP2351_INTA_IRQ_MASK(d->irq);
+	*IXDP2351_CPLD_INTA_MASK_CLR_REG = IXDP2351_INTA_IRQ_MASK(irq);
 }
 
 static void ixdp2351_inta_handler(unsigned int irq, struct irq_desc *desc)
@@ -63,7 +64,7 @@ static void ixdp2351_inta_handler(unsigned int irq, struct irq_desc *desc)
 		*IXDP2351_CPLD_INTA_STAT_REG & IXDP2351_INTA_IRQ_VALID;
 	int i;
 
-	desc->irq_data.chip->irq_mask(&desc->irq_data);
+	desc->chip->mask(irq);
 
 	for (i = 0; i < IXDP2351_INTA_IRQ_NUM; i++) {
 		if (ex_interrupt & (1 << i)) {
@@ -73,23 +74,23 @@ static void ixdp2351_inta_handler(unsigned int irq, struct irq_desc *desc)
 		}
 	}
 
-	desc->irq_data.chip->irq_unmask(&desc->irq_data);
+	desc->chip->unmask(irq);
 }
 
 static struct irq_chip ixdp2351_inta_chip = {
-	.irq_ack	= ixdp2351_inta_mask,
-	.irq_mask	= ixdp2351_inta_mask,
-	.irq_unmask	= ixdp2351_inta_unmask
+	.ack	= ixdp2351_inta_mask,
+	.mask	= ixdp2351_inta_mask,
+	.unmask	= ixdp2351_inta_unmask
 };
 
-static void ixdp2351_intb_mask(struct irq_data *d)
+static void ixdp2351_intb_mask(unsigned int irq)
 {
-	*IXDP2351_CPLD_INTB_MASK_SET_REG = IXDP2351_INTB_IRQ_MASK(d->irq);
+	*IXDP2351_CPLD_INTB_MASK_SET_REG = IXDP2351_INTB_IRQ_MASK(irq);
 }
 
-static void ixdp2351_intb_unmask(struct irq_data *d)
+static void ixdp2351_intb_unmask(unsigned int irq)
 {
-	*IXDP2351_CPLD_INTB_MASK_CLR_REG = IXDP2351_INTB_IRQ_MASK(d->irq);
+	*IXDP2351_CPLD_INTB_MASK_CLR_REG = IXDP2351_INTB_IRQ_MASK(irq);
 }
 
 static void ixdp2351_intb_handler(unsigned int irq, struct irq_desc *desc)
@@ -98,7 +99,7 @@ static void ixdp2351_intb_handler(unsigned int irq, struct irq_desc *desc)
 		*IXDP2351_CPLD_INTB_STAT_REG & IXDP2351_INTB_IRQ_VALID;
 	int i;
 
-	desc->irq_data.chip->irq_ack(&desc->irq_data);
+	desc->chip->ack(irq);
 
 	for (i = 0; i < IXDP2351_INTB_IRQ_NUM; i++) {
 		if (ex_interrupt & (1 << i)) {
@@ -108,13 +109,13 @@ static void ixdp2351_intb_handler(unsigned int irq, struct irq_desc *desc)
 		}
 	}
 
-	desc->irq_data.chip->irq_unmask(&desc->irq_data);
+	desc->chip->unmask(irq);
 }
 
 static struct irq_chip ixdp2351_intb_chip = {
-	.irq_ack	= ixdp2351_intb_mask,
-	.irq_mask	= ixdp2351_intb_mask,
-	.irq_unmask	= ixdp2351_intb_unmask
+	.ack	= ixdp2351_intb_mask,
+	.mask	= ixdp2351_intb_mask,
+	.unmask	= ixdp2351_intb_unmask
 };
 
 void __init ixdp2351_init_irq(void)
@@ -135,8 +136,8 @@ void __init ixdp2351_init_irq(void)
 	     irq++) {
 		if (IXDP2351_INTA_IRQ_MASK(irq) & IXDP2351_INTA_IRQ_VALID) {
 			set_irq_flags(irq, IRQF_VALID);
-			irq_set_chip_and_handler(irq, &ixdp2351_inta_chip,
-						 handle_level_irq);
+			set_irq_handler(irq, handle_level_irq);
+			set_irq_chip(irq, &ixdp2351_inta_chip);
 		}
 	}
 
@@ -146,13 +147,13 @@ void __init ixdp2351_init_irq(void)
 	     irq++) {
 		if (IXDP2351_INTB_IRQ_MASK(irq) & IXDP2351_INTB_IRQ_VALID) {
 			set_irq_flags(irq, IRQF_VALID);
-			irq_set_chip_and_handler(irq, &ixdp2351_intb_chip,
-						 handle_level_irq);
+			set_irq_handler(irq, handle_level_irq);
+			set_irq_chip(irq, &ixdp2351_intb_chip);
 		}
 	}
 
-	irq_set_chained_handler(IRQ_IXP23XX_INTA, ixdp2351_inta_handler);
-	irq_set_chained_handler(IRQ_IXP23XX_INTB, ixdp2351_intb_handler);
+	set_irq_chained_handler(IRQ_IXP23XX_INTA, ixdp2351_inta_handler);
+	set_irq_chained_handler(IRQ_IXP23XX_INTB, ixdp2351_intb_handler);
 }
 
 /*
@@ -167,7 +168,7 @@ void __init ixdp2351_init_irq(void)
  */
 #define DEVPIN(dev, pin) ((pin) | ((dev) << 3))
 
-static int __init ixdp2351_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+static int __init ixdp2351_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	u8 bus = dev->bus->number;
 	u32 devpin = DEVPIN(PCI_SLOT(dev->devfn), pin);
@@ -325,23 +326,13 @@ static void __init ixdp2351_init(void)
 	ixp23xx_sys_init();
 }
 
-static void ixdp2351_restart(char mode, const char *cmd)
-{
-	/* First try machine specific support */
-
-	*IXDP2351_CPLD_RESET1_REG = IXDP2351_CPLD_RESET1_MAGIC;
-	(void) *IXDP2351_CPLD_RESET1_REG;
-	*IXDP2351_CPLD_RESET1_REG = IXDP2351_CPLD_RESET1_ENABLE;
-
-	ixp23xx_restart(mode, cmd);
-}
-
 MACHINE_START(IXDP2351, "Intel IXDP2351 Development Platform")
 	/* Maintainer: MontaVista Software, Inc. */
+	.phys_io	= IXP23XX_PERIPHERAL_PHYS,
+	.io_pg_offst	= ((IXP23XX_PERIPHERAL_VIRT >> 18)) & 0xfffc,
 	.map_io		= ixdp2351_map_io,
 	.init_irq	= ixdp2351_init_irq,
 	.timer		= &ixp23xx_timer,
-	.atag_offset	= 0x100,
+	.boot_params	= 0x00000100,
 	.init_machine	= ixdp2351_init,
-	.restart	= ixdp2351_restart,
 MACHINE_END

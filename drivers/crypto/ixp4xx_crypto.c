@@ -17,8 +17,6 @@
 #include <linux/rtnetlink.h>
 #include <linux/interrupt.h>
 #include <linux/spinlock.h>
-#include <linux/gfp.h>
-#include <linux/module.h>
 
 #include <crypto/ctr.h>
 #include <crypto/des.h>
@@ -98,13 +96,8 @@
 
 struct buffer_desc {
 	u32 phys_next;
-#ifdef __ARMEB__
 	u16 buf_len;
 	u16 pkt_len;
-#else
-	u16 pkt_len;
-	u16 buf_len;
-#endif
 	u32 phys_addr;
 	u32 __reserved[4];
 	struct buffer_desc *next;
@@ -112,30 +105,17 @@ struct buffer_desc {
 };
 
 struct crypt_ctl {
-#ifdef __ARMEB__
 	u8 mode;		/* NPE_OP_*  operation mode */
 	u8 init_len;
 	u16 reserved;
-#else
-	u16 reserved;
-	u8 init_len;
-	u8 mode;		/* NPE_OP_*  operation mode */
-#endif
 	u8 iv[MAX_IVLEN];	/* IV for CBC mode or CTR IV for CTR mode */
 	u32 icv_rev_aes;	/* icv or rev aes */
 	u32 src_buf;
 	u32 dst_buf;
-#ifdef __ARMEB__
 	u16 auth_offs;		/* Authentication start offset */
 	u16 auth_len;		/* Authentication data length */
 	u16 crypt_offs;		/* Cryption start offset */
 	u16 crypt_len;		/* Cryption data length */
-#else
-	u16 auth_len;		/* Authentication data length */
-	u16 auth_offs;		/* Authentication start offset */
-	u16 crypt_len;		/* Cryption data length */
-	u16 crypt_offs;		/* Cryption start offset */
-#endif
 	u32 aadAddr;		/* Additional Auth Data Addr for CCM mode */
 	u32 crypto_ctx;		/* NPE Crypto Param structure address */
 
@@ -266,7 +246,7 @@ static int setup_crypt_desc(void)
 	BUILD_BUG_ON(sizeof(struct crypt_ctl) != 64);
 	crypt_virt = dma_alloc_coherent(dev,
 			NPE_QLEN * sizeof(struct crypt_ctl),
-			&crypt_phys, GFP_ATOMIC);
+			&crypt_phys, GFP_KERNEL);
 	if (!crypt_virt)
 		return -ENOMEM;
 	memset(crypt_virt, 0, NPE_QLEN * sizeof(struct crypt_ctl));
@@ -671,9 +651,6 @@ static int setup_auth(struct crypto_tfm *tfm, int encrypt, unsigned authsize,
 
 	/* write cfg word to cryptinfo */
 	cfgword = algo->cfgword | ( authsize << 6); /* (authsize/4) << 8 */
-#ifndef __ARMEB__
-	cfgword ^= 0xAA000000; /* change the "byte swap" flags */
-#endif
 	*(u32*)cinfo = cpu_to_be32(cfgword);
 	cinfo += sizeof(cfgword);
 
@@ -1045,7 +1022,7 @@ static int aead_perform(struct aead_request *req, int encrypt,
 	memcpy(crypt->iv, req->iv, ivsize);
 
 	if (req->src != req->dst) {
-		BUG(); /* -ENOTSUP because of my laziness */
+		BUG(); /* -ENOTSUP because of my lazyness */
 	}
 
 	/* ASSOC data */
@@ -1450,7 +1427,6 @@ static int __init ixp_module_init(void)
 			/* block ciphers */
 			cra->cra_type = &crypto_ablkcipher_type;
 			cra->cra_flags = CRYPTO_ALG_TYPE_ABLKCIPHER |
-					 CRYPTO_ALG_KERN_DRIVER_ONLY |
 					 CRYPTO_ALG_ASYNC;
 			if (!cra->cra_ablkcipher.setkey)
 				cra->cra_ablkcipher.setkey = ablk_setkey;
@@ -1463,7 +1439,6 @@ static int __init ixp_module_init(void)
 			/* authenc */
 			cra->cra_type = &crypto_aead_type;
 			cra->cra_flags = CRYPTO_ALG_TYPE_AEAD |
-					 CRYPTO_ALG_KERN_DRIVER_ONLY |
 					 CRYPTO_ALG_ASYNC;
 			cra->cra_aead.setkey = aead_setkey;
 			cra->cra_aead.setauthsize = aead_setauthsize;

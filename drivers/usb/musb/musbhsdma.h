@@ -31,7 +31,7 @@
  *
  */
 
-#if defined(CONFIG_SOC_OMAP2430) || defined(CONFIG_SOC_OMAP3430)
+#if defined(CONFIG_ARCH_OMAP2430) || defined(CONFIG_ARCH_OMAP3430)
 #include "omap2430.h"
 #endif
 
@@ -54,10 +54,6 @@
 	musb_writel(mbase, \
 		    MUSB_HSDMA_CHANNEL_OFFSET(bchannel, MUSB_HSDMA_ADDRESS), \
 		    addr)
-
-#define musb_read_hsdma_count(mbase, bchannel)	\
-	musb_readl(mbase,	\
-		   MUSB_HSDMA_CHANNEL_OFFSET(bchannel, MUSB_HSDMA_COUNT))
 
 #define musb_write_hsdma_count(mbase, bchannel, len) \
 	musb_writel(mbase, \
@@ -94,33 +90,21 @@ static inline void musb_write_hsdma_addr(void __iomem *mbase,
 {
 	musb_writew(mbase,
 		MUSB_HSDMA_CHANNEL_OFFSET(bchannel, MUSB_HSDMA_ADDR_LOW),
-		dma_addr);
+		((u16)((u32) dma_addr & 0xFFFF)));
 	musb_writew(mbase,
 		MUSB_HSDMA_CHANNEL_OFFSET(bchannel, MUSB_HSDMA_ADDR_HIGH),
-		(dma_addr >> 16));
-}
-
-static inline u32 musb_read_hsdma_count(void __iomem *mbase, u8 bchannel)
-{
-	u32 count = musb_readw(mbase,
-		MUSB_HSDMA_CHANNEL_OFFSET(bchannel, MUSB_HSDMA_COUNT_HIGH));
-
-	count = count << 16;
-
-	count |= musb_readw(mbase,
-		MUSB_HSDMA_CHANNEL_OFFSET(bchannel, MUSB_HSDMA_COUNT_LOW));
-
-	return count;
+		((u16)(((u32) dma_addr >> 16) & 0xFFFF)));
 }
 
 static inline void musb_write_hsdma_count(void __iomem *mbase,
 				u8 bchannel, u32 len)
 {
 	musb_writew(mbase,
-		MUSB_HSDMA_CHANNEL_OFFSET(bchannel, MUSB_HSDMA_COUNT_LOW),len);
+		MUSB_HSDMA_CHANNEL_OFFSET(bchannel, MUSB_HSDMA_COUNT_LOW),
+		((u16)((u32) len & 0xFFFF)));
 	musb_writew(mbase,
 		MUSB_HSDMA_CHANNEL_OFFSET(bchannel, MUSB_HSDMA_COUNT_HIGH),
-		(len >> 16));
+		((u16)(((u32) len >> 16) & 0xFFFF)));
 }
 
 #endif /* CONFIG_BLACKFIN */

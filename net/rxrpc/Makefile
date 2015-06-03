@@ -2,7 +2,7 @@
 # Makefile for Linux kernel RxRPC
 #
 
-af-rxrpc-y := \
+af-rxrpc-objs := \
 	af_rxrpc.o \
 	ar-accept.o \
 	ar-ack.o \
@@ -21,7 +21,7 @@ af-rxrpc-y := \
 	ar-transport.o
 
 ifeq ($(CONFIG_PROC_FS),y)
-af-rxrpc-y += ar-proc.o
+af-rxrpc-objs += ar-proc.o
 endif
 
 obj-$(CONFIG_AF_RXRPC) += af-rxrpc.o

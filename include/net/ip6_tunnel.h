@@ -13,8 +13,9 @@
 /* IPv6 tunnel */
 
 struct ip6_tnl {
-	struct ip6_tnl __rcu *next;	/* next tunnel in list */
+	struct ip6_tnl *next;	/* next tunnel in list */
 	struct net_device *dev;	/* virtual device associated with tunnel */
+	int recursion;		/* depth of hard_start_xmit recursion */
 	struct ip6_tnl_parm parms;	/* tunnel configuration parameters */
 	struct flowi fl;	/* flowi template for xmit */
 	struct dst_entry *dst_cache;    /* cached dst */
@@ -27,6 +28,6 @@ struct ipv6_tlv_tnl_enc_lim {
 	__u8 type;		/* type-code for option         */
 	__u8 length;		/* option length                */
 	__u8 encap_limit;	/* tunnel encapsulation limit   */
-} __packed;
+} __attribute__ ((packed));
 
 #endif

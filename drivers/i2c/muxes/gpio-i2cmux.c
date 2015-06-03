@@ -105,8 +105,7 @@ static int __devinit gpiomux_probe(struct platform_device *pdev)
 	for (i = 0; i < pdata->n_values; i++) {
 		u32 nr = pdata->base_nr ? (pdata->base_nr + i) : 0;
 
-		mux->adap[i] = i2c_add_mux_adapter(parent, &pdev->dev, mux,
-						   nr, i,
+		mux->adap[i] = i2c_add_mux_adapter(parent, mux, nr, i,
 						   gpiomux_select, deselect);
 		if (!mux->adap[i]) {
 			ret = -ENODEV;
@@ -166,7 +165,18 @@ static struct platform_driver gpiomux_driver = {
 	},
 };
 
-module_platform_driver(gpiomux_driver);
+static int __init gpiomux_init(void)
+{
+	return platform_driver_register(&gpiomux_driver);
+}
+
+static void __exit gpiomux_exit(void)
+{
+	platform_driver_unregister(&gpiomux_driver);
+}
+
+module_init(gpiomux_init);
+module_exit(gpiomux_exit);
 
 MODULE_DESCRIPTION("GPIO-based I2C multiplexer driver");
 MODULE_AUTHOR("Peter Korsgaard <peter.korsgaard@barco.com>");

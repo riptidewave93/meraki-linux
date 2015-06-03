@@ -95,11 +95,8 @@
 
 /* Use our own dbg macro */
 #undef dbg
-#define dbg(lvl, format, arg...)					\
-do {									\
-	if (debug >= lvl)						\
-		printk(KERN_DEBUG "%s: " format "\n", __FILE__, ##arg);	\
-} while (0)
+#define dbg(lvl, format, arg...) do { if (debug >= lvl) printk(KERN_DEBUG  __FILE__ ": " format "\n", ## arg); } while (0)
+
 
 /* Version Information */
 #define DRIVER_VERSION "v0.96"
@@ -195,7 +192,7 @@ struct tower_get_version_reply {
 
 
 /* table of devices that work with this driver */
-static const struct usb_device_id tower_table[] = {
+static struct usb_device_id tower_table [] = {
 	{ USB_DEVICE(LEGO_USB_TOWER_VENDOR_ID, LEGO_USB_TOWER_PRODUCT_ID) },
 	{ }					/* Terminating entry */
 };
@@ -269,7 +266,7 @@ static const struct file_operations tower_fops = {
 	.llseek =	tower_llseek,
 };
 
-static char *legousbtower_devnode(struct device *dev, umode_t *mode)
+static char *legousbtower_devnode(struct device *dev, mode_t *mode)
 {
 	return kasprintf(GFP_KERNEL, "usb/%s", dev_name(dev));
 }
@@ -305,7 +302,7 @@ static inline void lego_usb_tower_debug_data (int level, const char *function, i
 	if (debug < level)
 		return;
 
-	printk (KERN_DEBUG "%s: %s - length = %d, data = ", __FILE__, function, size);
+	printk (KERN_DEBUG __FILE__": %s - length = %d, data = ", function, size);
 	for (i = 0; i < size; ++i) {
 		printk ("%.2x ", data[i]);
 	}
@@ -409,7 +406,7 @@ static int tower_open (struct inode *inode, struct file *file)
 			  dev->udev,
 			  usb_rcvintpipe(dev->udev, dev->interrupt_in_endpoint->bEndpointAddress),
 			  dev->interrupt_in_buffer,
-			  usb_endpoint_maxp(dev->interrupt_in_endpoint),
+			  le16_to_cpu(dev->interrupt_in_endpoint->wMaxPacketSize),
 			  tower_interrupt_in_callback,
 			  dev,
 			  dev->interrupt_in_interval);
@@ -448,7 +445,7 @@ static int tower_release (struct inode *inode, struct file *file)
 
 	dbg(2, "%s: enter", __func__);
 
-	dev = file->private_data;
+	dev = (struct lego_usb_tower *)file->private_data;
 
 	if (dev == NULL) {
 		dbg(1, "%s: object is NULL", __func__);
@@ -597,7 +594,7 @@ static ssize_t tower_read (struct file *file, char __user *buffer, size_t count,
 
 	dbg(2, "%s: enter, count = %Zd", __func__, count);
 
-	dev = file->private_data;
+	dev = (struct lego_usb_tower *)file->private_data;
 
 	/* lock this object */
 	if (mutex_lock_interruptible(&dev->lock)) {
@@ -686,7 +683,7 @@ static ssize_t tower_write (struct file *file, const char __user *buffer, size_t
 
 	dbg(2, "%s: enter, count = %Zd", __func__, count);
 
-	dev = file->private_data;
+	dev = (struct lego_usb_tower *)file->private_data;
 
 	/* lock this object */
 	if (mutex_lock_interruptible(&dev->lock)) {
@@ -928,7 +925,7 @@ static int tower_probe (struct usb_interface *interface, const struct usb_device
 		err("Couldn't allocate read_buffer");
 		goto error;
 	}
-	dev->interrupt_in_buffer = kmalloc (usb_endpoint_maxp(dev->interrupt_in_endpoint), GFP_KERNEL);
+	dev->interrupt_in_buffer = kmalloc (le16_to_cpu(dev->interrupt_in_endpoint->wMaxPacketSize), GFP_KERNEL);
 	if (!dev->interrupt_in_buffer) {
 		err("Couldn't allocate interrupt_in_buffer");
 		goto error;
@@ -1043,7 +1040,51 @@ static void tower_disconnect (struct usb_interface *interface)
 	dbg(2, "%s: leave", __func__);
 }
 
-module_usb_driver(tower_driver);
+
+
+/**
+ *	lego_usb_tower_init
+ */
+static int __init lego_usb_tower_init(void)
+{
+	int result;
+	int retval = 0;
+
+	dbg(2, "%s: enter", __func__);
+
+	/* register this driver with the USB subsystem */
+	result = usb_register(&tower_driver);
+	if (result < 0) {
+		err("usb_register failed for the "__FILE__" driver. Error number %d", result);
+		retval = -1;
+		goto exit;
+	}
+
+	printk(KERN_INFO KBUILD_MODNAME ": " DRIVER_VERSION ":"
+	       DRIVER_DESC "\n");
+
+exit:
+	dbg(2, "%s: leave, return value %d", __func__, retval);
+
+	return retval;
+}
+
+
+/**
+ *	lego_usb_tower_exit
+ */
+static void __exit lego_usb_tower_exit(void)
+{
+	dbg(2, "%s: enter", __func__);
+
+	/* deregister this driver with the USB subsystem */
+	usb_deregister (&tower_driver);
+
+	dbg(2, "%s: leave", __func__);
+}
+
+module_init (lego_usb_tower_init);
+module_exit (lego_usb_tower_exit);
 
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);

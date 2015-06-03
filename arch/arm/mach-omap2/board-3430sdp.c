@@ -19,35 +19,30 @@
 #include <linux/input.h>
 #include <linux/input/matrix_keypad.h>
 #include <linux/spi/spi.h>
-#include <linux/i2c/twl.h>
+#include <linux/spi/ads7846.h>
+#include <linux/i2c/twl4030.h>
 #include <linux/regulator/machine.h>
 #include <linux/io.h>
 #include <linux/gpio.h>
-#include <linux/mmc/host.h>
 
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
 
-#include <plat/mcspi.h>
-#include <plat/board.h>
-#include <plat/usb.h>
-#include "common.h"
-#include <plat/dma.h>
-#include <plat/gpmc.h>
-#include <video/omapdss.h>
-#include <video/omap-panel-dvi.h>
+#include <mach/mcspi.h>
+#include <mach/mux.h>
+#include <mach/board.h>
+#include <mach/usb.h>
+#include <mach/common.h>
+#include <mach/dma.h>
+#include <mach/gpmc.h>
 
-#include <plat/gpmc-smc91x.h>
+#include <mach/control.h>
+#include <mach/gpmc-smc91x.h>
 
-#include "board-flash.h"
-#include "mux.h"
 #include "sdram-qimonda-hyb18m512160af-6.h"
-#include "hsmmc.h"
-#include "pm.h"
-#include "control.h"
-#include "common-board-devices.h"
+#include "mmc-twl4030.h"
 
 #define CONFIG_DISABLE_HFCLK 1
 
@@ -59,7 +54,7 @@
 
 #define TWL4030_MSECURE_GPIO 22
 
-static uint32_t board_keymap[] = {
+static int board_keymap[] = {
 	KEY(0, 0, KEY_LEFT),
 	KEY(0, 1, KEY_RIGHT),
 	KEY(0, 2, KEY_A),
@@ -105,142 +100,137 @@ static struct twl4030_keypad_data sdp3430_kp_data = {
 	.rep		= 1,
 };
 
-#define SDP3430_LCD_PANEL_BACKLIGHT_GPIO	8
-#define SDP3430_LCD_PANEL_ENABLE_GPIO		5
+static int ts_gpio;	/* Needed for ads7846_get_pendown_state */
 
-static struct gpio sdp3430_dss_gpios[] __initdata = {
-	{SDP3430_LCD_PANEL_ENABLE_GPIO,    GPIOF_OUT_INIT_LOW, "LCD reset"    },
-	{SDP3430_LCD_PANEL_BACKLIGHT_GPIO, GPIOF_OUT_INIT_LOW, "LCD Backlight"},
-};
-
-static int lcd_enabled;
-static int dvi_enabled;
-
-static void __init sdp3430_display_init(void)
+/**
+ * @brief ads7846_dev_init : Requests & sets GPIO line for pen-irq
+ *
+ * @return - void. If request gpio fails then Flag KERN_ERR.
+ */
+static void ads7846_dev_init(void)
 {
-	int r;
-
-	r = gpio_request_array(sdp3430_dss_gpios,
-			       ARRAY_SIZE(sdp3430_dss_gpios));
-	if (r)
-		printk(KERN_ERR "failed to get LCD control GPIOs\n");
-
-}
-
-static int sdp3430_panel_enable_lcd(struct omap_dss_device *dssdev)
-{
-	if (dvi_enabled) {
-		printk(KERN_ERR "cannot enable LCD, DVI is enabled\n");
-		return -EINVAL;
+	if (gpio_request(ts_gpio, "ADS7846 pendown") < 0) {
+		printk(KERN_ERR "can't get ads746 pen down GPIO\n");
+		return;
 	}
 
-	gpio_direction_output(SDP3430_LCD_PANEL_ENABLE_GPIO, 1);
-	gpio_direction_output(SDP3430_LCD_PANEL_BACKLIGHT_GPIO, 1);
+	gpio_direction_input(ts_gpio);
 
-	lcd_enabled = 1;
-
-	return 0;
+	omap_set_gpio_debounce(ts_gpio, 1);
+	omap_set_gpio_debounce_time(ts_gpio, 0xa);
 }
 
-static void sdp3430_panel_disable_lcd(struct omap_dss_device *dssdev)
+static int ads7846_get_pendown_state(void)
 {
-	lcd_enabled = 0;
-
-	gpio_direction_output(SDP3430_LCD_PANEL_ENABLE_GPIO, 0);
-	gpio_direction_output(SDP3430_LCD_PANEL_BACKLIGHT_GPIO, 0);
+	return !gpio_get_value(ts_gpio);
 }
 
-static int sdp3430_panel_enable_dvi(struct omap_dss_device *dssdev)
-{
-	if (lcd_enabled) {
-		printk(KERN_ERR "cannot enable DVI, LCD is enabled\n");
-		return -EINVAL;
-	}
-
-	dvi_enabled = 1;
-
-	return 0;
-}
-
-static void sdp3430_panel_disable_dvi(struct omap_dss_device *dssdev)
-{
-	dvi_enabled = 0;
-}
-
-static int sdp3430_panel_enable_tv(struct omap_dss_device *dssdev)
-{
-	return 0;
-}
-
-static void sdp3430_panel_disable_tv(struct omap_dss_device *dssdev)
-{
-}
-
-
-static struct omap_dss_device sdp3430_lcd_device = {
-	.name			= "lcd",
-	.driver_name		= "sharp_ls_panel",
-	.type			= OMAP_DISPLAY_TYPE_DPI,
-	.phy.dpi.data_lines	= 16,
-	.platform_enable	= sdp3430_panel_enable_lcd,
-	.platform_disable	= sdp3430_panel_disable_lcd,
-};
-
-static struct panel_dvi_platform_data dvi_panel = {
-	.platform_enable	= sdp3430_panel_enable_dvi,
-	.platform_disable	= sdp3430_panel_disable_dvi,
-};
-
-static struct omap_dss_device sdp3430_dvi_device = {
-	.name			= "dvi",
-	.type			= OMAP_DISPLAY_TYPE_DPI,
-	.driver_name		= "dvi",
-	.data			= &dvi_panel,
-	.phy.dpi.data_lines	= 24,
-};
-
-static struct omap_dss_device sdp3430_tv_device = {
-	.name			= "tv",
-	.driver_name		= "venc",
-	.type			= OMAP_DISPLAY_TYPE_VENC,
-	.phy.venc.type		= OMAP_DSS_VENC_TYPE_SVIDEO,
-	.platform_enable	= sdp3430_panel_enable_tv,
-	.platform_disable	= sdp3430_panel_disable_tv,
+static struct ads7846_platform_data tsc2046_config __initdata = {
+	.get_pendown_state	= ads7846_get_pendown_state,
+	.keep_vref_on		= 1,
 };
 
 
-static struct omap_dss_device *sdp3430_dss_devices[] = {
+static struct omap2_mcspi_device_config tsc2046_mcspi_config = {
+	.turbo_mode	= 0,
+	.single_channel	= 1,	/* 0: slave, 1: master */
+};
+
+static struct spi_board_info sdp3430_spi_board_info[] __initdata = {
+	[0] = {
+		/*
+		 * TSC2046 operates at a max freqency of 2MHz, so
+		 * operate slightly below at 1.5MHz
+		 */
+		.modalias		= "ads7846",
+		.bus_num		= 1,
+		.chip_select		= 0,
+		.max_speed_hz		= 1500000,
+		.controller_data	= &tsc2046_mcspi_config,
+		.irq			= 0,
+		.platform_data		= &tsc2046_config,
+	},
+};
+
+static struct platform_device sdp3430_lcd_device = {
+	.name		= "sdp2430_lcd",
+	.id		= -1,
+};
+
+static struct regulator_consumer_supply sdp3430_vdac_supply = {
+	.supply		= "vdac",
+	.dev		= &sdp3430_lcd_device.dev,
+};
+
+static struct regulator_consumer_supply sdp3430_vdvi_supply = {
+	.supply		= "vdvi",
+	.dev		= &sdp3430_lcd_device.dev,
+};
+
+static struct platform_device *sdp3430_devices[] __initdata = {
 	&sdp3430_lcd_device,
-	&sdp3430_dvi_device,
-	&sdp3430_tv_device,
 };
 
-static struct omap_dss_board_info sdp3430_dss_data = {
-	.num_devices	= ARRAY_SIZE(sdp3430_dss_devices),
-	.devices	= sdp3430_dss_devices,
-	.default_device	= &sdp3430_lcd_device,
+static struct omap_lcd_config sdp3430_lcd_config __initdata = {
+	.ctrl_name	= "internal",
 };
 
 static struct omap_board_config_kernel sdp3430_config[] __initdata = {
+	{ OMAP_TAG_LCD,		&sdp3430_lcd_config },
 };
 
-static struct omap2_hsmmc_info mmc[] = {
+static void __init omap_3430sdp_init_irq(void)
+{
+	omap_board_config = sdp3430_config;
+	omap_board_config_size = ARRAY_SIZE(sdp3430_config);
+	omap2_init_common_hw(hyb18m512160af6_sdrc_params, NULL);
+	omap_init_irq();
+	omap_gpio_init();
+}
+
+static int sdp3430_batt_table[] = {
+/* 0 C*/
+30800, 29500, 28300, 27100,
+26000, 24900, 23900, 22900, 22000, 21100, 20300, 19400, 18700, 17900,
+17200, 16500, 15900, 15300, 14700, 14100, 13600, 13100, 12600, 12100,
+11600, 11200, 10800, 10400, 10000, 9630,   9280,   8950,   8620,   8310,
+8020,   7730,   7460,   7200,   6950,   6710,   6470,   6250,   6040,   5830,
+5640,   5450,   5260,   5090,   4920,   4760,   4600,   4450,   4310,   4170,
+4040,   3910,   3790,   3670,   3550
+};
+
+static struct twl4030_bci_platform_data sdp3430_bci_data = {
+	.battery_tmp_tbl	= sdp3430_batt_table,
+	.tblsize		= ARRAY_SIZE(sdp3430_batt_table),
+};
+
+static struct twl4030_hsmmc_info mmc[] = {
 	{
 		.mmc		= 1,
 		/* 8 bits (default) requires S6.3 == ON,
 		 * so the SIM card isn't used; else 4 bits.
 		 */
-		.caps		= MMC_CAP_4_BIT_DATA | MMC_CAP_8_BIT_DATA,
+		.wires		= 8,
 		.gpio_wp	= 4,
-		.deferred	= true,
 	},
 	{
 		.mmc		= 2,
-		.caps		= MMC_CAP_4_BIT_DATA | MMC_CAP_8_BIT_DATA,
+		.wires		= 8,
 		.gpio_wp	= 7,
-		.deferred	= true,
 	},
 	{}	/* Terminator */
+};
+
+static struct regulator_consumer_supply sdp3430_vmmc1_supply = {
+	.supply			= "vmmc",
+};
+
+static struct regulator_consumer_supply sdp3430_vsim_supply = {
+	.supply			= "vmmc_aux",
+};
+
+static struct regulator_consumer_supply sdp3430_vmmc2_supply = {
+	.supply			= "vmmc",
 };
 
 static int sdp3430_twl_gpio_setup(struct device *dev,
@@ -251,13 +241,22 @@ static int sdp3430_twl_gpio_setup(struct device *dev,
 	 */
 	mmc[0].gpio_cd = gpio + 0;
 	mmc[1].gpio_cd = gpio + 1;
-	omap_hsmmc_late_init(mmc);
+	twl4030_mmc_init(mmc);
+
+	/* link regulators to MMC adapters ... we "know" the
+	 * regulators will be set up only *after* we return.
+	 */
+	sdp3430_vmmc1_supply.dev = mmc[0].dev;
+	sdp3430_vsim_supply.dev = mmc[0].dev;
+	sdp3430_vmmc2_supply.dev = mmc[1].dev;
 
 	/* gpio + 7 is "sub_lcd_en_bkl" (output/PWM1) */
-	gpio_request_one(gpio + 7, GPIOF_OUT_INIT_LOW, "sub_lcd_en_bkl");
+	gpio_request(gpio + 7, "sub_lcd_en_bkl");
+	gpio_direction_output(gpio + 7, 0);
 
 	/* gpio + 15 is "sub_lcd_nRST" (output) */
-	gpio_request_one(gpio + 15, GPIOF_OUT_INIT_LOW, "sub_lcd_nRST");
+	gpio_request(gpio + 15, "sub_lcd_nRST");
+	gpio_direction_output(gpio + 15, 0);
 
 	return 0;
 }
@@ -271,23 +270,12 @@ static struct twl4030_gpio_platform_data sdp3430_gpio_data = {
 	.setup		= sdp3430_twl_gpio_setup,
 };
 
-/* regulator consumer mappings */
-
-/* ads7846 on SPI */
-static struct regulator_consumer_supply sdp3430_vaux3_supplies[] = {
-	REGULATOR_SUPPLY("vcc", "spi1.0"),
+static struct twl4030_usb_data sdp3430_usb_data = {
+	.usb_mode	= T2_USB_MODE_ULPI,
 };
 
-static struct regulator_consumer_supply sdp3430_vmmc1_supplies[] = {
-	REGULATOR_SUPPLY("vmmc", "omap_hsmmc.0"),
-};
-
-static struct regulator_consumer_supply sdp3430_vsim_supplies[] = {
-	REGULATOR_SUPPLY("vmmc_aux", "omap_hsmmc.0"),
-};
-
-static struct regulator_consumer_supply sdp3430_vmmc2_supplies[] = {
-	REGULATOR_SUPPLY("vmmc", "omap_hsmmc.1"),
+static struct twl4030_madc_platform_data sdp3430_madc_data = {
+	.irq_line	= 1,
 };
 
 /*
@@ -332,8 +320,6 @@ static struct regulator_init_data sdp3430_vaux3 = {
 		.valid_ops_mask		= REGULATOR_CHANGE_MODE
 					| REGULATOR_CHANGE_STATUS,
 	},
-	.num_consumer_supplies		= ARRAY_SIZE(sdp3430_vaux3_supplies),
-	.consumer_supplies		= sdp3430_vaux3_supplies,
 };
 
 /* VAUX4 for OMAP VDD_CSI2 (camera) */
@@ -360,8 +346,8 @@ static struct regulator_init_data sdp3430_vmmc1 = {
 					| REGULATOR_CHANGE_MODE
 					| REGULATOR_CHANGE_STATUS,
 	},
-	.num_consumer_supplies	= ARRAY_SIZE(sdp3430_vmmc1_supplies),
-	.consumer_supplies	= sdp3430_vmmc1_supplies,
+	.num_consumer_supplies	= 1,
+	.consumer_supplies	= &sdp3430_vmmc1_supply,
 };
 
 /* VMMC2 for MMC2 card */
@@ -375,8 +361,8 @@ static struct regulator_init_data sdp3430_vmmc2 = {
 		.valid_ops_mask		= REGULATOR_CHANGE_MODE
 					| REGULATOR_CHANGE_STATUS,
 	},
-	.num_consumer_supplies	= ARRAY_SIZE(sdp3430_vmmc2_supplies),
-	.consumer_supplies	= sdp3430_vmmc2_supplies,
+	.num_consumer_supplies	= 1,
+	.consumer_supplies	= &sdp3430_vmmc2_supply,
 };
 
 /* VSIM for OMAP VDD_MMC1A (i/o for DAT4..DAT7) */
@@ -390,14 +376,50 @@ static struct regulator_init_data sdp3430_vsim = {
 					| REGULATOR_CHANGE_MODE
 					| REGULATOR_CHANGE_STATUS,
 	},
-	.num_consumer_supplies	= ARRAY_SIZE(sdp3430_vsim_supplies),
-	.consumer_supplies	= sdp3430_vsim_supplies,
+	.num_consumer_supplies	= 1,
+	.consumer_supplies	= &sdp3430_vsim_supply,
+};
+
+/* VDAC for DSS driving S-Video */
+static struct regulator_init_data sdp3430_vdac = {
+	.constraints = {
+		.min_uV			= 1800000,
+		.max_uV			= 1800000,
+		.apply_uV		= true,
+		.valid_modes_mask	= REGULATOR_MODE_NORMAL
+					| REGULATOR_MODE_STANDBY,
+		.valid_ops_mask		= REGULATOR_CHANGE_MODE
+					| REGULATOR_CHANGE_STATUS,
+	},
+	.num_consumer_supplies	= 1,
+	.consumer_supplies	= &sdp3430_vdac_supply,
+};
+
+/* VPLL2 for digital video outputs */
+static struct regulator_init_data sdp3430_vpll2 = {
+	.constraints = {
+		.name			= "VDVI",
+		.min_uV			= 1800000,
+		.max_uV			= 1800000,
+		.valid_modes_mask	= REGULATOR_MODE_NORMAL
+					| REGULATOR_MODE_STANDBY,
+		.valid_ops_mask		= REGULATOR_CHANGE_MODE
+					| REGULATOR_CHANGE_STATUS,
+	},
+	.num_consumer_supplies	= 1,
+	.consumer_supplies	= &sdp3430_vdvi_supply,
 };
 
 static struct twl4030_platform_data sdp3430_twldata = {
+	.irq_base	= TWL4030_IRQ_BASE,
+	.irq_end	= TWL4030_IRQ_END,
+
 	/* platform_data for children goes here */
+	.bci		= &sdp3430_bci_data,
 	.gpio		= &sdp3430_gpio_data,
+	.madc		= &sdp3430_madc_data,
 	.keypad		= &sdp3430_kp_data,
+	.usb		= &sdp3430_usb_data,
 
 	.vaux1		= &sdp3430_vaux1,
 	.vaux2		= &sdp3430_vaux2,
@@ -406,21 +428,24 @@ static struct twl4030_platform_data sdp3430_twldata = {
 	.vmmc1		= &sdp3430_vmmc1,
 	.vmmc2		= &sdp3430_vmmc2,
 	.vsim		= &sdp3430_vsim,
+	.vdac		= &sdp3430_vdac,
+	.vpll2		= &sdp3430_vpll2,
+};
+
+static struct i2c_board_info __initdata sdp3430_i2c_boardinfo[] = {
+	{
+		I2C_BOARD_INFO("twl4030", 0x48),
+		.flags = I2C_CLIENT_WAKE,
+		.irq = INT_34XX_SYS_NIRQ,
+		.platform_data = &sdp3430_twldata,
+	},
 };
 
 static int __init omap3430_i2c_init(void)
 {
 	/* i2c1 for PMIC only */
-	omap3_pmic_get_config(&sdp3430_twldata,
-			TWL_COMMON_PDATA_USB | TWL_COMMON_PDATA_BCI |
-			TWL_COMMON_PDATA_MADC | TWL_COMMON_PDATA_AUDIO,
-			TWL_COMMON_REGULATOR_VDAC | TWL_COMMON_REGULATOR_VPLL2);
-	sdp3430_twldata.vdac->constraints.apply_uV = true;
-	sdp3430_twldata.vpll2->constraints.apply_uV = true;
-	sdp3430_twldata.vpll2->constraints.name = "VDVI";
-
-	omap3_pmic_init("twl4030", &sdp3430_twldata);
-
+	omap_register_i2c_bus(1, 2600, sdp3430_i2c_boardinfo,
+			ARRAY_SIZE(sdp3430_i2c_boardinfo));
 	/* i2c2 on camera connector (for sensor control) and optional isp1301 */
 	omap_register_i2c_bus(2, 400, NULL, 0);
 	/* i2c3 on display connector (for DVI, tfp410) */
@@ -456,185 +481,40 @@ static inline void board_smc91x_init(void)
 
 static void enable_board_wakeup_source(void)
 {
-	/* T2 interrupt line (keypad) */
-	omap_mux_init_signal("sys_nirq",
-		OMAP_WAKEUP_EN | OMAP_PIN_INPUT_PULLUP);
+	omap_cfg_reg(AF26_34XX_SYS_NIRQ); /* T2 interrupt line (keypad) */
 }
-
-static const struct usbhs_omap_board_data usbhs_bdata __initconst = {
-
-	.port_mode[0] = OMAP_EHCI_PORT_MODE_PHY,
-	.port_mode[1] = OMAP_EHCI_PORT_MODE_PHY,
-	.port_mode[2] = OMAP_USBHS_PORT_MODE_UNUSED,
-
-	.phy_reset  = true,
-	.reset_gpio_port[0]  = 57,
-	.reset_gpio_port[1]  = 61,
-	.reset_gpio_port[2]  = -EINVAL
-};
-
-#ifdef CONFIG_OMAP_MUX
-static struct omap_board_mux board_mux[] __initdata = {
-	{ .reg_offset = OMAP_MUX_TERMINATOR },
-};
-#else
-#define board_mux	NULL
-#endif
-
-/*
- * SDP3430 V2 Board CS organization
- * Different from SDP3430 V1. Now 4 switches used to specify CS
- *
- * See also the Switch S8 settings in the comments.
- */
-static char chip_sel_3430[][GPMC_CS_NUM] = {
-	{PDC_NOR, PDC_NAND, PDC_ONENAND, DBG_MPDB, 0, 0, 0, 0}, /* S8:1111 */
-	{PDC_ONENAND, PDC_NAND, PDC_NOR, DBG_MPDB, 0, 0, 0, 0}, /* S8:1110 */
-	{PDC_NAND, PDC_ONENAND, PDC_NOR, DBG_MPDB, 0, 0, 0, 0}, /* S8:1101 */
-};
-
-static struct mtd_partition sdp_nor_partitions[] = {
-	/* bootloader (U-Boot, etc) in first sector */
-	{
-		.name		= "Bootloader-NOR",
-		.offset		= 0,
-		.size		= SZ_256K,
-		.mask_flags	= MTD_WRITEABLE, /* force read-only */
-	},
-	/* bootloader params in the next sector */
-	{
-		.name		= "Params-NOR",
-		.offset		= MTDPART_OFS_APPEND,
-		.size		= SZ_256K,
-		.mask_flags	= 0,
-	},
-	/* kernel */
-	{
-		.name		= "Kernel-NOR",
-		.offset		= MTDPART_OFS_APPEND,
-		.size		= SZ_2M,
-		.mask_flags	= 0
-	},
-	/* file system */
-	{
-		.name		= "Filesystem-NOR",
-		.offset		= MTDPART_OFS_APPEND,
-		.size		= MTDPART_SIZ_FULL,
-		.mask_flags	= 0
-	}
-};
-
-static struct mtd_partition sdp_onenand_partitions[] = {
-	{
-		.name		= "X-Loader-OneNAND",
-		.offset		= 0,
-		.size		= 4 * (64 * 2048),
-		.mask_flags	= MTD_WRITEABLE  /* force read-only */
-	},
-	{
-		.name		= "U-Boot-OneNAND",
-		.offset		= MTDPART_OFS_APPEND,
-		.size		= 2 * (64 * 2048),
-		.mask_flags	= MTD_WRITEABLE  /* force read-only */
-	},
-	{
-		.name		= "U-Boot Environment-OneNAND",
-		.offset		= MTDPART_OFS_APPEND,
-		.size		= 1 * (64 * 2048),
-	},
-	{
-		.name		= "Kernel-OneNAND",
-		.offset		= MTDPART_OFS_APPEND,
-		.size		= 16 * (64 * 2048),
-	},
-	{
-		.name		= "File System-OneNAND",
-		.offset		= MTDPART_OFS_APPEND,
-		.size		= MTDPART_SIZ_FULL,
-	},
-};
-
-static struct mtd_partition sdp_nand_partitions[] = {
-	/* All the partition sizes are listed in terms of NAND block size */
-	{
-		.name		= "X-Loader-NAND",
-		.offset		= 0,
-		.size		= 4 * (64 * 2048),
-		.mask_flags	= MTD_WRITEABLE,	/* force read-only */
-	},
-	{
-		.name		= "U-Boot-NAND",
-		.offset		= MTDPART_OFS_APPEND,	/* Offset = 0x80000 */
-		.size		= 10 * (64 * 2048),
-		.mask_flags	= MTD_WRITEABLE,	/* force read-only */
-	},
-	{
-		.name		= "Boot Env-NAND",
-
-		.offset		= MTDPART_OFS_APPEND,	/* Offset = 0x1c0000 */
-		.size		= 6 * (64 * 2048),
-	},
-	{
-		.name		= "Kernel-NAND",
-		.offset		= MTDPART_OFS_APPEND,	/* Offset = 0x280000 */
-		.size		= 40 * (64 * 2048),
-	},
-	{
-		.name		= "File System - NAND",
-		.size		= MTDPART_SIZ_FULL,
-		.offset		= MTDPART_OFS_APPEND,	/* Offset = 0x780000 */
-	},
-};
-
-static struct flash_partitions sdp_flash_partitions[] = {
-	{
-		.parts = sdp_nor_partitions,
-		.nr_parts = ARRAY_SIZE(sdp_nor_partitions),
-	},
-	{
-		.parts = sdp_onenand_partitions,
-		.nr_parts = ARRAY_SIZE(sdp_onenand_partitions),
-	},
-	{
-		.parts = sdp_nand_partitions,
-		.nr_parts = ARRAY_SIZE(sdp_nand_partitions),
-	},
-};
 
 static void __init omap_3430sdp_init(void)
 {
-	int gpio_pendown;
-
-	omap3_mux_init(board_mux, OMAP_PACKAGE_CBB);
-	omap_board_config = sdp3430_config;
-	omap_board_config_size = ARRAY_SIZE(sdp3430_config);
-	omap_hsmmc_init(mmc);
 	omap3430_i2c_init();
-	omap_display_init(&sdp3430_dss_data);
+	platform_add_devices(sdp3430_devices, ARRAY_SIZE(sdp3430_devices));
 	if (omap_rev() > OMAP3430_REV_ES1_0)
-		gpio_pendown = SDP3430_TS_GPIO_IRQ_SDPV2;
+		ts_gpio = SDP3430_TS_GPIO_IRQ_SDPV2;
 	else
-		gpio_pendown = SDP3430_TS_GPIO_IRQ_SDPV1;
-	omap_ads7846_init(1, gpio_pendown, 310, NULL);
+		ts_gpio = SDP3430_TS_GPIO_IRQ_SDPV1;
+	sdp3430_spi_board_info[0].irq = gpio_to_irq(ts_gpio);
+	spi_register_board_info(sdp3430_spi_board_info,
+				ARRAY_SIZE(sdp3430_spi_board_info));
+	ads7846_dev_init();
 	omap_serial_init();
-	omap_sdrc_init(hyb18m512160af6_sdrc_params, NULL);
-	usb_musb_init(NULL);
+	usb_musb_init();
 	board_smc91x_init();
-	board_flash_init(sdp_flash_partitions, chip_sel_3430, 0);
-	sdp3430_display_init();
 	enable_board_wakeup_source();
-	usbhs_init(&usbhs_bdata);
+}
+
+static void __init omap_3430sdp_map_io(void)
+{
+	omap2_set_globals_343x();
+	omap2_map_common_io();
 }
 
 MACHINE_START(OMAP_3430SDP, "OMAP3430 3430SDP board")
 	/* Maintainer: Syed Khasim - Texas Instruments Inc */
-	.atag_offset	= 0x100,
-	.reserve	= omap_reserve,
-	.map_io		= omap3_map_io,
-	.init_early	= omap3430_init_early,
-	.init_irq	= omap3_init_irq,
-	.handle_irq	= omap3_intc_handle_irq,
+	.phys_io	= 0x48000000,
+	.io_pg_offst	= ((0xd8000000) >> 18) & 0xfffc,
+	.boot_params	= 0x80000100,
+	.map_io		= omap_3430sdp_map_io,
+	.init_irq	= omap_3430sdp_init_irq,
 	.init_machine	= omap_3430sdp_init,
-	.timer		= &omap3_timer,
-	.restart	= omap_prcm_restart,
+	.timer		= &omap_timer,
 MACHINE_END

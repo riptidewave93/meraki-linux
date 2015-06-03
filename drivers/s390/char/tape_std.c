@@ -11,9 +11,6 @@
  *		 Stefan Bader <shbader@de.ibm.com>
  */
 
-#define KMSG_COMPONENT "tape"
-#define pr_fmt(fmt) KMSG_COMPONENT ": " fmt
-
 #include <linux/stddef.h>
 #include <linux/kernel.h>
 #include <linux/bio.h>
@@ -47,8 +44,8 @@ tape_std_assign_timeout(unsigned long data)
 			device->cdev_id);
 	rc = tape_cancel_io(device, request);
 	if(rc)
-		DBF_EVENT(3, "(%08x): Assign timeout: Cancel failed with rc = "
-			  "%i\n", device->cdev_id, rc);
+		DBF_EVENT(3, "(%s): Assign timeout: Cancel failed with rc = %i\n",
+			dev_name(&device->cdev->dev), rc);
 }
 
 int
@@ -564,6 +561,7 @@ int
 tape_std_mtreten(struct tape_device *device, int mt_count)
 {
 	struct tape_request *request;
+	int rc;
 
 	request = tape_alloc_request(4, 0);
 	if (IS_ERR(request))
@@ -575,7 +573,7 @@ tape_std_mtreten(struct tape_device *device, int mt_count)
 	tape_ccw_cc(request->cpaddr + 2, NOP, 0, NULL);
 	tape_ccw_end(request->cpaddr + 3, CCW_CMD_TIC, 0, request->cpaddr);
 	/* execute it, MTRETEN rc gets ignored */
-	tape_do_io_interruptible(device, request);
+	rc = tape_do_io_interruptible(device, request);
 	tape_free_request(request);
 	return tape_mtop(device, MTREW, 1);
 }

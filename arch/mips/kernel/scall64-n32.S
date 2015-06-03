@@ -89,7 +89,8 @@ n32_syscall_trace_entry:
 	SAVE_STATIC
 	move	s0, t2
 	move	a0, sp
-	jal	syscall_trace_enter
+	li	a1, 0
+	jal	do_syscall_trace
 
 	move	t0, s0
 	RESTORE_STATIC
@@ -182,7 +183,7 @@ EXPORT(sysn32_call_table)
 	PTR	sys_exit
 	PTR	compat_sys_wait4
 	PTR	sys_kill			/* 6060 */
-	PTR	sys_newuname
+	PTR	sys_32_newuname
 	PTR	sys_semget
 	PTR	sys_semop
 	PTR	sys_n32_semctl
@@ -273,7 +274,7 @@ EXPORT(sysn32_call_table)
 	PTR	sys_munlockall
 	PTR	sys_vhangup			/* 6150 */
 	PTR	sys_pivot_root
-	PTR	compat_sys_sysctl
+	PTR	sys_32_sysctl
 	PTR	sys_prctl
 	PTR	compat_sys_adjtimex
 	PTR	compat_sys_setrlimit		/* 6155 */
@@ -294,7 +295,7 @@ EXPORT(sysn32_call_table)
 	PTR	sys_ni_syscall			/* 6170, was get_kernel_syms */
 	PTR	sys_ni_syscall			/* was query_module */
 	PTR	sys_quotactl
-	PTR	sys_ni_syscall			/* was nfsservctl */
+	PTR	compat_sys_nfsservctl
 	PTR	sys_ni_syscall			/* res. for getpmsg */
 	PTR	sys_ni_syscall			/* 6175  for putpmsg */
 	PTR	sys_ni_syscall			/* res. for afs_syscall */
@@ -315,7 +316,7 @@ EXPORT(sysn32_call_table)
 	PTR	sys_fremovexattr
 	PTR	sys_tkill
 	PTR	sys_ni_syscall
-	PTR	sys_32_futex
+	PTR	compat_sys_futex
 	PTR	compat_sys_sched_setaffinity	/* 6195 */
 	PTR	compat_sys_sched_getaffinity
 	PTR	sys_cacheflush
@@ -419,17 +420,6 @@ EXPORT(sysn32_call_table)
 	PTR	compat_sys_rt_tgsigqueueinfo	/* 6295 */
 	PTR	sys_perf_event_open
 	PTR	sys_accept4
-	PTR     compat_sys_recvmmsg
+	PTR     sys_ni_syscall
 	PTR     sys_getdents64
-	PTR	sys_fanotify_init		/* 6300 */
-	PTR	sys_fanotify_mark
-	PTR	sys_prlimit64
-	PTR	sys_name_to_handle_at
-	PTR	sys_open_by_handle_at
-	PTR	compat_sys_clock_adjtime	/* 6305 */
-	PTR	sys_syncfs
-	PTR	compat_sys_sendmmsg
-	PTR	sys_setns
-	PTR	compat_sys_process_vm_readv
-	PTR	compat_sys_process_vm_writev	/* 6310 */
 	.size	sysn32_call_table,.-sysn32_call_table

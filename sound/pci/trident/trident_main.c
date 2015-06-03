@@ -35,7 +35,6 @@
 #include <linux/vmalloc.h>
 #include <linux/gameport.h>
 #include <linux/dma-mapping.h>
-#include <linux/export.h>
 
 #include <sound/core.h>
 #include <sound/info.h>
@@ -1056,7 +1055,7 @@ static int snd_trident_capture_prepare(struct snd_pcm_substream *substream)
 
 	spin_lock_irq(&trident->reg_lock);
 
-	// Initialize the channel and set channel Mode
+	// Initilize the channel and set channel Mode
 	outb(0, TRID_REG(trident, LEGACY_DMAR15));
 
 	// Set DMA channel operation mode register
@@ -3599,7 +3598,7 @@ int __devinit snd_trident_create(struct snd_card *card,
 	trident->port = pci_resource_start(pci, 0);
 
 	if (request_irq(pci->irq, snd_trident_interrupt, IRQF_SHARED,
-			KBUILD_MODNAME, trident)) {
+			"Trident Audio", trident)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		snd_trident_free(trident);
 		return -EBUSY;

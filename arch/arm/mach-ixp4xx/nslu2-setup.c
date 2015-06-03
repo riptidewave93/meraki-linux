@@ -16,7 +16,7 @@
  * Maintainers: http://www.nslu2-linux.org/
  *
  */
-#include <linux/gpio.h>
+
 #include <linux/if_ether.h>
 #include <linux/irq.h>
 #include <linux/serial.h>
@@ -26,30 +26,12 @@
 #include <linux/i2c.h>
 #include <linux/i2c-gpio.h>
 #include <linux/io.h>
+
 #include <asm/mach-types.h>
 #include <asm/mach/arch.h>
 #include <asm/mach/flash.h>
 #include <asm/mach/time.h>
-
-#define NSLU2_SDA_PIN		7
-#define NSLU2_SCL_PIN		6
-
-/* NSLU2 Timer */
-#define NSLU2_FREQ 66000000
-
-/* Buttons */
-#define NSLU2_PB_GPIO		5	/* power button */
-#define NSLU2_PO_GPIO		8	/* power off */
-#define NSLU2_RB_GPIO		12	/* reset button */
-
-/* Buzzer */
-#define NSLU2_GPIO_BUZZ		4
-
-/* LEDs */
-#define NSLU2_LED_RED_GPIO	0
-#define NSLU2_LED_GRN_GPIO	1
-#define NSLU2_LED_DISK1_GPIO	3
-#define NSLU2_LED_DISK2_GPIO	2
+#include <asm/gpio.h>
 
 static struct flash_platform_data nslu2_flash_data = {
 	.map_name		= "cfi_probe",
@@ -299,14 +281,11 @@ static void __init nslu2_init(void)
 
 MACHINE_START(NSLU2, "Linksys NSLU2")
 	/* Maintainer: www.nslu2-linux.org */
-	.atag_offset	= 0x100,
+	.phys_io	= IXP4XX_PERIPHERAL_BASE_PHYS,
+	.io_pg_offst	= ((IXP4XX_PERIPHERAL_BASE_VIRT) >> 18) & 0xFFFC,
+	.boot_params	= 0x00000100,
 	.map_io		= ixp4xx_map_io,
-	.init_early	= ixp4xx_init_early,
 	.init_irq	= ixp4xx_init_irq,
 	.timer          = &nslu2_timer,
 	.init_machine	= nslu2_init,
-#if defined(CONFIG_PCI)
-	.dma_zone_size	= SZ_64M,
-#endif
-	.restart	= ixp4xx_restart,
 MACHINE_END

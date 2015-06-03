@@ -12,6 +12,7 @@
 #include <linux/init.h>
 #include <linux/irq.h>
 #include <linux/interrupt.h>
+#include <asm/system.h>
 #include <asm/io.h>
 #include <mach/microdev.h>
 
@@ -64,9 +65,19 @@ static const struct {
 #  error Inconsistancy in defining the IRQ# for primary IDE!
 #endif
 
-static void disable_microdev_irq(struct irq_data *data)
+static void enable_microdev_irq(unsigned int irq);
+static void disable_microdev_irq(unsigned int irq);
+static void mask_and_ack_microdev(unsigned int);
+
+static struct irq_chip microdev_irq_type = {
+	.name = "MicroDev-IRQ",
+	.unmask = enable_microdev_irq,
+	.mask = disable_microdev_irq,
+	.ack = mask_and_ack_microdev,
+};
+
+static void disable_microdev_irq(unsigned int irq)
 {
-	unsigned int irq = data->irq;
 	unsigned int fpgaIrq;
 
 	if (irq >= NUM_EXTERNAL_IRQS)
@@ -77,12 +88,11 @@ static void disable_microdev_irq(struct irq_data *data)
 	fpgaIrq = fpgaIrqTable[irq].fpgaIrq;
 
 	/* disable interrupts on the FPGA INTC register */
-	__raw_writel(MICRODEV_FPGA_INTC_MASK(fpgaIrq), MICRODEV_FPGA_INTDSB_REG);
+	ctrl_outl(MICRODEV_FPGA_INTC_MASK(fpgaIrq), MICRODEV_FPGA_INTDSB_REG);
 }
 
-static void enable_microdev_irq(struct irq_data *data)
+static void enable_microdev_irq(unsigned int irq)
 {
-	unsigned int irq = data->irq;
 	unsigned long priorityReg, priorities, pri;
 	unsigned int fpgaIrq;
 
@@ -97,27 +107,26 @@ static void enable_microdev_irq(struct irq_data *data)
 	priorityReg = MICRODEV_FPGA_INTPRI_REG(fpgaIrq);
 
 	/* set priority for the interrupt */
-	priorities = __raw_readl(priorityReg);
+	priorities = ctrl_inl(priorityReg);
 	priorities &= ~MICRODEV_FPGA_INTPRI_MASK(fpgaIrq);
 	priorities |= MICRODEV_FPGA_INTPRI_LEVEL(fpgaIrq, pri);
-	__raw_writel(priorities, priorityReg);
+	ctrl_outl(priorities, priorityReg);
 
 	/* enable interrupts on the FPGA INTC register */
-	__raw_writel(MICRODEV_FPGA_INTC_MASK(fpgaIrq), MICRODEV_FPGA_INTENB_REG);
+	ctrl_outl(MICRODEV_FPGA_INTC_MASK(fpgaIrq), MICRODEV_FPGA_INTENB_REG);
 }
-
-static struct irq_chip microdev_irq_type = {
-	.name = "MicroDev-IRQ",
-	.irq_unmask = enable_microdev_irq,
-	.irq_mask = disable_microdev_irq,
-};
 
 /* This function sets the desired irq handler to be a MicroDev type */
 static void __init make_microdev_irq(unsigned int irq)
 {
 	disable_irq_nosync(irq);
-	irq_set_chip_and_handler(irq, &microdev_irq_type, handle_level_irq);
-	disable_microdev_irq(irq_get_irq_data(irq));
+	set_irq_chip_and_handler(irq, &microdev_irq_type, handle_level_irq);
+	disable_microdev_irq(irq);
+}
+
+static void mask_and_ack_microdev(unsigned int irq)
+{
+	disable_microdev_irq(irq);
 }
 
 extern void __init init_microdev_irq(void)
@@ -125,7 +134,7 @@ extern void __init init_microdev_irq(void)
 	int i;
 
 	/* disable interrupts on the FPGA INTC register */
-	__raw_writel(~0ul, MICRODEV_FPGA_INTDSB_REG);
+	ctrl_outl(~0ul, MICRODEV_FPGA_INTDSB_REG);
 
 	for (i = 0; i < NUM_EXTERNAL_IRQS; i++)
 		make_microdev_irq(i);

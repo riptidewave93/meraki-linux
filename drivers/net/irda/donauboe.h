@@ -30,7 +30,7 @@
  *     or the type-DO IR port.
  *
  * IrDA chip set list from Toshiba Computer Engineering Corp.
- * model			method	maker	controller		Version 
+ * model			method	maker	controler		Version 
  * Portege 320CT	FIR,SIR Toshiba Oboe(Triangle) 
  * Portege 3010CT	FIR,SIR Toshiba Oboe(Sydney) 
  * Portege 3015CT	FIR,SIR Toshiba Oboe(Sydney) 
@@ -51,10 +51,10 @@
 
 /* The documentation for this chip is allegedly released         */
 /* However I have not seen it, not have I managed to contact     */
-/* anyone who has. HOWEVER the chip bears a striking resemblance */
+/* anyone who has. HOWEVER the chip bears a striking resemblence */
 /* to the IrDA controller in the Toshiba RISC TMPR3922 chip      */
 /* the documentation for this is freely available at             */
-/* http://www.madingley.org/james/resources/toshoboe/TMPR3922.pdf */
+/* http://www.toshiba.com/taec/components/Generic/TMPR3922.shtml */
 /* The mapping between the registers in that document and the    */
 /* Registers in the 701 oboe chip are as follows    */
 
@@ -273,7 +273,7 @@ struct OboeSlot
   __u8 control;                 /*Slot control/status see below */
   __u32 address;                /*Slot buffer address */
 }
-__packed;
+__attribute__ ((packed));
 
 #define OBOE_NTASKS OBOE_TXRING_OFFSET_IN_SLOTS
 

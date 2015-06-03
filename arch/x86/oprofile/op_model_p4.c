@@ -11,7 +11,7 @@
 #include <linux/oprofile.h>
 #include <linux/smp.h>
 #include <linux/ptrace.h>
-#include <asm/nmi.h>
+#include <linux/nmi.h>
 #include <asm/msr.h>
 #include <asm/fixmap.h>
 #include <asm/apic.h>
@@ -50,7 +50,7 @@ static inline void setup_num_counters(void)
 #endif
 }
 
-static inline int addr_increment(void)
+static int inline addr_increment(void)
 {
 #ifdef CONFIG_SMP
 	return smp_num_siblings == 2 ? 2 : 1;
@@ -385,26 +385,8 @@ static unsigned int get_stagger(void)
 
 static unsigned long reset_value[NUM_COUNTERS_NON_HT];
 
-static void p4_shutdown(struct op_msrs const * const msrs)
-{
-	int i;
 
-	for (i = 0; i < num_counters; ++i) {
-		if (msrs->counters[i].addr)
-			release_perfctr_nmi(msrs->counters[i].addr);
-	}
-	/*
-	 * some of the control registers are specially reserved in
-	 * conjunction with the counter registers (hence the starting offset).
-	 * This saves a few bits.
-	 */
-	for (i = num_counters; i < num_controls; ++i) {
-		if (msrs->controls[i].addr)
-			release_evntsel_nmi(msrs->controls[i].addr);
-	}
-}
-
-static int p4_fill_in_addresses(struct op_msrs * const msrs)
+static void p4_fill_in_addresses(struct op_msrs * const msrs)
 {
 	unsigned int i;
 	unsigned int addr, cccraddr, stag;
@@ -486,18 +468,6 @@ static int p4_fill_in_addresses(struct op_msrs * const msrs)
 			msrs->controls[i++].addr = MSR_P4_CRU_ESCR5;
 		}
 	}
-
-	for (i = 0; i < num_counters; ++i) {
-		if (!counter_config[i].enabled)
-			continue;
-		if (msrs->controls[i].addr)
-			continue;
-		op_x86_warn_reserved(i);
-		p4_shutdown(msrs);
-		return -EBUSY;
-	}
-
-	return 0;
 }
 
 
@@ -697,6 +667,26 @@ static void p4_stop(struct op_msrs const * const msrs)
 		wrmsr(p4_counters[VIRT_CTR(stag, i)].cccr_address, low, high);
 	}
 }
+
+static void p4_shutdown(struct op_msrs const * const msrs)
+{
+	int i;
+
+	for (i = 0; i < num_counters; ++i) {
+		if (msrs->counters[i].addr)
+			release_perfctr_nmi(msrs->counters[i].addr);
+	}
+	/*
+	 * some of the control registers are specially reserved in
+	 * conjunction with the counter registers (hence the starting offset).
+	 * This saves a few bits.
+	 */
+	for (i = num_counters; i < num_controls; ++i) {
+		if (msrs->controls[i].addr)
+			release_evntsel_nmi(msrs->controls[i].addr);
+	}
+}
+
 
 #ifdef CONFIG_SMP
 struct op_x86_model_spec op_p4_ht2_spec = {

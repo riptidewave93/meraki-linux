@@ -76,7 +76,7 @@ int radeon_enable_vblank(struct drm_device *dev, int crtc)
 		default:
 			DRM_ERROR("tried to enable vblank on non-existent crtc %d\n",
 				  crtc);
-			return -EINVAL;
+			return EINVAL;
 		}
 	} else {
 		switch (crtc) {
@@ -89,7 +89,7 @@ int radeon_enable_vblank(struct drm_device *dev, int crtc)
 		default:
 			DRM_ERROR("tried to enable vblank on non-existent crtc %d\n",
 				  crtc);
-			return -EINVAL;
+			return EINVAL;
 		}
 	}
 
@@ -129,7 +129,7 @@ void radeon_disable_vblank(struct drm_device *dev, int crtc)
 	}
 }
 
-static u32 radeon_acknowledge_irqs(drm_radeon_private_t *dev_priv, u32 *r500_disp_int)
+static inline u32 radeon_acknowledge_irqs(drm_radeon_private_t *dev_priv, u32 *r500_disp_int)
 {
 	u32 irqs = RADEON_READ(RADEON_GEN_INT_STATUS);
 	u32 irq_mask = RADEON_SW_INT_TEST;
@@ -289,15 +289,15 @@ int radeon_irq_emit(struct drm_device *dev, void *data, struct drm_file *file_pr
 	drm_radeon_irq_emit_t *emit = data;
 	int result;
 
-	if (!dev_priv) {
-		DRM_ERROR("called with no initialization\n");
-		return -EINVAL;
-	}
-
 	if ((dev_priv->flags & RADEON_FAMILY_MASK) >= CHIP_R600)
 		return -EINVAL;
 
 	LOCK_TEST_WITH_RETURN(dev, file_priv);
+
+	if (!dev_priv) {
+		DRM_ERROR("called with no initialization\n");
+		return -EINVAL;
+	}
 
 	result = radeon_emit_irq(dev);
 

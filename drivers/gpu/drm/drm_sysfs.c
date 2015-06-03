@@ -14,9 +14,7 @@
 
 #include <linux/device.h>
 #include <linux/kdev_t.h>
-#include <linux/gfp.h>
 #include <linux/err.h>
-#include <linux/export.h>
 
 #include "drm_sysfs.h"
 #include "drm_core.h"
@@ -72,17 +70,19 @@ static int drm_class_resume(struct device *dev)
 	return 0;
 }
 
-static char *drm_devnode(struct device *dev, umode_t *mode)
+/* Display the version of drm_core. This doesn't work right in current design */
+static ssize_t version_show(struct class *dev, char *buf)
+{
+	return sprintf(buf, "%s %d.%d.%d %s\n", CORE_NAME, CORE_MAJOR,
+		       CORE_MINOR, CORE_PATCHLEVEL, CORE_DATE);
+}
+
+static char *drm_devnode(struct device *dev, mode_t *mode)
 {
 	return kasprintf(GFP_KERNEL, "dri/%s", dev_name(dev));
 }
 
-static CLASS_ATTR_STRING(version, S_IRUGO,
-		CORE_NAME " "
-		__stringify(CORE_MAJOR) "."
-		__stringify(CORE_MINOR) "."
-		__stringify(CORE_PATCHLEVEL) " "
-		CORE_DATE);
+static CLASS_ATTR(version, S_IRUGO, version_show, NULL);
 
 /**
  * drm_sysfs_create - create a struct drm_sysfs_class structure
@@ -109,7 +109,7 @@ struct class *drm_sysfs_create(struct module *owner, char *name)
 	class->suspend = drm_class_suspend;
 	class->resume = drm_class_resume;
 
-	err = class_create_file(class, &class_attr_version.attr);
+	err = class_create_file(class, &class_attr_version);
 	if (err)
 		goto err_out_class;
 
@@ -132,7 +132,7 @@ void drm_sysfs_destroy(void)
 {
 	if ((drm_class == NULL) || (IS_ERR(drm_class)))
 		return;
-	class_remove_file(drm_class, &class_attr_version.attr);
+	class_remove_file(drm_class, &class_attr_version);
 	class_destroy(drm_class);
 }
 
@@ -159,15 +159,8 @@ static ssize_t status_show(struct device *device,
 {
 	struct drm_connector *connector = to_drm_connector(device);
 	enum drm_connector_status status;
-	int ret;
 
-	ret = mutex_lock_interruptible(&connector->dev->mode_config.mutex);
-	if (ret)
-		return ret;
-
-	status = connector->funcs->detect(connector, true);
-	mutex_unlock(&connector->dev->mode_config.mutex);
-
+	status = connector->funcs->detect(connector);
 	return snprintf(buf, PAGE_SIZE, "%s\n",
 			drm_get_connector_status_name(status));
 }
@@ -201,9 +194,8 @@ static ssize_t enabled_show(struct device *device,
 			"disabled");
 }
 
-static ssize_t edid_show(struct file *filp, struct kobject *kobj,
-			 struct bin_attribute *attr, char *buf, loff_t off,
-			 size_t count)
+static ssize_t edid_show(struct kobject *kobj, struct bin_attribute *attr,
+			 char *buf, loff_t off, size_t count)
 {
 	struct device *connector_dev = container_of(kobj, struct device, kobj);
 	struct drm_connector *connector = to_drm_connector(connector_dev);
@@ -342,7 +334,7 @@ static struct device_attribute connector_attrs_opt1[] = {
 static struct bin_attribute edid_attr = {
 	.attr.name = "edid",
 	.attr.mode = 0444,
-	.size = 0,
+	.size = 128,
 	.read = edid_show,
 };
 
@@ -363,10 +355,7 @@ static struct bin_attribute edid_attr = {
 int drm_sysfs_connector_add(struct drm_connector *connector)
 {
 	struct drm_device *dev = connector->dev;
-	int attr_cnt = 0;
-	int opt_cnt = 0;
-	int i;
-	int ret = 0;
+	int ret = 0, i, j;
 
 	/* We shouldn't get called more than once for the same connector */
 	BUG_ON(device_is_registered(&connector->kdev));
@@ -389,8 +378,8 @@ int drm_sysfs_connector_add(struct drm_connector *connector)
 
 	/* Standard attributes */
 
-	for (attr_cnt = 0; attr_cnt < ARRAY_SIZE(connector_attrs); attr_cnt++) {
-		ret = device_create_file(&connector->kdev, &connector_attrs[attr_cnt]);
+	for (i = 0; i < ARRAY_SIZE(connector_attrs); i++) {
+		ret = device_create_file(&connector->kdev, &connector_attrs[i]);
 		if (ret)
 			goto err_out_files;
 	}
@@ -406,8 +395,8 @@ int drm_sysfs_connector_add(struct drm_connector *connector)
 		case DRM_MODE_CONNECTOR_SVIDEO:
 		case DRM_MODE_CONNECTOR_Component:
 		case DRM_MODE_CONNECTOR_TV:
-			for (opt_cnt = 0; opt_cnt < ARRAY_SIZE(connector_attrs_opt1); opt_cnt++) {
-				ret = device_create_file(&connector->kdev, &connector_attrs_opt1[opt_cnt]);
+			for (i = 0; i < ARRAY_SIZE(connector_attrs_opt1); i++) {
+				ret = device_create_file(&connector->kdev, &connector_attrs_opt1[i]);
 				if (ret)
 					goto err_out_files;
 			}
@@ -426,10 +415,10 @@ int drm_sysfs_connector_add(struct drm_connector *connector)
 	return 0;
 
 err_out_files:
-	for (i = 0; i < opt_cnt; i++)
-		device_remove_file(&connector->kdev, &connector_attrs_opt1[i]);
-	for (i = 0; i < attr_cnt; i++)
-		device_remove_file(&connector->kdev, &connector_attrs[i]);
+	if (i > 0)
+		for (j = 0; j < i; j++)
+			device_remove_file(&connector->kdev,
+					   &connector_attrs[i]);
 	device_unregister(&connector->kdev);
 
 out:
@@ -454,8 +443,6 @@ void drm_sysfs_connector_remove(struct drm_connector *connector)
 {
 	int i;
 
-	if (!connector->kdev.parent)
-		return;
 	DRM_DEBUG("removing \"%s\" from sysfs\n",
 		  drm_get_connector_name(connector));
 
@@ -463,7 +450,6 @@ void drm_sysfs_connector_remove(struct drm_connector *connector)
 		device_remove_file(&connector->kdev, &connector_attrs[i]);
 	sysfs_remove_bin_file(&connector->kdev.kobj, &edid_attr);
 	device_unregister(&connector->kdev);
-	connector->kdev.parent = NULL;
 }
 EXPORT_SYMBOL(drm_sysfs_connector_remove);
 
@@ -500,8 +486,7 @@ int drm_sysfs_device_add(struct drm_minor *minor)
 	int err;
 	char *minor_str;
 
-	minor->kdev.parent = minor->dev->dev;
-
+	minor->kdev.parent = &minor->dev->pdev->dev;
 	minor->kdev.class = drm_class;
 	minor->kdev.release = drm_sysfs_device_release;
 	minor->kdev.devt = minor->device;
@@ -536,9 +521,7 @@ err_out:
  */
 void drm_sysfs_device_remove(struct drm_minor *minor)
 {
-	if (minor->kdev.parent)
-		device_unregister(&minor->kdev);
-	minor->kdev.parent = NULL;
+	device_unregister(&minor->kdev);
 }
 
 

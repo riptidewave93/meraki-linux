@@ -9,7 +9,7 @@
 #endif
 
 /*
- * M32R PC Card Controller
+ * M32R PC Card Controler
  */
 #define M32R_PCC0_BASE        0x00ef7000
 #define M32R_PCC1_BASE        0x00ef7020

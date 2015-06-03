@@ -17,7 +17,6 @@
 #include <linux/backlight.h>
 #include <linux/atmel_pwm.h>
 #include <linux/atmel-pwm-bl.h>
-#include <linux/slab.h>
 
 struct atmel_pwm_bl {
 	const struct atmel_pwm_bl_platform_data	*pdata;
@@ -70,7 +69,7 @@ static int atmel_pwm_bl_set_intensity(struct backlight_device *bd)
 static int atmel_pwm_bl_get_intensity(struct backlight_device *bd)
 {
 	struct atmel_pwm_bl *pwmbl = bl_get_data(bd);
-	u32 intensity;
+	u8 intensity;
 
 	if (pwmbl->pdata->pwm_active_low) {
 		intensity = pwm_channel_readl(&pwmbl->pwmc, PWM_CDTY) -
@@ -80,7 +79,7 @@ static int atmel_pwm_bl_get_intensity(struct backlight_device *bd)
 			pwm_channel_readl(&pwmbl->pwmc, PWM_CDTY);
 	}
 
-	return intensity & 0xffff;
+	return intensity;
 }
 
 static int atmel_pwm_bl_init_pwm(struct atmel_pwm_bl *pwmbl)
@@ -114,14 +113,13 @@ static int atmel_pwm_bl_init_pwm(struct atmel_pwm_bl *pwmbl)
 	return pwm_channel_enable(&pwmbl->pwmc);
 }
 
-static const struct backlight_ops atmel_pwm_bl_ops = {
+static struct backlight_ops atmel_pwm_bl_ops = {
 	.get_brightness = atmel_pwm_bl_get_intensity,
 	.update_status  = atmel_pwm_bl_set_intensity,
 };
 
 static int atmel_pwm_bl_probe(struct platform_device *pdev)
 {
-	struct backlight_properties props;
 	const struct atmel_pwm_bl_platform_data *pdata;
 	struct backlight_device *bldev;
 	struct atmel_pwm_bl *pwmbl;
@@ -160,18 +158,15 @@ static int atmel_pwm_bl_probe(struct platform_device *pdev)
 			goto err_free_pwm;
 		}
 
-		/* Turn display off by default. */
+		/* Turn display off by defatult. */
 		retval = gpio_direction_output(pwmbl->gpio_on,
 				0 ^ pdata->on_active_low);
 		if (retval)
 			goto err_free_gpio;
 	}
 
-	memset(&props, 0, sizeof(struct backlight_properties));
-	props.type = BACKLIGHT_RAW;
-	props.max_brightness = pdata->pwm_duty_max - pdata->pwm_duty_min;
-	bldev = backlight_device_register("atmel-pwm-bl", &pdev->dev, pwmbl,
-					  &atmel_pwm_bl_ops, &props);
+	bldev = backlight_device_register("atmel-pwm-bl",
+			&pdev->dev, pwmbl, &atmel_pwm_bl_ops);
 	if (IS_ERR(bldev)) {
 		retval = PTR_ERR(bldev);
 		goto err_free_gpio;
@@ -183,6 +178,7 @@ static int atmel_pwm_bl_probe(struct platform_device *pdev)
 
 	/* Power up the backlight by default at middle intesity. */
 	bldev->props.power = FB_BLANK_UNBLANK;
+	bldev->props.max_brightness = pdata->pwm_duty_max - pdata->pwm_duty_min;
 	bldev->props.brightness = bldev->props.max_brightness / 2;
 
 	retval = atmel_pwm_bl_init_pwm(pwmbl);
@@ -211,8 +207,7 @@ static int __exit atmel_pwm_bl_remove(struct platform_device *pdev)
 	struct atmel_pwm_bl *pwmbl = platform_get_drvdata(pdev);
 
 	if (pwmbl->gpio_on != -1) {
-		gpio_set_value(pwmbl->gpio_on,
-					0 ^ pwmbl->pdata->on_active_low);
+		gpio_set_value(pwmbl->gpio_on, 0);
 		gpio_free(pwmbl->gpio_on);
 	}
 	pwm_channel_disable(&pwmbl->pwmc);

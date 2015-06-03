@@ -19,6 +19,7 @@ enum orion_ehci_phy_ver {
 };
 
 struct orion_ehci_data {
+	struct mbus_dram_target_info	*dram;
 	enum orion_ehci_phy_ver phy_version;
 };
 

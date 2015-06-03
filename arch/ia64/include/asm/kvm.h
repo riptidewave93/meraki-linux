@@ -60,7 +60,6 @@ struct kvm_ioapic_state {
 #define KVM_IRQCHIP_PIC_MASTER   0
 #define KVM_IRQCHIP_PIC_SLAVE    1
 #define KVM_IRQCHIP_IOAPIC       2
-#define KVM_NR_IRQCHIPS          3
 
 #define KVM_CONTEXT_SIZE	8*1024
 
@@ -259,10 +258,6 @@ struct kvm_debug_exit_arch {
 
 /* for KVM_SET_GUEST_DEBUG */
 struct kvm_guest_debug_arch {
-};
-
-/* definition of registers in kvm_run */
-struct kvm_sync_regs {
 };
 
 #endif

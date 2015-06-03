@@ -32,16 +32,18 @@
  * but we want to try to avoid allocating at 0x2900-0x2bff
  * which might have be mirrored at 0x0100-0x03ff..
  */
-resource_size_t
-pcibios_align_resource(void *data, const struct resource *res,
+void
+pcibios_align_resource(void *data, struct resource *res,
 		       resource_size_t size, resource_size_t align)
 {
-	resource_size_t start = res->start;
+	if (res->flags & IORESOURCE_IO) {
+		resource_size_t start = res->start;
 
-	if ((res->flags & IORESOURCE_IO) && (start & 0x300))
-		start = (start + 0x3ff) & ~0x3ff;
-
-	return start;
+		if (start & 0x300) {
+			start = (start + 0x3ff) & ~0x3ff;
+			res->start = start;
+		}
+	}
 }
 
 
@@ -94,7 +96,8 @@ static void __init pcibios_allocate_bus_resources(struct list_head *bus_list)
 				r = &dev->resource[idx];
 				if (!r->start)
 					continue;
-				pci_claim_resource(dev, idx);
+				if (pci_claim_resource(dev, idx) < 0)
+					printk(KERN_ERR "PCI: Cannot allocate resource region %d of bridge %s\n", idx, pci_name(dev));
 			}
 		}
 		pcibios_allocate_bus_resources(&bus->children);
@@ -124,6 +127,7 @@ static void __init pcibios_allocate_resources(int pass)
 				DBG("PCI: Resource %08lx-%08lx (f=%lx, d=%d, p=%d)\n",
 				    r->start, r->end, r->flags, disabled, pass);
 				if (pci_claim_resource(dev, idx) < 0) {
+					printk(KERN_ERR "PCI: Cannot allocate resource region %d of device %s\n", idx, pci_name(dev));
 					/* We'll assign a new address later */
 					r->end -= r->start;
 					r->start = 0;
@@ -193,4 +197,24 @@ void __init pcibios_resource_survey(void)
 	pcibios_allocate_resources(0);
 	pcibios_allocate_resources(1);
 	pcibios_assign_resources();
+}
+
+/*
+ *  If we set up a device for bus mastering, we need to check the latency
+ *  timer as certain crappy BIOSes forget to set it properly.
+ */
+unsigned int pcibios_max_latency = 255;
+
+void pcibios_set_master(struct pci_dev *dev)
+{
+	u8 lat;
+	pci_read_config_byte(dev, PCI_LATENCY_TIMER, &lat);
+	if (lat < 16)
+		lat = (64 <= pcibios_max_latency) ? 64 : pcibios_max_latency;
+	else if (lat > pcibios_max_latency)
+		lat = pcibios_max_latency;
+	else
+		return;
+	printk(KERN_DEBUG "PCI: Setting latency timer of device %s to %d\n", pci_name(dev), lat);
+	pci_write_config_byte(dev, PCI_LATENCY_TIMER, lat);
 }

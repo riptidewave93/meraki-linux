@@ -27,7 +27,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
 
 #include <linux/blkdev.h>
 #include <linux/device.h>

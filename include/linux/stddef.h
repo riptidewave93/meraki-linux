@@ -3,15 +3,21 @@
 
 #include <linux/compiler.h>
 
+#undef NULL
+#if defined(__cplusplus)
+#define NULL 0
+#else
+#define NULL ((void *)0)
+#endif
+
 #ifdef __KERNEL__
 
-#undef NULL
-#define NULL ((void *)0)
-
+#ifndef __cplusplus
 enum {
 	false	= 0,
 	true	= 1
 };
+#endif
 
 #undef offsetof
 #ifdef __compiler_offsetof

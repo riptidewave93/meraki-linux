@@ -1,8 +1,6 @@
 #ifndef _XT_U32_H
 #define _XT_U32_H 1
 
-#include <linux/types.h>
-
 enum xt_u32_ops {
 	XT_U32_AND,
 	XT_U32_LEFTSH,
@@ -11,13 +9,13 @@ enum xt_u32_ops {
 };
 
 struct xt_u32_location_element {
-	__u32 number;
-	__u8 nextop;
+	u_int32_t number;
+	u_int8_t nextop;
 };
 
 struct xt_u32_value_element {
-	__u32 min;
-	__u32 max;
+	u_int32_t min;
+	u_int32_t max;
 };
 
 /*
@@ -29,14 +27,14 @@ struct xt_u32_value_element {
 struct xt_u32_test {
 	struct xt_u32_location_element location[XT_U32_MAXSIZE+1];
 	struct xt_u32_value_element value[XT_U32_MAXSIZE+1];
-	__u8 nnums;
-	__u8 nvalues;
+	u_int8_t nnums;
+	u_int8_t nvalues;
 };
 
 struct xt_u32 {
 	struct xt_u32_test tests[XT_U32_MAXSIZE+1];
-	__u8 ntests;
-	__u8 invert;
+	u_int8_t ntests;
+	u_int8_t invert;
 };
 
 #endif /* _XT_U32_H */

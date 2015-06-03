@@ -18,6 +18,7 @@
 
 #include <asm/stacktrace.h>
 
+#include "dumpstack.h"
 
 int panic_on_unrecovered_nmi;
 int panic_on_io_nmi;
@@ -27,13 +28,8 @@ static int die_counter;
 
 void printk_address(unsigned long address, int reliable)
 {
-	struct module * mod = __module_text_address(address);
-	printk(" [<%p>] %s(%pB)", (void *) address,
+	printk(" [<%p>] %s%pS\n", (void *) address,
 			reliable ? "" : "? ", (void *) address);
-	if (mod != NULL)
-		printk(" {%s+%#lx}", mod->name,
-				address - ((unsigned long) mod->module_core));
-	printk("\n");
 }
 
 #ifdef CONFIG_FUNCTION_GRAPH_TRACER
@@ -42,15 +38,12 @@ print_ftrace_graph_addr(unsigned long addr, void *data,
 			const struct stacktrace_ops *ops,
 			struct thread_info *tinfo, int *graph)
 {
-	struct task_struct *task;
+	struct task_struct *task = tinfo->task;
 	unsigned long ret_addr;
-	int index;
+	int index = task->curr_ret_stack;
 
 	if (addr != (unsigned long)return_to_handler)
 		return;
-
-	task = tinfo->task;
-	index = task->curr_ret_stack;
 
 	if (!task->ret_stack || index < *graph)
 		return;
@@ -116,32 +109,20 @@ print_context_stack(struct thread_info *tinfo,
 	}
 	return bp;
 }
-EXPORT_SYMBOL_GPL(print_context_stack);
 
-unsigned long
-print_context_stack_bp(struct thread_info *tinfo,
-		       unsigned long *stack, unsigned long bp,
-		       const struct stacktrace_ops *ops, void *data,
-		       unsigned long *end, int *graph)
+
+static void
+print_trace_warning_symbol(void *data, char *msg, unsigned long symbol)
 {
-	struct stack_frame *frame = (struct stack_frame *)bp;
-	unsigned long *ret_addr = &frame->return_address;
-
-	while (valid_stack_ptr(tinfo, ret_addr, sizeof(*ret_addr), end)) {
-		unsigned long addr = *ret_addr;
-
-		if (!__kernel_text_address(addr))
-			break;
-
-		ops->address(data, addr, 1);
-		frame = frame->next_frame;
-		ret_addr = &frame->return_address;
-		print_ftrace_graph_addr(addr, data, ops, tinfo, graph);
-	}
-
-	return (unsigned long)frame;
+	printk(data);
+	print_symbol(msg, symbol);
+	printk("\n");
 }
-EXPORT_SYMBOL_GPL(print_context_stack_bp);
+
+static void print_trace_warning(void *data, char *msg)
+{
+	printk("%s%s\n", (char *)data, msg);
+}
 
 static int print_trace_stack(void *data, char *name)
 {
@@ -160,9 +141,10 @@ static void print_trace_address(void *data, unsigned long addr, int reliable)
 }
 
 static const struct stacktrace_ops print_trace_ops = {
-	.stack			= print_trace_stack,
-	.address		= print_trace_address,
-	.walk_stack		= print_context_stack,
+	.warning = print_trace_warning,
+	.warning_symbol = print_trace_warning_symbol,
+	.stack = print_trace_stack,
+	.address = print_trace_address,
 };
 
 void
@@ -189,10 +171,14 @@ void show_stack(struct task_struct *task, unsigned long *sp)
  */
 void dump_stack(void)
 {
-	unsigned long bp;
+	unsigned long bp = 0;
 	unsigned long stack;
 
-	bp = stack_frame(current, NULL);
+#ifdef CONFIG_FRAME_POINTER
+	if (!bp)
+		get_bp(bp);
+#endif
+
 	printk("Pid: %d, comm: %.20s %s %s %.*s\n",
 		current->pid, current->comm, print_tainted(),
 		init_utsname()->release,
@@ -202,7 +188,7 @@ void dump_stack(void)
 }
 EXPORT_SYMBOL(dump_stack);
 
-static arch_spinlock_t die_lock = __ARCH_SPIN_LOCK_UNLOCKED;
+static raw_spinlock_t die_lock = __RAW_SPIN_LOCK_UNLOCKED;
 static int die_owner = -1;
 static unsigned int die_nest_count;
 
@@ -211,16 +197,21 @@ unsigned __kprobes long oops_begin(void)
 	int cpu;
 	unsigned long flags;
 
+	/* notify the hw-branch tracer so it may disable tracing and
+	   add the last trace to the trace buffer -
+	   the earlier this happens, the more useful the trace. */
+	trace_hw_branch_oops();
+
 	oops_enter();
 
 	/* racy, but better than risking deadlock. */
 	raw_local_irq_save(flags);
 	cpu = smp_processor_id();
-	if (!arch_spin_trylock(&die_lock)) {
+	if (!__raw_spin_trylock(&die_lock)) {
 		if (cpu == die_owner)
 			/* nested oops. should stop eventually */;
 		else
-			arch_spin_lock(&die_lock);
+			__raw_spin_lock(&die_lock);
 	}
 	die_nest_count++;
 	die_owner = cpu;
@@ -228,7 +219,6 @@ unsigned __kprobes long oops_begin(void)
 	bust_spinlocks(1);
 	return flags;
 }
-EXPORT_SYMBOL_GPL(oops_begin);
 
 void __kprobes oops_end(unsigned long flags, struct pt_regs *regs, int signr)
 {
@@ -241,7 +231,7 @@ void __kprobes oops_end(unsigned long flags, struct pt_regs *regs, int signr)
 	die_nest_count--;
 	if (!die_nest_count)
 		/* Nest count reaches zero, release the lock. */
-		arch_spin_unlock(&die_lock);
+		__raw_spin_unlock(&die_lock);
 	raw_local_irq_restore(flags);
 	oops_exit();
 
@@ -260,8 +250,7 @@ int __kprobes __die(const char *str, struct pt_regs *regs, long err)
 	unsigned short ss;
 	unsigned long sp;
 #endif
-	printk(KERN_DEFAULT
-	       "%s: %04lx [#%d] ", str, err & 0xffff, ++die_counter);
+	printk(KERN_EMERG "%s: %04lx [#%d] ", str, err & 0xffff, ++die_counter);
 #ifdef CONFIG_PREEMPT
 	printk("PREEMPT ");
 #endif
@@ -272,18 +261,18 @@ int __kprobes __die(const char *str, struct pt_regs *regs, long err)
 	printk("DEBUG_PAGEALLOC");
 #endif
 	printk("\n");
+	sysfs_printk_last_file();
 	if (notify_die(DIE_OOPS, str, regs, err,
-			current->thread.trap_nr, SIGSEGV) == NOTIFY_STOP)
+			current->thread.trap_no, SIGSEGV) == NOTIFY_STOP)
 		return 1;
 
 	show_registers(regs);
 #ifdef CONFIG_X86_32
-	if (user_mode_vm(regs)) {
+	sp = (unsigned long) (&regs->sp);
+	savesegment(ss, ss);
+	if (user_mode(regs)) {
 		sp = regs->sp;
 		ss = regs->ss & 0xffff;
-	} else {
-		sp = kernel_stack_pointer(regs);
-		savesegment(ss, ss);
 	}
 	printk(KERN_EMERG "EIP: [<%08lx>] ", regs->ip);
 	print_symbol("%s", regs->ip);
@@ -313,6 +302,41 @@ void die(const char *str, struct pt_regs *regs, long err)
 		sig = 0;
 	oops_end(flags, regs, sig);
 }
+
+void notrace __kprobes
+die_nmi(char *str, struct pt_regs *regs, int do_panic)
+{
+	unsigned long flags;
+
+	if (notify_die(DIE_NMIWATCHDOG, str, regs, 0, 2, SIGINT) == NOTIFY_STOP)
+		return;
+
+	/*
+	 * We are in trouble anyway, lets at least try
+	 * to get a message out.
+	 */
+	flags = oops_begin();
+	printk(KERN_EMERG "%s", str);
+	printk(" on CPU%d, ip %08lx, registers:\n",
+		smp_processor_id(), regs->ip);
+	show_registers(regs);
+	oops_end(flags, regs, 0);
+	if (do_panic || panic_on_oops)
+		panic("Non maskable interrupt");
+	nmi_exit();
+	local_irq_enable();
+	do_exit(SIGBUS);
+}
+
+static int __init oops_setup(char *s)
+{
+	if (!s)
+		return -EINVAL;
+	if (!strcmp(s, "panic"))
+		panic_on_oops = 1;
+	return 0;
+}
+early_param("oops", oops_setup);
 
 static int __init kstack_setup(char *s)
 {

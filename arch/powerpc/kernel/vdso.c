@@ -9,6 +9,7 @@
  *  2 of the License, or (at your option) any later version.
  */
 
+#include <linux/module.h>
 #include <linux/errno.h>
 #include <linux/sched.h>
 #include <linux/kernel.h>
@@ -21,9 +22,10 @@
 #include <linux/elf.h>
 #include <linux/security.h>
 #include <linux/bootmem.h>
-#include <linux/memblock.h>
+#include <linux/lmb.h>
 
 #include <asm/pgtable.h>
+#include <asm/system.h>
 #include <asm/processor.h>
 #include <asm/mmu.h>
 #include <asm/mmu_context.h>
@@ -157,7 +159,7 @@ static void dump_vdso_pages(struct vm_area_struct * vma)
 {
 	int i;
 
-	if (!vma || is_32bit_task()) {
+	if (!vma || test_thread_flag(TIF_32BIT)) {
 		printk("vDSO32 @ %016lx:\n", (unsigned long)vdso32_kbase);
 		for (i=0; i<vdso32_pages; i++) {
 			struct page *pg = virt_to_page(vdso32_kbase +
@@ -168,7 +170,7 @@ static void dump_vdso_pages(struct vm_area_struct * vma)
 			dump_one_vdso_page(pg, upg);
 		}
 	}
-	if (!vma || !is_32bit_task()) {
+	if (!vma || !test_thread_flag(TIF_32BIT)) {
 		printk("vDSO64 @ %016lx:\n", (unsigned long)vdso64_kbase);
 		for (i=0; i<vdso64_pages; i++) {
 			struct page *pg = virt_to_page(vdso64_kbase +
@@ -198,7 +200,7 @@ int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp)
 		return 0;
 
 #ifdef CONFIG_PPC64
-	if (is_32bit_task()) {
+	if (test_thread_flag(TIF_32BIT)) {
 		vdso_pagelist = vdso32_pagelist;
 		vdso_pages = vdso32_pages;
 		vdso_base = VDSO32_MBASE;
@@ -262,11 +264,17 @@ int arch_setup_additional_pages(struct linux_binprm *bprm, int uses_interp)
 	 * the "data" page of the vDSO or you'll stop getting kernel updates
 	 * and your nice userland gettimeofday will be totally dead.
 	 * It's fine to use that for setting breakpoints in the vDSO code
-	 * pages though.
+	 * pages though
+	 *
+	 * Make sure the vDSO gets into every core dump.
+	 * Dumping its contents makes post-mortem fully interpretable later
+	 * without matching up the same kernel and hardware config to see
+	 * what PC values meant.
 	 */
 	rc = install_special_mapping(mm, vdso_base, vdso_pages << PAGE_SHIFT,
 				     VM_READ|VM_EXEC|
-				     VM_MAYREAD|VM_MAYWRITE|VM_MAYEXEC,
+				     VM_MAYREAD|VM_MAYWRITE|VM_MAYEXEC|
+				     VM_ALWAYSDUMP,
 				     vdso_pagelist);
 	if (rc) {
 		current->mm->context.vdso_base = 0;
@@ -713,20 +721,20 @@ static int __init vdso_init(void)
 
 #ifdef CONFIG_PPC64
 	/*
-	 * Fill up the "systemcfg" stuff for backward compatibility
+	 * Fill up the "systemcfg" stuff for backward compatiblity
 	 */
 	strcpy((char *)vdso_data->eye_catcher, "SYSTEMCFG:PPC64");
 	vdso_data->version.major = SYSTEMCFG_MAJOR;
 	vdso_data->version.minor = SYSTEMCFG_MINOR;
 	vdso_data->processor = mfspr(SPRN_PVR);
 	/*
-	 * Fake the old platform number for pSeries and add
+	 * Fake the old platform number for pSeries and iSeries and add
 	 * in LPAR bit if necessary
 	 */
-	vdso_data->platform = 0x100;
+	vdso_data->platform = machine_is(iseries) ? 0x200 : 0x100;
 	if (firmware_has_feature(FW_FEATURE_LPAR))
 		vdso_data->platform |= 1;
-	vdso_data->physicalMemorySize = memblock_phys_mem_size();
+	vdso_data->physicalMemorySize = lmb_phys_mem_size();
 	vdso_data->dcache_size = ppc64_caches.dsize;
 	vdso_data->dcache_line_size = ppc64_caches.dline_size;
 	vdso_data->icache_size = ppc64_caches.isize;
@@ -812,17 +820,17 @@ static int __init vdso_init(void)
 }
 arch_initcall(vdso_init);
 
-int in_gate_area_no_mm(unsigned long addr)
+int in_gate_area_no_task(unsigned long addr)
 {
 	return 0;
 }
 
-int in_gate_area(struct mm_struct *mm, unsigned long addr)
+int in_gate_area(struct task_struct *task, unsigned long addr)
 {
 	return 0;
 }
 
-struct vm_area_struct *get_gate_vma(struct mm_struct *mm)
+struct vm_area_struct *get_gate_vma(struct task_struct *tsk)
 {
 	return NULL;
 }

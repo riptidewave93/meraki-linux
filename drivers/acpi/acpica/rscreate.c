@@ -5,7 +5,7 @@
  ******************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -51,70 +51,6 @@ ACPI_MODULE_NAME("rscreate")
 
 /*******************************************************************************
  *
- * FUNCTION:    acpi_buffer_to_resource
- *
- * PARAMETERS:  aml_buffer          - Pointer to the resource byte stream
- *              aml_buffer_length   - Length of the aml_buffer
- *              resource_ptr        - Where the converted resource is returned
- *
- * RETURN:      Status
- *
- * DESCRIPTION: Convert a raw AML buffer to a resource list
- *
- ******************************************************************************/
-acpi_status
-acpi_buffer_to_resource(u8 *aml_buffer,
-			u16 aml_buffer_length,
-			struct acpi_resource **resource_ptr)
-{
-	acpi_status status;
-	acpi_size list_size_needed;
-	void *resource;
-	void *current_resource_ptr;
-
-	/*
-	 * Note: we allow AE_AML_NO_RESOURCE_END_TAG, since an end tag
-	 * is not required here.
-	 */
-
-	/* Get the required length for the converted resource */
-
-	status = acpi_rs_get_list_length(aml_buffer, aml_buffer_length,
-					 &list_size_needed);
-	if (status == AE_AML_NO_RESOURCE_END_TAG) {
-		status = AE_OK;
-	}
-	if (ACPI_FAILURE(status)) {
-		return (status);
-	}
-
-	/* Allocate a buffer for the converted resource */
-
-	resource = ACPI_ALLOCATE_ZEROED(list_size_needed);
-	current_resource_ptr = resource;
-	if (!resource) {
-		return (AE_NO_MEMORY);
-	}
-
-	/* Perform the AML-to-Resource conversion */
-
-	status = acpi_ut_walk_aml_resources(aml_buffer, aml_buffer_length,
-					    acpi_rs_convert_aml_to_resources,
-					    &current_resource_ptr);
-	if (status == AE_AML_NO_RESOURCE_END_TAG) {
-		status = AE_OK;
-	}
-	if (ACPI_FAILURE(status)) {
-		ACPI_FREE(resource);
-	} else {
-		*resource_ptr = resource;
-	}
-
-	return (status);
-}
-
-/*******************************************************************************
- *
  * FUNCTION:    acpi_rs_create_resource_list
  *
  * PARAMETERS:  aml_buffer          - Pointer to the resource byte stream
@@ -130,10 +66,9 @@ acpi_buffer_to_resource(u8 *aml_buffer,
  *              of device resources.
  *
  ******************************************************************************/
-
 acpi_status
 acpi_rs_create_resource_list(union acpi_operand_object *aml_buffer,
-			     struct acpi_buffer * output_buffer)
+			     struct acpi_buffer *output_buffer)
 {
 
 	acpi_status status;
@@ -247,7 +182,7 @@ acpi_rs_create_pci_routing_table(union acpi_operand_object *package_object,
 
 	/*
 	 * Loop through the ACPI_INTERNAL_OBJECTS - Each object should be a
-	 * package that in turn contains an u64 Address, a u8 Pin,
+	 * package that in turn contains an acpi_integer Address, a u8 Pin,
 	 * a Name, and a u8 source_index.
 	 */
 	top_object_list = package_object->package.elements;
@@ -277,7 +212,7 @@ acpi_rs_create_pci_routing_table(union acpi_operand_object *package_object,
 
 		if ((*top_object_list)->common.type != ACPI_TYPE_PACKAGE) {
 			ACPI_ERROR((AE_INFO,
-				    "(PRT[%u]) Need sub-package, found %s",
+				    "(PRT[%X]) Need sub-package, found %s",
 				    index,
 				    acpi_ut_get_object_type_name
 				    (*top_object_list)));
@@ -288,7 +223,7 @@ acpi_rs_create_pci_routing_table(union acpi_operand_object *package_object,
 
 		if ((*top_object_list)->package.count != 4) {
 			ACPI_ERROR((AE_INFO,
-				    "(PRT[%u]) Need package of length 4, found length %u",
+				    "(PRT[%X]) Need package of length 4, found length %d",
 				    index, (*top_object_list)->package.count));
 			return_ACPI_STATUS(AE_AML_PACKAGE_LIMIT);
 		}
@@ -305,7 +240,7 @@ acpi_rs_create_pci_routing_table(union acpi_operand_object *package_object,
 		obj_desc = sub_object_list[0];
 		if (obj_desc->common.type != ACPI_TYPE_INTEGER) {
 			ACPI_ERROR((AE_INFO,
-				    "(PRT[%u].Address) Need Integer, found %s",
+				    "(PRT[%X].Address) Need Integer, found %s",
 				    index,
 				    acpi_ut_get_object_type_name(obj_desc)));
 			return_ACPI_STATUS(AE_BAD_DATA);
@@ -318,7 +253,7 @@ acpi_rs_create_pci_routing_table(union acpi_operand_object *package_object,
 		obj_desc = sub_object_list[1];
 		if (obj_desc->common.type != ACPI_TYPE_INTEGER) {
 			ACPI_ERROR((AE_INFO,
-				    "(PRT[%u].Pin) Need Integer, found %s",
+				    "(PRT[%X].Pin) Need Integer, found %s",
 				    index,
 				    acpi_ut_get_object_type_name(obj_desc)));
 			return_ACPI_STATUS(AE_BAD_DATA);
@@ -354,7 +289,7 @@ acpi_rs_create_pci_routing_table(union acpi_operand_object *package_object,
 				if (obj_desc->reference.class !=
 				    ACPI_REFCLASS_NAME) {
 					ACPI_ERROR((AE_INFO,
-						    "(PRT[%u].Source) Need name, found Reference Class 0x%X",
+						    "(PRT[%X].Source) Need name, found Reference Class %X",
 						    index,
 						    obj_desc->reference.class));
 					return_ACPI_STATUS(AE_BAD_DATA);
@@ -405,7 +340,7 @@ acpi_rs_create_pci_routing_table(union acpi_operand_object *package_object,
 			default:
 
 				ACPI_ERROR((AE_INFO,
-					    "(PRT[%u].Source) Need Ref/String/Integer, found %s",
+					    "(PRT[%X].Source) Need Ref/String/Integer, found %s",
 					    index,
 					    acpi_ut_get_object_type_name
 					    (obj_desc)));
@@ -423,7 +358,7 @@ acpi_rs_create_pci_routing_table(union acpi_operand_object *package_object,
 		obj_desc = sub_object_list[3];
 		if (obj_desc->common.type != ACPI_TYPE_INTEGER) {
 			ACPI_ERROR((AE_INFO,
-				    "(PRT[%u].SourceIndex) Need Integer, found %s",
+				    "(PRT[%X].SourceIndex) Need Integer, found %s",
 				    index,
 				    acpi_ut_get_object_type_name(obj_desc)));
 			return_ACPI_STATUS(AE_BAD_DATA);

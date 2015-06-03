@@ -57,8 +57,8 @@
  *	Note that *all* calls to CMOS_READ and CMOS_WRITE are done with
  *	interrupts disabled. Due to the index-port/data-port (0x70/0x71)
  *	design of the RTC, we don't want two different things trying to
- *	get to it at once. (e.g. the periodic 11 min sync from
- *      kernel/time/ntp.c vs. this driver.)
+ *	get to it at once. (e.g. the periodic 11 min sync from time.c vs.
+ *	this driver.)
  */
 
 #include <linux/interrupt.h>
@@ -80,9 +80,9 @@
 #include <linux/bcd.h>
 #include <linux/delay.h>
 #include <linux/uaccess.h>
-#include <linux/ratelimit.h>
 
 #include <asm/current.h>
+#include <asm/system.h>
 
 #ifdef CONFIG_X86
 #include <asm/hpet.h>
@@ -282,31 +282,34 @@ static irqreturn_t rtc_interrupt(int irq, void *dev_id)
  */
 static ctl_table rtc_table[] = {
 	{
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "max-user-freq",
 		.data		= &rtc_max_user_freq,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= proc_dointvec,
+		.proc_handler	= &proc_dointvec,
 	},
-	{ }
+	{ .ctl_name = 0 }
 };
 
 static ctl_table rtc_root[] = {
 	{
+		.ctl_name	= CTL_UNNUMBERED,
 		.procname	= "rtc",
 		.mode		= 0555,
 		.child		= rtc_table,
 	},
-	{ }
+	{ .ctl_name = 0 }
 };
 
 static ctl_table dev_root[] = {
 	{
+		.ctl_name	= CTL_DEV,
 		.procname	= "dev",
 		.mode		= 0555,
 		.child		= rtc_root,
 	},
-	{ }
+	{ .ctl_name = 0 }
 };
 
 static struct ctl_table_header *sysctl_header;
@@ -961,7 +964,7 @@ static int __init rtc_init(void)
 #endif
 #ifdef CONFIG_SPARC32
 	struct device_node *ebus_dp;
-	struct platform_device *op;
+	struct of_device *op;
 #else
 	void *r;
 #ifdef RTC_IRQ
@@ -1195,8 +1198,10 @@ static void rtc_dropped_irq(unsigned long data)
 
 	spin_unlock_irq(&rtc_lock);
 
-	printk_ratelimited(KERN_WARNING "rtc: lost some interrupts at %ldHz.\n",
-			   freq);
+	if (printk_ratelimit()) {
+		printk(KERN_WARNING "rtc: lost some interrupts at %ldHz.\n",
+			freq);
+	}
 
 	/* Now we have new data */
 	wake_up_interruptible(&rtc_wait);

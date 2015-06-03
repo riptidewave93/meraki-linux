@@ -32,6 +32,7 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/vmalloc.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
@@ -307,7 +308,7 @@ static int mc68x328fb_setcolreg(u_int regno, u_int red, u_int green, u_int blue,
 	 * Pseudocolor:
 	 *    uses offset = 0 && length = RAMDAC register width.
 	 *    var->{color}.offset is 0
-	 *    var->{color}.length contains width of DAC
+	 *    var->{color}.length contains widht of DAC
 	 *    cmap is not used
 	 *    RAMDAC[X] is programmed to (red, green, blue)
 	 * Truecolor:
@@ -378,8 +379,8 @@ static int mc68x328fb_pan_display(struct fb_var_screeninfo *var,
 		    || var->xoffset)
 			return -EINVAL;
 	} else {
-		if (var->xoffset + info->var.xres > info->var.xres_virtual ||
-		    var->yoffset + info->var.yres > info->var.yres_virtual)
+		if (var->xoffset + var->xres > info->var.xres_virtual ||
+		    var->yoffset + var->yres > info->var.yres_virtual)
 			return -EINVAL;
 	}
 	info->var.xoffset = var->xoffset;

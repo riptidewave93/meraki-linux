@@ -5,10 +5,17 @@
 # Makefile for the Alchemy Au1xx0 CPUs, generic files.
 #
 
-obj-y += prom.o time.o clocks.o platform.o power.o setup.o \
-	sleeper.o dma.o dbdma.o vss.o irq.o
+obj-y += prom.o irq.o puts.o time.o reset.o \
+	clocks.o platform.o power.o setup.o \
+	sleeper.o dma.o dbdma.o
 
 # optional gpiolib support
 ifeq ($(CONFIG_ALCHEMY_GPIO_INDIRECT),)
- obj-$(CONFIG_GPIOLIB) += gpiolib.o
+ ifeq ($(CONFIG_GPIOLIB),y)
+  obj-$(CONFIG_ALCHEMY_GPIO_AU1000) += gpiolib-au1000.o
+ endif
 endif
+
+obj-$(CONFIG_PCI)		+= pci.o
+
+EXTRA_CFLAGS += -Werror

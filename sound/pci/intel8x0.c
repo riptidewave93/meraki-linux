@@ -32,7 +32,7 @@
 #include <linux/init.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/ac97_codec.h>
@@ -41,12 +41,6 @@
 /* for 440MX workaround */
 #include <asm/pgtable.h>
 #include <asm/cacheflush.h>
-
-#ifdef CONFIG_KVM_GUEST
-#include <linux/kvm_para.h>
-#else
-#define kvm_para_available() (0)
-#endif
 
 MODULE_AUTHOR("Jaroslav Kysela <perex@perex.cz>");
 MODULE_DESCRIPTION("Intel 82801AA,82901AB,i810,i820,i830,i840,i845,MX440; SiS 7012; Ali 5455");
@@ -79,11 +73,10 @@ static int index = SNDRV_DEFAULT_IDX1;	/* Index 0-MAX */
 static char *id = SNDRV_DEFAULT_STR1;	/* ID for this card */
 static int ac97_clock;
 static char *ac97_quirk;
-static bool buggy_semaphore;
+static int buggy_semaphore;
 static int buggy_irq = -1; /* auto-check */
-static bool xbox;
+static int xbox;
 static int spdif_aclink = -1;
-static int inside_vm = -1;
 
 module_param(index, int, 0444);
 MODULE_PARM_DESC(index, "Index value for Intel i8x0 soundcard.");
@@ -95,17 +88,15 @@ module_param(ac97_quirk, charp, 0444);
 MODULE_PARM_DESC(ac97_quirk, "AC'97 workaround for strange hardware.");
 module_param(buggy_semaphore, bool, 0444);
 MODULE_PARM_DESC(buggy_semaphore, "Enable workaround for hardwares with problematic codec semaphores.");
-module_param(buggy_irq, bint, 0444);
+module_param(buggy_irq, bool, 0444);
 MODULE_PARM_DESC(buggy_irq, "Enable workaround for buggy interrupts on some motherboards.");
 module_param(xbox, bool, 0444);
 MODULE_PARM_DESC(xbox, "Set to 1 for Xbox, if you have problems with the AC'97 codec detection.");
 module_param(spdif_aclink, int, 0444);
 MODULE_PARM_DESC(spdif_aclink, "S/PDIF over AC-link.");
-module_param(inside_vm, bint, 0444);
-MODULE_PARM_DESC(inside_vm, "KVM/Parallels optimization.");
 
 /* just for backward compatibility */
-static bool enable;
+static int enable;
 module_param(enable, bool, 0444);
 static int joystick;
 module_param(joystick, int, 0444);
@@ -409,7 +400,6 @@ struct intel8x0 {
 	unsigned buggy_irq: 1;		/* workaround for buggy mobos */
 	unsigned xbox: 1;		/* workaround for Xbox AC'97 detection */
 	unsigned buggy_semaphore: 1;	/* workaround for buggy codec semaphore */
-	unsigned inside_vm: 1;		/* enable VM optimization */
 
 	int spdif_idx;	/* SPDIF BAR index; *_SPBAR or -1 if use PCMOUT */
 	unsigned int sdm_saved;	/* SDM reg value */
@@ -430,7 +420,7 @@ struct intel8x0 {
 	u32 int_sta_mask;		/* interrupt status mask */
 };
 
-static DEFINE_PCI_DEVICE_TABLE(snd_intel8x0_ids) = {
+static struct pci_device_id snd_intel8x0_ids[] = {
 	{ PCI_VDEVICE(INTEL, 0x2415), DEVICE_INTEL },	/* 82801AA */
 	{ PCI_VDEVICE(INTEL, 0x2425), DEVICE_INTEL },	/* 82901AB */
 	{ PCI_VDEVICE(INTEL, 0x2445), DEVICE_INTEL },	/* 82801BA */
@@ -544,7 +534,7 @@ static int snd_intel8x0_codec_semaphore(struct intel8x0 *chip, unsigned int code
 		udelay(10);
 	} while (time--);
 
-	/* access to some forbidden (non existent) ac97 registers will not
+	/* access to some forbidden (non existant) ac97 registers will not
 	 * reset the semaphore. So even if you don't get the semaphore, still
 	 * continue the access. We don't need the semaphore anyway. */
 	snd_printk(KERN_ERR "codec_semaphore: semaphore is not ready [0x%x][0x%x]\n",
@@ -726,7 +716,7 @@ static void snd_intel8x0_setup_periods(struct intel8x0 *chip, struct ichdev *ich
  * Intel 82443MX running a 100MHz processor system bus has a hardware bug,
  * which aborts PCI busmaster for audio transfer.  A workaround is to set
  * the pages as non-cached.  For details, see the errata in
- *	http://download.intel.com/design/chipsets/specupdt/24505108.pdf
+ *	http://www.intel.com/design/chipsets/specupdt/245051.htm
  */
 static void fill_nocache(void *buf, int size, int nocache)
 {
@@ -1075,18 +1065,8 @@ static snd_pcm_uframes_t snd_intel8x0_pcm_pointer(struct snd_pcm_substream *subs
 			udelay(10);
 			continue;
 		}
-		if (civ != igetbyte(chip, ichdev->reg_offset + ICH_REG_OFF_CIV))
-			continue;
-
-		/* IO read operation is very expensive inside virtual machine
-		 * as it is emulated. The probability that subsequent PICB read
-		 * will return different result is high enough to loop till
-		 * timeout here.
-		 * Same CIV is strict enough condition to be sure that PICB
-		 * is valid inside VM on emulated card. */
-		if (chip->inside_vm)
-			break;
-		if (ptr1 == igetword(chip, ichdev->reg_offset + ichdev->roff_picb))
+		if (civ == igetbyte(chip, ichdev->reg_offset + ICH_REG_OFF_CIV) &&
+		    ptr1 == igetword(chip, ichdev->reg_offset + ichdev->roff_picb))
 			break;
 	} while (timeout--);
 	ptr = ichdev->last_pos;
@@ -1904,12 +1884,6 @@ static struct ac97_quirk ac97_quirks[] __devinitdata = {
 	},
 	{
 		.subvendor = 0x1028,
-		.subdevice = 0x0189,
-		.name = "Dell Inspiron 9300",
-		.type = AC97_TUNE_HP_MUTE_LED
-	},
-	{
-		.subvendor = 0x1028,
 		.subdevice = 0x0191,
 		.name = "Dell Inspiron 8600",
 		.type = AC97_TUNE_HP_ONLY
@@ -2099,18 +2073,6 @@ static struct ac97_quirk ac97_quirks[] __devinitdata = {
 		.subdevice = 0x5470,
 		.name = "MSI P4 ATX 645 Ultra",
 		.type = AC97_TUNE_HP_ONLY
-	},
-	{
-		.subvendor = 0x161f,
-		.subdevice = 0x202f,
-		.name = "Gateway M520",
-		.type = AC97_TUNE_INV_EAPD
-	},
-	{
-		.subvendor = 0x161f,
-		.subdevice = 0x203a,
-		.name = "Gateway 4525GZ",		/* AD1981B */
-		.type = AC97_TUNE_INV_EAPD
 	},
 	{
 		.subvendor = 0x1734,
@@ -2679,7 +2641,7 @@ static int intel8x0_resume(struct pci_dev *pci)
 	pci_set_master(pci);
 	snd_intel8x0_chip_init(chip, 0);
 	if (request_irq(pci->irq, snd_intel8x0_interrupt,
-			IRQF_SHARED, KBUILD_MODNAME, chip)) {
+			IRQF_SHARED, card->shortname, chip)) {
 		printk(KERN_ERR "intel8x0: unable to grab IRQ %d, "
 		       "disabling device\n", pci->irq);
 		snd_card_disconnect(card);
@@ -2943,45 +2905,6 @@ static unsigned int sis_codec_bits[3] = {
 	ICH_PCR, ICH_SCR, ICH_SIS_TCR
 };
 
-static int __devinit snd_intel8x0_inside_vm(struct pci_dev *pci)
-{
-	int result  = inside_vm;
-	char *msg   = NULL;
-
-	/* check module parameter first (override detection) */
-	if (result >= 0) {
-		msg = result ? "enable (forced) VM" : "disable (forced) VM";
-		goto fini;
-	}
-
-	/* detect KVM and Parallels virtual environments */
-	result = kvm_para_available();
-#ifdef X86_FEATURE_HYPERVISOR
-	result = result || boot_cpu_has(X86_FEATURE_HYPERVISOR);
-#endif
-	if (!result)
-		goto fini;
-
-	/* check for known (emulated) devices */
-	if (pci->subsystem_vendor == 0x1af4 &&
-	    pci->subsystem_device == 0x1100) {
-		/* KVM emulated sound, PCI SSID: 1af4:1100 */
-		msg = "enable KVM";
-	} else if (pci->subsystem_vendor == 0x1ab8) {
-		/* Parallels VM emulated sound, PCI SSID: 1ab8:xxxx */
-		msg = "enable Parallels VM";
-	} else {
-		msg = "disable (unknown or VT-d) VM";
-		result = 0;
-	}
-
-fini:
-	if (msg != NULL)
-		printk(KERN_INFO "intel8x0: %s optimization\n", msg);
-
-	return result;
-}
-
 static int __devinit snd_intel8x0_create(struct snd_card *card,
 					 struct pci_dev *pci,
 					 unsigned long device_type,
@@ -3048,8 +2971,6 @@ static int __devinit snd_intel8x0_create(struct snd_card *card,
 	chip->buggy_semaphore = buggy_semaphore;
 	if (xbox)
 		chip->xbox = 1;
-
-	chip->inside_vm = snd_intel8x0_inside_vm(pci);
 
 	if (pci->vendor == PCI_VENDOR_ID_INTEL &&
 	    pci->device == PCI_DEVICE_ID_INTEL_440MX)
@@ -3179,7 +3100,7 @@ static int __devinit snd_intel8x0_create(struct snd_card *card,
 
 	/* request irq after initializaing int_sta_mask, etc */
 	if (request_irq(pci->irq, snd_intel8x0_interrupt,
-			IRQF_SHARED, KBUILD_MODNAME, chip)) {
+			IRQF_SHARED, card->shortname, chip)) {
 		snd_printk(KERN_ERR "unable to grab IRQ %d\n", pci->irq);
 		snd_intel8x0_free(chip);
 		return -EBUSY;
@@ -3339,7 +3260,7 @@ static void __devexit snd_intel8x0_remove(struct pci_dev *pci)
 }
 
 static struct pci_driver driver = {
-	.name = KBUILD_MODNAME,
+	.name = "Intel ICH",
 	.id_table = snd_intel8x0_ids,
 	.probe = snd_intel8x0_probe,
 	.remove = __devexit_p(snd_intel8x0_remove),

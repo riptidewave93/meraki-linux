@@ -36,12 +36,14 @@
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/timex.h>
+#include <linux/slab.h>
 #include <linux/random.h>
 #include <linux/delay.h>
 
 #include <asm/bootinfo.h>
 #include <asm/time.h>
 #include <asm/mipsregs.h>
+#include <asm/system.h>
 
 #include <asm/mach-rc32434/irq.h>
 #include <asm/mach-rc32434/gpio.h>
@@ -110,10 +112,10 @@ static inline void ack_local_irq(unsigned int ip)
 	clear_c0_cause(ipnum);
 }
 
-static void rb532_enable_irq(struct irq_data *d)
+static void rb532_enable_irq(unsigned int irq_nr)
 {
-	unsigned int group, intr_bit, irq_nr = d->irq;
 	int ip = irq_nr - GROUP0_IRQ_BASE;
+	unsigned int group, intr_bit;
 	volatile unsigned int *addr;
 
 	if (ip < 0)
@@ -131,10 +133,10 @@ static void rb532_enable_irq(struct irq_data *d)
 	}
 }
 
-static void rb532_disable_irq(struct irq_data *d)
+static void rb532_disable_irq(unsigned int irq_nr)
 {
-	unsigned int group, intr_bit, mask, irq_nr = d->irq;
 	int ip = irq_nr - GROUP0_IRQ_BASE;
+	unsigned int group, intr_bit, mask;
 	volatile unsigned int *addr;
 
 	if (ip < 0) {
@@ -162,18 +164,18 @@ static void rb532_disable_irq(struct irq_data *d)
 	}
 }
 
-static void rb532_mask_and_ack_irq(struct irq_data *d)
+static void rb532_mask_and_ack_irq(unsigned int irq_nr)
 {
-	rb532_disable_irq(d);
-	ack_local_irq(group_to_ip(irq_to_group(d->irq)));
+	rb532_disable_irq(irq_nr);
+	ack_local_irq(group_to_ip(irq_to_group(irq_nr)));
 }
 
-static int rb532_set_type(struct irq_data *d,  unsigned type)
+static int rb532_set_type(unsigned int irq_nr, unsigned type)
 {
-	int gpio = d->irq - GPIO_MAPPED_IRQ_BASE;
-	int group = irq_to_group(d->irq);
+	int gpio = irq_nr - GPIO_MAPPED_IRQ_BASE;
+	int group = irq_to_group(irq_nr);
 
-	if (group != GPIO_MAPPED_IRQ_GROUP || d->irq > (GROUP4_IRQ_BASE + 13))
+	if (group != GPIO_MAPPED_IRQ_GROUP || irq_nr > (GROUP4_IRQ_BASE + 13))
 		return (type == IRQ_TYPE_LEVEL_HIGH) ? 0 : -EINVAL;
 
 	switch (type) {
@@ -192,11 +194,11 @@ static int rb532_set_type(struct irq_data *d,  unsigned type)
 
 static struct irq_chip rc32434_irq_type = {
 	.name		= "RB532",
-	.irq_ack	= rb532_disable_irq,
-	.irq_mask	= rb532_disable_irq,
-	.irq_mask_ack	= rb532_mask_and_ack_irq,
-	.irq_unmask	= rb532_enable_irq,
-	.irq_set_type	= rb532_set_type,
+	.ack		= rb532_disable_irq,
+	.mask		= rb532_disable_irq,
+	.mask_ack	= rb532_mask_and_ack_irq,
+	.unmask		= rb532_enable_irq,
+	.set_type	= rb532_set_type,
 };
 
 void __init arch_init_irq(void)
@@ -206,8 +208,8 @@ void __init arch_init_irq(void)
 	pr_info("Initializing IRQ's: %d out of %d\n", RC32434_NR_IRQS, NR_IRQS);
 
 	for (i = 0; i < RC32434_NR_IRQS; i++)
-		irq_set_chip_and_handler(i, &rc32434_irq_type,
-					 handle_level_irq);
+		set_irq_chip_and_handler(i,  &rc32434_irq_type,
+					handle_level_irq);
 }
 
 /* Main Interrupt dispatcher */

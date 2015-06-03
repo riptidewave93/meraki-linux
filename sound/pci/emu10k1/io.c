@@ -29,7 +29,6 @@
 #include <sound/core.h>
 #include <sound/emu10k1.h>
 #include <linux/delay.h>
-#include <linux/export.h>
 #include "p17v.h"
 
 unsigned int snd_emu10k1_ptr_read(struct snd_emu10k1 * emu, unsigned int reg, unsigned int chn)
@@ -257,7 +256,7 @@ int snd_emu1010_fpga_write(struct snd_emu10k1 * emu, u32 reg, u32 value)
 	if (reg > 0x3f)
 		return 1;
 	reg += 0x40; /* 0x40 upwards are registers. */
-	if (value > 0x3f) /* 0 to 0x3f are values */
+	if (value < 0 || value > 0x3f) /* 0 to 0x3f are values */
 		return 1;
 	spin_lock_irqsave(&emu->emu_lock, flags);
 	outl(reg, emu->port + A_IOCFG);

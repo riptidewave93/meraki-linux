@@ -304,6 +304,14 @@ plt_target (struct plt_entry *plt)
 
 #endif /* !USE_BRL */
 
+void *
+module_alloc (unsigned long size)
+{
+	if (!size)
+		return NULL;
+	return vmalloc(size);
+}
+
 void
 module_free (struct module *mod, void *module_region)
 {
@@ -843,6 +851,14 @@ apply_relocate_add (Elf64_Shdr *sechdrs, const char *strtab, unsigned int symind
 			return ret;
 	}
 	return 0;
+}
+
+int
+apply_relocate (Elf64_Shdr *sechdrs, const char *strtab, unsigned int symindex,
+		unsigned int relsec, struct module *mod)
+{
+	printk(KERN_ERR "module %s: REL relocs in section %u unsupported\n", mod->name, relsec);
+	return -ENOEXEC;
 }
 
 /*

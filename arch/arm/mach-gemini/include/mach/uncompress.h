@@ -16,7 +16,7 @@
 #include <linux/serial_reg.h>
 #include <mach/hardware.h>
 
-static volatile unsigned long * const UART = (unsigned long *)GEMINI_UART_BASE;
+static volatile unsigned long *UART = (unsigned long *)GEMINI_UART_BASE;
 
 /*
  * The following code assumes the serial port has already been
@@ -30,9 +30,7 @@ static inline void putc(char c)
 	UART[UART_TX] = c;
 }
 
-static inline void flush(void)
-{
-}
+#define flush() do { } while (0)
 
 /*
  * nothing to do

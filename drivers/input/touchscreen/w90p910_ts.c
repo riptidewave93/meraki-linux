@@ -16,7 +16,6 @@
 #include <linux/clk.h>
 #include <linux/input.h>
 #include <linux/interrupt.h>
-#include <linux/slab.h>
 
 /* ADC controller bit defines */
 #define ADC_DELAY	0xf00
@@ -233,7 +232,7 @@ static int __devinit w90x900ts_probe(struct platform_device *pdev)
 	w90p910_ts->state = TS_IDLE;
 	spin_lock_init(&w90p910_ts->lock);
 	setup_timer(&w90p910_ts->timer, w90p910_check_pen_up,
-		    (unsigned long)w90p910_ts);
+		    (unsigned long)&w90p910_ts);
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	if (!res) {
@@ -279,7 +278,7 @@ static int __devinit w90x900ts_probe(struct platform_device *pdev)
 
 	w90p910_ts->irq_num = platform_get_irq(pdev, 0);
 	if (request_irq(w90p910_ts->irq_num, w90p910_ts_interrupt,
-			0, "w90p910ts", w90p910_ts)) {
+			IRQF_DISABLED, "w90p910ts", w90p910_ts)) {
 		err = -EBUSY;
 		goto fail4;
 	}
@@ -331,7 +330,19 @@ static struct platform_driver w90x900ts_driver = {
 		.owner	= THIS_MODULE,
 	},
 };
-module_platform_driver(w90x900ts_driver);
+
+static int __init w90x900ts_init(void)
+{
+	return platform_driver_register(&w90x900ts_driver);
+}
+
+static void __exit w90x900ts_exit(void)
+{
+	platform_driver_unregister(&w90x900ts_driver);
+}
+
+module_init(w90x900ts_init);
+module_exit(w90x900ts_exit);
 
 MODULE_AUTHOR("Wan ZongShun <mcuos.com@gmail.com>");
 MODULE_DESCRIPTION("w90p910 touch screen driver!");

@@ -17,14 +17,14 @@
 /* Returns folded char, or 0 if ignorable */
 static inline u16 case_fold(u16 c)
 {
-	u16 tmp;
+        u16 tmp;
 
-	tmp = hfsplus_case_fold_table[c >> 8];
-	if (tmp)
-		tmp = hfsplus_case_fold_table[tmp + (c & 0xff)];
-	else
-		tmp = c;
-	return tmp;
+        tmp = hfsplus_case_fold_table[c >> 8];
+        if (tmp)
+                tmp = hfsplus_case_fold_table[tmp + (c & 0xff)];
+        else
+                tmp = c;
+        return tmp;
 }
 
 /* Compare unicode strings, return values like normal strcmp */
@@ -118,12 +118,10 @@ static u16 *hfsplus_compose_lookup(u16 *p, u16 cc)
 	return NULL;
 }
 
-int hfsplus_uni2asc(struct super_block *sb,
-		const struct hfsplus_unistr *ustr,
-		char *astr, int *len_p)
+int hfsplus_uni2asc(struct super_block *sb, const struct hfsplus_unistr *ustr, char *astr, int *len_p)
 {
 	const hfsplus_unichr *ip;
-	struct nls_table *nls = HFSPLUS_SB(sb)->nls;
+	struct nls_table *nls = HFSPLUS_SB(sb).nls;
 	u8 *op;
 	u16 cc, c0, c1;
 	u16 *ce1, *ce2;
@@ -134,7 +132,7 @@ int hfsplus_uni2asc(struct super_block *sb,
 	ustrlen = be16_to_cpu(ustr->length);
 	len = *len_p;
 	ce1 = NULL;
-	compose = !test_bit(HFSPLUS_SB_NODECOMPOSE, &HFSPLUS_SB(sb)->flags);
+	compose = !(HFSPLUS_SB(sb).flags & HFSPLUS_SB_NODECOMPOSE);
 
 	while (ustrlen > 0) {
 		c0 = be16_to_cpu(*ip++);
@@ -142,11 +140,7 @@ int hfsplus_uni2asc(struct super_block *sb,
 		/* search for single decomposed char */
 		if (likely(compose))
 			ce1 = hfsplus_compose_lookup(hfsplus_compose_table, c0);
-		if (ce1)
-			cc = ce1[0];
-		else
-			cc = 0;
-		if (cc) {
+		if (ce1 && (cc = ce1[0])) {
 			/* start of a possibly decomposed Hangul char */
 			if (cc != 0xffff)
 				goto done;
@@ -177,8 +171,7 @@ int hfsplus_uni2asc(struct super_block *sb,
 				goto same;
 			c1 = be16_to_cpu(*ip);
 			if (likely(compose))
-				ce1 = hfsplus_compose_lookup(
-					hfsplus_compose_table, c1);
+				ce1 = hfsplus_compose_lookup(hfsplus_compose_table, c1);
 			if (ce1)
 				break;
 			switch (c0) {
@@ -206,21 +199,19 @@ int hfsplus_uni2asc(struct super_block *sb,
 		if (ce2) {
 			i = 1;
 			while (i < ustrlen) {
-				ce1 = hfsplus_compose_lookup(ce2,
-					be16_to_cpu(ip[i]));
+				ce1 = hfsplus_compose_lookup(ce2, be16_to_cpu(ip[i]));
 				if (!ce1)
 					break;
 				i++;
 				ce2 = ce1;
 			}
-			cc = ce2[0];
-			if (cc) {
+			if ((cc = ce2[0])) {
 				ip += i;
 				ustrlen -= i;
 				goto done;
 			}
 		}
-same:
+	same:
 		switch (c0) {
 		case 0:
 			cc = 0x2400;
@@ -231,7 +222,7 @@ same:
 		default:
 			cc = c0;
 		}
-done:
+	done:
 		res = nls->uni2char(cc, op, len);
 		if (res < 0) {
 			if (res == -ENAMETOOLONG)
@@ -255,7 +246,7 @@ out:
 static inline int asc2unichar(struct super_block *sb, const char *astr, int len,
 			      wchar_t *uc)
 {
-	int size = HFSPLUS_SB(sb)->nls->char2uni(astr, len, uc);
+	int size = HFSPLUS_SB(sb).nls->char2uni(astr, len, uc);
 	if (size <= 0) {
 		*uc = '?';
 		size = 1;
@@ -302,15 +293,11 @@ int hfsplus_asc2uni(struct super_block *sb, struct hfsplus_unistr *ustr,
 	u16 *dstr, outlen = 0;
 	wchar_t c;
 
-	decompose = !test_bit(HFSPLUS_SB_NODECOMPOSE, &HFSPLUS_SB(sb)->flags);
+	decompose = !(HFSPLUS_SB(sb).flags & HFSPLUS_SB_NODECOMPOSE);
 	while (outlen < HFSPLUS_MAX_STRLEN && len > 0) {
 		size = asc2unichar(sb, astr, len, &c);
 
-		if (decompose)
-			dstr = decompose_unichar(c, &dsize);
-		else
-			dstr = NULL;
-		if (dstr) {
+		if (decompose && (dstr = decompose_unichar(c, &dsize))) {
 			if (outlen + dsize > HFSPLUS_MAX_STRLEN)
 				break;
 			do {
@@ -333,8 +320,7 @@ int hfsplus_asc2uni(struct super_block *sb, struct hfsplus_unistr *ustr,
  * Composed unicode characters are decomposed and case-folding is performed
  * if the appropriate bits are (un)set on the superblock.
  */
-int hfsplus_hash_dentry(const struct dentry *dentry, const struct inode *inode,
-		struct qstr *str)
+int hfsplus_hash_dentry(struct dentry *dentry, struct qstr *str)
 {
 	struct super_block *sb = dentry->d_sb;
 	const char *astr;
@@ -344,8 +330,8 @@ int hfsplus_hash_dentry(const struct dentry *dentry, const struct inode *inode,
 	wchar_t c;
 	u16 c2;
 
-	casefold = test_bit(HFSPLUS_SB_CASEFOLD, &HFSPLUS_SB(sb)->flags);
-	decompose = !test_bit(HFSPLUS_SB_NODECOMPOSE, &HFSPLUS_SB(sb)->flags);
+	casefold = (HFSPLUS_SB(sb).flags & HFSPLUS_SB_CASEFOLD);
+	decompose = !(HFSPLUS_SB(sb).flags & HFSPLUS_SB_NODECOMPOSE);
 	hash = init_name_hash();
 	astr = str->name;
 	len = str->len;
@@ -355,23 +341,15 @@ int hfsplus_hash_dentry(const struct dentry *dentry, const struct inode *inode,
 		astr += size;
 		len -= size;
 
-		if (decompose)
-			dstr = decompose_unichar(c, &dsize);
-		else
-			dstr = NULL;
-		if (dstr) {
+		if (decompose && (dstr = decompose_unichar(c, &dsize))) {
 			do {
 				c2 = *dstr++;
-				if (casefold)
-					c2 = case_fold(c2);
-				if (!casefold || c2)
+				if (!casefold || (c2 = case_fold(c2)))
 					hash = partial_name_hash(c2, hash);
 			} while (--dsize > 0);
 		} else {
 			c2 = c;
-			if (casefold)
-				c2 = case_fold(c2);
-			if (!casefold || c2)
+			if (!casefold || (c2 = case_fold(c2)))
 				hash = partial_name_hash(c2, hash);
 		}
 	}
@@ -385,12 +363,9 @@ int hfsplus_hash_dentry(const struct dentry *dentry, const struct inode *inode,
  * Composed unicode characters are decomposed and case-folding is performed
  * if the appropriate bits are (un)set on the superblock.
  */
-int hfsplus_compare_dentry(const struct dentry *parent,
-		const struct inode *pinode,
-		const struct dentry *dentry, const struct inode *inode,
-		unsigned int len, const char *str, const struct qstr *name)
+int hfsplus_compare_dentry(struct dentry *dentry, struct qstr *s1, struct qstr *s2)
 {
-	struct super_block *sb = parent->d_sb;
+	struct super_block *sb = dentry->d_sb;
 	int casefold, decompose, size;
 	int dsize1, dsize2, len1, len2;
 	const u16 *dstr1, *dstr2;
@@ -398,12 +373,12 @@ int hfsplus_compare_dentry(const struct dentry *parent,
 	u16 c1, c2;
 	wchar_t c;
 
-	casefold = test_bit(HFSPLUS_SB_CASEFOLD, &HFSPLUS_SB(sb)->flags);
-	decompose = !test_bit(HFSPLUS_SB_NODECOMPOSE, &HFSPLUS_SB(sb)->flags);
-	astr1 = str;
-	len1 = len;
-	astr2 = name->name;
-	len2 = name->len;
+	casefold = (HFSPLUS_SB(sb).flags & HFSPLUS_SB_CASEFOLD);
+	decompose = !(HFSPLUS_SB(sb).flags & HFSPLUS_SB_NODECOMPOSE);
+	astr1 = s1->name;
+	len1 = s1->len;
+	astr2 = s2->name;
+	len2 = s2->len;
 	dsize1 = dsize2 = 0;
 	dstr1 = dstr2 = NULL;
 
@@ -413,9 +388,7 @@ int hfsplus_compare_dentry(const struct dentry *parent,
 			astr1 += size;
 			len1 -= size;
 
-			if (decompose)
-				dstr1 = decompose_unichar(c, &dsize1);
-			if (!decompose || !dstr1) {
+			if (!decompose || !(dstr1 = decompose_unichar(c, &dsize1))) {
 				c1 = c;
 				dstr1 = &c1;
 				dsize1 = 1;
@@ -427,9 +400,7 @@ int hfsplus_compare_dentry(const struct dentry *parent,
 			astr2 += size;
 			len2 -= size;
 
-			if (decompose)
-				dstr2 = decompose_unichar(c, &dsize2);
-			if (!decompose || !dstr2) {
+			if (!decompose || !(dstr2 = decompose_unichar(c, &dsize2))) {
 				c2 = c;
 				dstr2 = &c2;
 				dsize2 = 1;
@@ -439,14 +410,12 @@ int hfsplus_compare_dentry(const struct dentry *parent,
 		c1 = *dstr1;
 		c2 = *dstr2;
 		if (casefold) {
-			c1 = case_fold(c1);
-			if (!c1) {
+			if  (!(c1 = case_fold(c1))) {
 				dstr1++;
 				dsize1--;
 				continue;
 			}
-			c2 = case_fold(c2);
-			if (!c2) {
+			if (!(c2 = case_fold(c2))) {
 				dstr2++;
 				dsize2--;
 				continue;

@@ -15,7 +15,6 @@
 
 #include <linux/compiler.h>
 #include <linux/types.h>
-#include <linux/bug.h>
 #include <linux/uaccess.h>
 struct task_struct;
 struct user_regset;

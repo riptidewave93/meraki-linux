@@ -19,35 +19,35 @@ struct hostap_ieee80211_mgmt {
 			__le16 status_code;
 			/* possibly followed by Challenge text */
 			u8 variable[0];
-		} __packed auth;
+		} __attribute__ ((packed)) auth;
 		struct {
 			__le16 reason_code;
-		} __packed deauth;
+		} __attribute__ ((packed)) deauth;
 		struct {
 			__le16 capab_info;
 			__le16 listen_interval;
 			/* followed by SSID and Supported rates */
 			u8 variable[0];
-		} __packed assoc_req;
+		} __attribute__ ((packed)) assoc_req;
 		struct {
 			__le16 capab_info;
 			__le16 status_code;
 			__le16 aid;
 			/* followed by Supported rates */
 			u8 variable[0];
-		} __packed assoc_resp, reassoc_resp;
+		} __attribute__ ((packed)) assoc_resp, reassoc_resp;
 		struct {
 			__le16 capab_info;
 			__le16 listen_interval;
 			u8 current_ap[6];
 			/* followed by SSID and Supported rates */
 			u8 variable[0];
-		} __packed reassoc_req;
+		} __attribute__ ((packed)) reassoc_req;
 		struct {
 			__le16 reason_code;
-		} __packed disassoc;
+		} __attribute__ ((packed)) disassoc;
 		struct {
-		} __packed probe_req;
+		} __attribute__ ((packed)) probe_req;
 		struct {
 			u8 timestamp[8];
 			__le16 beacon_int;
@@ -55,9 +55,9 @@ struct hostap_ieee80211_mgmt {
 			/* followed by some of SSID, Supported rates,
 			 * FH Params, DS Params, CF Params, IBSS Params, TIM */
 			u8 variable[0];
-		} __packed beacon, probe_resp;
+		} __attribute__ ((packed)) beacon, probe_resp;
 	} u;
-} __packed;
+} __attribute__ ((packed));
 
 
 #define IEEE80211_MGMT_HDR_LEN 24

@@ -1,11 +1,10 @@
 #include <linux/capability.h>
 #include <linux/blkdev.h>
-#include <linux/export.h>
-#include <linux/gfp.h>
 #include <linux/blkpg.h>
 #include <linux/hdreg.h>
 #include <linux/backing-dev.h>
-#include <linux/fs.h>
+#include <linux/buffer_head.h>
+#include <linux/smp_lock.h>
 #include <linux/blktrace_api.h>
 #include <asm/uaccess.h>
 
@@ -62,7 +61,7 @@ static int blkpg_ioctl(struct block_device *bdev, struct blkpg_ioctl_arg __user 
 
 			/* all seems OK */
 			part = add_partition(disk, partno, start, length,
-					     ADDPART_FLAG_NONE, NULL);
+					     ADDPART_FLAG_NONE);
 			mutex_unlock(&bdev->bd_mutex);
 			return IS_ERR(part) ? PTR_ERR(part) : 0;
 		case BLKPG_DEL_PARTITION:
@@ -102,7 +101,7 @@ static int blkdev_reread_part(struct block_device *bdev)
 	struct gendisk *disk = bdev->bd_disk;
 	int res;
 
-	if (!disk_part_scan_enabled(disk) || bdev != bdev->bd_contains)
+	if (!disk_partitionable(disk) || bdev != bdev->bd_contains)
 		return -EINVAL;
 	if (!capable(CAP_SYS_ADMIN))
 		return -EACCES;
@@ -114,10 +113,8 @@ static int blkdev_reread_part(struct block_device *bdev)
 }
 
 static int blk_ioctl_discard(struct block_device *bdev, uint64_t start,
-			     uint64_t len, int secure)
+			     uint64_t len)
 {
-	unsigned long flags = 0;
-
 	if (start & 511)
 		return -EINVAL;
 	if (len & 511)
@@ -125,11 +122,10 @@ static int blk_ioctl_discard(struct block_device *bdev, uint64_t start,
 	start >>= 9;
 	len >>= 9;
 
-	if (start + len > (i_size_read(bdev->bd_inode) >> 9))
+	if (start + len > (bdev->bd_inode->i_size >> 9))
 		return -EINVAL;
-	if (secure)
-		flags |= BLKDEV_DISCARD_SECURE;
-	return blkdev_issue_discard(bdev, start, len, GFP_KERNEL, flags);
+	return blkdev_issue_discard(bdev, start, len, GFP_KERNEL,
+				    DISCARD_FL_WAIT);
 }
 
 static int put_ushort(unsigned long arg, unsigned short val)
@@ -166,9 +162,17 @@ int __blkdev_driver_ioctl(struct block_device *bdev, fmode_t mode,
 			unsigned cmd, unsigned long arg)
 {
 	struct gendisk *disk = bdev->bd_disk;
+	int ret;
 
 	if (disk->fops->ioctl)
 		return disk->fops->ioctl(bdev, mode, cmd, arg);
+
+	if (disk->fops->locked_ioctl) {
+		lock_kernel();
+		ret = disk->fops->locked_ioctl(bdev, mode, cmd, arg);
+		unlock_kernel();
+		return ret;
+	}
 
 	return -ENOTTY;
 }
@@ -180,27 +184,8 @@ int __blkdev_driver_ioctl(struct block_device *bdev, fmode_t mode,
 EXPORT_SYMBOL_GPL(__blkdev_driver_ioctl);
 
 /*
- * Is it an unrecognized ioctl? The correct returns are either
- * ENOTTY (final) or ENOIOCTLCMD ("I don't know this one, try a
- * fallback"). ENOIOCTLCMD gets turned into ENOTTY by the ioctl
- * code before returning.
- *
- * Confused drivers sometimes return EINVAL, which is wrong. It
- * means "I understood the ioctl command, but the parameters to
- * it were wrong".
- *
- * We should aim to just fix the broken drivers, the EINVAL case
- * should go away.
- */
-static inline int is_unrecognized_ioctl(int ret)
-{
-	return	ret == -EINVAL ||
-		ret == -ENOTTY ||
-		ret == -ENOIOCTLCMD;
-}
-
-/*
- * always keep this in sync with compat_blkdev_ioctl()
+ * always keep this in sync with compat_blkdev_ioctl() and
+ * compat_blkdev_locked_ioctl()
  */
 int blkdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd,
 			unsigned long arg)
@@ -216,26 +201,31 @@ int blkdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd,
 			return -EACCES;
 
 		ret = __blkdev_driver_ioctl(bdev, mode, cmd, arg);
-		if (!is_unrecognized_ioctl(ret))
+		/* -EINVAL to handle old uncorrected drivers */
+		if (ret != -EINVAL && ret != -ENOTTY)
 			return ret;
 
+		lock_kernel();
 		fsync_bdev(bdev);
 		invalidate_bdev(bdev);
+		unlock_kernel();
 		return 0;
 
 	case BLKROSET:
 		ret = __blkdev_driver_ioctl(bdev, mode, cmd, arg);
-		if (!is_unrecognized_ioctl(ret))
+		/* -EINVAL to handle old uncorrected drivers */
+		if (ret != -EINVAL && ret != -ENOTTY)
 			return ret;
 		if (!capable(CAP_SYS_ADMIN))
 			return -EACCES;
 		if (get_user(n, (int __user *)(arg)))
 			return -EFAULT;
+		lock_kernel();
 		set_device_ro(bdev, n);
+		unlock_kernel();
 		return 0;
 
-	case BLKDISCARD:
-	case BLKSECDISCARD: {
+	case BLKDISCARD: {
 		uint64_t range[2];
 
 		if (!(mode & FMODE_WRITE))
@@ -244,8 +234,7 @@ int blkdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd,
 		if (copy_from_user(range, (void __user *)arg, sizeof(range)))
 			return -EFAULT;
 
-		return blk_ioctl_discard(bdev, range[0], range[1],
-					 cmd == BLKSECDISCARD);
+		return blk_ioctl_discard(bdev, range[0], range[1]);
 	}
 
 	case HDIO_GETGEO: {
@@ -260,7 +249,6 @@ int blkdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd,
 		 * We need to set the startsect first, the driver may
 		 * want to override it.
 		 */
-		memset(&geo, 0, sizeof(geo));
 		geo.start = get_start_sect(bdev);
 		ret = disk->fops->getgeo(bdev, &geo);
 		if (ret)
@@ -292,12 +280,8 @@ int blkdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd,
 		return put_uint(arg, bdev_io_opt(bdev));
 	case BLKALIGNOFF:
 		return put_int(arg, bdev_alignment_offset(bdev));
-	case BLKDISCARDZEROES:
-		return put_uint(arg, bdev_discard_zeroes_data(bdev));
 	case BLKSECTGET:
 		return put_ushort(arg, queue_max_sectors(bdev_get_queue(bdev)));
-	case BLKROTATIONAL:
-		return put_ushort(arg, !blk_queue_nonrot(bdev_get_queue(bdev)));
 	case BLKRASET:
 	case BLKFRASET:
 		if(!capable(CAP_SYS_ADMIN))
@@ -315,33 +299,36 @@ int blkdev_ioctl(struct block_device *bdev, fmode_t mode, unsigned cmd,
 			return -EINVAL;
 		if (get_user(n, (int __user *) arg))
 			return -EFAULT;
-		if (!(mode & FMODE_EXCL)) {
-			bdgrab(bdev);
-			if (blkdev_get(bdev, mode | FMODE_EXCL, &bdev) < 0)
-				return -EBUSY;
-		}
+		if (!(mode & FMODE_EXCL) && bd_claim(bdev, &bdev) < 0)
+			return -EBUSY;
 		ret = set_blocksize(bdev, n);
 		if (!(mode & FMODE_EXCL))
-			blkdev_put(bdev, mode | FMODE_EXCL);
+			bd_release(bdev);
 		return ret;
 	case BLKPG:
+		lock_kernel();
 		ret = blkpg_ioctl(bdev, (struct blkpg_ioctl_arg __user *) arg);
+		unlock_kernel();
 		break;
 	case BLKRRPART:
+		lock_kernel();
 		ret = blkdev_reread_part(bdev);
+		unlock_kernel();
 		break;
 	case BLKGETSIZE:
-		size = i_size_read(bdev->bd_inode);
+		size = bdev->bd_inode->i_size;
 		if ((size >> 9) > ~0UL)
 			return -EFBIG;
 		return put_ulong(arg, size >> 9);
 	case BLKGETSIZE64:
-		return put_u64(arg, i_size_read(bdev->bd_inode));
+		return put_u64(arg, bdev->bd_inode->i_size);
 	case BLKTRACESTART:
 	case BLKTRACESTOP:
 	case BLKTRACESETUP:
 	case BLKTRACETEARDOWN:
+		lock_kernel();
 		ret = blk_trace_ioctl(bdev, cmd, (char __user *) arg);
+		unlock_kernel();
 		break;
 	default:
 		ret = __blkdev_driver_ioctl(bdev, mode, cmd, arg);

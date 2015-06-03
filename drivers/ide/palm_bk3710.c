@@ -166,7 +166,7 @@ static void palm_bk3710_setpiomode(void __iomem *base, ide_drive_t *mate,
 	writel(val32, base + BK3710_DATRCVR);
 
 	if (mate) {
-		u8 mode2 = mate->pio_mode - XFER_PIO_0;
+		u8 mode2 = ide_get_best_pio_mode(mate, 255, 4);
 
 		if (mode2 < mode)
 			mode = mode2;
@@ -188,11 +188,10 @@ static void palm_bk3710_setpiomode(void __iomem *base, ide_drive_t *mate,
 	writel(val32, base + BK3710_REGRCVR);
 }
 
-static void palm_bk3710_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void palm_bk3710_set_dma_mode(ide_drive_t *drive, u8 xferspeed)
 {
 	int is_slave = drive->dn & 1;
-	void __iomem *base = (void *)hwif->dma_base;
-	const u8 xferspeed = drive->dma_mode;
+	void __iomem *base = (void *)drive->hwif->dma_base;
 
 	if (xferspeed >= XFER_UDMA_0) {
 		palm_bk3710_setudmamode(base, is_slave,
@@ -204,13 +203,12 @@ static void palm_bk3710_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 	}
 }
 
-static void palm_bk3710_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void palm_bk3710_set_pio_mode(ide_drive_t *drive, u8 pio)
 {
 	unsigned int cycle_time;
 	int is_slave = drive->dn & 1;
 	ide_drive_t *mate;
-	void __iomem *base = (void *)hwif->dma_base;
-	const u8 pio = drive->pio_mode - XFER_PIO_0;
+	void __iomem *base = (void *)drive->hwif->dma_base;
 
 	/*
 	 * Obtain the drive PIO data for tuning the Palm Chip registers
@@ -342,7 +340,7 @@ static int __init palm_bk3710_probe(struct platform_device *pdev)
 		return -ENODEV;
 	}
 
-	mem_size = resource_size(mem);
+	mem_size = mem->end - mem->start + 1;
 	if (request_mem_region(mem->start, mem_size, "palm_bk3710") == NULL) {
 		printk(KERN_ERR "failed to request memory region\n");
 		return -EBUSY;

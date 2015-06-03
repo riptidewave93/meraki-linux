@@ -1,5 +1,5 @@
 /*
- * Copyright Â© 2006 Intel Corporation
+ * Copyright © 2006 Intel Corporation
  *
  * Permission is hereby granted, free of charge, to any person obtaining a
  * copy of this software and associated documentation files (the "Software"),
@@ -98,7 +98,6 @@ struct vbios_data {
 #define BDB_SDVO_LVDS_PNP_IDS	 24
 #define BDB_SDVO_LVDS_POWER_SEQ	 25
 #define BDB_TV_OPTIONS		 26
-#define BDB_EDP			 27
 #define BDB_LVDS_OPTIONS	 40
 #define BDB_LVDS_LFP_DATA_PTRS	 41
 #define BDB_LVDS_LFP_DATA	 42
@@ -120,9 +119,7 @@ struct bdb_general_features {
 	u8 ssc_freq:1;
 	u8 enable_lfp_on_override:1;
 	u8 disable_ssc_ddt:1;
-	u8 rsvd7:1;
-	u8 display_clock_mode:1;
-	u8 rsvd8:1; /* finish byte */
+	u8 rsvd8:3; /* finish byte */
 
         /* bits 3 */
 	u8 disable_smooth_vision:1;
@@ -135,10 +132,7 @@ struct bdb_general_features {
         /* bits 5 */
 	u8 int_crt_support:1;
 	u8 int_tv_support:1;
-	u8 int_efp_support:1;
-	u8 dp_ssc_enb:1;	/* PCH attached eDP supports SSC */
-	u8 dp_ssc_freq:1;	/* SSC freq for PCH attached eDP */
-	u8 rsvd11:3; /* finish byte */
+	u8 rsvd11:6; /* finish byte */
 } __attribute__((packed));
 
 /* pre-915 */
@@ -202,7 +196,7 @@ struct bdb_general_features {
 struct child_device_config {
 	u16 handle;
 	u16 device_type;
-	u8  device_id[10]; /* ascii string */
+	u8  device_id[10]; /* See DEVICE_TYPE_* above */
 	u16 addin_offset;
 	u8  dvo_port; /* See Device_PORT_* above */
 	u8  i2c_pin;
@@ -244,7 +238,7 @@ struct bdb_general_definitions {
 	 * And the device num is related with the size of general definition
 	 * block. It is obtained by using the following formula:
 	 * number = (block_size - sizeof(bdb_general_definitions))/
-	 *	     sizeof(child_device_config);
+	 * 		sizeof(child_device_config);
 	 */
 	struct child_device_config devices[0];
 } __attribute__((packed));
@@ -432,51 +426,7 @@ struct bdb_driver_features {
 	u8 custom_vbt_version;
 } __attribute__((packed));
 
-#define EDP_18BPP	0
-#define EDP_24BPP	1
-#define EDP_30BPP	2
-#define EDP_RATE_1_62	0
-#define EDP_RATE_2_7	1
-#define EDP_LANE_1	0
-#define EDP_LANE_2	1
-#define EDP_LANE_4	3
-#define EDP_PREEMPHASIS_NONE	0
-#define EDP_PREEMPHASIS_3_5dB	1
-#define EDP_PREEMPHASIS_6dB	2
-#define EDP_PREEMPHASIS_9_5dB	3
-#define EDP_VSWING_0_4V		0
-#define EDP_VSWING_0_6V		1
-#define EDP_VSWING_0_8V		2
-#define EDP_VSWING_1_2V		3
-
-struct edp_power_seq {
-	u16 t1_t3;
-	u16 t8;
-	u16 t9;
-	u16 t10;
-	u16 t11_t12;
-} __attribute__ ((packed));
-
-struct edp_link_params {
-	u8 rate:4;
-	u8 lanes:4;
-	u8 preemphasis:4;
-	u8 vswing:4;
-} __attribute__ ((packed));
-
-struct bdb_edp {
-	struct edp_power_seq power_seqs[16];
-	u32 color_depth;
-	struct edp_link_params link_params[16];
-	u32 sdrrs_msa_timing_delay;
-
-	/* ith bit indicates enabled/disabled for (i+1)th panel */
-	u16 edp_s3d_feature;
-	u16 edp_t3_optimization;
-} __attribute__ ((packed));
-
-void intel_setup_bios(struct drm_device *dev);
-bool intel_parse_bios(struct drm_device *dev);
+bool intel_init_bios(struct drm_device *dev);
 
 /*
  * Driver<->VBIOS interaction occurs through scratch bits in

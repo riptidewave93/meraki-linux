@@ -11,7 +11,9 @@
 static inline void __noreturn BUG(void)
 {
 	__asm__ __volatile__("break %0" : : "i" (BRK_BUG));
-	unreachable();
+	/* Fool GCC into thinking the function doesn't return. */
+	while (1)
+		;
 }
 
 #define HAVE_ARCH_BUG

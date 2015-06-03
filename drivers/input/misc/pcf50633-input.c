@@ -20,7 +20,6 @@
 #include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/input.h>
-#include <linux/slab.h>
 
 #include <linux/mfd/pcf50633/core.h>
 
@@ -56,6 +55,7 @@ pcf50633_input_irq(int irq, void *data)
 static int __devinit pcf50633_input_probe(struct platform_device *pdev)
 {
 	struct pcf50633_input *input;
+	struct pcf50633_subdev_pdata *pdata = pdev->dev.platform_data;
 	struct input_dev *input_dev;
 	int ret;
 
@@ -71,7 +71,7 @@ static int __devinit pcf50633_input_probe(struct platform_device *pdev)
 	}
 
 	platform_set_drvdata(pdev, input);
-	input->pcf = dev_to_pcf50633(pdev->dev.parent);
+	input->pcf = pdata->pcf;
 	input->input_dev = input_dev;
 
 	input_dev->name = "PCF50633 PMU events";
@@ -85,9 +85,9 @@ static int __devinit pcf50633_input_probe(struct platform_device *pdev)
 		kfree(input);
 		return ret;
 	}
-	pcf50633_register_irq(input->pcf, PCF50633_IRQ_ONKEYR,
+	pcf50633_register_irq(pdata->pcf, PCF50633_IRQ_ONKEYR,
 				pcf50633_input_irq, input);
-	pcf50633_register_irq(input->pcf, PCF50633_IRQ_ONKEYF,
+	pcf50633_register_irq(pdata->pcf, PCF50633_IRQ_ONKEYF,
 				pcf50633_input_irq, input);
 
 	return 0;
@@ -113,7 +113,18 @@ static struct platform_driver pcf50633_input_driver = {
 	.probe = pcf50633_input_probe,
 	.remove = __devexit_p(pcf50633_input_remove),
 };
-module_platform_driver(pcf50633_input_driver);
+
+static int __init pcf50633_input_init(void)
+{
+	return platform_driver_register(&pcf50633_input_driver);
+}
+module_init(pcf50633_input_init);
+
+static void __exit pcf50633_input_exit(void)
+{
+	platform_driver_unregister(&pcf50633_input_driver);
+}
+module_exit(pcf50633_input_exit);
 
 MODULE_AUTHOR("Balaji Rao <balajirrao@openmoko.org>");
 MODULE_DESCRIPTION("PCF50633 input driver");

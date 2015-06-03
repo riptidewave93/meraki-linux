@@ -20,19 +20,19 @@
 #include <linux/fcntl.h>
 #include <linux/ptrace.h>
 #include <linux/user.h>
+#include <linux/slab.h>
 #include <linux/binfmts.h>
 #include <linux/personality.h>
 #include <linux/init.h>
-#include <linux/coredump.h>
-#include <linux/slab.h>
 
+#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/cacheflush.h>
 #include <asm/a.out-core.h>
 
 static int load_aout_binary(struct linux_binprm *, struct pt_regs * regs);
 static int load_aout_library(struct file*);
-static int aout_core_dump(struct coredump_params *cprm);
+static int aout_core_dump(long signr, struct pt_regs *regs, struct file *file, unsigned long limit);
 
 static struct linux_binfmt aout_format = {
 	.module		= THIS_MODULE,
@@ -50,12 +50,34 @@ static int set_brk(unsigned long start, unsigned long end)
 	end = PAGE_ALIGN(end);
 	if (end > start) {
 		unsigned long addr;
-		addr = vm_brk(start, end - start);
+		down_write(&current->mm->mmap_sem);
+		addr = do_brk(start, end - start);
+		up_write(&current->mm->mmap_sem);
 		if (BAD_ADDR(addr))
 			return addr;
 	}
 	return 0;
 }
+
+/*
+ * These are the only things you should do on a core-file: use only these
+ * macros to write out all the necessary info.
+ */
+
+static int dump_write(struct file *file, const void *addr, int nr)
+{
+	return file->f_op->write(file, addr, nr, &file->f_pos) == nr;
+}
+
+#define DUMP_WRITE(addr, nr)	\
+	if (!dump_write(file, (void *)(addr), (nr))) \
+		goto end_coredump;
+
+#define DUMP_SEEK(offset) \
+if (file->f_op->llseek) { \
+	if (file->f_op->llseek(file,(offset),0) != (offset)) \
+ 		goto end_coredump; \
+} else file->f_pos = (offset)
 
 /*
  * Routine writes a core dump image in the current directory.
@@ -67,21 +89,18 @@ static int set_brk(unsigned long start, unsigned long end)
  * dumping of the process results in another error..
  */
 
-static int aout_core_dump(struct coredump_params *cprm)
+static int aout_core_dump(long signr, struct pt_regs *regs, struct file *file, unsigned long limit)
 {
-	struct file *file = cprm->file;
 	mm_segment_t fs;
 	int has_dumped = 0;
-	void __user *dump_start;
-	int dump_size;
+	unsigned long dump_start, dump_size;
 	struct user dump;
 #ifdef __alpha__
-#       define START_DATA(u)	((void __user *)u.start_data)
+#       define START_DATA(u)	(u.start_data)
 #else
-#	define START_DATA(u)	((void __user *)((u.u_tsize << PAGE_SHIFT) + \
-				 u.start_code))
+#	define START_DATA(u)	((u.u_tsize << PAGE_SHIFT) + u.start_code)
 #endif
-#       define START_STACK(u)   ((void __user *)u.start_stack)
+#       define START_STACK(u)   (u.start_stack)
 
 	fs = get_fs();
 	set_fs(KERNEL_DS);
@@ -89,48 +108,47 @@ static int aout_core_dump(struct coredump_params *cprm)
 	current->flags |= PF_DUMPCORE;
        	strncpy(dump.u_comm, current->comm, sizeof(dump.u_comm));
 	dump.u_ar0 = offsetof(struct user, regs);
-	dump.signal = cprm->signr;
-	aout_dump_thread(cprm->regs, &dump);
+	dump.signal = signr;
+	aout_dump_thread(regs, &dump);
 
 /* If the size of the dump file exceeds the rlimit, then see what would happen
    if we wrote the stack, but not the data area.  */
-	if ((dump.u_dsize + dump.u_ssize+1) * PAGE_SIZE > cprm->limit)
+	if ((dump.u_dsize + dump.u_ssize+1) * PAGE_SIZE > limit)
 		dump.u_dsize = 0;
 
 /* Make sure we have enough room to write the stack and data areas. */
-	if ((dump.u_ssize + 1) * PAGE_SIZE > cprm->limit)
+	if ((dump.u_ssize + 1) * PAGE_SIZE > limit)
 		dump.u_ssize = 0;
 
 /* make sure we actually have a data and stack area to dump */
 	set_fs(USER_DS);
-	if (!access_ok(VERIFY_READ, START_DATA(dump), dump.u_dsize << PAGE_SHIFT))
+	if (!access_ok(VERIFY_READ, (void __user *)START_DATA(dump), dump.u_dsize << PAGE_SHIFT))
 		dump.u_dsize = 0;
-	if (!access_ok(VERIFY_READ, START_STACK(dump), dump.u_ssize << PAGE_SHIFT))
+	if (!access_ok(VERIFY_READ, (void __user *)START_STACK(dump), dump.u_ssize << PAGE_SHIFT))
 		dump.u_ssize = 0;
 
 	set_fs(KERNEL_DS);
 /* struct user */
-	if (!dump_write(file, &dump, sizeof(dump)))
-		goto end_coredump;
+	DUMP_WRITE(&dump,sizeof(dump));
 /* Now dump all of the user data.  Include malloced stuff as well */
-	if (!dump_seek(cprm->file, PAGE_SIZE - sizeof(dump)))
-		goto end_coredump;
+	DUMP_SEEK(PAGE_SIZE);
 /* now we start writing out the user space info */
 	set_fs(USER_DS);
 /* Dump the data area */
 	if (dump.u_dsize != 0) {
 		dump_start = START_DATA(dump);
 		dump_size = dump.u_dsize << PAGE_SHIFT;
-		if (!dump_write(file, dump_start, dump_size))
-			goto end_coredump;
+		DUMP_WRITE(dump_start,dump_size);
 	}
 /* Now prepare to dump the stack area */
 	if (dump.u_ssize != 0) {
 		dump_start = START_STACK(dump);
 		dump_size = dump.u_ssize << PAGE_SHIFT;
-		if (!dump_write(file, dump_start, dump_size))
-			goto end_coredump;
+		DUMP_WRITE(dump_start,dump_size);
 	}
+/* Finally dump the task struct.  Not be used by gdb, but could be useful */
+	set_fs(KERNEL_DS);
+	DUMP_WRITE(current,sizeof(*current));
 end_coredump:
 	set_fs(fs);
 	return has_dumped;
@@ -228,7 +246,7 @@ static int load_aout_binary(struct linux_binprm * bprm, struct pt_regs * regs)
 	 * size limits imposed on them by creating programs with large
 	 * arrays in the data or bss.
 	 */
-	rlim = rlimit(RLIMIT_DATA);
+	rlim = current->signal->rlim[RLIMIT_DATA].rlim_cur;
 	if (rlim >= RLIM_INFINITY)
 		rlim = ~0;
 	if (ex.a_data + ex.a_bss > rlim)
@@ -256,14 +274,8 @@ static int load_aout_binary(struct linux_binprm * bprm, struct pt_regs * regs)
 	current->mm->free_area_cache = current->mm->mmap_base;
 	current->mm->cached_hole_size = 0;
 
-	retval = setup_arg_pages(bprm, STACK_TOP, EXSTACK_DEFAULT);
-	if (retval < 0) {
-		/* Someone check-me: is this error path enough? */
-		send_sig(SIGKILL, current, 0);
-		return retval;
-	}
-
 	install_exec_creds(bprm);
+ 	current->flags &= ~PF_FORKNOEXEC;
 
 	if (N_MAGIC(ex) == OMAGIC) {
 		unsigned long text_addr, map_size;
@@ -278,7 +290,9 @@ static int load_aout_binary(struct linux_binprm * bprm, struct pt_regs * regs)
 		pos = 32;
 		map_size = ex.a_text+ex.a_data;
 #endif
-		error = vm_brk(text_addr & PAGE_MASK, map_size);
+		down_write(&current->mm->mmap_sem);
+		error = do_brk(text_addr & PAGE_MASK, map_size);
+		up_write(&current->mm->mmap_sem);
 		if (error != (text_addr & PAGE_MASK)) {
 			send_sig(SIGKILL, current, 0);
 			return error;
@@ -309,7 +323,9 @@ static int load_aout_binary(struct linux_binprm * bprm, struct pt_regs * regs)
 
 		if (!bprm->file->f_op->mmap||((fd_offset & ~PAGE_MASK) != 0)) {
 			loff_t pos = fd_offset;
-			vm_brk(N_TXTADDR(ex), ex.a_text+ex.a_data);
+			down_write(&current->mm->mmap_sem);
+			do_brk(N_TXTADDR(ex), ex.a_text+ex.a_data);
+			up_write(&current->mm->mmap_sem);
 			bprm->file->f_op->read(bprm->file,
 					(char __user *)N_TXTADDR(ex),
 					ex.a_text+ex.a_data, &pos);
@@ -319,20 +335,24 @@ static int load_aout_binary(struct linux_binprm * bprm, struct pt_regs * regs)
 			goto beyond_if;
 		}
 
-		error = vm_mmap(bprm->file, N_TXTADDR(ex), ex.a_text,
+		down_write(&current->mm->mmap_sem);
+		error = do_mmap(bprm->file, N_TXTADDR(ex), ex.a_text,
 			PROT_READ | PROT_EXEC,
 			MAP_FIXED | MAP_PRIVATE | MAP_DENYWRITE | MAP_EXECUTABLE,
 			fd_offset);
+		up_write(&current->mm->mmap_sem);
 
 		if (error != N_TXTADDR(ex)) {
 			send_sig(SIGKILL, current, 0);
 			return error;
 		}
 
-		error = vm_mmap(bprm->file, N_DATADDR(ex), ex.a_data,
+		down_write(&current->mm->mmap_sem);
+ 		error = do_mmap(bprm->file, N_DATADDR(ex), ex.a_data,
 				PROT_READ | PROT_WRITE | PROT_EXEC,
 				MAP_FIXED | MAP_PRIVATE | MAP_DENYWRITE | MAP_EXECUTABLE,
 				fd_offset + ex.a_text);
+		up_write(&current->mm->mmap_sem);
 		if (error != N_DATADDR(ex)) {
 			send_sig(SIGKILL, current, 0);
 			return error;
@@ -344,6 +364,13 @@ beyond_if:
 	retval = set_brk(current->mm->start_brk, current->mm->brk);
 	if (retval < 0) {
 		send_sig(SIGKILL, current, 0);
+		return retval;
+	}
+
+	retval = setup_arg_pages(bprm, STACK_TOP, EXSTACK_DEFAULT);
+	if (retval < 0) { 
+		/* Someone check-me: is this error path enough? */ 
+		send_sig(SIGKILL, current, 0); 
 		return retval;
 	}
 
@@ -402,7 +429,9 @@ static int load_aout_library(struct file *file)
 			       "N_TXTOFF is not page aligned. Please convert library: %s\n",
 			       file->f_path.dentry->d_name.name);
 		}
-		vm_brk(start_addr, ex.a_text + ex.a_data + ex.a_bss);
+		down_write(&current->mm->mmap_sem);
+		do_brk(start_addr, ex.a_text + ex.a_data + ex.a_bss);
+		up_write(&current->mm->mmap_sem);
 		
 		file->f_op->read(file, (char __user *)start_addr,
 			ex.a_text + ex.a_data, &pos);
@@ -413,10 +442,12 @@ static int load_aout_library(struct file *file)
 		goto out;
 	}
 	/* Now use mmap to map the library into memory. */
-	error = vm_mmap(file, start_addr, ex.a_text + ex.a_data,
+	down_write(&current->mm->mmap_sem);
+	error = do_mmap(file, start_addr, ex.a_text + ex.a_data,
 			PROT_READ | PROT_WRITE | PROT_EXEC,
 			MAP_FIXED | MAP_PRIVATE | MAP_DENYWRITE,
 			N_TXTOFF(ex));
+	up_write(&current->mm->mmap_sem);
 	retval = error;
 	if (error != start_addr)
 		goto out;
@@ -424,7 +455,9 @@ static int load_aout_library(struct file *file)
 	len = PAGE_ALIGN(ex.a_text + ex.a_data);
 	bss = ex.a_text + ex.a_data + ex.a_bss;
 	if (bss > len) {
-		error = vm_brk(start_addr + len, bss - len);
+		down_write(&current->mm->mmap_sem);
+		error = do_brk(start_addr + len, bss - len);
+		up_write(&current->mm->mmap_sem);
 		retval = error;
 		if (error != start_addr + len)
 			goto out;
@@ -436,8 +469,7 @@ out:
 
 static int __init init_aout_binfmt(void)
 {
-	register_binfmt(&aout_format);
-	return 0;
+	return register_binfmt(&aout_format);
 }
 
 static void __exit exit_aout_binfmt(void)

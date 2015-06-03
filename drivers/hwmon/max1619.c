@@ -41,6 +41,12 @@ static const unsigned short normal_i2c[] = {
 	0x18, 0x19, 0x1a, 0x29, 0x2a, 0x2b, 0x4c, 0x4d, 0x4e, I2C_CLIENT_END };
 
 /*
+ * Insmod parameters
+ */
+
+I2C_CLIENT_INSMOD_1(max1619);
+
+/*
  * The MAX1619 registers
  */
 
@@ -82,7 +88,7 @@ static int temp_to_reg(int val)
 
 static int max1619_probe(struct i2c_client *client,
 			 const struct i2c_device_id *id);
-static int max1619_detect(struct i2c_client *client,
+static int max1619_detect(struct i2c_client *client, int kind,
 			  struct i2c_board_info *info);
 static void max1619_init_client(struct i2c_client *client);
 static int max1619_remove(struct i2c_client *client);
@@ -93,7 +99,7 @@ static struct max1619_data *max1619_update_device(struct device *dev);
  */
 
 static const struct i2c_device_id max1619_id[] = {
-	{ "max1619", 0 },
+	{ "max1619", max1619 },
 	{ }
 };
 MODULE_DEVICE_TABLE(i2c, max1619_id);
@@ -107,7 +113,7 @@ static struct i2c_driver max1619_driver = {
 	.remove		= max1619_remove,
 	.id_table	= max1619_id,
 	.detect		= max1619_detect,
-	.address_list	= normal_i2c,
+	.address_data	= &addr_data,
 };
 
 /*
@@ -125,7 +131,7 @@ struct max1619_data {
 	u8 temp_input2, temp_low2, temp_high2; /* remote */
 	u8 temp_crit2;
 	u8 temp_hyst2;
-	u8 alarms;
+	u8 alarms; 
 };
 
 /*
@@ -133,8 +139,7 @@ struct max1619_data {
  */
 
 #define show_temp(value) \
-static ssize_t show_##value(struct device *dev, struct device_attribute *attr, \
-			    char *buf) \
+static ssize_t show_##value(struct device *dev, struct device_attribute *attr, char *buf) \
 { \
 	struct max1619_data *data = max1619_update_device(dev); \
 	return sprintf(buf, "%d\n", temp_from_reg(data->value)); \
@@ -147,17 +152,13 @@ show_temp(temp_crit2);
 show_temp(temp_hyst2);
 
 #define set_temp2(value, reg) \
-static ssize_t set_##value(struct device *dev, struct device_attribute *attr, \
-			   const char *buf, \
+static ssize_t set_##value(struct device *dev, struct device_attribute *attr, const char *buf, \
 	size_t count) \
 { \
 	struct i2c_client *client = to_i2c_client(dev); \
 	struct max1619_data *data = i2c_get_clientdata(client); \
-	long val; \
-	int err = kstrtol(buf, 10, &val); \
-	if (err) \
-		return err; \
-\
+	long val = simple_strtol(buf, NULL, 10); \
+ \
 	mutex_lock(&data->update_lock); \
 	data->value = temp_to_reg(val); \
 	i2c_smbus_write_byte_data(client, reg, data->value); \
@@ -170,8 +171,7 @@ set_temp2(temp_high2, MAX1619_REG_W_REMOTE_HIGH);
 set_temp2(temp_crit2, MAX1619_REG_W_REMOTE_CRIT);
 set_temp2(temp_hyst2, MAX1619_REG_W_TCRIT_HYST);
 
-static ssize_t show_alarms(struct device *dev, struct device_attribute *attr,
-			   char *buf)
+static ssize_t show_alarms(struct device *dev, struct device_attribute *attr, char *buf)
 {
 	struct max1619_data *data = max1619_update_device(dev);
 	return sprintf(buf, "%d\n", data->alarms);
@@ -226,34 +226,58 @@ static const struct attribute_group max1619_group = {
  */
 
 /* Return 0 if detection is successful, -ENODEV otherwise */
-static int max1619_detect(struct i2c_client *client,
+static int max1619_detect(struct i2c_client *new_client, int kind,
 			  struct i2c_board_info *info)
 {
-	struct i2c_adapter *adapter = client->adapter;
-	u8 reg_config, reg_convrate, reg_status, man_id, chip_id;
+	struct i2c_adapter *adapter = new_client->adapter;
+	u8 reg_config=0, reg_convrate=0, reg_status=0;
 
 	if (!i2c_check_functionality(adapter, I2C_FUNC_SMBUS_BYTE_DATA))
 		return -ENODEV;
 
-	/* detection */
-	reg_config = i2c_smbus_read_byte_data(client, MAX1619_REG_R_CONFIG);
-	reg_convrate = i2c_smbus_read_byte_data(client, MAX1619_REG_R_CONVRATE);
-	reg_status = i2c_smbus_read_byte_data(client, MAX1619_REG_R_STATUS);
-	if ((reg_config & 0x03) != 0x00
-	 || reg_convrate > 0x07 || (reg_status & 0x61) != 0x00) {
-		dev_dbg(&adapter->dev, "MAX1619 detection failed at 0x%02x\n",
-			client->addr);
-		return -ENODEV;
+	/*
+	 * Now we do the remaining detection. A negative kind means that
+	 * the driver was loaded with no force parameter (default), so we
+	 * must both detect and identify the chip. A zero kind means that
+	 * the driver was loaded with the force parameter, the detection
+	 * step shall be skipped. A positive kind means that the driver
+	 * was loaded with the force parameter and a given kind of chip is
+	 * requested, so both the detection and the identification steps
+	 * are skipped.
+	 */
+	if (kind < 0) { /* detection */
+		reg_config = i2c_smbus_read_byte_data(new_client,
+			      MAX1619_REG_R_CONFIG);
+		reg_convrate = i2c_smbus_read_byte_data(new_client,
+			       MAX1619_REG_R_CONVRATE);
+		reg_status = i2c_smbus_read_byte_data(new_client,
+				MAX1619_REG_R_STATUS);
+		if ((reg_config & 0x03) != 0x00
+		 || reg_convrate > 0x07 || (reg_status & 0x61 ) !=0x00) {
+			dev_dbg(&adapter->dev,
+				"MAX1619 detection failed at 0x%02x.\n",
+				new_client->addr);
+			return -ENODEV;
+		}
 	}
 
-	/* identification */
-	man_id = i2c_smbus_read_byte_data(client, MAX1619_REG_R_MAN_ID);
-	chip_id = i2c_smbus_read_byte_data(client, MAX1619_REG_R_CHIP_ID);
-	if (man_id != 0x4D || chip_id != 0x04) {
-		dev_info(&adapter->dev,
-			 "Unsupported chip (man_id=0x%02X, chip_id=0x%02X).\n",
-			 man_id, chip_id);
-		return -ENODEV;
+	if (kind <= 0) { /* identification */
+		u8 man_id, chip_id;
+	
+		man_id = i2c_smbus_read_byte_data(new_client,
+			 MAX1619_REG_R_MAN_ID);
+		chip_id = i2c_smbus_read_byte_data(new_client,
+			  MAX1619_REG_R_CHIP_ID);
+		
+		if ((man_id == 0x4D) && (chip_id == 0x04))
+			kind = max1619;
+
+		if (kind <= 0) { /* identification failed */
+			dev_info(&adapter->dev,
+			    "Unsupported chip (man_id=0x%02X, "
+			    "chip_id=0x%02X).\n", man_id, chip_id);
+			return -ENODEV;
+		}
 	}
 
 	strlcpy(info->type, "max1619", I2C_NAME_SIZE);
@@ -281,8 +305,7 @@ static int max1619_probe(struct i2c_client *new_client,
 	max1619_init_client(new_client);
 
 	/* Register sysfs hooks */
-	err = sysfs_create_group(&new_client->dev.kobj, &max1619_group);
-	if (err)
+	if ((err = sysfs_create_group(&new_client->dev.kobj, &max1619_group)))
 		goto exit_free;
 
 	data->hwmon_dev = hwmon_device_register(&new_client->dev);
@@ -360,9 +383,20 @@ static struct max1619_data *max1619_update_device(struct device *dev)
 	return data;
 }
 
-module_i2c_driver(max1619_driver);
+static int __init sensors_max1619_init(void)
+{
+	return i2c_add_driver(&max1619_driver);
+}
+
+static void __exit sensors_max1619_exit(void)
+{
+	i2c_del_driver(&max1619_driver);
+}
 
 MODULE_AUTHOR("Alexey Fisher <fishor@mail.ru> and "
 	"Jean Delvare <khali@linux-fr.org>");
 MODULE_DESCRIPTION("MAX1619 sensor driver");
 MODULE_LICENSE("GPL");
+
+module_init(sensors_max1619_init);
+module_exit(sensors_max1619_exit);

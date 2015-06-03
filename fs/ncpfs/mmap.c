@@ -9,18 +9,18 @@
 #include <linux/stat.h>
 #include <linux/time.h>
 #include <linux/kernel.h>
-#include <linux/gfp.h>
 #include <linux/mm.h>
 #include <linux/shm.h>
 #include <linux/errno.h>
 #include <linux/mman.h>
 #include <linux/string.h>
+#include <linux/slab.h>
 #include <linux/fcntl.h>
-#include <linux/memcontrol.h>
+#include <linux/ncp_fs.h>
 
+#include "ncplib_kernel.h"
 #include <asm/uaccess.h>
-
-#include "ncp_fs.h"
+#include <asm/system.h>
 
 /*
  * Fill in the supplied page for mmap
@@ -92,7 +92,6 @@ static int ncp_file_mmap_fault(struct vm_area_struct *area,
 	 * -- wli
 	 */
 	count_vm_event(PGMAJFAULT);
-	mem_cgroup_count_vm_event(area->vm_mm, PGMAJFAULT);
 	return VM_FAULT_MAJOR;
 }
 

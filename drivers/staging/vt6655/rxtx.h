@@ -35,53 +35,90 @@
 
 /*---------------------  Export Definitions -------------------------*/
 
+/*---------------------  Export Classes  ----------------------------*/
+
 /*---------------------  Export Variables  --------------------------*/
 
 /*---------------------  Export Functions  --------------------------*/
 
-/*
-void
-vGenerateMACHeader(PSDevice pDevice, unsigned long dwTxBufferAddr, unsigned char *pbySkbData,
-	unsigned int cbPacketSize, bool bDMA0Used, unsigned int *pcbHeadSize,
-	unsigned int *pcbAppendPayload);
 
-void
-vProcessRxMACHeader(PSDevice pDevice, unsigned long dwRxBufferAddr, unsigned int cbPacketSize,
-	bool bIsWEP, unsigned int *pcbHeadSize);
+#ifdef __cplusplus
+extern "C" {                            /* Assume C declarations for C++ */
+#endif /* __cplusplus */
+
+/*
+VOID vGenerateMACHeader(
+    IN PSDevice pDevice,
+    IN DWORD dwTxBufferAddr,
+    IN PBYTE pbySkbData,
+    IN UINT cbPacketSize,
+    IN BOOL bDMA0Used,
+    OUT PUINT pcbHeadSize,
+    OUT PUINT pcbAppendPayload
+     );
+
+VOID vProcessRxMACHeader (
+    IN  PSDevice pDevice,
+    IN  DWORD dwRxBufferAddr,
+    IN  UINT cbPacketSize,
+    IN  BOOL bIsWEP,
+    OUT PUINT pcbHeadSize
+    );
 */
 
 
-void
+VOID
 vGenerateMACHeader (
-    PSDevice         pDevice,
-    unsigned char *pbyBufferAddr,
-    unsigned short wDuration,
-    PSEthernetHeader psEthHeader,
-    bool bNeedEncrypt,
-    unsigned short wFragType,
-    unsigned int uDMAIdx,
-    unsigned int uFragIdx
+    IN PSDevice         pDevice,
+    IN PBYTE            pbyBufferAddr,
+    IN WORD             wDuration,
+    IN PSEthernetHeader psEthHeader,
+    IN BOOL             bNeedEncrypt,
+    IN WORD             wFragType,
+    IN UINT             uDMAIdx,
+    IN UINT             uFragIdx
     );
 
 
-unsigned int
+UINT
 cbGetFragCount(
-    PSDevice         pDevice,
-    PSKeyItem        pTransmitKey,
-    unsigned int	cbFrameBodySize,
-    PSEthernetHeader psEthHeader
+    IN  PSDevice         pDevice,
+    IN  PSKeyItem        pTransmitKey,
+    IN  UINT             cbFrameBodySize,
+    IN  PSEthernetHeader psEthHeader
     );
 
 
-void
-vGenerateFIFOHeader(PSDevice pDevice, unsigned char byPktTyp, unsigned char *pbyTxBufferAddr,
-	bool bNeedEncrypt, unsigned int	cbPayloadSize, unsigned int uDMAIdx, PSTxDesc pHeadTD,
-	PSEthernetHeader psEthHeader, unsigned char *pPacket, PSKeyItem pTransmitKey,
-	unsigned int uNodeIndex, unsigned int *puMACfragNum, unsigned int *pcbHeaderSize);
+VOID
+vGenerateFIFOHeader (
+    IN  PSDevice         pDevice,
+    IN  BYTE             byPktTyp,
+    IN  PBYTE            pbyTxBufferAddr,
+    IN  BOOL             bNeedEncrypt,
+    IN  UINT             cbPayloadSize,
+    IN  UINT             uDMAIdx,
+    IN  PSTxDesc         pHeadTD,
+    IN  PSEthernetHeader psEthHeader,
+    IN  PBYTE            pPacket,
+    IN  PSKeyItem        pTransmitKey,
+    IN  UINT             uNodeIndex,
+    OUT PUINT            puMACfragNum,
+    OUT PUINT            pcbHeaderSize
+    );
 
 
-void vDMA0_tx_80211(PSDevice  pDevice, struct sk_buff *skb, unsigned char *pbMPDU, unsigned int cbMPDULen);
+VOID vDMA0_tx_80211(PSDevice  pDevice, struct sk_buff *skb, PBYTE pbMPDU, UINT cbMPDULen);
 CMD_STATUS csMgmt_xmit(PSDevice pDevice, PSTxMgmtPacket pPacket);
 CMD_STATUS csBeacon_xmit(PSDevice pDevice, PSTxMgmtPacket pPacket);
 
+#ifdef __cplusplus
+}                                       /* End of extern "C" { */
+#endif /* __cplusplus */
+
+
+
+
 #endif // __RXTX_H__
+
+
+

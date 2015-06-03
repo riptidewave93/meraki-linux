@@ -24,7 +24,7 @@
  */
 
  /*
-  * See Documentation/filesystems/nfs/Exporting
+  * See Documentation/filesystems/Exporting
   * and examples in fs/exportfs
   *
   * Since cifs is a network file system, an "fsid" must be included for
@@ -45,11 +45,11 @@
 #include "cifs_debug.h"
 #include "cifsfs.h"
 
-#ifdef CONFIG_CIFS_NFSD_EXPORT
+#ifdef CONFIG_CIFS_EXPERIMENTAL
 static struct dentry *cifs_get_parent(struct dentry *dentry)
 {
 	/* BB need to add code here eventually to enable export via NFSD */
-	cFYI(1, "get parent for %p", dentry);
+	cFYI(1, ("get parent for %p", dentry));
 	return ERR_PTR(-EACCES);
 }
 
@@ -63,5 +63,5 @@ const struct export_operations cifs_export_ops = {
 	.encode_fs =  */
 };
 
-#endif /* CONFIG_CIFS_NFSD_EXPORT */
+#endif /* EXPERIMENTAL */
 

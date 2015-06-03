@@ -19,7 +19,6 @@
 #include <linux/notifier.h>
 #include <linux/of.h>
 #include <linux/percpu.h>
-#include <linux/slab.h>
 #include <asm/prom.h>
 
 #include "cacheinfo.h"
@@ -451,15 +450,15 @@ out:
 static struct cache_dir *__cpuinit cacheinfo_create_cache_dir(unsigned int cpu_id)
 {
 	struct cache_dir *cache_dir;
-	struct device *dev;
+	struct sys_device *sysdev;
 	struct kobject *kobj = NULL;
 
-	dev = get_cpu_device(cpu_id);
-	WARN_ONCE(!dev, "no dev for CPU %i\n", cpu_id);
-	if (!dev)
+	sysdev = get_cpu_sysdev(cpu_id);
+	WARN_ONCE(!sysdev, "no sysdev for CPU %i\n", cpu_id);
+	if (!sysdev)
 		goto err;
 
-	kobj = kobject_create_and_add("cache", &dev->kobj);
+	kobj = kobject_create_and_add("cache", &sysdev->kobj);
 	if (!kobj)
 		goto err;
 
@@ -643,7 +642,7 @@ static struct kobj_attribute *cache_index_opt_attrs[] = {
 	&cache_assoc_attr,
 };
 
-static const struct sysfs_ops cache_index_ops = {
+static struct sysfs_ops cache_index_ops = {
 	.show = cache_index_show,
 };
 
@@ -787,9 +786,6 @@ static void remove_index_dirs(struct cache_dir *cache_dir)
 static void remove_cache_dir(struct cache_dir *cache_dir)
 {
 	remove_index_dirs(cache_dir);
-
-	/* Remove cache dir from sysfs */
-	kobject_del(cache_dir->kobj);
 
 	kobject_put(cache_dir->kobj);
 

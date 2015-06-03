@@ -11,6 +11,7 @@
 
 #include <linux/module.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 #include <linux/errno.h>
 #include <linux/kernel_stat.h>
 #include <linux/pagemap.h>
@@ -92,7 +93,9 @@ static void appldata_get_mem_data(void *data)
 	mem_data->pswpin     = ev[PSWPIN];
 	mem_data->pswpout    = ev[PSWPOUT];
 	mem_data->pgalloc    = ev[PGALLOC_NORMAL];
+#ifdef CONFIG_ZONE_DMA
 	mem_data->pgalloc    += ev[PGALLOC_DMA];
+#endif
 	mem_data->pgfault    = ev[PGFAULT];
 	mem_data->pgmajfault = ev[PGMAJFAULT];
 

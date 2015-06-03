@@ -25,13 +25,14 @@
 #include <linux/spinlock.h>
 #include <linux/rwsem.h>
 #include <linux/init.h>
+#include <linux/smp_lock.h>
 #include <linux/mutex.h>
-#include <linux/jiffies.h>
 
 #include <asm/hardware/dec21285.h>
 #include <asm/io.h>
 #include <asm/leds.h>
 #include <asm/mach-types.h>
+#include <asm/system.h>
 #include <asm/uaccess.h>
 
 /*****************************************************************************/
@@ -39,7 +40,6 @@
 
 #define	NWFLASH_VERSION "6.4"
 
-static DEFINE_MUTEX(flash_mutex);
 static void kick_open(void);
 static int get_flash_id(void);
 static int erase_block(int nBlock);
@@ -50,7 +50,7 @@ static int write_block(unsigned long p, const char __user *buf, int count);
 #define KFLASH_ID	0x89A6		//Intel flash
 #define KFLASH_ID4	0xB0D4		//Intel flash 4Meg
 
-static bool flashdebug;		//if set - we will display progress msgs
+static int flashdebug;		//if set - we will display progress msgs
 
 static int gbWriteEnable;
 static int gbWriteBase64Enable;
@@ -93,9 +93,8 @@ static int get_flash_id(void)
 	return c2;
 }
 
-static long flash_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
+static int flash_ioctl(struct inode *inodep, struct file *filep, unsigned int cmd, unsigned long arg)
 {
-	mutex_lock(&flash_mutex);
 	switch (cmd) {
 	case CMD_WRITE_DISABLE:
 		gbWriteBase64Enable = 0;
@@ -113,10 +112,8 @@ static long flash_ioctl(struct file *filep, unsigned int cmd, unsigned long arg)
 	default:
 		gbWriteBase64Enable = 0;
 		gbWriteEnable = 0;
-		mutex_unlock(&flash_mutex);
 		return -EINVAL;
 	}
-	mutex_unlock(&flash_mutex);
 	return 0;
 }
 
@@ -281,7 +278,7 @@ static loff_t flash_llseek(struct file *file, loff_t offset, int orig)
 {
 	loff_t ret;
 
-	mutex_lock(&flash_mutex);
+	lock_kernel();
 	if (flashdebug)
 		printk(KERN_DEBUG "flash_llseek: offset=0x%X, orig=0x%X.\n",
 		       (unsigned int) offset, orig);
@@ -316,7 +313,7 @@ static loff_t flash_llseek(struct file *file, loff_t offset, int orig)
 	default:
 		ret = -EINVAL;
 	}
-	mutex_unlock(&flash_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -633,7 +630,7 @@ static const struct file_operations flash_fops =
 	.llseek		= flash_llseek,
 	.read		= flash_read,
 	.write		= flash_write,
-	.unlocked_ioctl	= flash_ioctl,
+	.ioctl		= flash_ioctl,
 };
 
 static struct miscdevice flash_miscdev =

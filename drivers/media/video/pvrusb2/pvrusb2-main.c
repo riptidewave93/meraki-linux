@@ -21,6 +21,7 @@
 
 #include <linux/kernel.h>
 #include <linux/errno.h>
+#include <linux/slab.h>
 #include <linux/module.h>
 #include <linux/usb.h>
 #include <linux/videodev2.h>
@@ -153,11 +154,11 @@ static void __exit pvr_exit(void)
 
 	usb_deregister(&pvr_driver);
 
-	pvr2_context_global_done();
-
 #ifdef CONFIG_VIDEO_PVRUSB2_SYSFS
 	pvr2_sysfs_class_destroy(class_ptr);
 #endif /* CONFIG_VIDEO_PVRUSB2_SYSFS */
+
+	pvr2_context_global_done();
 
 	pvr2_trace(PVR2_TRACE_INIT,"pvr_exit complete");
 }
@@ -168,7 +169,6 @@ module_exit(pvr_exit);
 MODULE_AUTHOR(DRIVER_AUTHOR);
 MODULE_DESCRIPTION(DRIVER_DESC);
 MODULE_LICENSE("GPL");
-MODULE_VERSION("0.9.1");
 
 
 /*

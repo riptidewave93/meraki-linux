@@ -61,7 +61,7 @@
 #include "scsiglue.h"
 
 MODULE_DESCRIPTION("Driver for In-System Design, Inc. ISD200 ASIC");
-MODULE_AUTHOR("BjÃ¶rn Stenberg <bjorn@haxx.se>");
+MODULE_AUTHOR("Björn Stenberg <bjorn@haxx.se>");
 MODULE_LICENSE("GPL");
 
 static int isd200_Initialization(struct us_data *us);
@@ -76,7 +76,7 @@ static int isd200_Initialization(struct us_data *us);
 { USB_DEVICE_VER(id_vendor, id_product, bcdDeviceMin, bcdDeviceMax), \
   .driver_info = (flags)|(USB_US_TYPE_STOR<<24) }
 
-static struct usb_device_id isd200_usb_ids[] = {
+struct usb_device_id isd200_usb_ids[] = {
 #	include "unusual_isd200.h"
 	{ }		/* Terminating entry */
 };
@@ -490,15 +490,16 @@ static int isd200_action( struct us_data *us, int action,
 			  void* pointer, int value )
 {
 	union ata_cdb ata;
-	/* static to prevent this large struct being placed on the valuable stack */
-	static struct scsi_device srb_dev;
+	struct scsi_device srb_dev;
 	struct isd200_info *info = (struct isd200_info *)us->extra;
 	struct scsi_cmnd *srb = &info->srb;
 	int status;
 
 	memset(&ata, 0, sizeof(ata));
+	memset(&srb_dev, 0, sizeof(srb_dev));
 	srb->cmnd = info->cmnd;
 	srb->device = &srb_dev;
+	++srb->serial_number;
 
 	ata.generic.SignatureByte0 = info->ConfigData.ATAMajorCommand;
 	ata.generic.SignatureByte1 = info->ConfigData.ATAMinorCommand;
@@ -1455,7 +1456,8 @@ static int isd200_init_info(struct us_data *us)
 	int retStatus = ISD200_GOOD;
 	struct isd200_info *info;
 
-	info = kzalloc(sizeof(struct isd200_info), GFP_KERNEL);
+	info = (struct isd200_info *)
+			kzalloc(sizeof(struct isd200_info), GFP_KERNEL);
 	if (!info)
 		retStatus = ISD200_ERROR;
 	else {
@@ -1509,7 +1511,7 @@ static int isd200_Initialization(struct us_data *us)
  * Protocol and Transport for the ISD200 ASIC
  *
  * This protocol and transport are for ATA devices connected to an ISD200
- * ASIC.  An ATAPI device that is connected as a slave device will be
+ * ASIC.  An ATAPI device that is conected as a slave device will be
  * detected in the driver initialization function and the protocol will
  * be changed to an ATAPI protocol (Transparent SCSI).
  *
@@ -1566,7 +1568,17 @@ static struct usb_driver isd200_driver = {
 	.post_reset =	usb_stor_post_reset,
 	.id_table =	isd200_usb_ids,
 	.soft_unbind =	1,
-	.no_dynamic_id = 1,
 };
 
-module_usb_driver(isd200_driver);
+static int __init isd200_init(void)
+{
+	return usb_register(&isd200_driver);
+}
+
+static void __exit isd200_exit(void)
+{
+	usb_deregister(&isd200_driver);
+}
+
+module_init(isd200_init);
+module_exit(isd200_exit);

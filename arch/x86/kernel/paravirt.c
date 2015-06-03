@@ -26,7 +26,6 @@
 
 #include <asm/bug.h>
 #include <asm/paravirt.h>
-#include <asm/debugreg.h>
 #include <asm/desc.h>
 #include <asm/setup.h>
 #include <asm/pgtable.h>
@@ -38,7 +37,6 @@
 #include <asm/apic.h>
 #include <asm/tlbflush.h>
 #include <asm/timer.h>
-#include <asm/special_insns.h>
 
 /* nop stub */
 void _paravirt_nop(void)
@@ -204,14 +202,6 @@ static void native_flush_tlb_single(unsigned long addr)
 	__native_flush_tlb_single(addr);
 }
 
-struct static_key paravirt_steal_enabled;
-struct static_key paravirt_steal_rq_enabled;
-
-static u64 native_steal_clock(int cpu)
-{
-	return 0;
-}
-
 /* These are in entry.S */
 extern void native_iret(void);
 extern void native_irq_enable_sysexit(void);
@@ -263,18 +253,6 @@ void paravirt_leave_lazy_mmu(void)
 	leave_lazy(PARAVIRT_LAZY_MMU);
 }
 
-void paravirt_flush_lazy_mmu(void)
-{
-	preempt_disable();
-
-	if (paravirt_get_lazy_mode() == PARAVIRT_LAZY_MMU) {
-		arch_leave_lazy_mmu_mode();
-		arch_enter_lazy_mmu_mode();
-	}
-
-	preempt_enable();
-}
-
 void paravirt_start_context_switch(struct task_struct *prev)
 {
 	BUG_ON(preemptible());
@@ -304,15 +282,23 @@ enum paravirt_lazy_mode paravirt_get_lazy_mode(void)
 	return percpu_read(paravirt_lazy_mode);
 }
 
+void arch_flush_lazy_mmu_mode(void)
+{
+	preempt_disable();
+
+	if (paravirt_get_lazy_mode() == PARAVIRT_LAZY_MMU) {
+		arch_leave_lazy_mmu_mode();
+		arch_enter_lazy_mmu_mode();
+	}
+
+	preempt_enable();
+}
+
 struct pv_info pv_info = {
 	.name = "bare hardware",
 	.paravirt_enabled = 0,
 	.kernel_rpl = 0,
 	.shared_kernel_pmd = 1,	/* Only used when CONFIG_X86_PAE is set */
-
-#ifdef CONFIG_X86_64
-	.extra_user_64bit_cs = __USER_CS,
-#endif
 };
 
 struct pv_init_ops pv_init_ops = {
@@ -321,7 +307,6 @@ struct pv_init_ops pv_init_ops = {
 
 struct pv_time_ops pv_time_ops = {
 	.sched_clock = native_sched_clock,
-	.steal_clock = native_steal_clock,
 };
 
 struct pv_irq_ops pv_irq_ops = {
@@ -428,6 +413,7 @@ struct pv_mmu_ops pv_mmu_ops = {
 
 	.alloc_pte = paravirt_nop,
 	.alloc_pmd = paravirt_nop,
+	.alloc_pmd_clone = paravirt_nop,
 	.alloc_pud = paravirt_nop,
 	.release_pte = paravirt_nop,
 	.release_pmd = paravirt_nop,
@@ -436,14 +422,15 @@ struct pv_mmu_ops pv_mmu_ops = {
 	.set_pte = native_set_pte,
 	.set_pte_at = native_set_pte_at,
 	.set_pmd = native_set_pmd,
-	.set_pmd_at = native_set_pmd_at,
 	.pte_update = paravirt_nop,
 	.pte_update_defer = paravirt_nop,
-	.pmd_update = paravirt_nop,
-	.pmd_update_defer = paravirt_nop,
 
 	.ptep_modify_prot_start = __ptep_modify_prot_start,
 	.ptep_modify_prot_commit = __ptep_modify_prot_commit,
+
+#ifdef CONFIG_HIGHPTE
+	.kmap_atomic_pte = kmap_atomic,
+#endif
 
 #if PAGETABLE_LEVELS >= 3
 #ifdef CONFIG_X86_PAE
@@ -477,7 +464,6 @@ struct pv_mmu_ops pv_mmu_ops = {
 	.lazy_mode = {
 		.enter = paravirt_nop,
 		.leave = paravirt_nop,
-		.flush = paravirt_nop,
 	},
 
 	.set_fixmap = native_set_fixmap,

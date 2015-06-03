@@ -26,23 +26,7 @@
  *
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include "stv06xx_st6422.h"
-
-/* controls */
-enum e_ctrl {
-	BRIGHTNESS,
-	CONTRAST,
-	GAIN,
-	EXPOSURE,
-	NCTRLS		/* number of controls */
-};
-
-/* sensor settings */
-struct st6422_settings {
-	struct gspca_ctrl ctrls[NCTRLS];
-};
 
 static struct v4l2_pix_format st6422_mode[] = {
 	/* Note we actually get 124 lines of data, of which we skip the 4st
@@ -73,14 +57,9 @@ static struct v4l2_pix_format st6422_mode[] = {
 	},
 };
 
-/* V4L2 controls supported by the driver */
-static void st6422_set_brightness(struct gspca_dev *gspca_dev);
-static void st6422_set_contrast(struct gspca_dev *gspca_dev);
-static void st6422_set_gain(struct gspca_dev *gspca_dev);
-static void st6422_set_exposure(struct gspca_dev *gspca_dev);
-
-static const struct ctrl st6422_ctrl[NCTRLS] = {
-[BRIGHTNESS] = {
+static const struct ctrl st6422_ctrl[] = {
+#define BRIGHTNESS_IDX 0
+	{
 		{
 			.id		= V4L2_CID_BRIGHTNESS,
 			.type		= V4L2_CTRL_TYPE_INTEGER,
@@ -90,9 +69,11 @@ static const struct ctrl st6422_ctrl[NCTRLS] = {
 			.step		= 1,
 			.default_value  = 3
 		},
-		.set_control = st6422_set_brightness
+		.set = st6422_set_brightness,
+		.get = st6422_get_brightness
 	},
-[CONTRAST] = {
+#define CONTRAST_IDX 1
+	{
 		{
 			.id		= V4L2_CID_CONTRAST,
 			.type		= V4L2_CTRL_TYPE_INTEGER,
@@ -102,9 +83,11 @@ static const struct ctrl st6422_ctrl[NCTRLS] = {
 			.step		= 1,
 			.default_value  = 11
 		},
-		.set_control = st6422_set_contrast
+		.set = st6422_set_contrast,
+		.get = st6422_get_contrast
 	},
-[GAIN] = {
+#define GAIN_IDX 2
+	{
 		{
 			.id		= V4L2_CID_GAIN,
 			.type		= V4L2_CTRL_TYPE_INTEGER,
@@ -114,42 +97,48 @@ static const struct ctrl st6422_ctrl[NCTRLS] = {
 			.step		= 1,
 			.default_value  = 64
 		},
-		.set_control = st6422_set_gain
+		.set = st6422_set_gain,
+		.get = st6422_get_gain
 	},
-[EXPOSURE] = {
+#define EXPOSURE_IDX 3
+	{
 		{
 			.id		= V4L2_CID_EXPOSURE,
 			.type		= V4L2_CTRL_TYPE_INTEGER,
 			.name		= "Exposure",
 			.minimum	= 0,
-#define EXPOSURE_MAX 1023
-			.maximum	= EXPOSURE_MAX,
+			.maximum	= 1023,
 			.step		= 1,
 			.default_value  = 256
 		},
-		.set_control = st6422_set_exposure
+		.set = st6422_set_exposure,
+		.get = st6422_get_exposure
 	},
 };
 
 static int st6422_probe(struct sd *sd)
 {
-	struct st6422_settings *sensor_settings;
+	int i;
+	s32 *sensor_settings;
 
 	if (sd->bridge != BRIDGE_ST6422)
 		return -ENODEV;
 
-	pr_info("st6422 sensor detected\n");
+	info("st6422 sensor detected");
 
-	sensor_settings = kmalloc(sizeof *sensor_settings, GFP_KERNEL);
+	sensor_settings = kmalloc(ARRAY_SIZE(st6422_ctrl) * sizeof(s32),
+				  GFP_KERNEL);
 	if (!sensor_settings)
 		return -ENOMEM;
 
 	sd->gspca_dev.cam.cam_mode = st6422_mode;
 	sd->gspca_dev.cam.nmodes = ARRAY_SIZE(st6422_mode);
-	sd->gspca_dev.cam.ctrls = sensor_settings->ctrls;
 	sd->desc.ctrls = st6422_ctrl;
 	sd->desc.nctrls = ARRAY_SIZE(st6422_ctrl);
 	sd->sensor_priv = sensor_settings;
+
+	for (i = 0; i < sd->desc.nctrls; i++)
+		sensor_settings[i] = st6422_ctrl[i].qctrl.default_value;
 
 	return 0;
 }
@@ -162,11 +151,11 @@ static int st6422_init(struct sd *sd)
 		{ STV_ISO_ENABLE, 0x00 }, /* disable capture */
 		{ 0x1436, 0x00 },
 		{ 0x1432, 0x03 },	/* 0x00-0x1F brightness */
-		{ 0x143a, 0xf9 },	/* 0x00-0x0F contrast */
+		{ 0x143a, 0xF9 },	/* 0x00-0x0F contrast */
 		{ 0x0509, 0x38 },	/* R */
 		{ 0x050a, 0x38 },	/* G */
 		{ 0x050b, 0x38 },	/* B */
-		{ 0x050c, 0x2a },
+		{ 0x050c, 0x2A },
 		{ 0x050d, 0x01 },
 
 
@@ -224,6 +213,7 @@ static int st6422_init(struct sd *sd)
 		{ 0x150e, 0x8e },
 		{ 0x150f, 0x37 },
 		{ 0x15c0, 0x00 },
+		{ 0x15c1, 1023 }, /* 160x120, ISOC_PACKET_SIZE */
 		{ 0x15c3, 0x08 },	/* 0x04/0x14 ... test pictures ??? */
 
 
@@ -245,71 +235,25 @@ static void st6422_disconnect(struct sd *sd)
 	kfree(sd->sensor_priv);
 }
 
-static int setbrightness(struct sd *sd)
-{
-	struct st6422_settings *sensor_settings = sd->sensor_priv;
-
-	/* val goes from 0 -> 31 */
-	return stv06xx_write_bridge(sd, 0x1432,
-			sensor_settings->ctrls[BRIGHTNESS].val);
-}
-
-static int setcontrast(struct sd *sd)
-{
-	struct st6422_settings *sensor_settings = sd->sensor_priv;
-
-	/* Val goes from 0 -> 15 */
-	return stv06xx_write_bridge(sd, 0x143a,
-			sensor_settings->ctrls[CONTRAST].val | 0xf0);
-}
-
-static int setgain(struct sd *sd)
-{
-	struct st6422_settings *sensor_settings = sd->sensor_priv;
-	u8 gain;
-	int err;
-
-	gain = sensor_settings->ctrls[GAIN].val;
-
-	/* Set red, green, blue, gain */
-	err = stv06xx_write_bridge(sd, 0x0509, gain);
-	if (err < 0)
-		return err;
-
-	err = stv06xx_write_bridge(sd, 0x050a, gain);
-	if (err < 0)
-		return err;
-
-	err = stv06xx_write_bridge(sd, 0x050b, gain);
-	if (err < 0)
-		return err;
-
-	/* 2 mystery writes */
-	err = stv06xx_write_bridge(sd, 0x050c, 0x2a);
-	if (err < 0)
-		return err;
-
-	return stv06xx_write_bridge(sd, 0x050d, 0x01);
-}
-
-static int setexposure(struct sd *sd)
-{
-	struct st6422_settings *sensor_settings = sd->sensor_priv;
-	u16 expo;
-	int err;
-
-	expo = sensor_settings->ctrls[EXPOSURE].val;
-	err = stv06xx_write_bridge(sd, 0x143d, expo & 0xff);
-	if (err < 0)
-		return err;
-
-	return stv06xx_write_bridge(sd, 0x143e, expo >> 8);
-}
-
 static int st6422_start(struct sd *sd)
 {
-	int err;
+	int err, packet_size;
 	struct cam *cam = &sd->gspca_dev.cam;
+	s32 *sensor_settings = sd->sensor_priv;
+	struct usb_host_interface *alt;
+	struct usb_interface *intf;
+
+	intf = usb_ifnum_to_if(sd->gspca_dev.dev, sd->gspca_dev.iface);
+	alt = usb_altnum_to_altsetting(intf, sd->gspca_dev.alt);
+	if (!alt) {
+		PDEBUG(D_ERR, "Couldn't get altsetting");
+		return -EIO;
+	}
+
+	packet_size = le16_to_cpu(alt->endpoint[0].desc.wMaxPacketSize);
+	err = stv06xx_write_bridge(sd, 0x15c1, packet_size);
+	if (err < 0)
+		return err;
 
 	if (cam->cam_mode[sd->gspca_dev.curr_mode].priv)
 		err = stv06xx_write_bridge(sd, 0x1505, 0x0f);
@@ -318,25 +262,29 @@ static int st6422_start(struct sd *sd)
 	if (err < 0)
 		return err;
 
-	err = setbrightness(sd);
+	err = st6422_set_brightness(&sd->gspca_dev,
+				    sensor_settings[BRIGHTNESS_IDX]);
 	if (err < 0)
 		return err;
 
-	err = setcontrast(sd);
+	err = st6422_set_contrast(&sd->gspca_dev,
+				  sensor_settings[CONTRAST_IDX]);
 	if (err < 0)
 		return err;
 
-	err = setexposure(sd);
+	err = st6422_set_exposure(&sd->gspca_dev,
+				  sensor_settings[EXPOSURE_IDX]);
 	if (err < 0)
 		return err;
 
-	err = setgain(sd);
+	err = st6422_set_gain(&sd->gspca_dev,
+			      sensor_settings[GAIN_IDX]);
 	if (err < 0)
 		return err;
 
-	/* commit settings */
-	err = stv06xx_write_bridge(sd, 0x143f, 0x01);
-	return (err < 0) ? err : 0;
+	PDEBUG(D_STREAM, "Starting stream");
+
+	return 0;
 }
 
 static int st6422_stop(struct sd *sd)
@@ -346,58 +294,159 @@ static int st6422_stop(struct sd *sd)
 	return 0;
 }
 
-static void st6422_set_brightness(struct gspca_dev *gspca_dev)
+static int st6422_get_brightness(struct gspca_dev *gspca_dev, __s32 *val)
 {
-	int err;
 	struct sd *sd = (struct sd *) gspca_dev;
+	s32 *sensor_settings = sd->sensor_priv;
 
-	err = setbrightness(sd);
+	*val = sensor_settings[BRIGHTNESS_IDX];
 
-	/* commit settings */
-	if (err >= 0)
-		err = stv06xx_write_bridge(sd, 0x143f, 0x01);
+	PDEBUG(D_V4L2, "Read brightness %d", *val);
 
-	gspca_dev->usb_err = err;
+	return 0;
 }
 
-static void st6422_set_contrast(struct gspca_dev *gspca_dev)
+static int st6422_set_brightness(struct gspca_dev *gspca_dev, __s32 val)
 {
 	int err;
 	struct sd *sd = (struct sd *) gspca_dev;
+	s32 *sensor_settings = sd->sensor_priv;
 
-	err = setcontrast(sd);
+	sensor_settings[BRIGHTNESS_IDX] = val;
+
+	if (!gspca_dev->streaming)
+		return 0;
+
+	/* val goes from 0 -> 31 */
+	PDEBUG(D_V4L2, "Set brightness to %d", val);
+	err = stv06xx_write_bridge(sd, 0x1432, val);
+	if (err < 0)
+		return err;
 
 	/* commit settings */
-	if (err >= 0)
-		err = stv06xx_write_bridge(sd, 0x143f, 0x01);
-
-	gspca_dev->usb_err = err;
+	err = stv06xx_write_bridge(sd, 0x143f, 0x01);
+	return (err < 0) ? err : 0;
 }
 
-static void st6422_set_gain(struct gspca_dev *gspca_dev)
+static int st6422_get_contrast(struct gspca_dev *gspca_dev, __s32 *val)
 {
-	int err;
 	struct sd *sd = (struct sd *) gspca_dev;
+	s32 *sensor_settings = sd->sensor_priv;
 
-	err = setgain(sd);
+	*val = sensor_settings[CONTRAST_IDX];
 
-	/* commit settings */
-	if (err >= 0)
-		err = stv06xx_write_bridge(sd, 0x143f, 0x01);
+	PDEBUG(D_V4L2, "Read contrast %d", *val);
 
-	gspca_dev->usb_err = err;
+	return 0;
 }
 
-static void st6422_set_exposure(struct gspca_dev *gspca_dev)
+static int st6422_set_contrast(struct gspca_dev *gspca_dev, __s32 val)
 {
 	int err;
 	struct sd *sd = (struct sd *) gspca_dev;
+	s32 *sensor_settings = sd->sensor_priv;
 
-	err = setexposure(sd);
+	sensor_settings[CONTRAST_IDX] = val;
+
+	if (!gspca_dev->streaming)
+		return 0;
+
+	/* Val goes from 0 -> 15 */
+	PDEBUG(D_V4L2, "Set contrast to %d\n", val);
+	err = stv06xx_write_bridge(sd, 0x143a, 0xf0 | val);
+	if (err < 0)
+		return err;
 
 	/* commit settings */
-	if (err >= 0)
-		err = stv06xx_write_bridge(sd, 0x143f, 0x01);
+	err = stv06xx_write_bridge(sd, 0x143f, 0x01);
+	return (err < 0) ? err : 0;
+}
 
-	gspca_dev->usb_err = err;
+static int st6422_get_gain(struct gspca_dev *gspca_dev, __s32 *val)
+{
+	struct sd *sd = (struct sd *) gspca_dev;
+	s32 *sensor_settings = sd->sensor_priv;
+
+	*val = sensor_settings[GAIN_IDX];
+
+	PDEBUG(D_V4L2, "Read gain %d", *val);
+
+	return 0;
+}
+
+static int st6422_set_gain(struct gspca_dev *gspca_dev, __s32 val)
+{
+	int err;
+	struct sd *sd = (struct sd *) gspca_dev;
+	s32 *sensor_settings = sd->sensor_priv;
+
+	sensor_settings[GAIN_IDX] = val;
+
+	if (!gspca_dev->streaming)
+		return 0;
+
+	PDEBUG(D_V4L2, "Set gain to %d", val);
+
+	/* Set red, green, blue, gain */
+	err = stv06xx_write_bridge(sd, 0x0509, val);
+	if (err < 0)
+		return err;
+
+	err = stv06xx_write_bridge(sd, 0x050a, val);
+	if (err < 0)
+		return err;
+
+	err = stv06xx_write_bridge(sd, 0x050b, val);
+	if (err < 0)
+		return err;
+
+	/* 2 mystery writes */
+	err = stv06xx_write_bridge(sd, 0x050c, 0x2a);
+	if (err < 0)
+		return err;
+
+	err = stv06xx_write_bridge(sd, 0x050d, 0x01);
+	if (err < 0)
+		return err;
+
+	/* commit settings */
+	err = stv06xx_write_bridge(sd, 0x143f, 0x01);
+	return (err < 0) ? err : 0;
+}
+
+static int st6422_get_exposure(struct gspca_dev *gspca_dev, __s32 *val)
+{
+	struct sd *sd = (struct sd *) gspca_dev;
+	s32 *sensor_settings = sd->sensor_priv;
+
+	*val = sensor_settings[EXPOSURE_IDX];
+
+	PDEBUG(D_V4L2, "Read exposure %d", *val);
+
+	return 0;
+}
+
+static int st6422_set_exposure(struct gspca_dev *gspca_dev, __s32 val)
+{
+	int err;
+	struct sd *sd = (struct sd *) gspca_dev;
+	s32 *sensor_settings = sd->sensor_priv;
+
+	sensor_settings[EXPOSURE_IDX] = val;
+
+	if (!gspca_dev->streaming)
+		return 0;
+
+	PDEBUG(D_V4L2, "Set exposure to %d\n", val);
+	err = stv06xx_write_bridge(sd, 0x143d, val & 0xff);
+	if (err < 0)
+		return err;
+
+	err = stv06xx_write_bridge(sd, 0x143e, val >> 8);
+	if (err < 0)
+		return err;
+
+	/* commit settings */
+	err = stv06xx_write_bridge(sd, 0x143f, 0x01);
+	return (err < 0) ? err : 0;
 }

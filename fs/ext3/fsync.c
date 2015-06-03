@@ -22,9 +22,14 @@
  * we can depend on generic_block_fdatasync() to sync the data blocks.
  */
 
+#include <linux/time.h>
 #include <linux/blkdev.h>
+#include <linux/fs.h>
+#include <linux/sched.h>
 #include <linux/writeback.h>
-#include "ext3.h"
+#include <linux/jbd.h>
+#include <linux/ext3_fs.h>
+#include <linux/ext3_jbd.h>
 
 /*
  * akpm: A new design for ext3_sync_file().
@@ -38,22 +43,16 @@
  * inode to disk.
  */
 
-int ext3_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
+int ext3_sync_file(struct file * file, struct dentry *dentry, int datasync)
 {
-	struct inode *inode = file->f_mapping->host;
+	struct inode *inode = dentry->d_inode;
 	struct ext3_inode_info *ei = EXT3_I(inode);
 	journal_t *journal = EXT3_SB(inode->i_sb)->s_journal;
-	int ret, needs_barrier = 0;
+	int ret = 0;
 	tid_t commit_tid;
-
-	trace_ext3_sync_file_enter(file, datasync);
 
 	if (inode->i_sb->s_flags & MS_RDONLY)
 		return 0;
-
-	ret = filemap_write_and_wait_range(inode->i_mapping, start, end);
-	if (ret)
-		goto out;
 
 	J_ASSERT(ext3_journal_current_handle() == NULL);
 
@@ -81,20 +80,18 @@ int ext3_sync_file(struct file *file, loff_t start, loff_t end, int datasync)
 	else
 		commit_tid = atomic_read(&ei->i_sync_tid);
 
-	if (test_opt(inode->i_sb, BARRIER) &&
-	    !journal_trans_will_send_data_barrier(journal, commit_tid))
-		needs_barrier = 1;
-	log_start_commit(journal, commit_tid);
-	ret = log_wait_commit(journal, commit_tid);
+	if (log_start_commit(journal, commit_tid)) {
+		log_wait_commit(journal, commit_tid);
+		goto out;
+	}
 
 	/*
 	 * In case we didn't commit a transaction, we have to flush
 	 * disk caches manually so that data really is on persistent
 	 * storage
 	 */
-	if (needs_barrier)
-		blkdev_issue_flush(inode->i_sb->s_bdev, GFP_KERNEL, NULL);
+	if (test_opt(inode->i_sb, BARRIER))
+		blkdev_issue_flush(inode->i_sb->s_bdev, NULL);
 out:
-	trace_ext3_sync_file_exit(inode, ret);
 	return ret;
 }

@@ -6,11 +6,11 @@
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
+#include <linux/smp_lock.h>
 #include <linux/miscdevice.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/random.h>
-#include <linux/slab.h>
 #include <asm/debug.h>
 #include <asm/uaccess.h>
 
@@ -49,6 +49,7 @@ static unsigned char parm_block[32] = {
 
 static int prng_open(struct inode *inode, struct file *file)
 {
+	cycle_kernel_lock();
 	return nonseekable_open(inode, file);
 }
 
@@ -76,7 +77,7 @@ static void prng_seed(int nbytes)
 
 	/* Add the entropy */
 	while (nbytes >= 8) {
-		*((__u64 *)parm_block) ^= *((__u64 *)(buf+i));
+		*((__u64 *)parm_block) ^= *((__u64 *)buf+i*8);
 		prng_add_entropy();
 		i += 8;
 		nbytes -= 8;
@@ -152,7 +153,6 @@ static const struct file_operations prng_fops = {
 	.open		= &prng_open,
 	.release	= NULL,
 	.read		= &prng_read,
-	.llseek		= noop_llseek,
 };
 
 static struct miscdevice prng_dev = {
@@ -166,7 +166,7 @@ static int __init prng_init(void)
 	int ret;
 
 	/* check if the CPU has a PRNG */
-	if (!crypt_s390_func_available(KMC_PRNG, CRYPT_S390_MSA))
+	if (!crypt_s390_func_available(KMC_PRNG))
 		return -EOPNOTSUPP;
 
 	if (prng_chunk_size < 8)

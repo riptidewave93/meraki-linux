@@ -17,7 +17,6 @@
 #include <linux/init.h>
 #include <linux/bootmem.h>
 #include <linux/irq.h>
-#include <linux/of_pci.h>
 
 #include <asm/sections.h>
 #include <asm/io.h>
@@ -236,7 +235,7 @@ static int chaos_validate_dev(struct pci_bus *bus, int devfn, int offset)
 
 	if (offset >= 0x100)
 		return  PCIBIOS_BAD_REGISTER_NUMBER;
-	np = of_pci_find_child_device(bus->dev.of_node, devfn);
+	np = pci_busdev_to_OF_node(bus, devfn);
 	if (np == NULL)
 		return PCIBIOS_DEVICE_NOT_FOUND;
 
@@ -300,10 +299,10 @@ static void __init setup_chaos(struct pci_controller *hose,
  * This function deals with some "special cases" devices.
  *
  *  0 -> No special case
- *  1 -> Skip the device but act as if the access was successful
+ *  1 -> Skip the device but act as if the access was successfull
  *       (return 0xff's on reads, eventually, cache config space
  *       accesses in a later version)
- * -1 -> Hide the device (unsuccessful access)
+ * -1 -> Hide the device (unsuccessful acess)
  */
 static int u3_ht_skip_device(struct pci_controller *hose,
 			     struct pci_bus *bus, unsigned int devfn)
@@ -561,20 +560,6 @@ static struct pci_ops u4_pcie_pci_ops =
 	.write = u4_pcie_write_config,
 };
 
-static void __devinit pmac_pci_fixup_u4_of_node(struct pci_dev *dev)
-{
-	/* Apple's device-tree "hides" the root complex virtual P2P bridge
-	 * on U4. However, Linux sees it, causing the PCI <-> OF matching
-	 * code to fail to properly match devices below it. This works around
-	 * it by setting the node of the bridge to point to the PHB node,
-	 * which is not entirely correct but fixes the matching code and
-	 * doesn't break anything else. It's also the simplest possible fix.
-	 */
-	if (dev->dev.of_node == NULL)
-		dev->dev.of_node = pcibios_get_phb_of_node(dev->bus);
-}
-DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_APPLE, 0x5b, pmac_pci_fixup_u4_of_node);
-
 #endif /* CONFIG_PPC64 */
 
 #ifdef CONFIG_PPC32
@@ -746,7 +731,7 @@ static void __init setup_bandit(struct pci_controller *hose,
 static int __init setup_uninorth(struct pci_controller *hose,
 				 struct resource *addr)
 {
-	pci_add_flags(PCI_REASSIGN_ALL_BUS);
+	ppc_pci_add_flags(PPC_PCI_REASSIGN_ALL_BUS);
 	has_uninorth = 1;
 	hose->ops = &macrisc_pci_ops;
 	hose->cfg_addr = ioremap(addr->start + 0x800000, 0x1000);
@@ -853,7 +838,8 @@ static void __init setup_u3_ht(struct pci_controller* hose)
 	 * into cfg_addr
 	 */
 	hose->cfg_data = ioremap(cfg_res.start, 0x02000000);
-	hose->cfg_addr = ioremap(self_res.start, resource_size(&self_res));
+	hose->cfg_addr = ioremap(self_res.start,
+				 self_res.end - self_res.start + 1);
 
 	/*
 	 * /ht node doesn't expose a "ranges" property, we read the register
@@ -1002,7 +988,7 @@ void __devinit pmac_pci_irq_fixup(struct pci_dev *dev)
 	    dev->vendor == PCI_VENDOR_ID_DEC &&
 	    dev->device == PCI_DEVICE_ID_DEC_TULIP_PLUS) {
 		dev->irq = irq_create_mapping(NULL, 60);
-		irq_set_irq_type(dev->irq, IRQ_TYPE_LEVEL_LOW);
+		set_irq_type(dev->irq, IRQ_TYPE_LEVEL_LOW);
 	}
 #endif /* CONFIG_PPC32 */
 }
@@ -1012,7 +998,7 @@ void __init pmac_pci_init(void)
 	struct device_node *np, *root;
 	struct device_node *ht = NULL;
 
-	pci_set_flags(PCI_CAN_SKIP_ISA_ALIGN);
+	ppc_pci_set_flags(PPC_PCI_CAN_SKIP_ISA_ALIGN);
 
 	root = of_find_node_by_path("/");
 	if (root == NULL) {
@@ -1059,6 +1045,9 @@ void __init pmac_pci_init(void)
 	}
 	/* pmac_check_ht_link(); */
 
+	/* We can allocate missing resources if any */
+	pci_probe_only = 0;
+
 #else /* CONFIG_PPC64 */
 	init_p2pbridge();
 	init_second_ohare();
@@ -1068,7 +1057,7 @@ void __init pmac_pci_init(void)
 	 * some offset between bus number and domains for now when we
 	 * assign all busses should help for now
 	 */
-	if (pci_has_flag(PCI_REASSIGN_ALL_BUS))
+	if (ppc_pci_has_flag(PPC_PCI_REASSIGN_ALL_BUS))
 		pcibios_assign_bus_offset = 0x10;
 #endif
 }
@@ -1166,11 +1155,13 @@ void __init pmac_pcibios_after_init(void)
 			pmac_call_feature(PMAC_FTR_1394_CABLE_POWER, nd, 0, 0);
 		}
 	}
+	of_node_put(nd);
 	for_each_node_by_name(nd, "ethernet") {
 		if (nd->parent && of_device_is_compatible(nd, "gmac")
 		    && of_device_is_compatible(nd->parent, "uni-north"))
 			pmac_call_feature(PMAC_FTR_GMAC_ENABLE, nd, 0, 0);
 	}
+	of_node_put(nd);
 }
 
 void pmac_pci_fixup_cardbus(struct pci_dev* dev)
@@ -1334,7 +1325,8 @@ static void fixup_u4_pcie(struct pci_dev* dev)
 		 */
 		if (r->start >= 0xf0000000 && r->start < 0xf3000000)
 			continue;
-		if (!region || resource_size(r) > resource_size(region))
+		if (!region || (r->end - r->start) >
+		    (region->end - region->start))
 			region = r;
 	}
 	/* Nothing found, bail */

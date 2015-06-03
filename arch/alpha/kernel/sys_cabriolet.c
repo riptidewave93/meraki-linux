@@ -18,6 +18,7 @@
 #include <linux/bitops.h>
 
 #include <asm/ptrace.h>
+#include <asm/system.h>
 #include <asm/dma.h>
 #include <asm/irq.h>
 #include <asm/mmu_context.h>
@@ -32,7 +33,7 @@
 #include "irq_impl.h"
 #include "pci_impl.h"
 #include "machvec_impl.h"
-#include "pc873xx.h"
+
 
 /* Note mask bit is true for DISABLED irqs.  */
 static unsigned long cached_irq_mask = ~0UL;
@@ -45,22 +46,39 @@ cabriolet_update_irq_hw(unsigned int irq, unsigned long mask)
 }
 
 static inline void
-cabriolet_enable_irq(struct irq_data *d)
+cabriolet_enable_irq(unsigned int irq)
 {
-	cabriolet_update_irq_hw(d->irq, cached_irq_mask &= ~(1UL << d->irq));
+	cabriolet_update_irq_hw(irq, cached_irq_mask &= ~(1UL << irq));
 }
 
 static void
-cabriolet_disable_irq(struct irq_data *d)
+cabriolet_disable_irq(unsigned int irq)
 {
-	cabriolet_update_irq_hw(d->irq, cached_irq_mask |= 1UL << d->irq);
+	cabriolet_update_irq_hw(irq, cached_irq_mask |= 1UL << irq);
+}
+
+static unsigned int
+cabriolet_startup_irq(unsigned int irq)
+{ 
+	cabriolet_enable_irq(irq);
+	return 0; /* never anything pending */
+}
+
+static void
+cabriolet_end_irq(unsigned int irq)
+{ 
+	if (!(irq_desc[irq].status & (IRQ_DISABLED|IRQ_INPROGRESS)))
+		cabriolet_enable_irq(irq);
 }
 
 static struct irq_chip cabriolet_irq_type = {
 	.name		= "CABRIOLET",
-	.irq_unmask	= cabriolet_enable_irq,
-	.irq_mask	= cabriolet_disable_irq,
-	.irq_mask_ack	= cabriolet_disable_irq,
+	.startup	= cabriolet_startup_irq,
+	.shutdown	= cabriolet_disable_irq,
+	.enable		= cabriolet_enable_irq,
+	.disable	= cabriolet_disable_irq,
+	.ack		= cabriolet_disable_irq,
+	.end		= cabriolet_end_irq,
 };
 
 static void 
@@ -104,9 +122,8 @@ common_init_irq(void (*srm_dev_int)(unsigned long v))
 		outb(0xff, 0x806);
 
 		for (i = 16; i < 35; ++i) {
-			irq_set_chip_and_handler(i, &cabriolet_irq_type,
-						 handle_level_irq);
-			irq_set_status_flags(i, IRQ_LEVEL);
+			irq_desc[i].status = IRQ_DISABLED | IRQ_LEVEL;
+			irq_desc[i].chip = &cabriolet_irq_type;
 		}
 	}
 
@@ -174,7 +191,7 @@ pc164_init_irq(void)
  */
 
 static inline int __init
-eb66p_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+eb66p_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	static char irq_tab[5][5] __initdata = {
 		/*INT  INTA  INTB  INTC   INTD */
@@ -204,7 +221,7 @@ eb66p_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
  */
 
 static inline int __init
-cabriolet_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+cabriolet_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	static char irq_tab[5][5] __initdata = {
 		/*INT   INTA  INTB  INTC   INTD */
@@ -219,30 +236,17 @@ cabriolet_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
 }
 
 static inline void __init
-cabriolet_enable_ide(void)
-{
-	if (pc873xx_probe() == -1) {
-		printk(KERN_ERR "Probing for PC873xx Super IO chip failed.\n");
-	 } else {
-		printk(KERN_INFO "Found %s Super IO chip at 0x%x\n",
-			pc873xx_get_model(), pc873xx_get_base());
-
-		pc873xx_enable_ide();
-	}
-}
-
-static inline void __init
 cabriolet_init_pci(void)
 {
 	common_init_pci();
-	cabriolet_enable_ide();
+	ns87312_enable_ide(0x398);
 }
 
 static inline void __init
 cia_cab_init_pci(void)
 {
 	cia_init_pci();
-	cabriolet_enable_ide();
+	ns87312_enable_ide(0x398);
 }
 
 /*
@@ -288,7 +292,7 @@ cia_cab_init_pci(void)
  */
 
 static inline int __init
-alphapc164_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+alphapc164_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	static char irq_tab[7][5] __initdata = {
 		/*INT   INTA  INTB   INTC   INTD */

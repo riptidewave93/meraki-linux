@@ -14,11 +14,13 @@
 #include <linux/sched.h>
 #include <linux/console.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/major.h>
 #include <linux/param.h>
 #include <linux/seq_file.h>
 #include <linux/serial.h>
+#include <linux/serialP.h>
 
 #include <asm/uaccess.h>
 #include <asm/irq.h>
@@ -36,7 +38,6 @@
 #define SERIAL_TIMER_VALUE (20 * HZ)
 
 static struct tty_driver *serial_driver;
-static struct tty_port serial_port;
 static struct timer_list serial_timer;
 
 static DEFINE_SPINLOCK(timer_lock);
@@ -68,10 +69,17 @@ static void rs_poll(unsigned long);
 
 static int rs_open(struct tty_struct *tty, struct file * filp)
 {
-	tty->port = &serial_port;
+	int line = tty->index;
+
+	if ((line < 0) || (line >= SERIAL_MAX_NUM_LINES))
+		return -ENODEV;
+
 	spin_lock(&timer_lock);
+
 	if (tty->count == 1) {
-		setup_timer(&serial_timer, rs_poll, (unsigned long)tty);
+		init_timer(&serial_timer);
+		serial_timer.data = (unsigned long) tty;
+		serial_timer.function = rs_poll;
 		mod_timer(&serial_timer, jiffies + SERIAL_TIMER_VALUE);
 	}
 	spin_unlock(&timer_lock);
@@ -92,10 +100,10 @@ static int rs_open(struct tty_struct *tty, struct file * filp)
  */
 static void rs_close(struct tty_struct *tty, struct file * filp)
 {
-	spin_lock_bh(&timer_lock);
+	spin_lock(&timer_lock);
 	if (tty->count == 1)
 		del_timer_sync(&serial_timer);
-	spin_unlock_bh(&timer_lock);
+	spin_unlock(&timer_lock);
 }
 
 
@@ -188,7 +196,7 @@ static const struct file_operations rs_proc_fops = {
 	.release	= single_release,
 };
 
-static const struct tty_operations serial_ops = {
+static struct tty_operations serial_ops = {
 	.open = rs_open,
 	.close = rs_close,
 	.write = rs_write,
@@ -203,14 +211,13 @@ static const struct tty_operations serial_ops = {
 
 int __init rs_init(void)
 {
-	tty_port_init(&serial_port);
-
-	serial_driver = alloc_tty_driver(SERIAL_MAX_NUM_LINES);
+	serial_driver = alloc_tty_driver(1);
 
 	printk ("%s %s\n", serial_name, serial_version);
 
 	/* Initialize the tty_driver structure */
 
+	serial_driver->owner = THIS_MODULE;
 	serial_driver->driver_name = "iss_serial";
 	serial_driver->name = "ttyS";
 	serial_driver->major = TTY_MAJOR;

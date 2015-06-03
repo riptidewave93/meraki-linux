@@ -82,10 +82,10 @@ int alloc_event_buffer(void)
 {
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&oprofilefs_lock, flags);
+	spin_lock_irqsave(&oprofilefs_lock, flags);
 	buffer_size = oprofile_buffer_size;
 	buffer_watershed = oprofile_buffer_watershed;
-	raw_spin_unlock_irqrestore(&oprofilefs_lock, flags);
+	spin_unlock_irqrestore(&oprofilefs_lock, flags);
 
 	if (buffer_watershed >= buffer_size)
 		return -EINVAL;
@@ -135,7 +135,7 @@ static int event_buffer_open(struct inode *inode, struct file *file)
 	 * echo 1 >/dev/oprofile/enable
 	 */
 
-	return nonseekable_open(inode, file);
+	return 0;
 
 fail:
 	dcookie_unregister(file->private_data);
@@ -205,5 +205,4 @@ const struct file_operations event_buffer_fops = {
 	.open		= event_buffer_open,
 	.release	= event_buffer_release,
 	.read		= event_buffer_read,
-	.llseek		= no_llseek,
 };

@@ -26,6 +26,7 @@
 #include <asm/processor.h>
 #include <asm/irq.h>
 #include <asm/sal.h>
+#include <asm/system.h>
 #include <asm/delay.h>
 #include <asm/io.h>
 #include <asm/smp.h>
@@ -495,13 +496,13 @@ static int sn2_ptc_seq_show(struct seq_file *file, void *data)
 		seq_printf(file, "cpu %d %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld %ld\n", cpu, stat->ptc_l,
 				stat->change_rid, stat->shub_ptc_flushes, stat->nodes_flushed,
 				stat->deadlocks,
-				1000 * stat->lock_itc_clocks / per_cpu(ia64_cpu_info, cpu).cyc_per_usec,
-				1000 * stat->shub_itc_clocks / per_cpu(ia64_cpu_info, cpu).cyc_per_usec,
-				1000 * stat->shub_itc_clocks_max / per_cpu(ia64_cpu_info, cpu).cyc_per_usec,
+				1000 * stat->lock_itc_clocks / per_cpu(cpu_info, cpu).cyc_per_usec,
+				1000 * stat->shub_itc_clocks / per_cpu(cpu_info, cpu).cyc_per_usec,
+				1000 * stat->shub_itc_clocks_max / per_cpu(cpu_info, cpu).cyc_per_usec,
 				stat->shub_ptc_flushes_not_my_mm,
 				stat->deadlocks2,
 				stat->shub_ipi_flushes,
-				1000 * stat->shub_ipi_flushes_itc_clocks / per_cpu(ia64_cpu_info, cpu).cyc_per_usec);
+				1000 * stat->shub_ipi_flushes_itc_clocks / per_cpu(cpu_info, cpu).cyc_per_usec);
 	}
 	return 0;
 }

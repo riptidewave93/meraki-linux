@@ -1,7 +1,6 @@
 #include <linux/module.h>
 #include <linux/clk.h>
 #include <linux/err.h>
-#include <linux/slab.h>
 #include <linux/io.h>
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
@@ -329,7 +328,7 @@ static int __init pwm_probe(struct platform_device *pdev)
 	p->pdev = pdev;
 	p->mask = *mp;
 	p->irq = irq;
-	p->base = ioremap(r->start, resource_size(r));
+	p->base = ioremap(r->start, r->end - r->start + 1);
 	if (!p->base)
 		goto fail;
 	p->clk = clk_get(&pdev->dev, "pwm_clk");

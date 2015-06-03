@@ -10,7 +10,6 @@
  */
 
 #include <linux/errno.h>
-#include <linux/gfp.h>
 #include <linux/hdlc.h>
 #include <linux/if_arp.h>
 #include <linux/inetdevice.h>
@@ -22,6 +21,7 @@
 #include <linux/poll.h>
 #include <linux/rtnetlink.h>
 #include <linux/skbuff.h>
+#include <linux/slab.h>
 #include <net/x25device.h>
 
 static int x25_ioctl(struct net_device *dev, struct ifreq *ifr);
@@ -34,7 +34,7 @@ static void x25_connect_disconnect(struct net_device *dev, int reason, int code)
 	unsigned char *ptr;
 
 	if ((skb = dev_alloc_skb(1)) == NULL) {
-		netdev_err(dev, "out of memory\n");
+		printk(KERN_ERR "%s: out of memory\n", dev->name);
 		return;
 	}
 
@@ -49,14 +49,14 @@ static void x25_connect_disconnect(struct net_device *dev, int reason, int code)
 
 static void x25_connected(struct net_device *dev, int reason)
 {
-	x25_connect_disconnect(dev, reason, X25_IFACE_CONNECT);
+	x25_connect_disconnect(dev, reason, 1);
 }
 
 
 
 static void x25_disconnected(struct net_device *dev, int reason)
 {
-	x25_connect_disconnect(dev, reason, X25_IFACE_DISCONNECT);
+	x25_connect_disconnect(dev, reason, 2);
 }
 
 
@@ -71,7 +71,7 @@ static int x25_data_indication(struct net_device *dev, struct sk_buff *skb)
 		return NET_RX_DROP;
 
 	ptr  = skb->data;
-	*ptr = X25_IFACE_DATA;
+	*ptr = 0;
 
 	skb->protocol = x25_type_trans(skb, dev);
 	return netif_rx(skb);
@@ -94,31 +94,33 @@ static netdev_tx_t x25_xmit(struct sk_buff *skb, struct net_device *dev)
 
 	/* X.25 to LAPB */
 	switch (skb->data[0]) {
-	case X25_IFACE_DATA:	/* Data to be transmitted */
+	case 0:		/* Data to be transmitted */
 		skb_pull(skb, 1);
 		if ((result = lapb_data_request(dev, skb)) != LAPB_OK)
 			dev_kfree_skb(skb);
 		return NETDEV_TX_OK;
 
-	case X25_IFACE_CONNECT:
+	case 1:
 		if ((result = lapb_connect_request(dev))!= LAPB_OK) {
 			if (result == LAPB_CONNECTED)
 				/* Send connect confirm. msg to level 3 */
 				x25_connected(dev, 0);
 			else
-				netdev_err(dev, "LAPB connect request failed, error code = %i\n",
-					   result);
+				printk(KERN_ERR "%s: LAPB connect request "
+				       "failed, error code = %i\n",
+				       dev->name, result);
 		}
 		break;
 
-	case X25_IFACE_DISCONNECT:
+	case 2:
 		if ((result = lapb_disconnect_request(dev)) != LAPB_OK) {
 			if (result == LAPB_NOTCONNECTED)
 				/* Send disconnect confirm. msg to level 3 */
 				x25_disconnected(dev, 0);
 			else
-				netdev_err(dev, "LAPB disconnect request failed, error code = %i\n",
-					   result);
+				printk(KERN_ERR "%s: LAPB disconnect request "
+				       "failed, error code = %i\n",
+				       dev->name, result);
 		}
 		break;
 
@@ -134,15 +136,15 @@ static netdev_tx_t x25_xmit(struct sk_buff *skb, struct net_device *dev)
 
 static int x25_open(struct net_device *dev)
 {
+	struct lapb_register_struct cb;
 	int result;
-	static const struct lapb_register_struct cb = {
-		.connect_confirmation = x25_connected,
-		.connect_indication = x25_connected,
-		.disconnect_confirmation = x25_disconnected,
-		.disconnect_indication = x25_disconnected,
-		.data_indication = x25_data_indication,
-		.data_transmit = x25_data_transmit,
-	};
+
+	cb.connect_confirmation = x25_connected;
+	cb.connect_indication = x25_connected;
+	cb.disconnect_confirmation = x25_disconnected;
+	cb.disconnect_indication = x25_disconnected;
+	cb.data_indication = x25_data_indication;
+	cb.data_transmit = x25_data_transmit;
 
 	result = lapb_register(dev, &cb);
 	if (result != LAPB_OK)
@@ -200,10 +202,10 @@ static int x25_ioctl(struct net_device *dev, struct ifreq *ifr)
 		return 0; /* return protocol only, no settable parameters */
 
 	case IF_PROTO_X25:
-		if (!capable(CAP_NET_ADMIN))
+		if(!capable(CAP_NET_ADMIN))
 			return -EPERM;
 
-		if (dev->flags & IFF_UP)
+		if(dev->flags & IFF_UP)
 			return -EBUSY;
 
 		result=hdlc->attach(dev, ENCODING_NRZ,PARITY_CRC16_PR1_CCITT);

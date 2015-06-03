@@ -62,16 +62,16 @@
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/list.h>
-#include <linux/slab.h>
 #include <linux/usb.h>
 #include <linux/usb/isp116x.h>
-#include <linux/usb/hcd.h>
 #include <linux/platform_device.h>
 
 #include <asm/io.h>
 #include <asm/irq.h>
+#include <asm/system.h>
 #include <asm/byteorder.h>
 
+#include "../core/hcd.h"
 #include "isp116x.h"
 
 #define DRIVER_VERSION	"03 Nov 2005"
@@ -611,7 +611,6 @@ static irqreturn_t isp116x_irq(struct usb_hcd *hcd)
 			/* IRQ's are off, we do no DMA,
 			   perfectly ready to die ... */
 			hcd->state = HC_STATE_HALT;
-			usb_hc_died(hcd);
 			ret = IRQ_HANDLED;
 			goto done;
 		}
@@ -951,9 +950,9 @@ static void isp116x_hub_descriptor(struct isp116x *isp116x,
 	/* Power switching, device type, overcurrent. */
 	desc->wHubCharacteristics = cpu_to_le16((u16) ((reg >> 8) & 0x1f));
 	desc->bPwrOn2PwrGood = (u8) ((reg >> 24) & 0xff);
-	/* ports removable, and legacy PortPwrCtrlMask */
-	desc->u.hs.DeviceRemovable[0] = 0;
-	desc->u.hs.DeviceRemovable[1] = ~0;
+	/* two bitmaps:  ports removable, and legacy PortPwrCtrlMask */
+	desc->bitmap[0] = 0;
+	desc->bitmap[1] = ~0;
 }
 
 /* Perform reset of a given port.
@@ -1557,6 +1556,8 @@ static int isp116x_remove(struct platform_device *pdev)
 	return 0;
 }
 
+#define resource_len(r) (((r)->end - (r)->start) + 1)
+
 static int __devinit isp116x_probe(struct platform_device *pdev)
 {
 	struct usb_hcd *hcd;
@@ -1567,9 +1568,6 @@ static int __devinit isp116x_probe(struct platform_device *pdev)
 	int irq;
 	int ret = 0;
 	unsigned long irqflags;
-
-	if (usb_disabled())
-		return -ENODEV;
 
 	if (pdev->num_resources < 3) {
 		ret = -ENODEV;
@@ -1598,7 +1596,7 @@ static int __devinit isp116x_probe(struct platform_device *pdev)
 		ret = -EBUSY;
 		goto err1;
 	}
-	addr_reg = ioremap(addr->start, resource_size(addr));
+	addr_reg = ioremap(addr->start, resource_len(addr));
 	if (addr_reg == NULL) {
 		ret = -ENOMEM;
 		goto err2;
@@ -1607,7 +1605,7 @@ static int __devinit isp116x_probe(struct platform_device *pdev)
 		ret = -EBUSY;
 		goto err3;
 	}
-	data_reg = ioremap(data->start, resource_size(data));
+	data_reg = ioremap(data->start, resource_len(data));
 	if (data_reg == NULL) {
 		ret = -ENOMEM;
 		goto err4;
@@ -1641,7 +1639,7 @@ static int __devinit isp116x_probe(struct platform_device *pdev)
 		goto err6;
 	}
 
-	ret = usb_add_hcd(hcd, irq, irqflags);
+	ret = usb_add_hcd(hcd, irq, irqflags | IRQF_DISABLED);
 	if (ret)
 		goto err6;
 
@@ -1710,4 +1708,22 @@ static struct platform_driver isp116x_driver = {
 	},
 };
 
-module_platform_driver(isp116x_driver);
+/*-----------------------------------------------------------------*/
+
+static int __init isp116x_init(void)
+{
+	if (usb_disabled())
+		return -ENODEV;
+
+	INFO("driver %s, %s\n", hcd_name, DRIVER_VERSION);
+	return platform_driver_register(&isp116x_driver);
+}
+
+module_init(isp116x_init);
+
+static void __exit isp116x_cleanup(void)
+{
+	platform_driver_unregister(&isp116x_driver);
+}
+
+module_exit(isp116x_cleanup);

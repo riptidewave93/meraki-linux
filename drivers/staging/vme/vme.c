@@ -1,8 +1,8 @@
 /*
  * VME Bridge Framework
  *
- * Author: Martyn Welch <martyn.welch@ge.com>
- * Copyright 2008 GE Intelligent Platforms Embedded Systems, Inc.
+ * Author: Martyn Welch <martyn.welch@gefanuc.com>
+ * Copyright 2008 GE Fanuc Intelligent Platforms Embedded Systems, Inc.
  *
  * Based on work by Tom Armistead and Ajit Prem
  * Copyright 2004 Motorola Inc.
@@ -13,6 +13,7 @@
  * option) any later version.
  */
 
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/mm.h>
@@ -29,22 +30,24 @@
 #include <linux/syscalls.h>
 #include <linux/mutex.h>
 #include <linux/spinlock.h>
-#include <linux/slab.h>
 
 #include "vme.h"
 #include "vme_bridge.h"
 
-/* Bitmask and list of registered buses both protected by common mutex */
+/* Bitmask and mutex to keep track of bridge numbers */
 static unsigned int vme_bus_numbers;
-static LIST_HEAD(vme_bus_list);
-static DEFINE_MUTEX(vme_buses_lock);
+DEFINE_MUTEX(vme_bus_num_mtx);
 
-static void __exit vme_exit(void);
-static int __init vme_init(void);
+static void __exit vme_exit (void);
+static int __init vme_init (void);
 
-static struct vme_dev *dev_to_vme_dev(struct device *dev)
+
+/*
+ * Find the bridge resource associated with a specific device resource
+ */
+static struct vme_bridge *dev_to_bridge(struct device *dev)
 {
-	return container_of(dev, struct vme_dev, dev);
+	return dev->platform_data;
 }
 
 /*
@@ -80,71 +83,65 @@ static struct vme_bridge *find_bridge(struct vme_resource *resource)
 /*
  * Allocate a contiguous block of memory for use by the driver. This is used to
  * create the buffers for the slave windows.
+ *
+ * XXX VME bridges could be available on buses other than PCI. At the momment
+ *     this framework only supports PCI devices.
  */
-void *vme_alloc_consistent(struct vme_resource *resource, size_t size,
+void * vme_alloc_consistent(struct vme_resource *resource, size_t size,
 	dma_addr_t *dma)
 {
 	struct vme_bridge *bridge;
+	struct pci_dev *pdev;
 
-	if (resource == NULL) {
-		printk(KERN_ERR "No resource\n");
+	if(resource == NULL) {
+		printk("No resource\n");
 		return NULL;
 	}
 
 	bridge = find_bridge(resource);
-	if (bridge == NULL) {
-		printk(KERN_ERR "Can't find bridge\n");
+	if(bridge == NULL) {
+		printk("Can't find bridge\n");
 		return NULL;
 	}
 
+	/* Find pci_dev container of dev */
 	if (bridge->parent == NULL) {
-		printk(KERN_ERR "Dev entry NULL for"
-			" bridge %s\n", bridge->name);
+		printk("Dev entry NULL\n");
 		return NULL;
 	}
+	pdev = container_of(bridge->parent, struct pci_dev, dev);
 
-	if (bridge->alloc_consistent == NULL) {
-		printk(KERN_ERR "alloc_consistent not supported by"
-			" bridge %s\n", bridge->name);
-		return NULL;
-	}
-
-	return bridge->alloc_consistent(bridge->parent, size, dma);
+	return pci_alloc_consistent(pdev, size, dma);
 }
 EXPORT_SYMBOL(vme_alloc_consistent);
 
 /*
  * Free previously allocated contiguous block of memory.
+ *
+ * XXX VME bridges could be available on buses other than PCI. At the momment
+ *     this framework only supports PCI devices.
  */
 void vme_free_consistent(struct vme_resource *resource, size_t size,
 	void *vaddr, dma_addr_t dma)
 {
 	struct vme_bridge *bridge;
+	struct pci_dev *pdev;
 
-	if (resource == NULL) {
-		printk(KERN_ERR "No resource\n");
+	if(resource == NULL) {
+		printk("No resource\n");
 		return;
 	}
 
 	bridge = find_bridge(resource);
-	if (bridge == NULL) {
-		printk(KERN_ERR "Can't find bridge\n");
+	if(bridge == NULL) {
+		printk("Can't find bridge\n");
 		return;
 	}
 
-	if (bridge->parent == NULL) {
-		printk(KERN_ERR "Dev entry NULL for"
-			" bridge %s\n", bridge->name);
-		return;
-	}
+	/* Find pci_dev container of dev */
+	pdev = container_of(bridge->parent, struct pci_dev, dev);
 
-	if (bridge->free_consistent == NULL) {
-		printk(KERN_ERR "free_consistent not supported by"
-			" bridge %s\n", bridge->name);
-		return;
-	}
-
-	bridge->free_consistent(bridge->parent, size, vaddr, dma);
+	pci_free_consistent(pdev, size, vaddr, dma);
 }
 EXPORT_SYMBOL(vme_free_consistent);
 
@@ -153,7 +150,9 @@ size_t vme_get_size(struct vme_resource *resource)
 	int enabled, retval;
 	unsigned long long base, size;
 	dma_addr_t buf_base;
-	u32 aspace, cycle, dwidth;
+	vme_address_t aspace;
+	vme_cycle_t cycle;
+	vme_width_t dwidth;
 
 	switch (resource->type) {
 	case VME_MASTER:
@@ -179,7 +178,7 @@ size_t vme_get_size(struct vme_resource *resource)
 }
 EXPORT_SYMBOL(vme_get_size);
 
-static int vme_check_window(u32 aspace, unsigned long long vme_base,
+static int vme_check_window(vme_address_t aspace, unsigned long long vme_base,
 	unsigned long long size)
 {
 	int retval = 0;
@@ -218,7 +217,7 @@ static int vme_check_window(u32 aspace, unsigned long long vme_base,
 		/* User Defined */
 		break;
 	default:
-		printk(KERN_ERR "Invalid address space\n");
+		printk("Invalid address space\n");
 		retval = -EINVAL;
 		break;
 	}
@@ -230,8 +229,8 @@ static int vme_check_window(u32 aspace, unsigned long long vme_base,
  * Request a slave image with specific attributes, return some unique
  * identifier.
  */
-struct vme_resource *vme_slave_request(struct vme_dev *vdev, u32 address,
-	u32 cycle)
+struct vme_resource * vme_slave_request(struct device *dev,
+	vme_address_t address, vme_cycle_t cycle)
 {
 	struct vme_bridge *bridge;
 	struct list_head *slave_pos = NULL;
@@ -239,34 +238,34 @@ struct vme_resource *vme_slave_request(struct vme_dev *vdev, u32 address,
 	struct vme_slave_resource *slave_image = NULL;
 	struct vme_resource *resource = NULL;
 
-	bridge = vdev->bridge;
+	bridge = dev_to_bridge(dev);
 	if (bridge == NULL) {
 		printk(KERN_ERR "Can't find VME bus\n");
 		goto err_bus;
 	}
 
 	/* Loop through slave resources */
-	list_for_each(slave_pos, &bridge->slave_resources) {
+	list_for_each(slave_pos, &(bridge->slave_resources)) {
 		slave_image = list_entry(slave_pos,
 			struct vme_slave_resource, list);
 
 		if (slave_image == NULL) {
-			printk(KERN_ERR "Registered NULL Slave resource\n");
+			printk("Registered NULL Slave resource\n");
 			continue;
 		}
 
 		/* Find an unlocked and compatible image */
-		mutex_lock(&slave_image->mtx);
-		if (((slave_image->address_attr & address) == address) &&
+		mutex_lock(&(slave_image->mtx));
+		if(((slave_image->address_attr & address) == address) &&
 			((slave_image->cycle_attr & cycle) == cycle) &&
 			(slave_image->locked == 0)) {
 
 			slave_image->locked = 1;
-			mutex_unlock(&slave_image->mtx);
+			mutex_unlock(&(slave_image->mtx));
 			allocated_image = slave_image;
 			break;
 		}
-		mutex_unlock(&slave_image->mtx);
+		mutex_unlock(&(slave_image->mtx));
 	}
 
 	/* No free image */
@@ -279,49 +278,49 @@ struct vme_resource *vme_slave_request(struct vme_dev *vdev, u32 address,
 		goto err_alloc;
 	}
 	resource->type = VME_SLAVE;
-	resource->entry = &allocated_image->list;
+	resource->entry = &(allocated_image->list);
 
 	return resource;
 
 err_alloc:
 	/* Unlock image */
-	mutex_lock(&slave_image->mtx);
+	mutex_lock(&(slave_image->mtx));
 	slave_image->locked = 0;
-	mutex_unlock(&slave_image->mtx);
+	mutex_unlock(&(slave_image->mtx));
 err_image:
 err_bus:
 	return NULL;
 }
 EXPORT_SYMBOL(vme_slave_request);
 
-int vme_slave_set(struct vme_resource *resource, int enabled,
+int vme_slave_set (struct vme_resource *resource, int enabled,
 	unsigned long long vme_base, unsigned long long size,
-	dma_addr_t buf_base, u32 aspace, u32 cycle)
+	dma_addr_t buf_base, vme_address_t aspace, vme_cycle_t cycle)
 {
 	struct vme_bridge *bridge = find_bridge(resource);
 	struct vme_slave_resource *image;
 	int retval;
 
 	if (resource->type != VME_SLAVE) {
-		printk(KERN_ERR "Not a slave resource\n");
+		printk("Not a slave resource\n");
 		return -EINVAL;
 	}
 
 	image = list_entry(resource->entry, struct vme_slave_resource, list);
 
 	if (bridge->slave_set == NULL) {
-		printk(KERN_ERR "Function not supported\n");
+		printk("Function not supported\n");
 		return -ENOSYS;
 	}
 
-	if (!(((image->address_attr & aspace) == aspace) &&
+	if(!(((image->address_attr & aspace) == aspace) &&
 		((image->cycle_attr & cycle) == cycle))) {
-		printk(KERN_ERR "Invalid attributes\n");
+		printk("Invalid attributes\n");
 		return -EINVAL;
 	}
 
 	retval = vme_check_window(aspace, vme_base, size);
-	if (retval)
+	if(retval)
 		return retval;
 
 	return bridge->slave_set(image, enabled, vme_base, size, buf_base,
@@ -329,22 +328,22 @@ int vme_slave_set(struct vme_resource *resource, int enabled,
 }
 EXPORT_SYMBOL(vme_slave_set);
 
-int vme_slave_get(struct vme_resource *resource, int *enabled,
+int vme_slave_get (struct vme_resource *resource, int *enabled,
 	unsigned long long *vme_base, unsigned long long *size,
-	dma_addr_t *buf_base, u32 *aspace, u32 *cycle)
+	dma_addr_t *buf_base, vme_address_t *aspace, vme_cycle_t *cycle)
 {
 	struct vme_bridge *bridge = find_bridge(resource);
 	struct vme_slave_resource *image;
 
 	if (resource->type != VME_SLAVE) {
-		printk(KERN_ERR "Not a slave resource\n");
+		printk("Not a slave resource\n");
 		return -EINVAL;
 	}
 
 	image = list_entry(resource->entry, struct vme_slave_resource, list);
 
 	if (bridge->slave_get == NULL) {
-		printk(KERN_ERR "vme_slave_get not supported\n");
+		printk("vme_slave_get not supported\n");
 		return -EINVAL;
 	}
 
@@ -358,24 +357,24 @@ void vme_slave_free(struct vme_resource *resource)
 	struct vme_slave_resource *slave_image;
 
 	if (resource->type != VME_SLAVE) {
-		printk(KERN_ERR "Not a slave resource\n");
+		printk("Not a slave resource\n");
 		return;
 	}
 
 	slave_image = list_entry(resource->entry, struct vme_slave_resource,
 		list);
 	if (slave_image == NULL) {
-		printk(KERN_ERR "Can't find slave resource\n");
+		printk("Can't find slave resource\n");
 		return;
 	}
 
 	/* Unlock image */
-	mutex_lock(&slave_image->mtx);
+	mutex_lock(&(slave_image->mtx));
 	if (slave_image->locked == 0)
 		printk(KERN_ERR "Image is already free\n");
 
 	slave_image->locked = 0;
-	mutex_unlock(&slave_image->mtx);
+	mutex_unlock(&(slave_image->mtx));
 
 	/* Free up resource memory */
 	kfree(resource);
@@ -386,8 +385,8 @@ EXPORT_SYMBOL(vme_slave_free);
  * Request a master image with specific attributes, return some unique
  * identifier.
  */
-struct vme_resource *vme_master_request(struct vme_dev *vdev, u32 address,
-	u32 cycle, u32 dwidth)
+struct vme_resource * vme_master_request(struct device *dev,
+	vme_address_t address, vme_cycle_t cycle, vme_width_t dwidth)
 {
 	struct vme_bridge *bridge;
 	struct list_head *master_pos = NULL;
@@ -395,14 +394,14 @@ struct vme_resource *vme_master_request(struct vme_dev *vdev, u32 address,
 	struct vme_master_resource *master_image = NULL;
 	struct vme_resource *resource = NULL;
 
-	bridge = vdev->bridge;
+	bridge = dev_to_bridge(dev);
 	if (bridge == NULL) {
 		printk(KERN_ERR "Can't find VME bus\n");
 		goto err_bus;
 	}
 
 	/* Loop through master resources */
-	list_for_each(master_pos, &bridge->master_resources) {
+	list_for_each(master_pos, &(bridge->master_resources)) {
 		master_image = list_entry(master_pos,
 			struct vme_master_resource, list);
 
@@ -412,18 +411,18 @@ struct vme_resource *vme_master_request(struct vme_dev *vdev, u32 address,
 		}
 
 		/* Find an unlocked and compatible image */
-		spin_lock(&master_image->lock);
-		if (((master_image->address_attr & address) == address) &&
+		spin_lock(&(master_image->lock));
+		if(((master_image->address_attr & address) == address) &&
 			((master_image->cycle_attr & cycle) == cycle) &&
 			((master_image->width_attr & dwidth) == dwidth) &&
 			(master_image->locked == 0)) {
 
 			master_image->locked = 1;
-			spin_unlock(&master_image->lock);
+			spin_unlock(&(master_image->lock));
 			allocated_image = master_image;
 			break;
 		}
-		spin_unlock(&master_image->lock);
+		spin_unlock(&(master_image->lock));
 	}
 
 	/* Check to see if we found a resource */
@@ -438,50 +437,51 @@ struct vme_resource *vme_master_request(struct vme_dev *vdev, u32 address,
 		goto err_alloc;
 	}
 	resource->type = VME_MASTER;
-	resource->entry = &allocated_image->list;
+	resource->entry = &(allocated_image->list);
 
 	return resource;
 
+	kfree(resource);
 err_alloc:
 	/* Unlock image */
-	spin_lock(&master_image->lock);
+	spin_lock(&(master_image->lock));
 	master_image->locked = 0;
-	spin_unlock(&master_image->lock);
+	spin_unlock(&(master_image->lock));
 err_image:
 err_bus:
 	return NULL;
 }
 EXPORT_SYMBOL(vme_master_request);
 
-int vme_master_set(struct vme_resource *resource, int enabled,
-	unsigned long long vme_base, unsigned long long size, u32 aspace,
-	u32 cycle, u32 dwidth)
+int vme_master_set (struct vme_resource *resource, int enabled,
+	unsigned long long vme_base, unsigned long long size,
+	vme_address_t aspace, vme_cycle_t cycle, vme_width_t dwidth)
 {
 	struct vme_bridge *bridge = find_bridge(resource);
 	struct vme_master_resource *image;
 	int retval;
 
 	if (resource->type != VME_MASTER) {
-		printk(KERN_ERR "Not a master resource\n");
+		printk("Not a master resource\n");
 		return -EINVAL;
 	}
 
 	image = list_entry(resource->entry, struct vme_master_resource, list);
 
 	if (bridge->master_set == NULL) {
-		printk(KERN_WARNING "vme_master_set not supported\n");
+		printk("vme_master_set not supported\n");
 		return -EINVAL;
 	}
 
-	if (!(((image->address_attr & aspace) == aspace) &&
+	if(!(((image->address_attr & aspace) == aspace) &&
 		((image->cycle_attr & cycle) == cycle) &&
 		((image->width_attr & dwidth) == dwidth))) {
-		printk(KERN_WARNING "Invalid attributes\n");
+		printk("Invalid attributes\n");
 		return -EINVAL;
 	}
 
 	retval = vme_check_window(aspace, vme_base, size);
-	if (retval)
+	if(retval)
 		return retval;
 
 	return bridge->master_set(image, enabled, vme_base, size, aspace,
@@ -489,22 +489,22 @@ int vme_master_set(struct vme_resource *resource, int enabled,
 }
 EXPORT_SYMBOL(vme_master_set);
 
-int vme_master_get(struct vme_resource *resource, int *enabled,
-	unsigned long long *vme_base, unsigned long long *size, u32 *aspace,
-	u32 *cycle, u32 *dwidth)
+int vme_master_get (struct vme_resource *resource, int *enabled,
+	unsigned long long *vme_base, unsigned long long *size,
+	vme_address_t *aspace, vme_cycle_t *cycle, vme_width_t *dwidth)
 {
 	struct vme_bridge *bridge = find_bridge(resource);
 	struct vme_master_resource *image;
 
 	if (resource->type != VME_MASTER) {
-		printk(KERN_ERR "Not a master resource\n");
+		printk("Not a master resource\n");
 		return -EINVAL;
 	}
 
 	image = list_entry(resource->entry, struct vme_master_resource, list);
 
 	if (bridge->master_get == NULL) {
-		printk(KERN_WARNING "vme_master_set not supported\n");
+		printk("vme_master_set not supported\n");
 		return -EINVAL;
 	}
 
@@ -516,7 +516,7 @@ EXPORT_SYMBOL(vme_master_get);
 /*
  * Read data out of VME space into a buffer.
  */
-ssize_t vme_master_read(struct vme_resource *resource, void *buf, size_t count,
+ssize_t vme_master_read (struct vme_resource *resource, void *buf, size_t count,
 	loff_t offset)
 {
 	struct vme_bridge *bridge = find_bridge(resource);
@@ -524,12 +524,12 @@ ssize_t vme_master_read(struct vme_resource *resource, void *buf, size_t count,
 	size_t length;
 
 	if (bridge->master_read == NULL) {
-		printk(KERN_WARNING "Reading from resource not supported\n");
+		printk("Reading from resource not supported\n");
 		return -EINVAL;
 	}
 
 	if (resource->type != VME_MASTER) {
-		printk(KERN_ERR "Not a master resource\n");
+		printk("Not a master resource\n");
 		return -EINVAL;
 	}
 
@@ -538,7 +538,7 @@ ssize_t vme_master_read(struct vme_resource *resource, void *buf, size_t count,
 	length = vme_get_size(resource);
 
 	if (offset > length) {
-		printk(KERN_WARNING "Invalid Offset\n");
+		printk("Invalid Offset\n");
 		return -EFAULT;
 	}
 
@@ -553,7 +553,7 @@ EXPORT_SYMBOL(vme_master_read);
 /*
  * Write data out to VME space from a buffer.
  */
-ssize_t vme_master_write(struct vme_resource *resource, void *buf,
+ssize_t vme_master_write (struct vme_resource *resource, void *buf,
 	size_t count, loff_t offset)
 {
 	struct vme_bridge *bridge = find_bridge(resource);
@@ -561,12 +561,12 @@ ssize_t vme_master_write(struct vme_resource *resource, void *buf,
 	size_t length;
 
 	if (bridge->master_write == NULL) {
-		printk(KERN_WARNING "Writing to resource not supported\n");
+		printk("Writing to resource not supported\n");
 		return -EINVAL;
 	}
 
 	if (resource->type != VME_MASTER) {
-		printk(KERN_ERR "Not a master resource\n");
+		printk("Not a master resource\n");
 		return -EINVAL;
 	}
 
@@ -575,7 +575,7 @@ ssize_t vme_master_write(struct vme_resource *resource, void *buf,
 	length = vme_get_size(resource);
 
 	if (offset > length) {
-		printk(KERN_WARNING "Invalid Offset\n");
+		printk("Invalid Offset\n");
 		return -EFAULT;
 	}
 
@@ -589,19 +589,19 @@ EXPORT_SYMBOL(vme_master_write);
 /*
  * Perform RMW cycle to provided location.
  */
-unsigned int vme_master_rmw(struct vme_resource *resource, unsigned int mask,
+unsigned int vme_master_rmw (struct vme_resource *resource, unsigned int mask,
 	unsigned int compare, unsigned int swap, loff_t offset)
 {
 	struct vme_bridge *bridge = find_bridge(resource);
 	struct vme_master_resource *image;
 
 	if (bridge->master_rmw == NULL) {
-		printk(KERN_WARNING "Writing to resource not supported\n");
+		printk("Writing to resource not supported\n");
 		return -EINVAL;
 	}
 
 	if (resource->type != VME_MASTER) {
-		printk(KERN_ERR "Not a master resource\n");
+		printk("Not a master resource\n");
 		return -EINVAL;
 	}
 
@@ -616,24 +616,24 @@ void vme_master_free(struct vme_resource *resource)
 	struct vme_master_resource *master_image;
 
 	if (resource->type != VME_MASTER) {
-		printk(KERN_ERR "Not a master resource\n");
+		printk("Not a master resource\n");
 		return;
 	}
 
 	master_image = list_entry(resource->entry, struct vme_master_resource,
 		list);
 	if (master_image == NULL) {
-		printk(KERN_ERR "Can't find master resource\n");
+		printk("Can't find master resource\n");
 		return;
 	}
 
 	/* Unlock image */
-	spin_lock(&master_image->lock);
+	spin_lock(&(master_image->lock));
 	if (master_image->locked == 0)
 		printk(KERN_ERR "Image is already free\n");
 
 	master_image->locked = 0;
-	spin_unlock(&master_image->lock);
+	spin_unlock(&(master_image->lock));
 
 	/* Free up resource memory */
 	kfree(resource);
@@ -644,7 +644,7 @@ EXPORT_SYMBOL(vme_master_free);
  * Request a DMA controller with specific attributes, return some unique
  * identifier.
  */
-struct vme_resource *vme_dma_request(struct vme_dev *vdev, u32 route)
+struct vme_resource *vme_request_dma(struct device *dev)
 {
 	struct vme_bridge *bridge;
 	struct list_head *dma_pos = NULL;
@@ -655,33 +655,31 @@ struct vme_resource *vme_dma_request(struct vme_dev *vdev, u32 route)
 	/* XXX Not checking resource attributes */
 	printk(KERN_ERR "No VME resource Attribute tests done\n");
 
-	bridge = vdev->bridge;
+	bridge = dev_to_bridge(dev);
 	if (bridge == NULL) {
 		printk(KERN_ERR "Can't find VME bus\n");
 		goto err_bus;
 	}
 
 	/* Loop through DMA resources */
-	list_for_each(dma_pos, &bridge->dma_resources) {
+	list_for_each(dma_pos, &(bridge->dma_resources)) {
 		dma_ctrlr = list_entry(dma_pos,
 			struct vme_dma_resource, list);
 
 		if (dma_ctrlr == NULL) {
-			printk(KERN_ERR "Registered NULL DMA resource\n");
+			printk("Registered NULL DMA resource\n");
 			continue;
 		}
 
-		/* Find an unlocked and compatible controller */
-		mutex_lock(&dma_ctrlr->mtx);
-		if (((dma_ctrlr->route_attr & route) == route) &&
-			(dma_ctrlr->locked == 0)) {
-
+		/* Find an unlocked controller */
+		mutex_lock(&(dma_ctrlr->mtx));
+		if(dma_ctrlr->locked == 0) {
 			dma_ctrlr->locked = 1;
-			mutex_unlock(&dma_ctrlr->mtx);
+			mutex_unlock(&(dma_ctrlr->mtx));
 			allocated_ctrlr = dma_ctrlr;
 			break;
 		}
-		mutex_unlock(&dma_ctrlr->mtx);
+		mutex_unlock(&(dma_ctrlr->mtx));
 	}
 
 	/* Check to see if we found a resource */
@@ -694,20 +692,20 @@ struct vme_resource *vme_dma_request(struct vme_dev *vdev, u32 route)
 		goto err_alloc;
 	}
 	resource->type = VME_DMA;
-	resource->entry = &allocated_ctrlr->list;
+	resource->entry = &(allocated_ctrlr->list);
 
 	return resource;
 
 err_alloc:
 	/* Unlock image */
-	mutex_lock(&dma_ctrlr->mtx);
+	mutex_lock(&(dma_ctrlr->mtx));
 	dma_ctrlr->locked = 0;
-	mutex_unlock(&dma_ctrlr->mtx);
+	mutex_unlock(&(dma_ctrlr->mtx));
 err_ctrlr:
 err_bus:
 	return NULL;
 }
-EXPORT_SYMBOL(vme_dma_request);
+EXPORT_SYMBOL(vme_request_dma);
 
 /*
  * Start new list
@@ -718,20 +716,21 @@ struct vme_dma_list *vme_new_dma_list(struct vme_resource *resource)
 	struct vme_dma_list *dma_list;
 
 	if (resource->type != VME_DMA) {
-		printk(KERN_ERR "Not a DMA resource\n");
+		printk("Not a DMA resource\n");
 		return NULL;
 	}
 
 	ctrlr = list_entry(resource->entry, struct vme_dma_resource, list);
 
-	dma_list = kmalloc(sizeof(struct vme_dma_list), GFP_KERNEL);
-	if (dma_list == NULL) {
-		printk(KERN_ERR "Unable to allocate memory for new dma list\n");
+	dma_list = (struct vme_dma_list *)kmalloc(
+		sizeof(struct vme_dma_list), GFP_KERNEL);
+	if(dma_list == NULL) {
+		printk("Unable to allocate memory for new dma list\n");
 		return NULL;
 	}
-	INIT_LIST_HEAD(&dma_list->entries);
+	INIT_LIST_HEAD(&(dma_list->entries));
 	dma_list->parent = ctrlr;
-	mutex_init(&dma_list->mtx);
+	mutex_init(&(dma_list->mtx));
 
 	return dma_list;
 }
@@ -740,22 +739,23 @@ EXPORT_SYMBOL(vme_new_dma_list);
 /*
  * Create "Pattern" type attributes
  */
-struct vme_dma_attr *vme_dma_pattern_attribute(u32 pattern, u32 type)
+struct vme_dma_attr *vme_dma_pattern_attribute(u32 pattern,
+	vme_pattern_t type)
 {
 	struct vme_dma_attr *attributes;
 	struct vme_dma_pattern *pattern_attr;
 
-	attributes = kmalloc(sizeof(struct vme_dma_attr), GFP_KERNEL);
-	if (attributes == NULL) {
-		printk(KERN_ERR "Unable to allocate memory for attributes "
-			"structure\n");
+	attributes = (struct vme_dma_attr *)kmalloc(
+		sizeof(struct vme_dma_attr), GFP_KERNEL);
+	if(attributes == NULL) {
+		printk("Unable to allocate memory for attributes structure\n");
 		goto err_attr;
 	}
 
-	pattern_attr = kmalloc(sizeof(struct vme_dma_pattern), GFP_KERNEL);
-	if (pattern_attr == NULL) {
-		printk(KERN_ERR "Unable to allocate memory for pattern "
-			"attributes\n");
+	pattern_attr = (struct vme_dma_pattern *)kmalloc(
+		sizeof(struct vme_dma_pattern), GFP_KERNEL);
+	if(pattern_attr == NULL) {
+		printk("Unable to allocate memory for pattern attributes\n");
 		goto err_pat;
 	}
 
@@ -767,6 +767,7 @@ struct vme_dma_attr *vme_dma_pattern_attribute(u32 pattern, u32 type)
 
 	return attributes;
 
+	kfree(pattern_attr);
 err_pat:
 	kfree(attributes);
 err_attr:
@@ -784,17 +785,17 @@ struct vme_dma_attr *vme_dma_pci_attribute(dma_addr_t address)
 
 	/* XXX Run some sanity checks here */
 
-	attributes = kmalloc(sizeof(struct vme_dma_attr), GFP_KERNEL);
-	if (attributes == NULL) {
-		printk(KERN_ERR "Unable to allocate memory for attributes "
-			"structure\n");
+	attributes = (struct vme_dma_attr *)kmalloc(
+		sizeof(struct vme_dma_attr), GFP_KERNEL);
+	if(attributes == NULL) {
+		printk("Unable to allocate memory for attributes structure\n");
 		goto err_attr;
 	}
 
-	pci_attr = kmalloc(sizeof(struct vme_dma_pci), GFP_KERNEL);
-	if (pci_attr == NULL) {
-		printk(KERN_ERR "Unable to allocate memory for pci "
-			"attributes\n");
+	pci_attr = (struct vme_dma_pci *)kmalloc(sizeof(struct vme_dma_pci),
+		GFP_KERNEL);
+	if(pci_attr == NULL) {
+		printk("Unable to allocate memory for pci attributes\n");
 		goto err_pci;
 	}
 
@@ -807,6 +808,7 @@ struct vme_dma_attr *vme_dma_pci_attribute(dma_addr_t address)
 
 	return attributes;
 
+	kfree(pci_attr);
 err_pci:
 	kfree(attributes);
 err_attr:
@@ -818,23 +820,24 @@ EXPORT_SYMBOL(vme_dma_pci_attribute);
  * Create "VME" type attributes
  */
 struct vme_dma_attr *vme_dma_vme_attribute(unsigned long long address,
-	u32 aspace, u32 cycle, u32 dwidth)
+	vme_address_t aspace, vme_cycle_t cycle, vme_width_t dwidth)
 {
 	struct vme_dma_attr *attributes;
 	struct vme_dma_vme *vme_attr;
 
-	attributes = kmalloc(
+	/* XXX Run some sanity checks here */
+
+	attributes = (struct vme_dma_attr *)kmalloc(
 		sizeof(struct vme_dma_attr), GFP_KERNEL);
-	if (attributes == NULL) {
-		printk(KERN_ERR "Unable to allocate memory for attributes "
-			"structure\n");
+	if(attributes == NULL) {
+		printk("Unable to allocate memory for attributes structure\n");
 		goto err_attr;
 	}
 
-	vme_attr = kmalloc(sizeof(struct vme_dma_vme), GFP_KERNEL);
-	if (vme_attr == NULL) {
-		printk(KERN_ERR "Unable to allocate memory for vme "
-			"attributes\n");
+	vme_attr = (struct vme_dma_vme *)kmalloc(sizeof(struct vme_dma_vme),
+		GFP_KERNEL);
+	if(vme_attr == NULL) {
+		printk("Unable to allocate memory for vme attributes\n");
 		goto err_vme;
 	}
 
@@ -848,6 +851,7 @@ struct vme_dma_attr *vme_dma_vme_attribute(unsigned long long address,
 
 	return attributes;
 
+	kfree(vme_attr);
 err_vme:
 	kfree(attributes);
 err_attr:
@@ -872,18 +876,18 @@ int vme_dma_list_add(struct vme_dma_list *list, struct vme_dma_attr *src,
 	int retval;
 
 	if (bridge->dma_list_add == NULL) {
-		printk(KERN_WARNING "Link List DMA generation not supported\n");
+		printk("Link List DMA generation not supported\n");
 		return -EINVAL;
 	}
 
-	if (!mutex_trylock(&list->mtx)) {
-		printk(KERN_ERR "Link List already submitted\n");
+	if (mutex_trylock(&(list->mtx))) {
+		printk("Link List already submitted\n");
 		return -EINVAL;
 	}
 
 	retval = bridge->dma_list_add(list, src, dest, count);
 
-	mutex_unlock(&list->mtx);
+	mutex_unlock(&(list->mtx));
 
 	return retval;
 }
@@ -895,15 +899,15 @@ int vme_dma_list_exec(struct vme_dma_list *list)
 	int retval;
 
 	if (bridge->dma_list_exec == NULL) {
-		printk(KERN_ERR "Link List DMA execution not supported\n");
+		printk("Link List DMA execution not supported\n");
 		return -EINVAL;
 	}
 
-	mutex_lock(&list->mtx);
+	mutex_lock(&(list->mtx));
 
 	retval = bridge->dma_list_exec(list);
 
-	mutex_unlock(&list->mtx);
+	mutex_unlock(&(list->mtx));
 
 	return retval;
 }
@@ -915,12 +919,12 @@ int vme_dma_list_free(struct vme_dma_list *list)
 	int retval;
 
 	if (bridge->dma_list_empty == NULL) {
-		printk(KERN_WARNING "Emptying of Link Lists not supported\n");
+		printk("Emptying of Link Lists not supported\n");
 		return -EINVAL;
 	}
 
-	if (!mutex_trylock(&list->mtx)) {
-		printk(KERN_ERR "Link List in use\n");
+	if (mutex_trylock(&(list->mtx))) {
+		printk("Link List in use\n");
 		return -EINVAL;
 	}
 
@@ -930,11 +934,11 @@ int vme_dma_list_free(struct vme_dma_list *list)
 	 */
 	retval = bridge->dma_list_empty(list);
 	if (retval) {
-		printk(KERN_ERR "Unable to empty link-list entries\n");
-		mutex_unlock(&list->mtx);
+		printk("Unable to empty link-list entries\n");
+		mutex_unlock(&(list->mtx));
 		return retval;
 	}
-	mutex_unlock(&list->mtx);
+	mutex_unlock(&(list->mtx));
 	kfree(list);
 
 	return retval;
@@ -946,153 +950,109 @@ int vme_dma_free(struct vme_resource *resource)
 	struct vme_dma_resource *ctrlr;
 
 	if (resource->type != VME_DMA) {
-		printk(KERN_ERR "Not a DMA resource\n");
+		printk("Not a DMA resource\n");
 		return -EINVAL;
 	}
 
 	ctrlr = list_entry(resource->entry, struct vme_dma_resource, list);
 
-	if (!mutex_trylock(&ctrlr->mtx)) {
-		printk(KERN_ERR "Resource busy, can't free\n");
+	if (mutex_trylock(&(ctrlr->mtx))) {
+		printk("Resource busy, can't free\n");
 		return -EBUSY;
 	}
 
-	if (!(list_empty(&ctrlr->pending) && list_empty(&ctrlr->running))) {
-		printk(KERN_WARNING "Resource still processing transfers\n");
-		mutex_unlock(&ctrlr->mtx);
+	if (!(list_empty(&(ctrlr->pending)) && list_empty(&(ctrlr->running)))) {
+		printk("Resource still processing transfers\n");
+		mutex_unlock(&(ctrlr->mtx));
 		return -EBUSY;
 	}
 
 	ctrlr->locked = 0;
 
-	mutex_unlock(&ctrlr->mtx);
+	mutex_unlock(&(ctrlr->mtx));
 
 	return 0;
 }
 EXPORT_SYMBOL(vme_dma_free);
 
-void vme_irq_handler(struct vme_bridge *bridge, int level, int statid)
-{
-	void (*call)(int, int, void *);
-	void *priv_data;
-
-	call = bridge->irq[level - 1].callback[statid].func;
-	priv_data = bridge->irq[level - 1].callback[statid].priv_data;
-
-	if (call != NULL)
-		call(level, statid, priv_data);
-	else
-		printk(KERN_WARNING "Spurilous VME interrupt, level:%x, "
-			"vector:%x\n", level, statid);
-}
-EXPORT_SYMBOL(vme_irq_handler);
-
-int vme_irq_request(struct vme_dev *vdev, int level, int statid,
-	void (*callback)(int, int, void *),
+int vme_request_irq(struct device *dev, int level, int statid,
+	void (*callback)(int level, int vector, void *priv_data),
 	void *priv_data)
 {
 	struct vme_bridge *bridge;
 
-	bridge = vdev->bridge;
+	bridge = dev_to_bridge(dev);
 	if (bridge == NULL) {
 		printk(KERN_ERR "Can't find VME bus\n");
 		return -EINVAL;
 	}
 
-	if ((level < 1) || (level > 7)) {
-		printk(KERN_ERR "Invalid interrupt level\n");
-		return -EINVAL;
-	}
-
-	if (bridge->irq_set == NULL) {
-		printk(KERN_ERR "Configuring interrupts not supported\n");
-		return -EINVAL;
-	}
-
-	mutex_lock(&bridge->irq_mtx);
-
-	if (bridge->irq[level - 1].callback[statid].func) {
-		mutex_unlock(&bridge->irq_mtx);
-		printk(KERN_WARNING "VME Interrupt already taken\n");
-		return -EBUSY;
-	}
-
-	bridge->irq[level - 1].count++;
-	bridge->irq[level - 1].callback[statid].priv_data = priv_data;
-	bridge->irq[level - 1].callback[statid].func = callback;
-
-	/* Enable IRQ level */
-	bridge->irq_set(bridge, level, 1, 1);
-
-	mutex_unlock(&bridge->irq_mtx);
-
-	return 0;
-}
-EXPORT_SYMBOL(vme_irq_request);
-
-void vme_irq_free(struct vme_dev *vdev, int level, int statid)
-{
-	struct vme_bridge *bridge;
-
-	bridge = vdev->bridge;
-	if (bridge == NULL) {
-		printk(KERN_ERR "Can't find VME bus\n");
-		return;
-	}
-
-	if ((level < 1) || (level > 7)) {
-		printk(KERN_ERR "Invalid interrupt level\n");
-		return;
-	}
-
-	if (bridge->irq_set == NULL) {
-		printk(KERN_ERR "Configuring interrupts not supported\n");
-		return;
-	}
-
-	mutex_lock(&bridge->irq_mtx);
-
-	bridge->irq[level - 1].count--;
-
-	/* Disable IRQ level if no more interrupts attached at this level*/
-	if (bridge->irq[level - 1].count == 0)
-		bridge->irq_set(bridge, level, 0, 1);
-
-	bridge->irq[level - 1].callback[statid].func = NULL;
-	bridge->irq[level - 1].callback[statid].priv_data = NULL;
-
-	mutex_unlock(&bridge->irq_mtx);
-}
-EXPORT_SYMBOL(vme_irq_free);
-
-int vme_irq_generate(struct vme_dev *vdev, int level, int statid)
-{
-	struct vme_bridge *bridge;
-
-	bridge = vdev->bridge;
-	if (bridge == NULL) {
-		printk(KERN_ERR "Can't find VME bus\n");
-		return -EINVAL;
-	}
-
-	if ((level < 1) || (level > 7)) {
+	if((level < 1) || (level > 7)) {
 		printk(KERN_WARNING "Invalid interrupt level\n");
 		return -EINVAL;
 	}
 
-	if (bridge->irq_generate == NULL) {
-		printk(KERN_WARNING "Interrupt generation not supported\n");
+	if (bridge->request_irq == NULL) {
+		printk("Registering interrupts not supported\n");
 		return -EINVAL;
 	}
 
-	return bridge->irq_generate(bridge, level, statid);
+	return bridge->request_irq(level, statid, callback, priv_data);
 }
-EXPORT_SYMBOL(vme_irq_generate);
+EXPORT_SYMBOL(vme_request_irq);
+
+void vme_free_irq(struct device *dev, int level, int statid)
+{
+	struct vme_bridge *bridge;
+
+	bridge = dev_to_bridge(dev);
+	if (bridge == NULL) {
+		printk(KERN_ERR "Can't find VME bus\n");
+		return;
+	}
+
+	if((level < 1) || (level > 7)) {
+		printk(KERN_WARNING "Invalid interrupt level\n");
+		return;
+	}
+
+	if (bridge->free_irq == NULL) {
+		printk("Freeing interrupts not supported\n");
+		return;
+	}
+
+	bridge->free_irq(level, statid);
+}
+EXPORT_SYMBOL(vme_free_irq);
+
+int vme_generate_irq(struct device *dev, int level, int statid)
+{
+	struct vme_bridge *bridge;
+
+	bridge = dev_to_bridge(dev);
+	if (bridge == NULL) {
+		printk(KERN_ERR "Can't find VME bus\n");
+		return -EINVAL;
+	}
+
+	if((level < 1) || (level > 7)) {
+		printk(KERN_WARNING "Invalid interrupt level\n");
+		return -EINVAL;
+	}
+
+	if (bridge->generate_irq == NULL) {
+		printk("Interrupt generation not supported\n");
+		return -EINVAL;
+	}
+
+	return bridge->generate_irq(level, statid);
+}
+EXPORT_SYMBOL(vme_generate_irq);
 
 /*
  * Request the location monitor, return resource or NULL
  */
-struct vme_resource *vme_lm_request(struct vme_dev *vdev)
+struct vme_resource *vme_lm_request(struct device *dev)
 {
 	struct vme_bridge *bridge;
 	struct list_head *lm_pos = NULL;
@@ -1100,14 +1060,14 @@ struct vme_resource *vme_lm_request(struct vme_dev *vdev)
 	struct vme_lm_resource *lm = NULL;
 	struct vme_resource *resource = NULL;
 
-	bridge = vdev->bridge;
+	bridge = dev_to_bridge(dev);
 	if (bridge == NULL) {
 		printk(KERN_ERR "Can't find VME bus\n");
 		goto err_bus;
 	}
 
 	/* Loop through DMA resources */
-	list_for_each(lm_pos, &bridge->lm_resources) {
+	list_for_each(lm_pos, &(bridge->lm_resources)) {
 		lm = list_entry(lm_pos,
 			struct vme_lm_resource, list);
 
@@ -1118,14 +1078,14 @@ struct vme_resource *vme_lm_request(struct vme_dev *vdev)
 		}
 
 		/* Find an unlocked controller */
-		mutex_lock(&lm->mtx);
+		mutex_lock(&(lm->mtx));
 		if (lm->locked == 0) {
 			lm->locked = 1;
-			mutex_unlock(&lm->mtx);
+			mutex_unlock(&(lm->mtx));
 			allocated_lm = lm;
 			break;
 		}
-		mutex_unlock(&lm->mtx);
+		mutex_unlock(&(lm->mtx));
 	}
 
 	/* Check to see if we found a resource */
@@ -1138,15 +1098,15 @@ struct vme_resource *vme_lm_request(struct vme_dev *vdev)
 		goto err_alloc;
 	}
 	resource->type = VME_LM;
-	resource->entry = &allocated_lm->list;
+	resource->entry = &(allocated_lm->list);
 
 	return resource;
 
 err_alloc:
 	/* Unlock image */
-	mutex_lock(&lm->mtx);
+	mutex_lock(&(lm->mtx));
 	lm->locked = 0;
-	mutex_unlock(&lm->mtx);
+	mutex_unlock(&(lm->mtx));
 err_lm:
 err_bus:
 	return NULL;
@@ -1169,7 +1129,7 @@ int vme_lm_count(struct vme_resource *resource)
 EXPORT_SYMBOL(vme_lm_count);
 
 int vme_lm_set(struct vme_resource *resource, unsigned long long lm_base,
-	u32 aspace, u32 cycle)
+	vme_address_t aspace, vme_cycle_t cycle)
 {
 	struct vme_bridge *bridge = find_bridge(resource);
 	struct vme_lm_resource *lm;
@@ -1186,12 +1146,14 @@ int vme_lm_set(struct vme_resource *resource, unsigned long long lm_base,
 		return -EINVAL;
 	}
 
-	return bridge->lm_set(lm, lm_base, aspace, cycle);
+	/* XXX Check parameters */
+
+	return lm->parent->lm_set(lm, lm_base, aspace, cycle);
 }
 EXPORT_SYMBOL(vme_lm_set);
 
 int vme_lm_get(struct vme_resource *resource, unsigned long long *lm_base,
-	u32 *aspace, u32 *cycle)
+	vme_address_t *aspace, vme_cycle_t *cycle)
 {
 	struct vme_bridge *bridge = find_bridge(resource);
 	struct vme_lm_resource *lm;
@@ -1266,236 +1228,245 @@ void vme_lm_free(struct vme_resource *resource)
 
 	lm = list_entry(resource->entry, struct vme_lm_resource, list);
 
-	mutex_lock(&lm->mtx);
+	if (mutex_trylock(&(lm->mtx))) {
+		printk(KERN_ERR "Resource busy, can't free\n");
+		return;
+	}
 
-	/* XXX
-	 * Check to see that there aren't any callbacks still attached, if
-	 * there are we should probably be detaching them!
-	 */
+	/* XXX Check to see that there aren't any callbacks still attached */
 
 	lm->locked = 0;
 
-	mutex_unlock(&lm->mtx);
-
-	kfree(resource);
+	mutex_unlock(&(lm->mtx));
 }
 EXPORT_SYMBOL(vme_lm_free);
 
-int vme_slot_get(struct vme_dev *vdev)
+int vme_slot_get(struct device *bus)
 {
 	struct vme_bridge *bridge;
 
-	bridge = vdev->bridge;
+	bridge = dev_to_bridge(bus);
 	if (bridge == NULL) {
 		printk(KERN_ERR "Can't find VME bus\n");
 		return -EINVAL;
 	}
 
 	if (bridge->slot_get == NULL) {
-		printk(KERN_WARNING "vme_slot_get not supported\n");
+		printk("vme_slot_get not supported\n");
 		return -EINVAL;
 	}
 
-	return bridge->slot_get(bridge);
+	return bridge->slot_get();
 }
 EXPORT_SYMBOL(vme_slot_get);
 
 
 /* - Bridge Registration --------------------------------------------------- */
 
-static void vme_dev_release(struct device *dev)
-{
-	kfree(dev_to_vme_dev(dev));
-}
-
-int vme_register_bridge(struct vme_bridge *bridge)
+static int vme_alloc_bus_num(void)
 {
 	int i;
-	int ret = -1;
 
-	mutex_lock(&vme_buses_lock);
+	mutex_lock(&vme_bus_num_mtx);
 	for (i = 0; i < sizeof(vme_bus_numbers) * 8; i++) {
-		if ((vme_bus_numbers & (1 << i)) == 0) {
-			vme_bus_numbers |= (1 << i);
-			bridge->num = i;
-			INIT_LIST_HEAD(&bridge->devices);
-			list_add_tail(&bridge->bus_list, &vme_bus_list);
-			ret = 0;
+		if (((vme_bus_numbers >> i) & 0x1) == 0) {
+			vme_bus_numbers |= (0x1 << i);
 			break;
 		}
 	}
-	mutex_unlock(&vme_buses_lock);
+	mutex_unlock(&vme_bus_num_mtx);
 
-	return ret;
+	return i;
+}
+
+static void vme_free_bus_num(int bus)
+{
+	mutex_lock(&vme_bus_num_mtx);
+	vme_bus_numbers |= ~(0x1 << bus);
+	mutex_unlock(&vme_bus_num_mtx);
+}
+
+int vme_register_bridge (struct vme_bridge *bridge)
+{
+	struct device *dev;
+	int retval;
+	int i;
+
+	bridge->num = vme_alloc_bus_num();
+
+	/* This creates 32 vme "slot" devices. This equates to a slot for each
+	 * ID available in a system conforming to the ANSI/VITA 1-1994
+	 * specification.
+	 */
+	for (i = 0; i < VME_SLOTS_MAX; i++) {
+		dev = &(bridge->dev[i]);
+		memset(dev, 0, sizeof(struct device));
+
+		dev->parent = bridge->parent;
+		dev->bus = &(vme_bus_type);
+		/*
+		 * We save a pointer to the bridge in platform_data so that we
+		 * can get to it later. We keep driver_data for use by the
+		 * driver that binds against the slot
+		 */
+		dev->platform_data = bridge;
+		dev_set_name(dev, "vme-%x.%x", bridge->num, i + 1);
+
+		retval = device_register(dev);
+		if(retval)
+			goto err_reg;
+	}
+
+	return retval;
+
+	i = VME_SLOTS_MAX;
+err_reg:
+	while (i > -1) {
+		dev = &(bridge->dev[i]);
+		device_unregister(dev);
+	}
+	vme_free_bus_num(bridge->num);
+	return retval;
 }
 EXPORT_SYMBOL(vme_register_bridge);
 
-void vme_unregister_bridge(struct vme_bridge *bridge)
+void vme_unregister_bridge (struct vme_bridge *bridge)
 {
-	struct vme_dev *vdev;
-	struct vme_dev *tmp;
+	int i;
+	struct device *dev;
 
-	mutex_lock(&vme_buses_lock);
-	vme_bus_numbers &= ~(1 << bridge->num);
-	list_for_each_entry_safe(vdev, tmp, &bridge->devices, bridge_list) {
-		list_del(&vdev->drv_list);
-		list_del(&vdev->bridge_list);
-		device_unregister(&vdev->dev);
+
+	for (i = 0; i < VME_SLOTS_MAX; i++) {
+		dev = &(bridge->dev[i]);
+		device_unregister(dev);
 	}
-	list_del(&bridge->bus_list);
-	mutex_unlock(&vme_buses_lock);
+	vme_free_bus_num(bridge->num);
 }
 EXPORT_SYMBOL(vme_unregister_bridge);
 
+
 /* - Driver Registration --------------------------------------------------- */
 
-static int __vme_register_driver_bus(struct vme_driver *drv,
-	struct vme_bridge *bridge, unsigned int ndevs)
+int vme_register_driver (struct vme_driver *drv)
 {
-	int err;
-	unsigned int i;
-	struct vme_dev *vdev;
-	struct vme_dev *tmp;
-
-	for (i = 0; i < ndevs; i++) {
-		vdev = kzalloc(sizeof(struct vme_dev), GFP_KERNEL);
-		if (!vdev) {
-			err = -ENOMEM;
-			goto err_devalloc;
-		}
-		vdev->num = i;
-		vdev->bridge = bridge;
-		vdev->dev.platform_data = drv;
-		vdev->dev.release = vme_dev_release;
-		vdev->dev.parent = bridge->parent;
-		vdev->dev.bus = &vme_bus_type;
-		dev_set_name(&vdev->dev, "%s.%u-%u", drv->name, bridge->num,
-			vdev->num);
-
-		err = device_register(&vdev->dev);
-		if (err)
-			goto err_reg;
-
-		if (vdev->dev.platform_data) {
-			list_add_tail(&vdev->drv_list, &drv->devices);
-			list_add_tail(&vdev->bridge_list, &bridge->devices);
-		} else
-			device_unregister(&vdev->dev);
-	}
-	return 0;
-
-err_reg:
-	kfree(vdev);
-err_devalloc:
-	list_for_each_entry_safe(vdev, tmp, &drv->devices, drv_list) {
-		list_del(&vdev->drv_list);
-		list_del(&vdev->bridge_list);
-		device_unregister(&vdev->dev);
-	}
-	return err;
-}
-
-static int __vme_register_driver(struct vme_driver *drv, unsigned int ndevs)
-{
-	struct vme_bridge *bridge;
-	int err = 0;
-
-	mutex_lock(&vme_buses_lock);
-	list_for_each_entry(bridge, &vme_bus_list, bus_list) {
-		/*
-		 * This cannot cause trouble as we already have vme_buses_lock
-		 * and if the bridge is removed, it will have to go through
-		 * vme_unregister_bridge() to do it (which calls remove() on
-		 * the bridge which in turn tries to acquire vme_buses_lock and
-		 * will have to wait).
-		 */
-		err = __vme_register_driver_bus(drv, bridge, ndevs);
-		if (err)
-			break;
-	}
-	mutex_unlock(&vme_buses_lock);
-	return err;
-}
-
-int vme_register_driver(struct vme_driver *drv, unsigned int ndevs)
-{
-	int err;
-
 	drv->driver.name = drv->name;
 	drv->driver.bus = &vme_bus_type;
-	INIT_LIST_HEAD(&drv->devices);
 
-	err = driver_register(&drv->driver);
-	if (err)
-		return err;
-
-	err = __vme_register_driver(drv, ndevs);
-	if (err)
-		driver_unregister(&drv->driver);
-
-	return err;
+	return driver_register(&drv->driver);
 }
 EXPORT_SYMBOL(vme_register_driver);
 
-void vme_unregister_driver(struct vme_driver *drv)
+void vme_unregister_driver (struct vme_driver *drv)
 {
-	struct vme_dev *dev, *dev_tmp;
-
-	mutex_lock(&vme_buses_lock);
-	list_for_each_entry_safe(dev, dev_tmp, &drv->devices, drv_list) {
-		list_del(&dev->drv_list);
-		list_del(&dev->bridge_list);
-		device_unregister(&dev->dev);
-	}
-	mutex_unlock(&vme_buses_lock);
-
 	driver_unregister(&drv->driver);
 }
 EXPORT_SYMBOL(vme_unregister_driver);
 
 /* - Bus Registration ------------------------------------------------------ */
 
+int vme_calc_slot(struct device *dev)
+{
+	struct vme_bridge *bridge;
+	int num;
+
+	bridge = dev_to_bridge(dev);
+
+	/* Determine slot number */
+	num = 0;
+	while(num < VME_SLOTS_MAX) {
+		if(&(bridge->dev[num]) == dev) {
+			break;
+		}
+		num++;
+	}
+	if (num == VME_SLOTS_MAX) {
+		dev_err(dev, "Failed to identify slot\n");
+		num = 0;
+		goto err_dev;
+	}
+	num++;
+
+err_dev:
+	return num;
+}
+
+static struct vme_driver *dev_to_vme_driver(struct device *dev)
+{
+	if(dev->driver == NULL)
+		printk("Bugger dev->driver is NULL\n");
+
+	return container_of(dev->driver, struct vme_driver, driver);
+}
+
 static int vme_bus_match(struct device *dev, struct device_driver *drv)
 {
-	struct vme_driver *vme_drv;
+	struct vme_bridge *bridge;
+	struct vme_driver *driver;
+	int i, num;
 
-	vme_drv = container_of(drv, struct vme_driver, driver);
+	bridge = dev_to_bridge(dev);
+	driver = container_of(drv, struct vme_driver, driver);
 
-	if (dev->platform_data == vme_drv) {
-		struct vme_dev *vdev = dev_to_vme_dev(dev);
+	num = vme_calc_slot(dev);
+	if (!num)
+		goto err_dev;
 
-		if (vme_drv->match && vme_drv->match(vdev))
-			return 1;
-
-		dev->platform_data = NULL;
+	if (driver->bind_table == NULL) {
+		dev_err(dev, "Bind table NULL\n");
+		goto err_table;
 	}
+
+	i = 0;
+	while((driver->bind_table[i].bus != 0) ||
+		(driver->bind_table[i].slot != 0)) {
+
+		if (bridge->num == driver->bind_table[i].bus) {
+			if (num == driver->bind_table[i].slot)
+				return 1;
+
+			if (driver->bind_table[i].slot == VME_SLOT_ALL)
+				return 1;
+
+			if ((driver->bind_table[i].slot == VME_SLOT_CURRENT) &&
+				(num == vme_slot_get(dev)))
+				return 1;
+		}
+		i++;
+	}
+
+err_dev:
+err_table:
 	return 0;
 }
 
 static int vme_bus_probe(struct device *dev)
 {
-	int retval = -ENODEV;
+	struct vme_bridge *bridge;
 	struct vme_driver *driver;
-	struct vme_dev *vdev = dev_to_vme_dev(dev);
+	int retval = -ENODEV;
 
-	driver = dev->platform_data;
+	driver = dev_to_vme_driver(dev);
+	bridge = dev_to_bridge(dev);
 
-	if (driver->probe != NULL)
-		retval = driver->probe(vdev);
+	if(driver->probe != NULL) {
+		retval = driver->probe(dev, bridge->num, vme_calc_slot(dev));
+	}
 
 	return retval;
 }
 
 static int vme_bus_remove(struct device *dev)
 {
-	int retval = -ENODEV;
+	struct vme_bridge *bridge;
 	struct vme_driver *driver;
-	struct vme_dev *vdev = dev_to_vme_dev(dev);
+	int retval = -ENODEV;
 
-	driver = dev->platform_data;
+	driver = dev_to_vme_driver(dev);
+	bridge = dev_to_bridge(dev);
 
-	if (driver->remove != NULL)
-		retval = driver->remove(vdev);
+	if(driver->remove != NULL) {
+		retval = driver->remove(dev, bridge->num, vme_calc_slot(dev));
+	}
 
 	return retval;
 }
@@ -1508,18 +1479,18 @@ struct bus_type vme_bus_type = {
 };
 EXPORT_SYMBOL(vme_bus_type);
 
-static int __init vme_init(void)
+static int __init vme_init (void)
 {
 	return bus_register(&vme_bus_type);
 }
 
-static void __exit vme_exit(void)
+static void __exit vme_exit (void)
 {
 	bus_unregister(&vme_bus_type);
 }
 
 MODULE_DESCRIPTION("VME bridge driver framework");
-MODULE_AUTHOR("Martyn Welch <martyn.welch@ge.com");
+MODULE_AUTHOR("Martyn Welch <martyn.welch@gefanuc.com");
 MODULE_LICENSE("GPL");
 
 module_init(vme_init);

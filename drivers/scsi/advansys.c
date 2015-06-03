@@ -41,6 +41,7 @@
 #include <linux/firmware.h>
 
 #include <asm/io.h>
+#include <asm/system.h>
 #include <asm/dma.h>
 
 #include <scsi/scsi_cmnd.h>
@@ -4543,7 +4544,7 @@ AscMemWordCopyPtrToLram(PortAddr iop_base, ushort s_addr,
  * Copy 4 bytes to LRAM.
  *
  * The source data is assumed to be in little-endian order in memory
- * and is maintained in little-endian order when written to LRAM.
+ * and is maintained in little-endian order when writen to LRAM.
  */
 static void
 AscMemDWordCopyPtrToLram(PortAddr iop_base,
@@ -4723,10 +4724,6 @@ static ushort AscInitMicroCodeVar(ASC_DVC_VAR *asc_dvc)
 	BUG_ON((unsigned long)asc_dvc->overrun_buf & 7);
 	asc_dvc->overrun_dma = dma_map_single(board->dev, asc_dvc->overrun_buf,
 					ASC_OVERRUN_BSIZE, DMA_FROM_DEVICE);
-	if (dma_mapping_error(board->dev, asc_dvc->overrun_dma)) {
-		warn_code = -ENOMEM;
-		goto err_dma_map;
-	}
 	phy_addr = cpu_to_le32(asc_dvc->overrun_dma);
 	AscMemDWordCopyPtrToLram(iop_base, ASCV_OVERRUN_PADDR_D,
 				 (uchar *)&phy_addr, 1);
@@ -4742,22 +4739,13 @@ static ushort AscInitMicroCodeVar(ASC_DVC_VAR *asc_dvc)
 	AscSetPCAddr(iop_base, ASC_MCODE_START_ADDR);
 	if (AscGetPCAddr(iop_base) != ASC_MCODE_START_ADDR) {
 		asc_dvc->err_code |= ASC_IERR_SET_PC_ADDR;
-		warn_code = UW_ERR;
-		goto err_mcode_start;
+		return warn_code;
 	}
 	if (AscStartChip(iop_base) != 1) {
 		asc_dvc->err_code |= ASC_IERR_START_STOP_CHIP;
-		warn_code = UW_ERR;
-		goto err_mcode_start;
+		return warn_code;
 	}
 
-	return warn_code;
-
-err_mcode_start:
-	dma_unmap_single(board->dev, asc_dvc->overrun_dma,
-			 ASC_OVERRUN_BSIZE, DMA_FROM_DEVICE);
-err_dma_map:
-	asc_dvc->overrun_dma = 0;
 	return warn_code;
 }
 
@@ -4793,14 +4781,12 @@ static ushort AscInitAsc1000Driver(ASC_DVC_VAR *asc_dvc)
 	if (err) {
 		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
 		       fwname, err);
-		asc_dvc->err_code |= ASC_IERR_MCODE_CHKSUM;
 		return err;
 	}
 	if (fw->size < 4) {
 		printk(KERN_ERR "Bogus length %zu in image \"%s\"\n",
 		       fw->size, fwname);
 		release_firmware(fw);
-		asc_dvc->err_code |= ASC_IERR_MCODE_CHKSUM;
 		return -EINVAL;
 	}
 	chksum = (fw->data[3] << 24) | (fw->data[2] << 16) |
@@ -4814,8 +4800,6 @@ static ushort AscInitAsc1000Driver(ASC_DVC_VAR *asc_dvc)
 	}
 	release_firmware(fw);
 	warn_code |= AscInitMicroCodeVar(asc_dvc);
-	if (!asc_dvc->overrun_dma)
-		return warn_code;
 	asc_dvc->init_state |= ASC_INIT_STATE_END_LOAD_MC;
 	AscEnableInterrupt(iop_base);
 	return warn_code;
@@ -5126,14 +5110,12 @@ static int AdvInitAsc3550Driver(ADV_DVC_VAR *asc_dvc)
 	if (err) {
 		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
 		       fwname, err);
-		asc_dvc->err_code = ASC_IERR_MCODE_CHKSUM;
 		return err;
 	}
 	if (fw->size < 4) {
 		printk(KERN_ERR "Bogus length %zu in image \"%s\"\n",
 		       fw->size, fwname);
 		release_firmware(fw);
-		asc_dvc->err_code = ASC_IERR_MCODE_CHKSUM;
 		return -EINVAL;
 	}
 	chksum = (fw->data[3] << 24) | (fw->data[2] << 16) |
@@ -5642,14 +5624,12 @@ static int AdvInitAsc38C0800Driver(ADV_DVC_VAR *asc_dvc)
 	if (err) {
 		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
 		       fwname, err);
-		asc_dvc->err_code = ASC_IERR_MCODE_CHKSUM;
 		return err;
 	}
 	if (fw->size < 4) {
 		printk(KERN_ERR "Bogus length %zu in image \"%s\"\n",
 		       fw->size, fwname);
 		release_firmware(fw);
-		asc_dvc->err_code = ASC_IERR_MCODE_CHKSUM;
 		return -EINVAL;
 	}
 	chksum = (fw->data[3] << 24) | (fw->data[2] << 16) |
@@ -6144,14 +6124,12 @@ static int AdvInitAsc38C1600Driver(ADV_DVC_VAR *asc_dvc)
 	if (err) {
 		printk(KERN_ERR "Failed to load image \"%s\" err %d\n",
 		       fwname, err);
-		asc_dvc->err_code = ASC_IERR_MCODE_CHKSUM;
 		return err;
 	}
 	if (fw->size < 4) {
 		printk(KERN_ERR "Bogus length %zu in image \"%s\"\n",
 		       fw->size, fwname);
 		release_firmware(fw);
-		asc_dvc->err_code = ASC_IERR_MCODE_CHKSUM;
 		return -EINVAL;
 	}
 	chksum = (fw->data[3] << 24) | (fw->data[2] << 16) |
@@ -7991,11 +7969,10 @@ static int advansys_reset(struct scsi_cmnd *scp)
 		ASC_DBG(1, "before AscInitAsc1000Driver()\n");
 		status = AscInitAsc1000Driver(asc_dvc);
 
-		/* Refer to ASC_IERR_* definitions for meaning of 'err_code'. */
-		if (asc_dvc->err_code || !asc_dvc->overrun_dma) {
+		/* Refer to ASC_IERR_* defintions for meaning of 'err_code'. */
+		if (asc_dvc->err_code) {
 			scmd_printk(KERN_INFO, scp, "SCSI bus reset error: "
-				    "0x%x, status: 0x%x\n", asc_dvc->err_code,
-				    status);
+				    "0x%x\n", asc_dvc->err_code);
 			ret = FAILED;
 		} else if (status) {
 			scmd_printk(KERN_INFO, scp, "SCSI bus reset warning: "
@@ -9499,7 +9476,7 @@ static int asc_execute_scsi_cmnd(struct scsi_cmnd *scp)
  * in the 'scp' result field.
  */
 static int
-advansys_queuecommand_lck(struct scsi_cmnd *scp, void (*done)(struct scsi_cmnd *))
+advansys_queuecommand(struct scsi_cmnd *scp, void (*done)(struct scsi_cmnd *))
 {
 	struct Scsi_Host *shost = scp->device->host;
 	int asc_res, result = 0;
@@ -9523,8 +9500,6 @@ advansys_queuecommand_lck(struct scsi_cmnd *scp, void (*done)(struct scsi_cmnd *
 
 	return result;
 }
-
-static DEF_SCSI_QCMD(advansys_queuecommand)
 
 static ushort __devinit AscGetEisaChipCfg(PortAddr iop_base)
 {
@@ -9718,7 +9693,7 @@ static ushort __devinit AscInitAscDvcVar(ASC_DVC_VAR *asc_dvc)
 	asc_dvc->bug_fix_cntl = 0;
 	asc_dvc->pci_fix_asyn_xfer = 0;
 	asc_dvc->pci_fix_asyn_xfer_always = 0;
-	/* asc_dvc->init_state initialized in AscInitGetConfig(). */
+	/* asc_dvc->init_state initalized in AscInitGetConfig(). */
 	asc_dvc->sdtr_done = 0;
 	asc_dvc->cur_total_qng = 0;
 	asc_dvc->is_in_int = 0;
@@ -12328,7 +12303,7 @@ static int __devinit advansys_board_found(struct Scsi_Host *shost,
 		asc_dvc_varp->overrun_buf = kzalloc(ASC_OVERRUN_BSIZE, GFP_KERNEL);
 		if (!asc_dvc_varp->overrun_buf) {
 			ret = -ENOMEM;
-			goto err_free_irq;
+			goto err_free_wide_mem;
 		}
 		warn_code = AscInitAsc1000Driver(asc_dvc_varp);
 
@@ -12337,36 +12312,30 @@ static int __devinit advansys_board_found(struct Scsi_Host *shost,
 					"warn 0x%x, error 0x%x\n",
 					asc_dvc_varp->init_state, warn_code,
 					asc_dvc_varp->err_code);
-			if (!asc_dvc_varp->overrun_dma) {
+			if (asc_dvc_varp->err_code) {
 				ret = -ENODEV;
-				goto err_free_mem;
+				kfree(asc_dvc_varp->overrun_buf);
 			}
 		}
 	} else {
-		if (advansys_wide_init_chip(shost)) {
+		if (advansys_wide_init_chip(shost))
 			ret = -ENODEV;
-			goto err_free_mem;
-		}
 	}
+
+	if (ret)
+		goto err_free_wide_mem;
 
 	ASC_DBG_PRT_SCSI_HOST(2, shost);
 
 	ret = scsi_add_host(shost, boardp->dev);
 	if (ret)
-		goto err_free_mem;
+		goto err_free_wide_mem;
 
 	scsi_scan_host(shost);
 	return 0;
 
- err_free_mem:
-	if (ASC_NARROW_BOARD(boardp)) {
-		if (asc_dvc_varp->overrun_dma)
-			dma_unmap_single(boardp->dev, asc_dvc_varp->overrun_dma,
-					 ASC_OVERRUN_BSIZE, DMA_FROM_DEVICE);
-		kfree(asc_dvc_varp->overrun_buf);
-	} else
-		advansys_wide_free_mem(boardp);
- err_free_irq:
+ err_free_wide_mem:
+	advansys_wide_free_mem(boardp);
 	free_irq(boardp->irq, shost);
  err_free_dma:
 #ifdef CONFIG_ISA

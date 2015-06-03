@@ -40,6 +40,7 @@
 #include <linux/time.h>
 #include <linux/stat.h>
 #include <linux/string.h>
+#include <linux/smp_lock.h>
 #include <linux/buffer_head.h>
 #include <linux/blkdev.h>
 #include <linux/sched.h>
@@ -84,7 +85,7 @@ static int ufs_trunc_direct(struct inode *inode)
 	retry = 0;
 	
 	frag1 = DIRECT_FRAGMENT;
-	frag4 = min_t(u64, UFS_NDIR_FRAGMENT, ufsi->i_lastfrag);
+	frag4 = min_t(u32, UFS_NDIR_FRAGMENT, ufsi->i_lastfrag);
 	frag2 = ((frag1 & uspi->s_fpbmask) ? ((frag1 | uspi->s_fpbmask) + 1) : frag1);
 	frag3 = frag4 & ~uspi->s_fpbmask;
 	block1 = block2 = 0;
@@ -242,8 +243,10 @@ static int ufs_trunc_indirect(struct inode *inode, u64 offset, void *p)
 		ubh_bforget(ind_ubh);
 		ind_ubh = NULL;
 	}
-	if (IS_SYNC(inode) && ind_ubh && ubh_buffer_dirty(ind_ubh))
-		ubh_sync_block(ind_ubh);
+	if (IS_SYNC(inode) && ind_ubh && ubh_buffer_dirty(ind_ubh)) {
+		ubh_ll_rw_block(SWRITE, ind_ubh);
+		ubh_wait_on_buffer (ind_ubh);
+	}
 	ubh_brelse (ind_ubh);
 	
 	UFSD("EXIT: ino %lu\n", inode->i_ino);
@@ -304,8 +307,10 @@ static int ufs_trunc_dindirect(struct inode *inode, u64 offset, void *p)
 		ubh_bforget(dind_bh);
 		dind_bh = NULL;
 	}
-	if (IS_SYNC(inode) && dind_bh && ubh_buffer_dirty(dind_bh))
-		ubh_sync_block(dind_bh);
+	if (IS_SYNC(inode) && dind_bh && ubh_buffer_dirty(dind_bh)) {
+		ubh_ll_rw_block(SWRITE, dind_bh);
+		ubh_wait_on_buffer (dind_bh);
+	}
 	ubh_brelse (dind_bh);
 	
 	UFSD("EXIT: ino %lu\n", inode->i_ino);
@@ -362,8 +367,10 @@ static int ufs_trunc_tindirect(struct inode *inode)
 		ubh_bforget(tind_bh);
 		tind_bh = NULL;
 	}
-	if (IS_SYNC(inode) && tind_bh && ubh_buffer_dirty(tind_bh))
-		ubh_sync_block(tind_bh);
+	if (IS_SYNC(inode) && tind_bh && ubh_buffer_dirty(tind_bh)) {
+		ubh_ll_rw_block(SWRITE, tind_bh);
+		ubh_wait_on_buffer (tind_bh);
+	}
 	ubh_brelse (tind_bh);
 	
 	UFSD("EXIT: ino %lu\n", inode->i_ino);
@@ -466,6 +473,7 @@ int ufs_truncate(struct inode *inode, loff_t old_i_size)
 
 	block_truncate_page(inode->i_mapping, inode->i_size, ufs_getfrag_block);
 
+	lock_kernel();
 	while (1) {
 		retry = ufs_trunc_direct(inode);
 		retry |= ufs_trunc_indirect(inode, UFS_IND_BLOCK,
@@ -479,18 +487,27 @@ int ufs_truncate(struct inode *inode, loff_t old_i_size)
 			break;
 		if (IS_SYNC(inode) && (inode->i_state & I_DIRTY))
 			ufs_sync_inode (inode);
+		blk_run_address_space(inode->i_mapping);
 		yield();
 	}
 
 	inode->i_mtime = inode->i_ctime = CURRENT_TIME_SEC;
 	ufsi->i_lastfrag = DIRECT_FRAGMENT;
+	unlock_kernel();
 	mark_inode_dirty(inode);
 out:
 	UFSD("EXIT: err %d\n", err);
 	return err;
 }
 
-int ufs_setattr(struct dentry *dentry, struct iattr *attr)
+
+/*
+ * We don't define our `inode->i_op->truncate', and call it here,
+ * because of:
+ * - there is no way to know old size
+ * - there is no way inform user about error, if it happens in `truncate'
+ */
+static int ufs_setattr(struct dentry *dentry, struct iattr *attr)
 {
 	struct inode *inode = dentry->d_inode;
 	unsigned int ia_valid = attr->ia_valid;
@@ -500,22 +517,17 @@ int ufs_setattr(struct dentry *dentry, struct iattr *attr)
 	if (error)
 		return error;
 
-	if (ia_valid & ATTR_SIZE && attr->ia_size != inode->i_size) {
+	if (ia_valid & ATTR_SIZE &&
+	    attr->ia_size != i_size_read(inode)) {
 		loff_t old_i_size = inode->i_size;
-
-		/* XXX(truncate): truncate_setsize should be called last */
-		truncate_setsize(inode, attr->ia_size);
-
-		lock_ufs(inode->i_sb);
+		error = vmtruncate(inode, attr->ia_size);
+		if (error)
+			return error;
 		error = ufs_truncate(inode, old_i_size);
-		unlock_ufs(inode->i_sb);
 		if (error)
 			return error;
 	}
-
-	setattr_copy(inode, attr);
-	mark_inode_dirty(inode);
-	return 0;
+	return inode_setattr(inode, attr);
 }
 
 const struct inode_operations ufs_file_inode_operations = {

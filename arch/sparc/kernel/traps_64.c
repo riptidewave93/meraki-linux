@@ -17,11 +17,10 @@
 #include <linux/mm.h>
 #include <linux/init.h>
 #include <linux/kdebug.h>
-#include <linux/ftrace.h>
-#include <linux/gfp.h>
 
 #include <asm/smp.h>
 #include <asm/delay.h>
+#include <asm/system.h>
 #include <asm/ptrace.h>
 #include <asm/oplib.h>
 #include <asm/page.h>
@@ -40,7 +39,6 @@
 #include <asm/head.h>
 #include <asm/prom.h>
 #include <asm/memctrl.h>
-#include <asm/cacheflush.h>
 
 #include "entry.h"
 #include "kstack.h"
@@ -622,7 +620,7 @@ static const char CHAFSR_PERR_msg[] =
 static const char CHAFSR_IERR_msg[] =
 	"Internal processor error";
 static const char CHAFSR_ISAP_msg[] =
-	"System request parity error on incoming address";
+	"System request parity error on incoming addresss";
 static const char CHAFSR_UCU_msg[] =
 	"Uncorrectable E-cache ECC error for ifetch/data";
 static const char CHAFSR_UCC_msg[] =
@@ -1804,7 +1802,7 @@ static const char *sun4v_err_type_to_str(u32 type)
 		return "warning resumable";
 	default:
 		return "unknown";
-	}
+	};
 }
 
 static void sun4v_log_error(struct pt_regs *regs, struct sun4v_error_entry *ent, int cpu, const char *pfx, atomic_t *ocnt)
@@ -2152,12 +2150,9 @@ static void user_instruction_dump(unsigned int __user *pc)
 
 void show_stack(struct task_struct *tsk, unsigned long *_ksp)
 {
-	unsigned long fp, ksp;
+	unsigned long fp, thread_base, ksp;
 	struct thread_info *tp;
 	int count = 0;
-#ifdef CONFIG_FUNCTION_GRAPH_TRACER
-	int graph = 0;
-#endif
 
 	ksp = (unsigned long) _ksp;
 	if (!tsk)
@@ -2173,6 +2168,7 @@ void show_stack(struct task_struct *tsk, unsigned long *_ksp)
 		flushw_all();
 
 	fp = ksp + STACK_BIAS;
+	thread_base = (unsigned long) tp;
 
 	printk("Call Trace:\n");
 	do {
@@ -2196,16 +2192,6 @@ void show_stack(struct task_struct *tsk, unsigned long *_ksp)
 		}
 
 		printk(" [%016lx] %pS\n", pc, (void *) pc);
-#ifdef CONFIG_FUNCTION_GRAPH_TRACER
-		if ((pc + 8UL) == (unsigned long) &return_to_handler) {
-			int index = tsk->curr_ret_stack;
-			if (tsk->ret_stack && index >= graph) {
-				pc = tsk->ret_stack[index - graph].ret;
-				printk(" [%016lx] %pS\n", pc, (void *) pc);
-				graph++;
-			}
-		}
-#endif
 	} while (++count < 16);
 }
 
@@ -2215,6 +2201,27 @@ void dump_stack(void)
 }
 
 EXPORT_SYMBOL(dump_stack);
+
+static inline int is_kernel_stack(struct task_struct *task,
+				  struct reg_window *rw)
+{
+	unsigned long rw_addr = (unsigned long) rw;
+	unsigned long thread_base, thread_end;
+
+	if (rw_addr < PAGE_OFFSET) {
+		if (task != &init_task)
+			return 0;
+	}
+
+	thread_base = (unsigned long) task_stack_page(task);
+	thread_end = thread_base + sizeof(union thread_union);
+	if (rw_addr >= thread_base &&
+	    rw_addr < thread_end &&
+	    !(rw_addr & 0x7UL))
+		return 1;
+
+	return 0;
+}
 
 static inline struct reg_window *kernel_stack_up(struct reg_window *rw)
 {
@@ -2244,7 +2251,6 @@ void die_if_kernel(char *str, struct pt_regs *regs)
 	show_regs(regs);
 	add_taint(TAINT_DIE);
 	if (regs->tstate & TSTATE_PRIV) {
-		struct thread_info *tp = current_thread_info();
 		struct reg_window *rw = (struct reg_window *)
 			(regs->u_regs[UREG_FP] + STACK_BIAS);
 
@@ -2252,8 +2258,8 @@ void die_if_kernel(char *str, struct pt_regs *regs)
 		 * find some badly aligned kernel stack.
 		 */
 		while (rw &&
-		       count++ < 30 &&
-		       kstack_valid(tp, (unsigned long) rw)) {
+		       count++ < 30&&
+		       is_kernel_stack(current, rw)) {
 			printk("Caller[%016lx]: %pS\n", rw->ins[7],
 			       (void *) rw->ins[7]);
 
@@ -2542,6 +2548,15 @@ void __init trap_init(void)
 					       rwbuf_stkptrs) ||
 		     TI_GSR != offsetof(struct thread_info, gsr) ||
 		     TI_XFSR != offsetof(struct thread_info, xfsr) ||
+		     TI_USER_CNTD0 != offsetof(struct thread_info,
+					       user_cntd0) ||
+		     TI_USER_CNTD1 != offsetof(struct thread_info,
+					       user_cntd1) ||
+		     TI_KERN_CNTD0 != offsetof(struct thread_info,
+					       kernel_cntd0) ||
+		     TI_KERN_CNTD1 != offsetof(struct thread_info,
+					       kernel_cntd1) ||
+		     TI_PCR != offsetof(struct thread_info, pcr_reg) ||
 		     TI_PRE_COUNT != offsetof(struct thread_info,
 					      preempt_count) ||
 		     TI_NEW_CHILD != offsetof(struct thread_info, new_child) ||

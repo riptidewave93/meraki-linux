@@ -21,9 +21,10 @@
 #include <linux/sched.h>
 #include <linux/adb.h>
 #include <linux/pmu.h>
+#include <linux/slab.h>
 #include <linux/cpufreq.h>
 #include <linux/init.h>
-#include <linux/device.h>
+#include <linux/sysdev.h>
 #include <linux/hardirq.h>
 #include <asm/prom.h>
 #include <asm/machdep.h>
@@ -33,9 +34,9 @@
 #include <asm/sections.h>
 #include <asm/cputable.h>
 #include <asm/time.h>
+#include <asm/system.h>
 #include <asm/mpic.h>
 #include <asm/keylargo.h>
-#include <asm/switch_to.h>
 
 /* WARNING !!! This will cause calibrate_delay() to be called,
  * but this is an __init function ! So you MUST go edit
@@ -310,12 +311,8 @@ static int pmu_set_cpu_speed(int low_speed)
 	/* Restore low level PMU operations */
 	pmu_unlock();
 
-	/*
-	 * Restore decrementer; we'll take a decrementer interrupt
-	 * as soon as interrupts are re-enabled and the generic
-	 * clockevents code will reprogram it with the right value.
-	 */
-	set_dec(1);
+	/* Restore decrementer */
+	wakeup_decrementer();
 
 	/* Restore interrupts */
  	mpic_cpu_set_priority(pic_prio);
@@ -429,7 +426,7 @@ static u32 read_gpio(struct device_node *np)
 	return offset;
 }
 
-static int pmac_cpufreq_suspend(struct cpufreq_policy *policy)
+static int pmac_cpufreq_suspend(struct cpufreq_policy *policy, pm_message_t pmsg)
 {
 	/* Ok, this could be made a bit smarter, but let's be robust for now. We
 	 * always force a speed change to high speed before sleep, to make sure
@@ -660,31 +657,31 @@ static int __init pmac_cpufreq_setup(void)
 	cur_freq = (*value) / 1000;
 
 	/*  Check for 7447A based MacRISC3 */
-	if (of_machine_is_compatible("MacRISC3") &&
+	if (machine_is_compatible("MacRISC3") &&
 	    of_get_property(cpunode, "dynamic-power-step", NULL) &&
 	    PVR_VER(mfspr(SPRN_PVR)) == 0x8003) {
 		pmac_cpufreq_init_7447A(cpunode);
 	/* Check for other MacRISC3 machines */
-	} else if (of_machine_is_compatible("PowerBook3,4") ||
-		   of_machine_is_compatible("PowerBook3,5") ||
-		   of_machine_is_compatible("MacRISC3")) {
+	} else if (machine_is_compatible("PowerBook3,4") ||
+		   machine_is_compatible("PowerBook3,5") ||
+		   machine_is_compatible("MacRISC3")) {
 		pmac_cpufreq_init_MacRISC3(cpunode);
 	/* Else check for iBook2 500/600 */
-	} else if (of_machine_is_compatible("PowerBook4,1")) {
+	} else if (machine_is_compatible("PowerBook4,1")) {
 		hi_freq = cur_freq;
 		low_freq = 400000;
 		set_speed_proc = pmu_set_cpu_speed;
 		is_pmu_based = 1;
 	}
 	/* Else check for TiPb 550 */
-	else if (of_machine_is_compatible("PowerBook3,3") && cur_freq == 550000) {
+	else if (machine_is_compatible("PowerBook3,3") && cur_freq == 550000) {
 		hi_freq = cur_freq;
 		low_freq = 500000;
 		set_speed_proc = pmu_set_cpu_speed;
 		is_pmu_based = 1;
 	}
 	/* Else check for TiPb 400 & 500 */
-	else if (of_machine_is_compatible("PowerBook3,2")) {
+	else if (machine_is_compatible("PowerBook3,2")) {
 		/* We only know about the 400 MHz and the 500Mhz model
 		 * they both have 300 MHz as low frequency
 		 */

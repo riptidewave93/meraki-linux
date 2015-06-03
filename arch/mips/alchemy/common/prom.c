@@ -43,15 +43,29 @@ int prom_argc;
 char **prom_argv;
 char **prom_envp;
 
-void __init prom_init_cmdline(void)
+char * __init_or_module prom_getcmdline(void)
 {
-	int i;
+	return &(arcs_cmdline[0]);
+}
 
-	for (i = 1; i < prom_argc; i++) {
-		strlcat(arcs_cmdline, prom_argv[i], COMMAND_LINE_SIZE);
-		if (i < (prom_argc - 1))
-			strlcat(arcs_cmdline, " ", COMMAND_LINE_SIZE);
+void prom_init_cmdline(void)
+{
+	char *cp;
+	int actr;
+
+	actr = 1; /* Always ignore argv[0] */
+
+	cp = &(arcs_cmdline[0]);
+	while (actr < prom_argc) {
+		strcpy(cp, prom_argv[actr]);
+		cp += strlen(prom_argv[actr]);
+		*cp++ = ' ';
+		actr++;
 	}
+	if (cp != &(arcs_cmdline[0])) /* get rid of trailing space */
+		--cp;
+	if (prom_argc > 1)
+		*cp = '\0';
 }
 
 char *prom_getenv(char *envname)
@@ -104,15 +118,17 @@ static inline void str2eaddr(unsigned char *ea, unsigned char *str)
 	}
 }
 
-int __init prom_get_ethernet_addr(char *ethernet_addr)
+int prom_get_ethernet_addr(char *ethernet_addr)
 {
 	char *ethaddr_str;
+	char *argptr;
 
 	/* Check the environment variables first */
 	ethaddr_str = prom_getenv("ethaddr");
 	if (!ethaddr_str) {
 		/* Check command line */
-		ethaddr_str = strstr(arcs_cmdline, "ethaddr=");
+		argptr = prom_getcmdline();
+		ethaddr_str = strstr(argptr, "ethaddr=");
 		if (!ethaddr_str)
 			return -1;
 
@@ -123,6 +139,7 @@ int __init prom_get_ethernet_addr(char *ethernet_addr)
 
 	return 0;
 }
+EXPORT_SYMBOL(prom_get_ethernet_addr);
 
 void __init prom_free_prom_memory(void)
 {

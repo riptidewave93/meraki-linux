@@ -1,9 +1,25 @@
 /*
- *  Ptrace user space interface.
+ *  arch/s390/kernel/ptrace.c
  *
- *    Copyright IBM Corp. 1999,2010
- *    Author(s): Denis Joseph Barrow
+ *  S390 version
+ *    Copyright (C) 1999,2000 IBM Deutschland Entwicklung GmbH, IBM Corporation
+ *    Author(s): Denis Joseph Barrow (djbarrow@de.ibm.com,barrow_dj@yahoo.com),
  *               Martin Schwidefsky (schwidefsky@de.ibm.com)
+ *
+ *  Based on PowerPC version 
+ *    Copyright (C) 1995-1996 Gary Thomas (gdt@linuxppc.org)
+ *
+ *  Derived from "arch/m68k/kernel/ptrace.c"
+ *  Copyright (C) 1994 by Hamish Macdonald
+ *  Taken from linux/kernel/ptrace.c and modified for M680x0.
+ *  linux/kernel/ptrace.c is by Ross Biro 1/23/92, edited by Linus Torvalds
+ *
+ * Modified by Cort Dougan (cort@cs.nmt.edu) 
+ *
+ *
+ * This file is subject to the terms and conditions of the GNU General
+ * Public License.  See the file README.legal in the main directory of
+ * this archive for more details.
  */
 
 #include <linux/kernel.h>
@@ -26,9 +42,9 @@
 #include <asm/page.h>
 #include <asm/pgtable.h>
 #include <asm/pgalloc.h>
+#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/unistd.h>
-#include <asm/switch_to.h>
 #include "entry.h"
 
 #ifdef CONFIG_COMPAT
@@ -41,65 +57,71 @@
 enum s390_regset {
 	REGSET_GENERAL,
 	REGSET_FP,
-	REGSET_LAST_BREAK,
-	REGSET_SYSTEM_CALL,
 	REGSET_GENERAL_EXTENDED,
 };
 
-void update_per_regs(struct task_struct *task)
+static void
+FixPerRegisters(struct task_struct *task)
 {
-	struct pt_regs *regs = task_pt_regs(task);
-	struct thread_struct *thread = &task->thread;
-	struct per_regs old, new;
+	struct pt_regs *regs;
+	per_struct *per_info;
 
-	/* Copy user specified PER registers */
-	new.control = thread->per_user.control;
-	new.start = thread->per_user.start;
-	new.end = thread->per_user.end;
-
-	/* merge TIF_SINGLE_STEP into user specified PER registers. */
-	if (test_tsk_thread_flag(task, TIF_SINGLE_STEP)) {
-		new.control |= PER_EVENT_IFETCH;
-		new.start = 0;
-		new.end = PSW_ADDR_INSN;
+	regs = task_pt_regs(task);
+	per_info = (per_struct *) &task->thread.per_info;
+	per_info->control_regs.bits.em_instruction_fetch =
+		per_info->single_step | per_info->instruction_fetch;
+	
+	if (per_info->single_step) {
+		per_info->control_regs.bits.starting_addr = 0;
+#ifdef CONFIG_COMPAT
+		if (is_compat_task())
+			per_info->control_regs.bits.ending_addr = 0x7fffffffUL;
+		else
+#endif
+			per_info->control_regs.bits.ending_addr = PSW_ADDR_INSN;
+	} else {
+		per_info->control_regs.bits.starting_addr =
+			per_info->starting_addr;
+		per_info->control_regs.bits.ending_addr =
+			per_info->ending_addr;
 	}
-
-	/* Take care of the PER enablement bit in the PSW. */
-	if (!(new.control & PER_EVENT_MASK)) {
+	/*
+	 * if any of the control reg tracing bits are on 
+	 * we switch on per in the psw
+	 */
+	if (per_info->control_regs.words.cr[0] & PER_EM_MASK)
+		regs->psw.mask |= PSW_MASK_PER;
+	else
 		regs->psw.mask &= ~PSW_MASK_PER;
-		return;
-	}
-	regs->psw.mask |= PSW_MASK_PER;
-	__ctl_store(old, 9, 11);
-	if (memcmp(&new, &old, sizeof(struct per_regs)) != 0)
-		__ctl_load(new, 9, 11);
+
+	if (per_info->control_regs.bits.em_storage_alteration)
+		per_info->control_regs.bits.storage_alt_space_ctl = 1;
+	else
+		per_info->control_regs.bits.storage_alt_space_ctl = 0;
 }
 
 void user_enable_single_step(struct task_struct *task)
 {
-	set_tsk_thread_flag(task, TIF_SINGLE_STEP);
-	if (task == current)
-		update_per_regs(task);
+	task->thread.per_info.single_step = 1;
+	FixPerRegisters(task);
 }
 
 void user_disable_single_step(struct task_struct *task)
 {
-	clear_tsk_thread_flag(task, TIF_SINGLE_STEP);
-	if (task == current)
-		update_per_regs(task);
+	task->thread.per_info.single_step = 0;
+	FixPerRegisters(task);
 }
 
 /*
  * Called by kernel/ptrace.c when detaching..
  *
- * Clear all debugging related fields.
+ * Make sure single step bits etc are not set.
  */
-void ptrace_disable(struct task_struct *task)
+void
+ptrace_disable(struct task_struct *child)
 {
-	memset(&task->thread.per_user, 0, sizeof(task->thread.per_user));
-	memset(&task->thread.per_event, 0, sizeof(task->thread.per_event));
-	clear_tsk_thread_flag(task, TIF_SINGLE_STEP);
-	clear_tsk_thread_flag(task, TIF_PER_TRAP);
+	/* make sure the single step bit is not set. */
+	user_disable_single_step(child);
 }
 
 #ifndef CONFIG_64BIT
@@ -107,47 +129,6 @@ void ptrace_disable(struct task_struct *task)
 #else
 # define __ADDR_MASK 7
 #endif
-
-static inline unsigned long __peek_user_per(struct task_struct *child,
-					    addr_t addr)
-{
-	struct per_struct_kernel *dummy = NULL;
-
-	if (addr == (addr_t) &dummy->cr9)
-		/* Control bits of the active per set. */
-		return test_thread_flag(TIF_SINGLE_STEP) ?
-			PER_EVENT_IFETCH : child->thread.per_user.control;
-	else if (addr == (addr_t) &dummy->cr10)
-		/* Start address of the active per set. */
-		return test_thread_flag(TIF_SINGLE_STEP) ?
-			0 : child->thread.per_user.start;
-	else if (addr == (addr_t) &dummy->cr11)
-		/* End address of the active per set. */
-		return test_thread_flag(TIF_SINGLE_STEP) ?
-			PSW_ADDR_INSN : child->thread.per_user.end;
-	else if (addr == (addr_t) &dummy->bits)
-		/* Single-step bit. */
-		return test_thread_flag(TIF_SINGLE_STEP) ?
-			(1UL << (BITS_PER_LONG - 1)) : 0;
-	else if (addr == (addr_t) &dummy->starting_addr)
-		/* Start address of the user specified per set. */
-		return child->thread.per_user.start;
-	else if (addr == (addr_t) &dummy->ending_addr)
-		/* End address of the user specified per set. */
-		return child->thread.per_user.end;
-	else if (addr == (addr_t) &dummy->perc_atmid)
-		/* PER code, ATMID and AI of the last PER trap */
-		return (unsigned long)
-			child->thread.per_event.cause << (BITS_PER_LONG - 16);
-	else if (addr == (addr_t) &dummy->address)
-		/* Address of the last PER trap */
-		return child->thread.per_event.address;
-	else if (addr == (addr_t) &dummy->access_id)
-		/* Access id of the last PER trap */
-		return (unsigned long)
-			child->thread.per_event.paid << (BITS_PER_LONG - 8);
-	return 0;
-}
 
 /*
  * Read the word at offset addr from the user area of a process. The
@@ -169,8 +150,8 @@ static unsigned long __peek_user(struct task_struct *child, addr_t addr)
 		 */
 		tmp = *(addr_t *)((addr_t) &task_pt_regs(child)->psw + addr);
 		if (addr == (addr_t) &dummy->regs.psw.mask)
-			/* Return a clean psw mask. */
-			tmp = psw_user_bits | (tmp & PSW_MASK_USER);
+			/* Remove per bit from user psw. */
+			tmp &= ~PSW_MASK_PER;
 
 	} else if (addr < (addr_t) &dummy->regs.orig_gpr2) {
 		/*
@@ -214,10 +195,10 @@ static unsigned long __peek_user(struct task_struct *child, addr_t addr)
 
 	} else if (addr < (addr_t) (&dummy->regs.per_info + 1)) {
 		/*
-		 * Handle access to the per_info structure.
+		 * per_info is found in the thread structure
 		 */
-		addr -= (addr_t) &dummy->regs.per_info;
-		tmp = __peek_user_per(child, addr);
+		offset = addr - (addr_t) &dummy->regs.per_info;
+		tmp = *(addr_t *)((addr_t) &child->thread.per_info + offset);
 
 	} else
 		tmp = 0;
@@ -247,35 +228,6 @@ peek_user(struct task_struct *child, addr_t addr, addr_t data)
 	return put_user(tmp, (addr_t __user *) data);
 }
 
-static inline void __poke_user_per(struct task_struct *child,
-				   addr_t addr, addr_t data)
-{
-	struct per_struct_kernel *dummy = NULL;
-
-	/*
-	 * There are only three fields in the per_info struct that the
-	 * debugger user can write to.
-	 * 1) cr9: the debugger wants to set a new PER event mask
-	 * 2) starting_addr: the debugger wants to set a new starting
-	 *    address to use with the PER event mask.
-	 * 3) ending_addr: the debugger wants to set a new ending
-	 *    address to use with the PER event mask.
-	 * The user specified PER event mask and the start and end
-	 * addresses are used only if single stepping is not in effect.
-	 * Writes to any other field in per_info are ignored.
-	 */
-	if (addr == (addr_t) &dummy->cr9)
-		/* PER event mask of the user specified per set. */
-		child->thread.per_user.control =
-			data & (PER_EVENT_MASK | PER_CONTROL_MASK);
-	else if (addr == (addr_t) &dummy->starting_addr)
-		/* Starting address of the user specified per set. */
-		child->thread.per_user.start = data;
-	else if (addr == (addr_t) &dummy->ending_addr)
-		/* Ending address of the user specified per set. */
-		child->thread.per_user.end = data;
-}
-
 /*
  * Write a word to the user area of a process at location addr. This
  * operation does have an additional problem compared to peek_user.
@@ -292,12 +244,18 @@ static int __poke_user(struct task_struct *child, addr_t addr, addr_t data)
 		 * psw and gprs are stored on the stack
 		 */
 		if (addr == (addr_t) &dummy->regs.psw.mask &&
-		    (((data^psw_user_bits) & ~PSW_MASK_USER) ||
-		     (((data^psw_user_bits) & PSW_MASK_ASC) &&
-		      ((data|psw_user_bits) & PSW_MASK_ASC) == PSW_MASK_ASC) ||
-		     ((data & PSW_MASK_EA) && !(data & PSW_MASK_BA))))
+#ifdef CONFIG_COMPAT
+		    data != PSW_MASK_MERGE(psw_user32_bits, data) &&
+#endif
+		    data != PSW_MASK_MERGE(psw_user_bits, data))
 			/* Invalid psw mask. */
 			return -EINVAL;
+#ifndef CONFIG_64BIT
+		if (addr == (addr_t) &dummy->regs.psw.addr)
+			/* I'd like to reject addresses without the
+			   high order bit but older gdb's rely on it */
+			data |= PSW_ADDR_AMODE;
+#endif
 		*(addr_t *)((addr_t) &task_pt_regs(child)->psw + addr) = data;
 
 	} else if (addr < (addr_t) (&dummy->regs.orig_gpr2)) {
@@ -344,17 +302,19 @@ static int __poke_user(struct task_struct *child, addr_t addr, addr_t data)
 
 	} else if (addr < (addr_t) (&dummy->regs.per_info + 1)) {
 		/*
-		 * Handle access to the per_info structure.
+		 * per_info is found in the thread structure 
 		 */
-		addr -= (addr_t) &dummy->regs.per_info;
-		__poke_user_per(child, addr, data);
+		offset = addr - (addr_t) &dummy->regs.per_info;
+		*(addr_t *)((addr_t) &child->thread.per_info + offset) = data;
 
 	}
 
+	FixPerRegisters(child);
 	return 0;
 }
 
-static int poke_user(struct task_struct *child, addr_t addr, addr_t data)
+static int
+poke_user(struct task_struct *child, addr_t addr, addr_t data)
 {
 	addr_t mask;
 
@@ -374,8 +334,7 @@ static int poke_user(struct task_struct *child, addr_t addr, addr_t data)
 	return __poke_user(child, addr, data);
 }
 
-long arch_ptrace(struct task_struct *child, long request,
-		 unsigned long addr, unsigned long data)
+long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 {
 	ptrace_area parea; 
 	int copied, ret;
@@ -414,10 +373,6 @@ long arch_ptrace(struct task_struct *child, long request,
 			copied += sizeof(unsigned long);
 		}
 		return 0;
-	case PTRACE_GET_LAST_BREAK:
-		put_user(task_thread_info(child)->last_break,
-			 (unsigned long __user *) data);
-		return 0;
 	default:
 		/* Removing high order bit from addr (only for 31 bit). */
 		addr &= PSW_ADDR_INSN;
@@ -441,72 +396,31 @@ long arch_ptrace(struct task_struct *child, long request,
  */
 
 /*
- * Same as peek_user_per but for a 31 bit program.
- */
-static inline __u32 __peek_user_per_compat(struct task_struct *child,
-					   addr_t addr)
-{
-	struct compat_per_struct_kernel *dummy32 = NULL;
-
-	if (addr == (addr_t) &dummy32->cr9)
-		/* Control bits of the active per set. */
-		return (__u32) test_thread_flag(TIF_SINGLE_STEP) ?
-			PER_EVENT_IFETCH : child->thread.per_user.control;
-	else if (addr == (addr_t) &dummy32->cr10)
-		/* Start address of the active per set. */
-		return (__u32) test_thread_flag(TIF_SINGLE_STEP) ?
-			0 : child->thread.per_user.start;
-	else if (addr == (addr_t) &dummy32->cr11)
-		/* End address of the active per set. */
-		return test_thread_flag(TIF_SINGLE_STEP) ?
-			PSW32_ADDR_INSN : child->thread.per_user.end;
-	else if (addr == (addr_t) &dummy32->bits)
-		/* Single-step bit. */
-		return (__u32) test_thread_flag(TIF_SINGLE_STEP) ?
-			0x80000000 : 0;
-	else if (addr == (addr_t) &dummy32->starting_addr)
-		/* Start address of the user specified per set. */
-		return (__u32) child->thread.per_user.start;
-	else if (addr == (addr_t) &dummy32->ending_addr)
-		/* End address of the user specified per set. */
-		return (__u32) child->thread.per_user.end;
-	else if (addr == (addr_t) &dummy32->perc_atmid)
-		/* PER code, ATMID and AI of the last PER trap */
-		return (__u32) child->thread.per_event.cause << 16;
-	else if (addr == (addr_t) &dummy32->address)
-		/* Address of the last PER trap */
-		return (__u32) child->thread.per_event.address;
-	else if (addr == (addr_t) &dummy32->access_id)
-		/* Access id of the last PER trap */
-		return (__u32) child->thread.per_event.paid << 24;
-	return 0;
-}
-
-/*
  * Same as peek_user but for a 31 bit program.
  */
 static u32 __peek_user_compat(struct task_struct *child, addr_t addr)
 {
-	struct compat_user *dummy32 = NULL;
+	struct user32 *dummy32 = NULL;
+	per_struct32 *dummy_per32 = NULL;
 	addr_t offset;
 	__u32 tmp;
 
 	if (addr < (addr_t) &dummy32->regs.acrs) {
-		struct pt_regs *regs = task_pt_regs(child);
 		/*
 		 * psw and gprs are stored on the stack
 		 */
 		if (addr == (addr_t) &dummy32->regs.psw.mask) {
 			/* Fake a 31 bit psw mask. */
-			tmp = (__u32)(regs->psw.mask >> 32);
-			tmp = psw32_user_bits | (tmp & PSW32_MASK_USER);
+			tmp = (__u32)(task_pt_regs(child)->psw.mask >> 32);
+			tmp = PSW32_MASK_MERGE(psw32_user_bits, tmp);
 		} else if (addr == (addr_t) &dummy32->regs.psw.addr) {
 			/* Fake a 31 bit psw address. */
-			tmp = (__u32) regs->psw.addr |
-				(__u32)(regs->psw.mask & PSW_MASK_BA);
+			tmp = (__u32) task_pt_regs(child)->psw.addr |
+				PSW32_ADDR_AMODE31;
 		} else {
 			/* gpr 0-15 */
-			tmp = *(__u32 *)((addr_t) &regs->psw + addr*2 + 4);
+			tmp = *(__u32 *)((addr_t) &task_pt_regs(child)->psw +
+					 addr*2 + 4);
 		}
 	} else if (addr < (addr_t) (&dummy32->regs.orig_gpr2)) {
 		/*
@@ -537,10 +451,19 @@ static u32 __peek_user_compat(struct task_struct *child, addr_t addr)
 
 	} else if (addr < (addr_t) (&dummy32->regs.per_info + 1)) {
 		/*
-		 * Handle access to the per_info structure.
+		 * per_info is found in the thread structure
 		 */
-		addr -= (addr_t) &dummy32->regs.per_info;
-		tmp = __peek_user_per_compat(child, addr);
+		offset = addr - (addr_t) &dummy32->regs.per_info;
+		/* This is magic. See per_struct and per_struct32. */
+		if ((offset >= (addr_t) &dummy_per32->control_regs &&
+		     offset < (addr_t) (&dummy_per32->control_regs + 1)) ||
+		    (offset >= (addr_t) &dummy_per32->starting_addr &&
+		     offset <= (addr_t) &dummy_per32->ending_addr) ||
+		    offset == (addr_t) &dummy_per32->lowcore.words.address)
+			offset = offset*2 + 4;
+		else
+			offset = offset*2;
+		tmp = *(__u32 *)((addr_t) &child->thread.per_info + offset);
 
 	} else
 		tmp = 0;
@@ -561,60 +484,35 @@ static int peek_user_compat(struct task_struct *child,
 }
 
 /*
- * Same as poke_user_per but for a 31 bit program.
- */
-static inline void __poke_user_per_compat(struct task_struct *child,
-					  addr_t addr, __u32 data)
-{
-	struct compat_per_struct_kernel *dummy32 = NULL;
-
-	if (addr == (addr_t) &dummy32->cr9)
-		/* PER event mask of the user specified per set. */
-		child->thread.per_user.control =
-			data & (PER_EVENT_MASK | PER_CONTROL_MASK);
-	else if (addr == (addr_t) &dummy32->starting_addr)
-		/* Starting address of the user specified per set. */
-		child->thread.per_user.start = data;
-	else if (addr == (addr_t) &dummy32->ending_addr)
-		/* Ending address of the user specified per set. */
-		child->thread.per_user.end = data;
-}
-
-/*
  * Same as poke_user but for a 31 bit program.
  */
 static int __poke_user_compat(struct task_struct *child,
 			      addr_t addr, addr_t data)
 {
-	struct compat_user *dummy32 = NULL;
+	struct user32 *dummy32 = NULL;
+	per_struct32 *dummy_per32 = NULL;
 	__u32 tmp = (__u32) data;
 	addr_t offset;
 
 	if (addr < (addr_t) &dummy32->regs.acrs) {
-		struct pt_regs *regs = task_pt_regs(child);
 		/*
 		 * psw, gprs, acrs and orig_gpr2 are stored on the stack
 		 */
 		if (addr == (addr_t) &dummy32->regs.psw.mask) {
 			/* Build a 64 bit psw mask from 31 bit mask. */
-			if (((tmp^psw32_user_bits) & ~PSW32_MASK_USER) ||
-			    (((tmp^psw32_user_bits) & PSW32_MASK_ASC) &&
-			     ((tmp|psw32_user_bits) & PSW32_MASK_ASC)
-			     == PSW32_MASK_ASC))
+			if (tmp != PSW32_MASK_MERGE(psw32_user_bits, tmp))
 				/* Invalid psw mask. */
 				return -EINVAL;
-			regs->psw.mask = (regs->psw.mask & ~PSW_MASK_USER) |
-				(regs->psw.mask & PSW_MASK_BA) |
-				(__u64)(tmp & PSW32_MASK_USER) << 32;
+			task_pt_regs(child)->psw.mask =
+				PSW_MASK_MERGE(psw_user32_bits, (__u64) tmp << 32);
 		} else if (addr == (addr_t) &dummy32->regs.psw.addr) {
 			/* Build a 64 bit psw address from 31 bit address. */
-			regs->psw.addr = (__u64) tmp & PSW32_ADDR_INSN;
-			/* Transfer 31 bit amode bit to psw mask. */
-			regs->psw.mask = (regs->psw.mask & ~PSW_MASK_BA) |
-				(__u64)(tmp & PSW32_ADDR_AMODE);
+			task_pt_regs(child)->psw.addr =
+				(__u64) tmp & PSW32_ADDR_INSN;
 		} else {
 			/* gpr 0-15 */
-			*(__u32*)((addr_t) &regs->psw + addr*2 + 4) = tmp;
+			*(__u32*)((addr_t) &task_pt_regs(child)->psw
+				  + addr*2 + 4) = tmp;
 		}
 	} else if (addr < (addr_t) (&dummy32->regs.orig_gpr2)) {
 		/*
@@ -649,20 +547,37 @@ static int __poke_user_compat(struct task_struct *child,
 
 	} else if (addr < (addr_t) (&dummy32->regs.per_info + 1)) {
 		/*
-		 * Handle access to the per_info structure.
+		 * per_info is found in the thread structure.
 		 */
-		addr -= (addr_t) &dummy32->regs.per_info;
-		__poke_user_per_compat(child, addr, data);
+		offset = addr - (addr_t) &dummy32->regs.per_info;
+		/*
+		 * This is magic. See per_struct and per_struct32.
+		 * By incident the offsets in per_struct are exactly
+		 * twice the offsets in per_struct32 for all fields.
+		 * The 8 byte fields need special handling though,
+		 * because the second half (bytes 4-7) is needed and
+		 * not the first half.
+		 */
+		if ((offset >= (addr_t) &dummy_per32->control_regs &&
+		     offset < (addr_t) (&dummy_per32->control_regs + 1)) ||
+		    (offset >= (addr_t) &dummy_per32->starting_addr &&
+		     offset <= (addr_t) &dummy_per32->ending_addr) ||
+		    offset == (addr_t) &dummy_per32->lowcore.words.address)
+			offset = offset*2 + 4;
+		else
+			offset = offset*2;
+		*(__u32 *)((addr_t) &child->thread.per_info + offset) = tmp;
+
 	}
 
+	FixPerRegisters(child);
 	return 0;
 }
 
 static int poke_user_compat(struct task_struct *child,
 			    addr_t addr, addr_t data)
 {
-	if (!is_compat_task() || (addr & 3) ||
-	    addr > sizeof(struct compat_user) - 3)
+	if (!is_compat_task() || (addr & 3) || addr > sizeof(struct user32) - 3)
 		return -EIO;
 
 	return __poke_user_compat(child, addr, data);
@@ -673,7 +588,7 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 {
 	unsigned long addr = caddr;
 	unsigned long data = cdata;
-	compat_ptrace_area parea;
+	ptrace_area_emu31 parea; 
 	int copied, ret;
 
 	switch (request) {
@@ -710,10 +625,6 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 			copied += sizeof(unsigned int);
 		}
 		return 0;
-	case PTRACE_GET_LAST_BREAK:
-		put_user(task_thread_info(child)->last_break,
-			 (unsigned int __user *) data);
-		return 0;
 	}
 	return compat_ptrace_request(child, request, addr, data);
 }
@@ -738,24 +649,27 @@ asmlinkage long do_syscall_trace_enter(struct pt_regs *regs)
 		 * debugger stored an invalid system call number. Skip
 		 * the system call and the system call restart handling.
 		 */
-		clear_thread_flag(TIF_SYSCALL);
+		regs->svcnr = 0;
 		ret = -1;
 	}
 
 	if (unlikely(test_thread_flag(TIF_SYSCALL_TRACEPOINT)))
 		trace_sys_enter(regs, regs->gprs[2]);
 
-	audit_syscall_entry(is_compat_task() ?
-				AUDIT_ARCH_S390 : AUDIT_ARCH_S390X,
-			    regs->gprs[2], regs->orig_gpr2,
-			    regs->gprs[3], regs->gprs[4],
-			    regs->gprs[5]);
+	if (unlikely(current->audit_context))
+		audit_syscall_entry(is_compat_task() ?
+					AUDIT_ARCH_S390 : AUDIT_ARCH_S390X,
+				    regs->gprs[2], regs->orig_gpr2,
+				    regs->gprs[3], regs->gprs[4],
+				    regs->gprs[5]);
 	return ret ?: regs->gprs[2];
 }
 
 asmlinkage void do_syscall_trace_exit(struct pt_regs *regs)
 {
-	audit_syscall_exit(regs);
+	if (unlikely(current->audit_context))
+		audit_syscall_exit(AUDITSC_RESULT(regs->gprs[2]),
+				   regs->gprs[2]);
 
 	if (unlikely(test_thread_flag(TIF_SYSCALL_TRACEPOINT)))
 		trace_sys_exit(regs, regs->gprs[2]);
@@ -875,56 +789,6 @@ static int s390_fpregs_set(struct task_struct *target,
 	return rc;
 }
 
-#ifdef CONFIG_64BIT
-
-static int s390_last_break_get(struct task_struct *target,
-			       const struct user_regset *regset,
-			       unsigned int pos, unsigned int count,
-			       void *kbuf, void __user *ubuf)
-{
-	if (count > 0) {
-		if (kbuf) {
-			unsigned long *k = kbuf;
-			*k = task_thread_info(target)->last_break;
-		} else {
-			unsigned long  __user *u = ubuf;
-			if (__put_user(task_thread_info(target)->last_break, u))
-				return -EFAULT;
-		}
-	}
-	return 0;
-}
-
-static int s390_last_break_set(struct task_struct *target,
-			       const struct user_regset *regset,
-			       unsigned int pos, unsigned int count,
-			       const void *kbuf, const void __user *ubuf)
-{
-	return 0;
-}
-
-#endif
-
-static int s390_system_call_get(struct task_struct *target,
-				const struct user_regset *regset,
-				unsigned int pos, unsigned int count,
-				void *kbuf, void __user *ubuf)
-{
-	unsigned int *data = &task_thread_info(target)->system_call;
-	return user_regset_copyout(&pos, &count, &kbuf, &ubuf,
-				   data, 0, sizeof(unsigned int));
-}
-
-static int s390_system_call_set(struct task_struct *target,
-				const struct user_regset *regset,
-				unsigned int pos, unsigned int count,
-				const void *kbuf, const void __user *ubuf)
-{
-	unsigned int *data = &task_thread_info(target)->system_call;
-	return user_regset_copyin(&pos, &count, &kbuf, &ubuf,
-				  data, 0, sizeof(unsigned int));
-}
-
 static const struct user_regset s390_regsets[] = {
 	[REGSET_GENERAL] = {
 		.core_note_type = NT_PRSTATUS,
@@ -941,24 +805,6 @@ static const struct user_regset s390_regsets[] = {
 		.align = sizeof(long),
 		.get = s390_fpregs_get,
 		.set = s390_fpregs_set,
-	},
-#ifdef CONFIG_64BIT
-	[REGSET_LAST_BREAK] = {
-		.core_note_type = NT_S390_LAST_BREAK,
-		.n = 1,
-		.size = sizeof(long),
-		.align = sizeof(long),
-		.get = s390_last_break_get,
-		.set = s390_last_break_set,
-	},
-#endif
-	[REGSET_SYSTEM_CALL] = {
-		.core_note_type = NT_S390_SYSTEM_CALL,
-		.n = 1,
-		.size = sizeof(unsigned int),
-		.align = sizeof(unsigned int),
-		.get = s390_system_call_get,
-		.set = s390_system_call_set,
 	},
 };
 
@@ -1094,35 +940,6 @@ static int s390_compat_regs_high_set(struct task_struct *target,
 	return rc;
 }
 
-static int s390_compat_last_break_get(struct task_struct *target,
-				      const struct user_regset *regset,
-				      unsigned int pos, unsigned int count,
-				      void *kbuf, void __user *ubuf)
-{
-	compat_ulong_t last_break;
-
-	if (count > 0) {
-		last_break = task_thread_info(target)->last_break;
-		if (kbuf) {
-			unsigned long *k = kbuf;
-			*k = last_break;
-		} else {
-			unsigned long  __user *u = ubuf;
-			if (__put_user(last_break, u))
-				return -EFAULT;
-		}
-	}
-	return 0;
-}
-
-static int s390_compat_last_break_set(struct task_struct *target,
-				      const struct user_regset *regset,
-				      unsigned int pos, unsigned int count,
-				      const void *kbuf, const void __user *ubuf)
-{
-	return 0;
-}
-
 static const struct user_regset s390_compat_regsets[] = {
 	[REGSET_GENERAL] = {
 		.core_note_type = NT_PRSTATUS,
@@ -1140,24 +957,8 @@ static const struct user_regset s390_compat_regsets[] = {
 		.get = s390_fpregs_get,
 		.set = s390_fpregs_set,
 	},
-	[REGSET_LAST_BREAK] = {
-		.core_note_type = NT_S390_LAST_BREAK,
-		.n = 1,
-		.size = sizeof(long),
-		.align = sizeof(long),
-		.get = s390_compat_last_break_get,
-		.set = s390_compat_last_break_set,
-	},
-	[REGSET_SYSTEM_CALL] = {
-		.core_note_type = NT_S390_SYSTEM_CALL,
-		.n = 1,
-		.size = sizeof(compat_uint_t),
-		.align = sizeof(compat_uint_t),
-		.get = s390_system_call_get,
-		.set = s390_system_call_set,
-	},
 	[REGSET_GENERAL_EXTENDED] = {
-		.core_note_type = NT_S390_HIGH_GPRS,
+		.core_note_type = NT_PRXSTATUS,
 		.n = sizeof(s390_compat_regs_high) / sizeof(compat_long_t),
 		.size = sizeof(compat_long_t),
 		.align = sizeof(compat_long_t),
@@ -1181,62 +982,4 @@ const struct user_regset_view *task_user_regset_view(struct task_struct *task)
 		return &user_s390_compat_view;
 #endif
 	return &user_s390_view;
-}
-
-static const char *gpr_names[NUM_GPRS] = {
-	"r0", "r1",  "r2",  "r3",  "r4",  "r5",  "r6",  "r7",
-	"r8", "r9", "r10", "r11", "r12", "r13", "r14", "r15",
-};
-
-unsigned long regs_get_register(struct pt_regs *regs, unsigned int offset)
-{
-	if (offset >= NUM_GPRS)
-		return 0;
-	return regs->gprs[offset];
-}
-
-int regs_query_register_offset(const char *name)
-{
-	unsigned long offset;
-
-	if (!name || *name != 'r')
-		return -EINVAL;
-	if (strict_strtoul(name + 1, 10, &offset))
-		return -EINVAL;
-	if (offset >= NUM_GPRS)
-		return -EINVAL;
-	return offset;
-}
-
-const char *regs_query_register_name(unsigned int offset)
-{
-	if (offset >= NUM_GPRS)
-		return NULL;
-	return gpr_names[offset];
-}
-
-static int regs_within_kernel_stack(struct pt_regs *regs, unsigned long addr)
-{
-	unsigned long ksp = kernel_stack_pointer(regs);
-
-	return (addr & ~(THREAD_SIZE - 1)) == (ksp & ~(THREAD_SIZE - 1));
-}
-
-/**
- * regs_get_kernel_stack_nth() - get Nth entry of the stack
- * @regs:pt_regs which contains kernel stack pointer.
- * @n:stack entry number.
- *
- * regs_get_kernel_stack_nth() returns @n th entry of the kernel stack which
- * is specifined by @regs. If the @n th entry is NOT in the kernel stack,
- * this returns 0.
- */
-unsigned long regs_get_kernel_stack_nth(struct pt_regs *regs, unsigned int n)
-{
-	unsigned long addr;
-
-	addr = kernel_stack_pointer(regs) + n * sizeof(long);
-	if (!regs_within_kernel_stack(regs, addr))
-		return 0;
-	return *(unsigned long *)addr;
 }

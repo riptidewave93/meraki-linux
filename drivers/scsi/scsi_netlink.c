@@ -22,8 +22,6 @@
 #include <linux/jiffies.h>
 #include <linux/security.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
-#include <linux/export.h>
 #include <net/sock.h>
 #include <net/netlink.h>
 
@@ -112,7 +110,7 @@ scsi_nl_rcv_msg(struct sk_buff *skb)
 			goto next_msg;
 		}
 
-		if (!capable(CAP_SYS_ADMIN)) {
+		if (security_netlink_recv(skb, CAP_SYS_ADMIN)) {
 			err = -EPERM;
 			goto next_msg;
 		}
@@ -478,7 +476,7 @@ EXPORT_SYMBOL_GPL(scsi_nl_remove_driver);
 
 
 /**
- * scsi_netlink_init - Called by SCSI subsystem to initialize
+ * scsi_netlink_init - Called by SCSI subsystem to intialize
  * 	the SCSI transport netlink interface
  *
  **/
@@ -500,7 +498,7 @@ scsi_netlink_init(void)
 				SCSI_NL_GRP_CNT, scsi_nl_rcv_msg, NULL,
 				THIS_MODULE);
 	if (!scsi_nl_sock) {
-		printk(KERN_ERR "%s: register of receive handler failed\n",
+		printk(KERN_ERR "%s: register of recieve handler failed\n",
 				__func__);
 		netlink_unregister_notifier(&scsi_netlink_notifier);
 		return;
@@ -615,7 +613,7 @@ EXPORT_SYMBOL_GPL(scsi_nl_send_transport_msg);
  * @data_buf:		pointer to vendor unique data buffer
  *
  * Returns:
- *   0 on successful return
+ *   0 on succesful return
  *   otherwise, failing error code
  *
  * Notes:

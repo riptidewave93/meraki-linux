@@ -84,7 +84,7 @@ int cachefiles_daemon_bind(struct cachefiles_cache *cache, char *args)
 static int cachefiles_daemon_add_cache(struct cachefiles_cache *cache)
 {
 	struct cachefiles_object *fsdef;
-	struct path path;
+	struct nameidata nd;
 	struct kstatfs stats;
 	struct dentry *graveyard, *cachedir, *root;
 	const struct cred *saved_cred;
@@ -114,12 +114,15 @@ static int cachefiles_daemon_add_cache(struct cachefiles_cache *cache)
 	_debug("- fsdef %p", fsdef);
 
 	/* look up the directory at the root of the cache */
-	ret = kern_path(cache->rootdirname, LOOKUP_DIRECTORY, &path);
+	memset(&nd, 0, sizeof(nd));
+
+	ret = path_lookup(cache->rootdirname, LOOKUP_DIRECTORY, &nd);
 	if (ret < 0)
 		goto error_open_root;
 
-	cache->mnt = path.mnt;
-	root = path.dentry;
+	cache->mnt = mntget(nd.path.mnt);
+	root = dget(nd.path.dentry);
+	path_put(&nd.path);
 
 	/* check parameters */
 	ret = -EOPNOTSUPP;
@@ -129,6 +132,8 @@ static int cachefiles_daemon_add_cache(struct cachefiles_cache *cache)
 	    !root->d_inode->i_op->mkdir ||
 	    !root->d_inode->i_op->setxattr ||
 	    !root->d_inode->i_op->getxattr ||
+	    !root->d_sb ||
+	    !root->d_sb->s_op ||
 	    !root->d_sb->s_op->statfs ||
 	    !root->d_sb->s_op->sync_fs)
 		goto error_unsupported;
@@ -144,7 +149,7 @@ static int cachefiles_daemon_add_cache(struct cachefiles_cache *cache)
 		goto error_unsupported;
 
 	/* get the cache size and blocksize */
-	ret = vfs_statfs(&path, &stats);
+	ret = vfs_statfs(root, &stats);
 	if (ret < 0)
 		goto error_unsupported;
 

@@ -18,8 +18,8 @@
 #include <linux/kernel.h>
 #include <linux/mm.h>
 #include <linux/stddef.h>
-#include <linux/export.h>
 #include <linux/unistd.h>
+#include <linux/slab.h>
 #include <linux/user.h>
 #include <linux/reboot.h>
 #include <linux/init.h>
@@ -52,11 +52,11 @@
 #include <asm/udbg.h>
 #include <asm/mpic.h>
 #include <asm/cell-regs.h>
-#include <asm/io-workarounds.h>
 
 #include "interrupt.h"
 #include "pervasive.h"
 #include "ras.h"
+#include "io-workarounds.h"
 
 #ifdef DEBUG
 #define DBG(fmt...) udbg_printf(fmt)
@@ -137,20 +137,10 @@ static int __devinit cell_setup_phb(struct pci_controller *phb)
 
 	iowa_register_bus(phb, &spiderpci_ops, &spiderpci_iowa_init,
 				  (void *)SPIDER_PCI_REG_BASE);
+	io_workaround_init();
+
 	return 0;
 }
-
-static const struct of_device_id cell_bus_ids[] __initconst = {
-	{ .type = "soc", },
-	{ .compatible = "soc", },
-	{ .type = "spider", },
-	{ .type = "axon", },
-	{ .type = "plb5", },
-	{ .type = "plb4", },
-	{ .type = "opb", },
-	{ .type = "ebc", },
-	{},
-};
 
 static int __init cell_publish_devices(void)
 {
@@ -159,7 +149,7 @@ static int __init cell_publish_devices(void)
 	int node;
 
 	/* Publish OF platform devices for southbridge IOs */
-	of_platform_bus_probe(NULL, cell_bus_ids, NULL);
+	of_platform_bus_probe(NULL, NULL, NULL);
 
 	/* On spider based blades, we need to manually create the OF
 	 * platform devices for the PCI host bridges
@@ -184,10 +174,22 @@ static int __init cell_publish_devices(void)
 }
 machine_subsys_initcall(cell, cell_publish_devices);
 
+static void cell_mpic_cascade(unsigned int irq, struct irq_desc *desc)
+{
+	struct mpic *mpic = desc->handler_data;
+	unsigned int virq;
+
+	virq = mpic_get_one_irq(mpic);
+	if (virq != NO_IRQ)
+		generic_handle_irq(virq);
+	desc->chip->eoi(irq);
+}
+
 static void __init mpic_init_IRQ(void)
 {
 	struct device_node *dn;
 	struct mpic *mpic;
+	unsigned int virq;
 
 	for (dn = NULL;
 	     (dn = of_find_node_by_name(dn, "interrupt-controller"));) {
@@ -197,11 +199,19 @@ static void __init mpic_init_IRQ(void)
 		/* The MPIC driver will get everything it needs from the
 		 * device-tree, just pass 0 to all arguments
 		 */
-		mpic = mpic_alloc(dn, 0, MPIC_SECONDARY | MPIC_NO_RESET,
-				0, 0, " MPIC     ");
+		mpic = mpic_alloc(dn, 0, 0, 0, 0, " MPIC     ");
 		if (mpic == NULL)
 			continue;
 		mpic_init(mpic);
+
+		virq = irq_of_parse_and_map(dn, 0);
+		if (virq == NO_IRQ)
+			continue;
+
+		printk(KERN_INFO "%s : hooking up to IRQ %d\n",
+		       dn->full_name, virq);
+		set_irq_data(virq, mpic);
+		set_irq_chained_handler(virq, cell_mpic_cascade);
 	}
 }
 

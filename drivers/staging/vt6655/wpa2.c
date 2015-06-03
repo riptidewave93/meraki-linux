@@ -42,14 +42,14 @@ static int          msglevel                =MSG_LEVEL_INFO;
 
 /*---------------------  Static Variables  --------------------------*/
 
-const unsigned char abyOUIGK[4]      = { 0x00, 0x0F, 0xAC, 0x00 };
-const unsigned char abyOUIWEP40[4]   = { 0x00, 0x0F, 0xAC, 0x01 };
-const unsigned char abyOUIWEP104[4]  = { 0x00, 0x0F, 0xAC, 0x05 };
-const unsigned char abyOUITKIP[4]    = { 0x00, 0x0F, 0xAC, 0x02 };
-const unsigned char abyOUICCMP[4]    = { 0x00, 0x0F, 0xAC, 0x04 };
+const BYTE abyOUIGK[4]      = { 0x00, 0x0F, 0xAC, 0x00 };
+const BYTE abyOUIWEP40[4]   = { 0x00, 0x0F, 0xAC, 0x01 };
+const BYTE abyOUIWEP104[4]  = { 0x00, 0x0F, 0xAC, 0x05 };
+const BYTE abyOUITKIP[4]    = { 0x00, 0x0F, 0xAC, 0x02 };
+const BYTE abyOUICCMP[4]    = { 0x00, 0x0F, 0xAC, 0x04 };
 
-const unsigned char abyOUI8021X[4]   = { 0x00, 0x0F, 0xAC, 0x01 };
-const unsigned char abyOUIPSK[4]     = { 0x00, 0x0F, 0xAC, 0x02 };
+const BYTE abyOUI8021X[4]   = { 0x00, 0x0F, 0xAC, 0x01 };
+const BYTE abyOUIPSK[4]     = { 0x00, 0x0F, 0xAC, 0x02 };
 
 
 /*---------------------  Static Functions  --------------------------*/
@@ -72,14 +72,14 @@ const unsigned char abyOUIPSK[4]     = { 0x00, 0x0F, 0xAC, 0x02 };
  * Return Value: none.
  *
 -*/
-void
+VOID
 WPA2_ClearRSN (
-    PKnownBSS        pBSSNode
+    IN PKnownBSS        pBSSNode
     )
 {
     int ii;
 
-    pBSSNode->bWPA2Valid = false;
+    pBSSNode->bWPA2Valid = FALSE;
 
     pBSSNode->byCSSGK = WLAN_11i_CSS_CCMP;
     for (ii=0; ii < 4; ii ++)
@@ -88,7 +88,7 @@ WPA2_ClearRSN (
     for (ii=0; ii < 4; ii ++)
         pBSSNode->abyAKMSSAuthType[ii] = WLAN_11i_AKMSS_802_1X;
     pBSSNode->wAKMSSAuthCount = 1;
-    pBSSNode->sRSNCapObj.bRSNCapExist = false;
+    pBSSNode->sRSNCapObj.bRSNCapExist = FALSE;
     pBSSNode->sRSNCapObj.wRSNCap = 0;
 }
 
@@ -107,16 +107,16 @@ WPA2_ClearRSN (
  * Return Value: none.
  *
 -*/
-void
+VOID
 WPA2vParseRSN (
-    PKnownBSS        pBSSNode,
-    PWLAN_IE_RSN     pRSN
+    IN PKnownBSS        pBSSNode,
+    IN PWLAN_IE_RSN     pRSN
     )
 {
     int                 i, j;
-    unsigned short m = 0, n = 0;
-    unsigned char *pbyOUI;
-    bool bUseGK = false;
+    WORD                m = 0, n = 0;
+    PBYTE               pbyOUI;
+    BOOL                bUseGK = FALSE;
 
     DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"WPA2_ParseRSN: [%d]\n", pRSN->len);
 
@@ -124,7 +124,7 @@ WPA2vParseRSN (
 
     if (pRSN->len == 2) { // ver(2)
         if ((pRSN->byElementID == WLAN_EID_RSN) && (pRSN->wVersion == 1)) {
-            pBSSNode->bWPA2Valid = true;
+            pBSSNode->bWPA2Valid = TRUE;
         }
         return;
     }
@@ -159,21 +159,21 @@ WPA2vParseRSN (
         DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"802.11i CSS: %X\n", pBSSNode->byCSSGK);
 
         if (pRSN->len == 6) {
-            pBSSNode->bWPA2Valid = true;
+            pBSSNode->bWPA2Valid = TRUE;
             return;
         }
 
         if (pRSN->len >= 8) { // ver(2) + GK(4) + PK count(2)
-            pBSSNode->wCSSPKCount = *((unsigned short *) &(pRSN->abyRSN[4]));
+            pBSSNode->wCSSPKCount = *((PWORD) &(pRSN->abyRSN[4]));
             j = 0;
             pbyOUI = &(pRSN->abyRSN[6]);
 
-            for (i = 0; (i < pBSSNode->wCSSPKCount) && (j < sizeof(pBSSNode->abyCSSPK)/sizeof(unsigned char)); i++) {
+            for (i = 0; (i < pBSSNode->wCSSPKCount) && (j < sizeof(pBSSNode->abyCSSPK)/sizeof(BYTE)); i++) {
 
                 if (pRSN->len >= 8+i*4+4) { // ver(2)+GK(4)+PKCnt(2)+PKS(4*i)
                     if ( !memcmp(pbyOUI, abyOUIGK, 4)) {
                         pBSSNode->abyCSSPK[j++] = WLAN_11i_CSS_USE_GROUP;
-                        bUseGK = true;
+                        bUseGK = TRUE;
                     } else if ( !memcmp(pbyOUI, abyOUIWEP40, 4)) {
                         // Invialid CSS, continue to parsing
                     } else if ( !memcmp(pbyOUI, abyOUITKIP, 4)) {
@@ -195,7 +195,7 @@ WPA2vParseRSN (
                     break;
             } //for
 
-            if (bUseGK == true) {
+            if (bUseGK == TRUE) {
                 if (j != 1) {
                     // invalid CSS, This should be only PK CSS.
                     return;
@@ -209,17 +209,17 @@ WPA2vParseRSN (
                 // invalid CSS, No valid PK.
                 return;
             }
-            pBSSNode->wCSSPKCount = (unsigned short)j;
+            pBSSNode->wCSSPKCount = (WORD)j;
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"wCSSPKCount: %d\n", pBSSNode->wCSSPKCount);
         }
 
-        m = *((unsigned short *) &(pRSN->abyRSN[4]));
+        m = *((PWORD) &(pRSN->abyRSN[4]));
 
         if (pRSN->len >= 10+m*4) { // ver(2) + GK(4) + PK count(2) + PKS(4*m) + AKMSS count(2)
-            pBSSNode->wAKMSSAuthCount = *((unsigned short *) &(pRSN->abyRSN[6+4*m]));
+            pBSSNode->wAKMSSAuthCount = *((PWORD) &(pRSN->abyRSN[6+4*m]));;
             j = 0;
             pbyOUI = &(pRSN->abyRSN[8+4*m]);
-            for (i = 0; (i < pBSSNode->wAKMSSAuthCount) && (j < sizeof(pBSSNode->abyAKMSSAuthType)/sizeof(unsigned char)); i++) {
+            for (i = 0; (i < pBSSNode->wAKMSSAuthCount) && (j < sizeof(pBSSNode->abyAKMSSAuthType)/sizeof(BYTE)); i++) {
                 if (pRSN->len >= 10+(m+i)*4+4) { // ver(2)+GK(4)+PKCnt(2)+PKS(4*m)+AKMSS(2)+AKS(4*i)
                     if ( !memcmp(pbyOUI, abyOUI8021X, 4))
                         pBSSNode->abyAKMSSAuthType[j++] = WLAN_11i_AKMSS_802_1X;
@@ -232,17 +232,17 @@ WPA2vParseRSN (
                 } else
                     break;
             }
-            pBSSNode->wAKMSSAuthCount = (unsigned short)j;
+            pBSSNode->wAKMSSAuthCount = (WORD)j;
             DBG_PRT(MSG_LEVEL_DEBUG, KERN_INFO"wAKMSSAuthCount: %d\n", pBSSNode->wAKMSSAuthCount);
 
-            n = *((unsigned short *) &(pRSN->abyRSN[6+4*m]));
+            n = *((PWORD) &(pRSN->abyRSN[6+4*m]));;
             if (pRSN->len >= 12+4*m+4*n) { // ver(2)+GK(4)+PKCnt(2)+PKS(4*m)+AKMSSCnt(2)+AKMSS(4*n)+Cap(2)
-                pBSSNode->sRSNCapObj.bRSNCapExist = true;
-                pBSSNode->sRSNCapObj.wRSNCap = *((unsigned short *) &(pRSN->abyRSN[8+4*m+4*n]));
+                pBSSNode->sRSNCapObj.bRSNCapExist = TRUE;
+                pBSSNode->sRSNCapObj.wRSNCap = *((PWORD) &(pRSN->abyRSN[8+4*m+4*n]));
             }
         }
         //ignore PMKID lists bcs only (Re)Assocrequest has this field
-        pBSSNode->bWPA2Valid = true;
+        pBSSNode->bWPA2Valid = TRUE;
     }
 }
 
@@ -261,16 +261,16 @@ WPA2vParseRSN (
  * Return Value: length of IEs.
  *
 -*/
-unsigned int
+UINT
 WPA2uSetIEs(
-    void *pMgmtHandle,
-    PWLAN_IE_RSN pRSNIEs
+    IN PVOID pMgmtHandle,
+    OUT PWLAN_IE_RSN pRSNIEs
     )
 {
     PSMgmtObject    pMgmt = (PSMgmtObject) pMgmtHandle;
-    unsigned char *pbyBuffer = NULL;
-    unsigned int ii = 0;
-    unsigned short *pwPMKID = NULL;
+    PBYTE           pbyBuffer = NULL;
+    UINT            ii = 0;
+    PWORD           pwPMKID = NULL;
 
     if (pRSNIEs == NULL) {
         return(0);
@@ -279,7 +279,7 @@ WPA2uSetIEs(
          (pMgmt->eAuthenMode == WMAC_AUTH_WPA2PSK)) &&
         (pMgmt->pCurrBSS != NULL)) {
         /* WPA2 IE */
-        pbyBuffer = (unsigned char *) pRSNIEs;
+        pbyBuffer = (PBYTE) pRSNIEs;
         pRSNIEs->byElementID = WLAN_EID_RSN;
         pRSNIEs->len = 6; //Version(2)+GK(4)
         pRSNIEs->wVersion = 1;
@@ -330,7 +330,7 @@ WPA2uSetIEs(
         pRSNIEs->len +=6;
 
         // RSN Capabilites
-        if (pMgmt->pCurrBSS->sRSNCapObj.bRSNCapExist == true) {
+        if (pMgmt->pCurrBSS->sRSNCapObj.bRSNCapExist == TRUE) {
             memcpy(&pRSNIEs->abyRSN[16], &pMgmt->pCurrBSS->sRSNCapObj.wRSNCap, 2);
         } else {
             pRSNIEs->abyRSN[16] = 0;
@@ -339,14 +339,14 @@ WPA2uSetIEs(
         pRSNIEs->len +=2;
 
         if ((pMgmt->gsPMKIDCache.BSSIDInfoCount > 0) &&
-            (pMgmt->bRoaming == true) &&
+            (pMgmt->bRoaming == TRUE) &&
             (pMgmt->eAuthenMode == WMAC_AUTH_WPA2)) {
             // RSN PMKID
-            pwPMKID = (unsigned short *)(&pRSNIEs->abyRSN[18]);  // Point to PMKID count
+            pwPMKID = (PWORD)(&pRSNIEs->abyRSN[18]);  // Point to PMKID count
             *pwPMKID = 0;                               // Initialize PMKID count
             pbyBuffer = &pRSNIEs->abyRSN[20];           // Point to PMKID list
             for (ii = 0; ii < pMgmt->gsPMKIDCache.BSSIDInfoCount; ii++) {
-                if ( !memcmp(&pMgmt->gsPMKIDCache.BSSIDInfo[ii].abyBSSID[0], pMgmt->abyCurrBSSID, ETH_ALEN)) {
+                if ( !memcmp(&pMgmt->gsPMKIDCache.BSSIDInfo[ii].abyBSSID[0], pMgmt->abyCurrBSSID, U_ETHER_ADDR_LEN)) {
                     (*pwPMKID) ++;
                     memcpy(pbyBuffer, pMgmt->gsPMKIDCache.BSSIDInfo[ii].abyPMKID, 16);
                     pbyBuffer += 16;

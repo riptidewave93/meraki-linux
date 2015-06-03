@@ -44,8 +44,7 @@ static int gru_user_copy_handle(void __user **dp, void *s)
 
 static int gru_dump_context_data(void *grubase,
 			struct gru_context_configuration_handle *cch,
-			void __user *ubuf, int ctxnum, int dsrcnt,
-			int flush_cbrs)
+			void __user *ubuf, int ctxnum, int dsrcnt)
 {
 	void *cb, *cbe, *tfh, *gseg;
 	int i, scr;
@@ -56,8 +55,6 @@ static int gru_dump_context_data(void *grubase,
 	tfh = grubase + GRU_TFH_BASE;
 
 	for_each_cbr_in_allocation_map(i, &cch->cbr_allocation_map, scr) {
-		if (flush_cbrs)
-			gru_flush_cache(cb);
 		if (gru_user_copy_handle(&ubuf, cb))
 			goto fail;
 		if (gru_user_copy_handle(&ubuf, tfh + i * GRU_HANDLE_STRIDE))
@@ -118,7 +115,7 @@ fail:
 
 static int gru_dump_context(struct gru_state *gru, int ctxnum,
 		void __user *ubuf, void __user *ubufend, char data_opt,
-		char lock_cch, char flush_cbrs)
+		char lock_cch)
 {
 	struct gru_dump_context_header hdr;
 	struct gru_dump_context_header __user *uhdr = ubuf;
@@ -162,7 +159,8 @@ static int gru_dump_context(struct gru_state *gru, int ctxnum,
 			ret = -EFBIG;
 		else
 			ret = gru_dump_context_data(grubase, cch, ubuf, ctxnum,
-							dsrcnt, flush_cbrs);
+							dsrcnt);
+
 	}
 	if (cch_locked)
 		unlock_cch_handle(cch);
@@ -217,8 +215,7 @@ int gru_dump_chiplet_request(unsigned long arg)
 	for (ctxnum = 0; ctxnum < GRU_NUM_CCH; ctxnum++) {
 		if (req.ctxnum == ctxnum || req.ctxnum < 0) {
 			ret = gru_dump_context(gru, ctxnum, ubuf, ubufend,
-						req.data_opt, req.lock_cch,
-						req.flush_cbrs);
+						req.data_opt, req.lock_cch);
 			if (ret < 0)
 				goto fail;
 			ubuf += ret;

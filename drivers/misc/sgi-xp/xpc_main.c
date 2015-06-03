@@ -44,7 +44,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/sysctl.h>
 #include <linux/device.h>
 #include <linux/delay.h>
@@ -52,10 +51,6 @@
 #include <linux/kdebug.h>
 #include <linux/kthread.h>
 #include "xpc.h"
-
-#ifdef CONFIG_X86_64
-#include <asm/traps.h>
-#endif
 
 /* define two XPC debug device structures to be used with dev_dbg() et al */
 
@@ -94,40 +89,48 @@ static int xpc_disengage_max_timelimit = 120;
 
 static ctl_table xpc_sys_xpc_hb_dir[] = {
 	{
+	 .ctl_name = CTL_UNNUMBERED,
 	 .procname = "hb_interval",
 	 .data = &xpc_hb_interval,
 	 .maxlen = sizeof(int),
 	 .mode = 0644,
-	 .proc_handler = proc_dointvec_minmax,
+	 .proc_handler = &proc_dointvec_minmax,
+	 .strategy = &sysctl_intvec,
 	 .extra1 = &xpc_hb_min_interval,
 	 .extra2 = &xpc_hb_max_interval},
 	{
+	 .ctl_name = CTL_UNNUMBERED,
 	 .procname = "hb_check_interval",
 	 .data = &xpc_hb_check_interval,
 	 .maxlen = sizeof(int),
 	 .mode = 0644,
-	 .proc_handler = proc_dointvec_minmax,
+	 .proc_handler = &proc_dointvec_minmax,
+	 .strategy = &sysctl_intvec,
 	 .extra1 = &xpc_hb_check_min_interval,
 	 .extra2 = &xpc_hb_check_max_interval},
 	{}
 };
 static ctl_table xpc_sys_xpc_dir[] = {
 	{
+	 .ctl_name = CTL_UNNUMBERED,
 	 .procname = "hb",
 	 .mode = 0555,
 	 .child = xpc_sys_xpc_hb_dir},
 	{
+	 .ctl_name = CTL_UNNUMBERED,
 	 .procname = "disengage_timelimit",
 	 .data = &xpc_disengage_timelimit,
 	 .maxlen = sizeof(int),
 	 .mode = 0644,
-	 .proc_handler = proc_dointvec_minmax,
+	 .proc_handler = &proc_dointvec_minmax,
+	 .strategy = &sysctl_intvec,
 	 .extra1 = &xpc_disengage_min_timelimit,
 	 .extra2 = &xpc_disengage_max_timelimit},
 	{}
 };
 static ctl_table xpc_sys_dir[] = {
 	{
+	 .ctl_name = CTL_UNNUMBERED,
 	 .procname = "xpc",
 	 .mode = 0555,
 	 .child = xpc_sys_xpc_dir},
@@ -1083,9 +1086,6 @@ xpc_system_reboot(struct notifier_block *nb, unsigned long event, void *unused)
 	return NOTIFY_DONE;
 }
 
-/* Used to only allow one cpu to complete disconnect */
-static unsigned int xpc_die_disconnecting;
-
 /*
  * Notify other partitions to deactivate from us by first disengaging from all
  * references to our memory.
@@ -1098,9 +1098,6 @@ xpc_die_deactivate(void)
 	int any_engaged;
 	long keep_waiting;
 	long wait_to_print;
-
-	if (cmpxchg(&xpc_die_disconnecting, 0, 1))
-		return;
 
 	/* keep xpc_hb_checker thread from doing anything (just in case) */
 	xpc_exiting = 1;
@@ -1169,7 +1166,7 @@ xpc_die_deactivate(void)
  * about the lack of a heartbeat.
  */
 static int
-xpc_system_die(struct notifier_block *nb, unsigned long event, void *_die_args)
+xpc_system_die(struct notifier_block *nb, unsigned long event, void *unused)
 {
 #ifdef CONFIG_IA64		/* !!! temporary kludge */
 	switch (event) {
@@ -1201,27 +1198,7 @@ xpc_system_die(struct notifier_block *nb, unsigned long event, void *_die_args)
 		break;
 	}
 #else
-	struct die_args *die_args = _die_args;
-
-	switch (event) {
-	case DIE_TRAP:
-		if (die_args->trapnr == X86_TRAP_DF)
-			xpc_die_deactivate();
-
-		if (((die_args->trapnr == X86_TRAP_MF) ||
-		     (die_args->trapnr == X86_TRAP_XF)) &&
-		    !user_mode_vm(die_args->regs))
-			xpc_die_deactivate();
-
-		break;
-	case DIE_INT3:
-	case DIE_DEBUG:
-		break;
-	case DIE_OOPS:
-	case DIE_GPF:
-	default:
-		xpc_die_deactivate();
-	}
+	xpc_die_deactivate();
 #endif
 
 	return NOTIFY_DONE;

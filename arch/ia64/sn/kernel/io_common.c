@@ -7,8 +7,6 @@
  */
 
 #include <linux/bootmem.h>
-#include <linux/export.h>
-#include <linux/slab.h>
 #include <asm/sn/types.h>
 #include <asm/sn/addrs.h>
 #include <asm/sn/sn_feature_sets.h>

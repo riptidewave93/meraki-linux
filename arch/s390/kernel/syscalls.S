@@ -98,7 +98,7 @@ SYSCALL(sys_uselib,sys_uselib,sys32_uselib_wrapper)
 SYSCALL(sys_swapon,sys_swapon,sys32_swapon_wrapper)
 SYSCALL(sys_reboot,sys_reboot,sys32_reboot_wrapper)
 SYSCALL(sys_ni_syscall,sys_ni_syscall,old32_readdir_wrapper)	/* old readdir syscall */
-SYSCALL(sys_old_mmap,sys_old_mmap,old32_mmap_wrapper)		/* 90 */
+SYSCALL(sys_s390_old_mmap,sys_s390_old_mmap,old32_mmap_wrapper)	/* 90 */
 SYSCALL(sys_munmap,sys_munmap,sys32_munmap_wrapper)
 SYSCALL(sys_truncate,sys_truncate,sys32_truncate_wrapper)
 SYSCALL(sys_ftruncate,sys_ftruncate,sys32_ftruncate_wrapper)
@@ -125,12 +125,12 @@ NI_SYSCALL							/* vm86old for i386 */
 SYSCALL(sys_wait4,sys_wait4,compat_sys_wait4_wrapper)
 SYSCALL(sys_swapoff,sys_swapoff,sys32_swapoff_wrapper)		/* 115 */
 SYSCALL(sys_sysinfo,sys_sysinfo,compat_sys_sysinfo_wrapper)
-SYSCALL(sys_s390_ipc,sys_s390_ipc,sys32_ipc_wrapper)
+SYSCALL(sys_ipc,sys_ipc,sys32_ipc_wrapper)
 SYSCALL(sys_fsync,sys_fsync,sys32_fsync_wrapper)
 SYSCALL(sys_sigreturn,sys_sigreturn,sys32_sigreturn)
 SYSCALL(sys_clone,sys_clone,sys_clone_wrapper)			/* 120 */
 SYSCALL(sys_setdomainname,sys_setdomainname,sys32_setdomainname_wrapper)
-SYSCALL(sys_newuname,sys_newuname,sys32_newuname_wrapper)
+SYSCALL(sys_newuname,sys_s390_newuname,sys32_newuname_wrapper)
 NI_SYSCALL							/* modify_ldt for i386 */
 SYSCALL(sys_adjtimex,sys_adjtimex,compat_sys_adjtimex_wrapper)
 SYSCALL(sys_mprotect,sys_mprotect,sys32_mprotect_wrapper)	/* 125 */
@@ -177,7 +177,7 @@ SYSCALL(sys_getresuid16,sys_ni_syscall,sys32_getresuid16_wrapper)	/* 165 old get
 NI_SYSCALL							/* for vm86 */
 NI_SYSCALL							/* old sys_query_module */
 SYSCALL(sys_poll,sys_poll,sys32_poll_wrapper)
-NI_SYSCALL							/* old nfsservctl */
+SYSCALL(sys_nfsservctl,sys_nfsservctl,compat_sys_nfsservctl_wrapper)
 SYSCALL(sys_setresgid16,sys_ni_syscall,sys32_setresgid16_wrapper)	/* 170 old setresgid16 syscall */
 SYSCALL(sys_getresgid16,sys_ni_syscall,sys32_getresgid16_wrapper)	/* old getresgid16 syscall */
 SYSCALL(sys_prctl,sys_prctl,sys32_prctl_wrapper)
@@ -340,13 +340,3 @@ SYSCALL(sys_preadv,sys_preadv,compat_sys_preadv_wrapper)
 SYSCALL(sys_pwritev,sys_pwritev,compat_sys_pwritev_wrapper)
 SYSCALL(sys_rt_tgsigqueueinfo,sys_rt_tgsigqueueinfo,compat_sys_rt_tgsigqueueinfo_wrapper) /* 330 */
 SYSCALL(sys_perf_event_open,sys_perf_event_open,sys_perf_event_open_wrapper)
-SYSCALL(sys_fanotify_init,sys_fanotify_init,sys_fanotify_init_wrapper)
-SYSCALL(sys_fanotify_mark,sys_fanotify_mark,sys_fanotify_mark_wrapper)
-SYSCALL(sys_prlimit64,sys_prlimit64,sys_prlimit64_wrapper)
-SYSCALL(sys_name_to_handle_at,sys_name_to_handle_at,sys_name_to_handle_at_wrapper) /* 335 */
-SYSCALL(sys_open_by_handle_at,sys_open_by_handle_at,compat_sys_open_by_handle_at_wrapper)
-SYSCALL(sys_clock_adjtime,sys_clock_adjtime,compat_sys_clock_adjtime_wrapper)
-SYSCALL(sys_syncfs,sys_syncfs,sys_syncfs_wrapper)
-SYSCALL(sys_setns,sys_setns,sys_setns_wrapper)
-SYSCALL(sys_process_vm_readv,sys_process_vm_readv,compat_sys_process_vm_readv_wrapper) /* 340 */
-SYSCALL(sys_process_vm_writev,sys_process_vm_writev,compat_sys_process_vm_writev_wrapper)

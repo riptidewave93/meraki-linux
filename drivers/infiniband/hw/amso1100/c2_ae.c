@@ -157,7 +157,7 @@ void c2_ae_event(struct c2_dev *c2dev, u32 mq_index)
 	int status;
 
 	/*
-	 * retrieve the message
+	 * retreive the message
 	 */
 	wr = c2_mq_consume(mq);
 	if (!wr)
@@ -288,11 +288,6 @@ void c2_ae_event(struct c2_dev *c2dev, u32 mq_index)
 		cm_event.private_data_len =
 			be32_to_cpu(req->private_data_length);
 		cm_event.private_data = req->private_data;
-		/*
-		 * Until ird/ord negotiation via MPAv2 support is added, send
-		 * max supported values
-		 */
-		cm_event.ird = cm_event.ord = 128;
 
 		if (cm_id->event_handler)
 			cm_id->event_handler(cm_id, &cm_event);

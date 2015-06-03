@@ -46,7 +46,6 @@
 
 #include <linux/module.h>
 #include <linux/parport.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/serio.h>
 

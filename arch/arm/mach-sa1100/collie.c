@@ -11,7 +11,7 @@
  * published by the Free Software Foundation.
  *
  * ChangeLog:
- *  2006 Pavel Machek <pavel@ucw.cz>
+ *  2006 Pavel Machek <pavel@suse.cz>
  *  03-06-2004 John Lenz <lenz@cs.wisc.edu>
  *  06-04-2002 Chris Larson <kergoth@digitalnemesis.net>
  *  04-16-2001 Lineo Japan,Inc. ...
@@ -22,18 +22,14 @@
 #include <linux/tty.h>
 #include <linux/delay.h>
 #include <linux/platform_device.h>
-#include <linux/mfd/ucb1x00.h>
 #include <linux/mtd/mtd.h>
 #include <linux/mtd/partitions.h>
 #include <linux/timer.h>
 #include <linux/gpio.h>
-#include <linux/pda_power.h>
-
-#include <video/sa1100fb.h>
 
 #include <mach/hardware.h>
 #include <asm/mach-types.h>
-#include <asm/page.h>
+#include <asm/irq.h>
 #include <asm/setup.h>
 #include <mach/collie.h>
 
@@ -46,18 +42,20 @@
 #include <asm/mach/sharpsl_param.h>
 #include <asm/hardware/locomo.h>
 #include <mach/mcp.h>
-#include <mach/irqs.h>
 
 #include "generic.h"
 
 static struct resource collie_scoop_resources[] = {
-	[0] = DEFINE_RES_MEM(0x40800000, SZ_4K),
+	[0] = {
+		.start		= 0x40800000,
+		.end		= 0x40800fff,
+		.flags		= IORESOURCE_MEM,
+	},
 };
 
 static struct scoop_config collie_scoop_setup = {
 	.io_dir 	= COLLIE_SCOOP_IO_DIR,
 	.io_out		= COLLIE_SCOOP_IO_OUT,
-	.gpio_base	= COLLIE_SCOOP_GPIO_BASE,
 };
 
 struct platform_device colliescoop_device = {
@@ -84,75 +82,9 @@ static struct scoop_pcmcia_config collie_pcmcia_config = {
 	.num_devs	= 1,
 };
 
-static struct ucb1x00_plat_data collie_ucb1x00_data = {
-	.gpio_base	= COLLIE_TC35143_GPIO_BASE,
-};
-
 static struct mcp_plat_data collie_mcp_data = {
 	.mccr0		= MCCR0_ADM | MCCR0_ExtClk,
 	.sclk_rate	= 9216000,
-	.codec_pdata	= &collie_ucb1x00_data,
-};
-
-/*
- * Collie AC IN
- */
-static int collie_power_init(struct device *dev)
-{
-	int ret = gpio_request(COLLIE_GPIO_AC_IN, "ac in");
-	if (ret)
-		goto err_gpio_req;
-
-	ret = gpio_direction_input(COLLIE_GPIO_AC_IN);
-	if (ret)
-		goto err_gpio_in;
-
-	return 0;
-
-err_gpio_in:
-	gpio_free(COLLIE_GPIO_AC_IN);
-err_gpio_req:
-	return ret;
-}
-
-static void collie_power_exit(struct device *dev)
-{
-	gpio_free(COLLIE_GPIO_AC_IN);
-}
-
-static int collie_power_ac_online(void)
-{
-	return gpio_get_value(COLLIE_GPIO_AC_IN) == 2;
-}
-
-static char *collie_ac_supplied_to[] = {
-	"main-battery",
-	"backup-battery",
-};
-
-static struct pda_power_pdata collie_power_data = {
-	.init			= collie_power_init,
-	.is_ac_online		= collie_power_ac_online,
-	.exit			= collie_power_exit,
-	.supplied_to		= collie_ac_supplied_to,
-	.num_supplicants	= ARRAY_SIZE(collie_ac_supplied_to),
-};
-
-static struct resource collie_power_resource[] = {
-	{
-		.name		= "ac",
-		.flags		= IORESOURCE_IRQ |
-				  IORESOURCE_IRQ_HIGHEDGE |
-				  IORESOURCE_IRQ_LOWEDGE,
-	},
-};
-
-static struct platform_device collie_power_device = {
-	.name			= "pda-power",
-	.id			= -1,
-	.dev.platform_data	= &collie_power_data,
-	.resource		= collie_power_resource,
-	.num_resources		= ARRAY_SIZE(collie_power_resource),
 };
 
 #ifdef CONFIG_SHARP_LOCOMO
@@ -224,20 +156,21 @@ device_initcall(collie_uart_init);
 
 
 static struct resource locomo_resources[] = {
-	[0] = DEFINE_RES_MEM(0x40000000, SZ_8K),
-	[1] = DEFINE_RES_IRQ(IRQ_GPIO25),
-};
-
-static struct locomo_platform_data locomo_info = {
-	.irq_base	= IRQ_BOARD_START,
+	[0] = {
+		.start		= 0x40000000,
+		.end		= 0x40001fff,
+		.flags		= IORESOURCE_MEM,
+	},
+	[1] = {
+		.start		= IRQ_GPIO25,
+		.end		= IRQ_GPIO25,
+		.flags		= IORESOURCE_IRQ,
+	},
 };
 
 struct platform_device collie_locomo_device = {
 	.name		= "locomo",
 	.id		= 0,
-	.dev		= {
-		.platform_data	= &locomo_info,
-	},
 	.num_resources	= ARRAY_SIZE(locomo_resources),
 	.resource	= locomo_resources,
 };
@@ -245,7 +178,6 @@ struct platform_device collie_locomo_device = {
 static struct platform_device *devices[] __initdata = {
 	&collie_locomo_device,
 	&colliescoop_device,
-	&collie_power_device,
 };
 
 static struct mtd_partition collie_partitions[] = {
@@ -298,25 +230,11 @@ static struct flash_platform_data collie_flash_data = {
 };
 
 static struct resource collie_flash_resources[] = {
-	DEFINE_RES_MEM(SA1100_CS0_PHYS, SZ_32M),
-};
-
-static struct sa1100fb_mach_info collie_lcd_info = {
-	.pixclock	= 171521,	.bpp		= 16,
-	.xres		= 320,		.yres		= 240,
-
-	.hsync_len	= 5,		.vsync_len	= 1,
-	.left_margin	= 11,		.upper_margin	= 2,
-	.right_margin	= 30,		.lower_margin	= 0,
-
-	.sync		= FB_SYNC_HOR_HIGH_ACT | FB_SYNC_VERT_HIGH_ACT,
-
-	.lccr0		= LCCR0_Color | LCCR0_Sngl | LCCR0_Act,
-	.lccr3		= LCCR3_OutEnH | LCCR3_PixRsEdg | LCCR3_ACBsDiv(2),
-
-#ifdef CONFIG_BACKLIGHT_LOCOMO
-	.lcd_power	= locomolcd_power
-#endif
+	{
+		.start	= SA1100_CS0_PHYS,
+		.end	= SA1100_CS0_PHYS + SZ_32M - 1,
+		.flags	= IORESOURCE_MEM,
+	}
 };
 
 static void __init collie_init(void)
@@ -330,28 +248,21 @@ static void __init collie_init(void)
 	GPDR = GPIO_LDD8 | GPIO_LDD9 | GPIO_LDD10 | GPIO_LDD11 | GPIO_LDD12 |
 		GPIO_LDD13 | GPIO_LDD14 | GPIO_LDD15 | GPIO_SSP_TXD |
 		GPIO_SSP_SCLK | GPIO_SSP_SFRM | GPIO_SDLC_SCLK |
-		_COLLIE_GPIO_UCB1x00_RESET | _COLLIE_GPIO_nMIC_ON |
-		_COLLIE_GPIO_nREMOCON_ON | GPIO_32_768kHz;
+		COLLIE_GPIO_UCB1x00_RESET | COLLIE_GPIO_nMIC_ON |
+		COLLIE_GPIO_nREMOCON_ON | GPIO_32_768kHz;
 
 	PPDR = PPC_LDD0 | PPC_LDD1 | PPC_LDD2 | PPC_LDD3 | PPC_LDD4 | PPC_LDD5 |
 		PPC_LDD6 | PPC_LDD7 | PPC_L_PCLK | PPC_L_LCLK | PPC_L_FCLK | PPC_L_BIAS |
 		PPC_TXD1 | PPC_TXD2 | PPC_TXD3 | PPC_TXD4 | PPC_SCLK | PPC_SFRM;
 
-	PWER = _COLLIE_GPIO_AC_IN | _COLLIE_GPIO_CO | _COLLIE_GPIO_ON_KEY |
-		_COLLIE_GPIO_WAKEUP | _COLLIE_GPIO_nREMOCON_INT | PWER_RTC;
+	PWER = COLLIE_GPIO_AC_IN | COLLIE_GPIO_CO | COLLIE_GPIO_ON_KEY |
+		COLLIE_GPIO_WAKEUP | COLLIE_GPIO_nREMOCON_INT | PWER_RTC;
 
-	PGSR = _COLLIE_GPIO_nREMOCON_ON;
+	PGSR = COLLIE_GPIO_nREMOCON_ON;
 
 	PSDR = PPC_RXD1 | PPC_RXD2 | PPC_RXD3 | PPC_RXD4;
 
 	PCFR = PCFR_OPDE;
-
-	GPSR |= _COLLIE_GPIO_UCB1x00_RESET;
-
-	collie_power_resource[0].start = gpio_to_irq(COLLIE_GPIO_AC_IN);
-	collie_power_resource[0].end = gpio_to_irq(COLLIE_GPIO_AC_IN);
-
-	sa11x0_ppc_configure_mcp();
 
 
 	platform_scoop_config = &collie_pcmcia_config;
@@ -361,10 +272,9 @@ static void __init collie_init(void)
 		printk(KERN_WARNING "collie: Unable to register LoCoMo device\n");
 	}
 
-	sa11x0_register_lcd(&collie_lcd_info);
-	sa11x0_register_mtd(&collie_flash_data, collie_flash_resources,
-			    ARRAY_SIZE(collie_flash_resources));
-	sa11x0_register_mcp(&collie_mcp_data);
+	sa11x0_set_flash_data(&collie_flash_data, collie_flash_resources,
+			      ARRAY_SIZE(collie_flash_resources));
+	sa11x0_set_mcp_data(&collie_mcp_data);
 
 	sharpsl_save_param();
 }
@@ -396,10 +306,10 @@ static void __init collie_map_io(void)
 }
 
 MACHINE_START(COLLIE, "Sharp-Collie")
+	.phys_io	= 0x80000000,
+	.io_pg_offst	= ((0xf8000000) >> 18) & 0xfffc,
 	.map_io		= collie_map_io,
-	.nr_irqs	= SA1100_NR_IRQS,
 	.init_irq	= sa1100_init_irq,
 	.timer		= &sa1100_timer,
 	.init_machine	= collie_init,
-	.restart	= sa11x0_restart,
 MACHINE_END

@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2008-2011 Freescale Semiconductor, Inc. All rights reserved.
+ * Copyright (C) 2008 Freescale Semiconductor, Inc. All rights reserved.
  *
  * Author: Yu Liu, <yu.liu@freescale.com>
  *
@@ -13,9 +13,7 @@
  */
 
 #include <linux/kvm_host.h>
-#include <linux/slab.h>
 #include <linux/err.h>
-#include <linux/export.h>
 
 #include <asm/reg.h>
 #include <asm/cputable.h>
@@ -42,11 +40,6 @@ void kvmppc_core_vcpu_load(struct kvm_vcpu *vcpu, int cpu)
 void kvmppc_core_vcpu_put(struct kvm_vcpu *vcpu)
 {
 	kvmppc_e500_tlb_put(vcpu);
-
-#ifdef CONFIG_SPE
-	if (vcpu->arch.shadow_msr & MSR_SPE)
-		kvmppc_vcpu_disable_spe(vcpu);
-#endif
 }
 
 int kvmppc_core_check_processor_compat(void)
@@ -66,12 +59,6 @@ int kvmppc_core_vcpu_setup(struct kvm_vcpu *vcpu)
 	struct kvmppc_vcpu_e500 *vcpu_e500 = to_e500(vcpu);
 
 	kvmppc_e500_tlb_setup(vcpu_e500);
-
-	/* Registers init */
-	vcpu->arch.pvr = mfspr(SPRN_PVR);
-	vcpu_e500->svr = mfspr(SPRN_SVR);
-
-	vcpu->arch.cpu_type = KVM_CPU_E500V2;
 
 	return 0;
 }
@@ -102,80 +89,6 @@ int kvmppc_core_vcpu_translate(struct kvm_vcpu *vcpu,
 	return 0;
 }
 
-void kvmppc_core_get_sregs(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
-{
-	struct kvmppc_vcpu_e500 *vcpu_e500 = to_e500(vcpu);
-
-	sregs->u.e.features |= KVM_SREGS_E_ARCH206_MMU | KVM_SREGS_E_SPE |
-	                       KVM_SREGS_E_PM;
-	sregs->u.e.impl_id = KVM_SREGS_E_IMPL_FSL;
-
-	sregs->u.e.impl.fsl.features = 0;
-	sregs->u.e.impl.fsl.svr = vcpu_e500->svr;
-	sregs->u.e.impl.fsl.hid0 = vcpu_e500->hid0;
-	sregs->u.e.impl.fsl.mcar = vcpu_e500->mcar;
-
-	sregs->u.e.mas0 = vcpu->arch.shared->mas0;
-	sregs->u.e.mas1 = vcpu->arch.shared->mas1;
-	sregs->u.e.mas2 = vcpu->arch.shared->mas2;
-	sregs->u.e.mas7_3 = vcpu->arch.shared->mas7_3;
-	sregs->u.e.mas4 = vcpu->arch.shared->mas4;
-	sregs->u.e.mas6 = vcpu->arch.shared->mas6;
-
-	sregs->u.e.mmucfg = mfspr(SPRN_MMUCFG);
-	sregs->u.e.tlbcfg[0] = vcpu_e500->tlb0cfg;
-	sregs->u.e.tlbcfg[1] = vcpu_e500->tlb1cfg;
-	sregs->u.e.tlbcfg[2] = 0;
-	sregs->u.e.tlbcfg[3] = 0;
-
-	sregs->u.e.ivor_high[0] = vcpu->arch.ivor[BOOKE_IRQPRIO_SPE_UNAVAIL];
-	sregs->u.e.ivor_high[1] = vcpu->arch.ivor[BOOKE_IRQPRIO_SPE_FP_DATA];
-	sregs->u.e.ivor_high[2] = vcpu->arch.ivor[BOOKE_IRQPRIO_SPE_FP_ROUND];
-	sregs->u.e.ivor_high[3] =
-		vcpu->arch.ivor[BOOKE_IRQPRIO_PERFORMANCE_MONITOR];
-
-	kvmppc_get_sregs_ivor(vcpu, sregs);
-}
-
-int kvmppc_core_set_sregs(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
-{
-	struct kvmppc_vcpu_e500 *vcpu_e500 = to_e500(vcpu);
-
-	if (sregs->u.e.impl_id == KVM_SREGS_E_IMPL_FSL) {
-		vcpu_e500->svr = sregs->u.e.impl.fsl.svr;
-		vcpu_e500->hid0 = sregs->u.e.impl.fsl.hid0;
-		vcpu_e500->mcar = sregs->u.e.impl.fsl.mcar;
-	}
-
-	if (sregs->u.e.features & KVM_SREGS_E_ARCH206_MMU) {
-		vcpu->arch.shared->mas0 = sregs->u.e.mas0;
-		vcpu->arch.shared->mas1 = sregs->u.e.mas1;
-		vcpu->arch.shared->mas2 = sregs->u.e.mas2;
-		vcpu->arch.shared->mas7_3 = sregs->u.e.mas7_3;
-		vcpu->arch.shared->mas4 = sregs->u.e.mas4;
-		vcpu->arch.shared->mas6 = sregs->u.e.mas6;
-	}
-
-	if (!(sregs->u.e.features & KVM_SREGS_E_IVOR))
-		return 0;
-
-	if (sregs->u.e.features & KVM_SREGS_E_SPE) {
-		vcpu->arch.ivor[BOOKE_IRQPRIO_SPE_UNAVAIL] =
-			sregs->u.e.ivor_high[0];
-		vcpu->arch.ivor[BOOKE_IRQPRIO_SPE_FP_DATA] =
-			sregs->u.e.ivor_high[1];
-		vcpu->arch.ivor[BOOKE_IRQPRIO_SPE_FP_ROUND] =
-			sregs->u.e.ivor_high[2];
-	}
-
-	if (sregs->u.e.features & KVM_SREGS_E_PM) {
-		vcpu->arch.ivor[BOOKE_IRQPRIO_PERFORMANCE_MONITOR] =
-			sregs->u.e.ivor_high[3];
-	}
-
-	return kvmppc_set_sregs_ivor(vcpu, sregs);
-}
-
 struct kvm_vcpu *kvmppc_core_vcpu_create(struct kvm *kvm, unsigned int id)
 {
 	struct kvmppc_vcpu_e500 *vcpu_e500;
@@ -197,14 +110,8 @@ struct kvm_vcpu *kvmppc_core_vcpu_create(struct kvm *kvm, unsigned int id)
 	if (err)
 		goto uninit_vcpu;
 
-	vcpu->arch.shared = (void*)__get_free_page(GFP_KERNEL|__GFP_ZERO);
-	if (!vcpu->arch.shared)
-		goto uninit_tlb;
-
 	return vcpu;
 
-uninit_tlb:
-	kvmppc_e500_tlb_uninit(vcpu_e500);
 uninit_vcpu:
 	kvm_vcpu_uninit(vcpu);
 free_vcpu:
@@ -217,9 +124,8 @@ void kvmppc_core_vcpu_free(struct kvm_vcpu *vcpu)
 {
 	struct kvmppc_vcpu_e500 *vcpu_e500 = to_e500(vcpu);
 
-	free_page((unsigned long)vcpu->arch.shared);
-	kvm_vcpu_uninit(vcpu);
 	kvmppc_e500_tlb_uninit(vcpu_e500);
+	kvm_vcpu_uninit(vcpu);
 	kmem_cache_free(kvm_vcpu_cache, vcpu_e500);
 }
 
@@ -228,10 +134,6 @@ static int __init kvmppc_e500_init(void)
 	int r, i;
 	unsigned long ivor[3];
 	unsigned long max_ivor = 0;
-
-	r = kvmppc_core_check_processor_compat();
-	if (r)
-		return r;
 
 	r = kvmppc_booke_init();
 	if (r)
@@ -252,10 +154,10 @@ static int __init kvmppc_e500_init(void)
 	flush_icache_range(kvmppc_booke_handlers,
 			kvmppc_booke_handlers + max_ivor + kvmppc_handler_len);
 
-	return kvm_init(NULL, sizeof(struct kvmppc_vcpu_e500), 0, THIS_MODULE);
+	return kvm_init(NULL, sizeof(struct kvmppc_vcpu_e500), THIS_MODULE);
 }
 
-static void __exit kvmppc_e500_exit(void)
+static void __init kvmppc_e500_exit(void)
 {
 	kvmppc_booke_exit();
 }

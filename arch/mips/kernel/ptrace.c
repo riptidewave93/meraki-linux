@@ -34,6 +34,7 @@
 #include <asm/mipsmtregs.h>
 #include <asm/pgtable.h>
 #include <asm/page.h>
+#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/bootinfo.h>
 #include <asm/reg.h>
@@ -254,13 +255,9 @@ int ptrace_set_watch_regs(struct task_struct *child,
 	return 0;
 }
 
-long arch_ptrace(struct task_struct *child, long request,
-		 unsigned long addr, unsigned long data)
+long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 {
 	int ret;
-	void __user *addrp = (void __user *) addr;
-	void __user *datavp = (void __user *) data;
-	unsigned long __user *datalp = (void __user *) data;
 
 	switch (request) {
 	/* when I and D space are separate, these will need to be fixed. */
@@ -389,7 +386,7 @@ long arch_ptrace(struct task_struct *child, long request,
 			ret = -EIO;
 			goto out;
 		}
-		ret = put_user(tmp, datalp);
+		ret = put_user(tmp, (unsigned long __user *) data);
 		break;
 	}
 
@@ -481,31 +478,64 @@ long arch_ptrace(struct task_struct *child, long request,
 		}
 
 	case PTRACE_GETREGS:
-		ret = ptrace_getregs(child, datavp);
+		ret = ptrace_getregs(child, (__s64 __user *) data);
 		break;
 
 	case PTRACE_SETREGS:
-		ret = ptrace_setregs(child, datavp);
+		ret = ptrace_setregs(child, (__s64 __user *) data);
 		break;
 
 	case PTRACE_GETFPREGS:
-		ret = ptrace_getfpregs(child, datavp);
+		ret = ptrace_getfpregs(child, (__u32 __user *) data);
 		break;
 
 	case PTRACE_SETFPREGS:
-		ret = ptrace_setfpregs(child, datavp);
+		ret = ptrace_setfpregs(child, (__u32 __user *) data);
+		break;
+
+	case PTRACE_SYSCALL: /* continue and stop at next (return from) syscall */
+	case PTRACE_CONT: { /* restart after signal. */
+		ret = -EIO;
+		if (!valid_signal(data))
+			break;
+		if (request == PTRACE_SYSCALL) {
+			set_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
+		}
+		else {
+			clear_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
+		}
+		child->exit_code = data;
+		wake_up_process(child);
+		ret = 0;
+		break;
+	}
+
+	/*
+	 * make the child exit.  Best I can do is send it a sigkill.
+	 * perhaps it should be put in the status that it wants to
+	 * exit.
+	 */
+	case PTRACE_KILL:
+		ret = 0;
+		if (child->exit_state == EXIT_ZOMBIE)	/* already dead */
+			break;
+		child->exit_code = SIGKILL;
+		wake_up_process(child);
 		break;
 
 	case PTRACE_GET_THREAD_AREA:
-		ret = put_user(task_thread_info(child)->tp_value, datalp);
+		ret = put_user(task_thread_info(child)->tp_value,
+				(unsigned long __user *) data);
 		break;
 
 	case PTRACE_GET_WATCH_REGS:
-		ret = ptrace_get_watch_regs(child, addrp);
+		ret = ptrace_get_watch_regs(child,
+					(struct pt_watch_regs __user *) addr);
 		break;
 
 	case PTRACE_SET_WATCH_REGS:
-		ret = ptrace_set_watch_regs(child, addrp);
+		ret = ptrace_set_watch_regs(child,
+					(struct pt_watch_regs __user *) addr);
 		break;
 
 	default:
@@ -532,10 +562,15 @@ static inline int audit_arch(void)
  * Notification of system call entry/exit
  * - triggered by current->work.syscall_trace
  */
-asmlinkage void syscall_trace_enter(struct pt_regs *regs)
+asmlinkage void do_syscall_trace(struct pt_regs *regs, int entryexit)
 {
 	/* do the secure computing check first */
-	secure_computing(regs->regs[2]);
+	if (!entryexit)
+		secure_computing(regs->regs[0]);
+
+	if (unlikely(current->audit_context) && entryexit)
+		audit_syscall_exit(AUDITSC_RESULT(regs->regs[7]),
+		                   -regs->regs[2]);
 
 	if (!(current->ptrace & PT_PTRACED))
 		goto out;
@@ -559,37 +594,8 @@ asmlinkage void syscall_trace_enter(struct pt_regs *regs)
 	}
 
 out:
-	audit_syscall_entry(audit_arch(), regs->regs[2],
-			    regs->regs[4], regs->regs[5],
-			    regs->regs[6], regs->regs[7]);
-}
-
-/*
- * Notification of system call entry/exit
- * - triggered by current->work.syscall_trace
- */
-asmlinkage void syscall_trace_leave(struct pt_regs *regs)
-{
-	audit_syscall_exit(regs);
-
-	if (!(current->ptrace & PT_PTRACED))
-		return;
-
-	if (!test_thread_flag(TIF_SYSCALL_TRACE))
-		return;
-
-	/* The 0x80 provides a way for the tracing parent to distinguish
-	   between a syscall stop and SIGTRAP delivery */
-	ptrace_notify(SIGTRAP | ((current->ptrace & PT_TRACESYSGOOD) ?
-	                         0x80 : 0));
-
-	/*
-	 * this isn't the same as continuing with a signal, but it will do
-	 * for normal use.  strace only continues with a signal if the
-	 * stopping signal is not SIGTRAP.  -brl
-	 */
-	if (current->exit_code) {
-		send_sig(current->exit_code, current, 1);
-		current->exit_code = 0;
-	}
+	if (unlikely(current->audit_context) && !entryexit)
+		audit_syscall_entry(audit_arch(), regs->regs[0],
+				    regs->regs[4], regs->regs[5],
+				    regs->regs[6], regs->regs[7]);
 }

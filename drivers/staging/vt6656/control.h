@@ -36,14 +36,16 @@
 
 /*---------------------  Export Definitions -------------------------*/
 
-#define CONTROLnsRequestOut(Device, Request, Value, Index, Length, Buffer) \
-	PIPEnsControlOut(Device, Request, Value, Index, Length, Buffer)
 
-#define CONTROLnsRequestOutAsyn(Device, Request, Value, Index, Length, Buffer) \
-	PIPEnsControlOutAsyn(Device, Request, Value, Index, Length, Buffer)
+#define CONTROLnsRequestOut( Device,Request,Value,Index,Length,Buffer) \
+        PIPEnsControlOut( Device,Request,Value,Index,Length,Buffer)
 
-#define CONTROLnsRequestIn(Device, Request, Value, Index, Length, Buffer) \
-	PIPEnsControlIn(Device, Request, Value, Index, Length, Buffer)
+#define CONTROLnsRequestOutAsyn( Device,Request,Value,Index,Length,Buffer) \
+        PIPEnsControlOutAsyn( Device,Request,Value,Index,Length,Buffer)
+
+#define CONTROLnsRequestIn( Device,Request,Value,Index,Length,Buffer) \
+        PIPEnsControlIn( Device,Request,Value,Index,Length,Buffer)
+
 
 /*---------------------  Export Classes  ----------------------------*/
 
@@ -52,27 +54,30 @@
 /*---------------------  Export Functions  --------------------------*/
 
 void ControlvWriteByte(
-     PSDevice pDevice,
-     BYTE byRegType,
-     BYTE byRegOfs,
-     BYTE byData
+    IN PSDevice pDevice,
+    IN BYTE byRegType,
+    IN BYTE byRegOfs,
+    IN BYTE byData
     );
 
 
 void ControlvReadByte(
-     PSDevice pDevice,
-     BYTE byRegType,
-     BYTE byRegOfs,
-     PBYTE pbyData
+    IN PSDevice pDevice,
+    IN BYTE byRegType,
+    IN BYTE byRegOfs,
+    IN PBYTE pbyData
     );
 
 
 void ControlvMaskByte(
-     PSDevice pDevice,
-     BYTE byRegType,
-     BYTE byRegOfs,
-     BYTE byMask,
-     BYTE byData
+    IN PSDevice pDevice,
+    IN BYTE byRegType,
+    IN BYTE byRegOfs,
+    IN BYTE byMask,
+    IN BYTE byData
     );
 
-#endif /* __CONTROL_H__ */
+#endif // __RCV_H__
+
+
+

@@ -78,7 +78,6 @@ enum fixed_addresses {
 	VSYSCALL_LAST_PAGE,
 	VSYSCALL_FIRST_PAGE = VSYSCALL_LAST_PAGE
 			    + ((VSYSCALL_END-VSYSCALL_START) >> PAGE_SHIFT) - 1,
-	VVAR_PAGE,
 	VSYSCALL_HPET,
 #endif
 	FIX_DBGP_BASE,
@@ -117,29 +116,19 @@ enum fixed_addresses {
 #endif
 	FIX_TEXT_POKE1,	/* reserve 2 pages for text_poke() */
 	FIX_TEXT_POKE0, /* first page is last, because allocation is backward */
-#ifdef	CONFIG_X86_INTEL_MID
-	FIX_LNW_VRTC,
-#endif
 	__end_of_permanent_fixed_addresses,
-
 	/*
 	 * 256 temporary boot-time mappings, used by early_ioremap(),
 	 * before ioremap() is functional.
 	 *
-	 * If necessary we round it up to the next 256 pages boundary so
-	 * that we can have a single pgd entry and a single pte table:
+	 * We round it up to the next 256 pages boundary so that we
+	 * can have a single pgd entry and a single pte table:
 	 */
 #define NR_FIX_BTMAPS		64
 #define FIX_BTMAPS_SLOTS	4
-#define TOTAL_FIX_BTMAPS	(NR_FIX_BTMAPS * FIX_BTMAPS_SLOTS)
-	FIX_BTMAP_END =
-	 (__end_of_permanent_fixed_addresses ^
-	  (__end_of_permanent_fixed_addresses + TOTAL_FIX_BTMAPS - 1)) &
-	 -PTRS_PER_PTE
-	 ? __end_of_permanent_fixed_addresses + TOTAL_FIX_BTMAPS -
-	   (__end_of_permanent_fixed_addresses & (TOTAL_FIX_BTMAPS - 1))
-	 : __end_of_permanent_fixed_addresses,
-	FIX_BTMAP_BEGIN = FIX_BTMAP_END + TOTAL_FIX_BTMAPS - 1,
+	FIX_BTMAP_END = __end_of_permanent_fixed_addresses + 256 -
+			(__end_of_permanent_fixed_addresses & 255),
+	FIX_BTMAP_BEGIN = FIX_BTMAP_END + NR_FIX_BTMAPS*FIX_BTMAPS_SLOTS - 1,
 #ifdef CONFIG_X86_32
 	FIX_WP_TEST,
 #endif
@@ -219,20 +208,5 @@ static inline unsigned long virt_to_fix(const unsigned long vaddr)
 	BUG_ON(vaddr >= FIXADDR_TOP || vaddr < FIXADDR_START);
 	return __virt_to_fix(vaddr);
 }
-
-/* Return an pointer with offset calculated */
-static __always_inline unsigned long
-__set_fixmap_offset(enum fixed_addresses idx, phys_addr_t phys, pgprot_t flags)
-{
-	__set_fixmap(idx, phys, flags);
-	return fix_to_virt(idx) + (phys & (PAGE_SIZE - 1));
-}
-
-#define set_fixmap_offset(idx, phys)			\
-	__set_fixmap_offset(idx, phys, PAGE_KERNEL)
-
-#define set_fixmap_offset_nocache(idx, phys)			\
-	__set_fixmap_offset(idx, phys, PAGE_KERNEL_NOCACHE)
-
 #endif /* !__ASSEMBLY__ */
 #endif /* _ASM_X86_FIXMAP_H */

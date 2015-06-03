@@ -5,7 +5,7 @@
  * NetLabel system manages static and dynamic label mappings for network
  * protocols such as CIPSO and RIPSO.
  *
- * Author: Paul Moore <paul@paul-moore.com>
+ * Author: Paul Moore <paul.moore@hp.com>
  *
  */
 
@@ -32,7 +32,7 @@
 #define _NETLABEL_MGMT_H
 
 #include <net/netlabel.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 /*
  * The following NetLabel payloads are supported by the management interface.
@@ -173,6 +173,7 @@ enum {
 	NLBL_MGMT_C_VERSION,
 	__NLBL_MGMT_C_MAX,
 };
+#define NLBL_MGMT_C_MAX (__NLBL_MGMT_C_MAX - 1)
 
 /* NetLabel Management attributes */
 enum {

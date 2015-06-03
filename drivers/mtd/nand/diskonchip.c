@@ -31,7 +31,6 @@
 #include <linux/mtd/doc2000.h>
 #include <linux/mtd/partitions.h>
 #include <linux/mtd/inftl.h>
-#include <linux/module.h>
 
 /* Where to look for the devices? */
 #ifndef CONFIG_MTD_NAND_DISKONCHIP_PROBE_ADDRESS
@@ -133,7 +132,7 @@ static struct rs_control *rs_decoder;
 
 /*
  * The HW decoder in the DoC ASIC's provides us a error syndrome,
- * which we must convert to a standard syndrome usable by the generic
+ * which we must convert to a standard syndrom usable by the generic
  * Reed-Solomon library code.
  *
  * Fabrice Bellard figured this out in the old docecc code. I added
@@ -154,7 +153,7 @@ static int doc_ecc_decode(struct rs_control *rs, uint8_t *data, uint8_t *ecc)
 	ds[3] = ((ecc[3] & 0xc0) >> 6) | ((ecc[0] & 0xff) << 2);
 	parity = ecc[1];
 
-	/* Initialize the syndrome buffer */
+	/* Initialize the syndrom buffer */
 	for (i = 0; i < NROOTS; i++)
 		s[i] = ds[0];
 	/*
@@ -1032,7 +1031,7 @@ static int doc200x_correct_data(struct mtd_info *mtd, u_char *dat,
 		WriteDOC(DOC_ECC_DIS, docptr, Mplus_ECCConf);
 	else
 		WriteDOC(DOC_ECC_DIS, docptr, ECCConf);
-	if (no_ecc_failures && mtd_is_eccerr(ret)) {
+	if (no_ecc_failures && (ret == -EBADMSG)) {
 		printk(KERN_ERR "suppressing ECC failure\n");
 		ret = 0;
 	}
@@ -1072,7 +1071,7 @@ static int __init find_media_headers(struct mtd_info *mtd, u_char *buf, const ch
 	size_t retlen;
 
 	for (offs = 0; offs < mtd->size; offs += mtd->erasesize) {
-		ret = mtd_read(mtd, offs, mtd->writesize, &retlen, buf);
+		ret = mtd->read(mtd, offs, mtd->writesize, &retlen, buf);
 		if (retlen != mtd->writesize)
 			continue;
 		if (ret) {
@@ -1097,7 +1096,7 @@ static int __init find_media_headers(struct mtd_info *mtd, u_char *buf, const ch
 	/* Only one mediaheader was found.  We want buf to contain a
 	   mediaheader on return, so we'll have to re-read the one we found. */
 	offs = doc->mh0_page << this->page_shift;
-	ret = mtd_read(mtd, offs, mtd->writesize, &retlen, buf);
+	ret = mtd->read(mtd, offs, mtd->writesize, &retlen, buf);
 	if (retlen != mtd->writesize) {
 		/* Insanity.  Give up. */
 		printk(KERN_ERR "Read DiskOnChip Media Header once, but can't reread it???\n");
@@ -1653,8 +1652,7 @@ static int __init doc_probe(unsigned long physadr)
 	nand->ecc.mode		= NAND_ECC_HW_SYNDROME;
 	nand->ecc.size		= 512;
 	nand->ecc.bytes		= 6;
-	nand->ecc.strength	= 2;
-	nand->bbt_options	= NAND_BBT_USE_FLASH;
+	nand->options		= NAND_USE_FLASH_BBT;
 
 	doc->physadr		= physadr;
 	doc->virtadr		= virtadr;

@@ -2,7 +2,6 @@
 #define _LINUX_RESOURCE_H
 
 #include <linux/time.h>
-#include <linux/types.h>
 
 /*
  * Resource control/accounting header file for linux
@@ -44,13 +43,6 @@ struct rlimit {
 	unsigned long	rlim_max;
 };
 
-#define RLIM64_INFINITY		(~0ULL)
-
-struct rlimit64 {
-	__u64 rlim_cur;
-	__u64 rlim_max;
-};
-
 #define	PRIO_MIN	(-20)
 #define	PRIO_MAX	20
 
@@ -81,8 +73,6 @@ struct rlimit64 {
 struct task_struct;
 
 int getrusage(struct task_struct *p, int who, struct rusage __user *ru);
-int do_prlimit(struct task_struct *tsk, unsigned int resource,
-		struct rlimit *new_rlim, struct rlimit *old_rlim);
 
 #endif /* __KERNEL__ */
 

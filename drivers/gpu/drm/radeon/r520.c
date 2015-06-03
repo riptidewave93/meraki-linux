@@ -27,13 +27,12 @@
  */
 #include "drmP.h"
 #include "radeon.h"
-#include "radeon_asic.h"
 #include "atom.h"
 #include "r520d.h"
 
 /* This files gather functions specifics to: r520,rv530,rv560,rv570,r580 */
 
-int r520_mc_wait_for_idle(struct radeon_device *rdev)
+static int r520_mc_wait_for_idle(struct radeon_device *rdev)
 {
 	unsigned i;
 	uint32_t tmp;
@@ -53,6 +52,7 @@ static void r520_gpu_init(struct radeon_device *rdev)
 {
 	unsigned pipe_select_current, gb_pipe_select, tmp;
 
+	r100_hdp_reset(rdev);
 	rv515_vga_render_disable(rdev);
 	/*
 	 * DST_PIPE_CONFIG		0x170C
@@ -79,8 +79,8 @@ static void r520_gpu_init(struct radeon_device *rdev)
 		WREG32(0x4128, 0xFF);
 	}
 	r420_pipes_init(rdev);
-	gb_pipe_select = RREG32(R400_GB_PIPE_SELECT);
-	tmp = RREG32(R300_DST_PIPE_CONFIG);
+	gb_pipe_select = RREG32(0x402C);
+	tmp = RREG32(0x170C);
 	pipe_select_current = (tmp >> 2) & 3;
 	tmp = (1 << pipe_select_current) |
 	      (((gb_pipe_select >> 8) & 0xF) << 4);
@@ -119,16 +119,19 @@ static void r520_vram_get_type(struct radeon_device *rdev)
 		rdev->mc.vram_width *= 2;
 }
 
-void r520_mc_init(struct radeon_device *rdev)
+void r520_vram_info(struct radeon_device *rdev)
 {
+	fixed20_12 a;
 
 	r520_vram_get_type(rdev);
+
 	r100_vram_init_sizes(rdev);
-	radeon_vram_location(rdev, &rdev->mc, 0);
-	rdev->mc.gtt_base_align = 0;
-	if (!(rdev->flags & RADEON_IS_AGP))
-		radeon_gtt_location(rdev, &rdev->mc);
-	radeon_update_bandwidth_info(rdev);
+	/* FIXME: we should enforce default clock in case GPU is not in
+	 * default setup
+	 */
+	a.full = rfixed_const(100);
+	rdev->pm.sclk.full = rfixed_const(rdev->clock.default_sclk);
+	rdev->pm.sclk.full = rfixed_div(rdev->pm.sclk, a);
 }
 
 void r520_mc_program(struct radeon_device *rdev)
@@ -181,42 +184,21 @@ static int r520_startup(struct radeon_device *rdev)
 		if (r)
 			return r;
 	}
-
-	/* allocate wb buffer */
-	r = radeon_wb_init(rdev);
-	if (r)
-		return r;
-
-	r = radeon_fence_driver_start_ring(rdev, RADEON_RING_TYPE_GFX_INDEX);
-	if (r) {
-		dev_err(rdev->dev, "failed initializing CP fences (%d).\n", r);
-		return r;
-	}
-
 	/* Enable IRQ */
-	if (!rdev->irq.installed) {
-		r = radeon_irq_kms_init(rdev);
-		if (r)
-			return r;
-	}
-
+	rdev->irq.sw_int = true;
 	rs600_irq_set(rdev);
-	rdev->config.r300.hdp_cntl = RREG32(RADEON_HOST_PATH_CNTL);
 	/* 1M ring buffer */
 	r = r100_cp_init(rdev, 1024 * 1024);
 	if (r) {
-		dev_err(rdev->dev, "failed initializing CP (%d).\n", r);
+		dev_err(rdev->dev, "failled initializing CP (%d).\n", r);
 		return r;
 	}
-
-	r = radeon_ib_pool_start(rdev);
+	r = r100_wb_init(rdev);
 	if (r)
-		return r;
-
-	r = radeon_ib_test(rdev, RADEON_RING_TYPE_GFX_INDEX, &rdev->ring[RADEON_RING_TYPE_GFX_INDEX]);
+		dev_err(rdev->dev, "failled initializing WB (%d).\n", r);
+	r = r100_ib_init(rdev);
 	if (r) {
-		dev_err(rdev->dev, "failed testing IB (%d).\n", r);
-		rdev->accel_working = false;
+		dev_err(rdev->dev, "failled initializing IB (%d).\n", r);
 		return r;
 	}
 	return 0;
@@ -224,15 +206,13 @@ static int r520_startup(struct radeon_device *rdev)
 
 int r520_resume(struct radeon_device *rdev)
 {
-	int r;
-
 	/* Make sur GART are not working */
 	if (rdev->flags & RADEON_IS_PCIE)
 		rv370_pcie_gart_disable(rdev);
 	/* Resume clock before doing reset */
 	rv515_clock_startup(rdev);
 	/* Reset gpu before posting otherwise ATOM will enter infinite loop */
-	if (radeon_asic_reset(rdev)) {
+	if (radeon_gpu_reset(rdev)) {
 		dev_warn(rdev->dev, "GPU reset failed ! (0xE40=0x%08X, 0x7C0=0x%08X)\n",
 			RREG32(R_000E40_RBBM_STATUS),
 			RREG32(R_0007C0_CP_STAT));
@@ -241,15 +221,7 @@ int r520_resume(struct radeon_device *rdev)
 	atom_asic_init(rdev->mode_info.atom_context);
 	/* Resume clock after posting */
 	rv515_clock_startup(rdev);
-	/* Initialize surface registers */
-	radeon_surface_init(rdev);
-
-	rdev->accel_working = true;
-	r = r520_startup(rdev);
-	if (r) {
-		rdev->accel_working = false;
-	}
-	return r;
+	return r520_startup(rdev);
 }
 
 int r520_init(struct radeon_device *rdev)
@@ -260,8 +232,6 @@ int r520_init(struct radeon_device *rdev)
 	radeon_scratch_init(rdev);
 	/* Initialize surface registers */
 	radeon_surface_init(rdev);
-	/* restore some register to sane defaults */
-	r100_restore_sanity(rdev);
 	/* TODO: disable VGA need to use VGA request */
 	/* BIOS*/
 	if (!radeon_get_bios(rdev)) {
@@ -277,62 +247,55 @@ int r520_init(struct radeon_device *rdev)
 		return -EINVAL;
 	}
 	/* Reset gpu before posting otherwise ATOM will enter infinite loop */
-	if (radeon_asic_reset(rdev)) {
+	if (radeon_gpu_reset(rdev)) {
 		dev_warn(rdev->dev,
 			"GPU reset failed ! (0xE40=0x%08X, 0x7C0=0x%08X)\n",
 			RREG32(R_000E40_RBBM_STATUS),
 			RREG32(R_0007C0_CP_STAT));
 	}
 	/* check if cards are posted or not */
-	if (radeon_boot_test_post_card(rdev) == false)
-		return -EINVAL;
-
 	if (!radeon_card_posted(rdev) && rdev->bios) {
 		DRM_INFO("GPU not posted. posting now...\n");
 		atom_asic_init(rdev->mode_info.atom_context);
 	}
 	/* Initialize clocks */
 	radeon_get_clock_info(rdev->ddev);
-	/* initialize AGP */
-	if (rdev->flags & RADEON_IS_AGP) {
-		r = radeon_agp_init(rdev);
-		if (r) {
-			radeon_agp_disable(rdev);
-		}
-	}
-	/* initialize memory controller */
-	r520_mc_init(rdev);
+	/* Initialize power management */
+	radeon_pm_init(rdev);
+	/* Get vram informations */
+	r520_vram_info(rdev);
+	/* Initialize memory controller (also test AGP) */
+	r = r420_mc_init(rdev);
+	if (r)
+		return r;
 	rv515_debugfs(rdev);
 	/* Fence driver */
 	r = radeon_fence_driver_init(rdev);
 	if (r)
 		return r;
+	r = radeon_irq_kms_init(rdev);
+	if (r)
+		return r;
 	/* Memory manager */
-	r = radeon_bo_init(rdev);
+	r = radeon_object_init(rdev);
 	if (r)
 		return r;
 	r = rv370_pcie_gart_init(rdev);
 	if (r)
 		return r;
 	rv515_set_safe_registers(rdev);
-
-	r = radeon_ib_pool_init(rdev);
 	rdev->accel_working = true;
-	if (r) {
-		dev_err(rdev->dev, "IB initialization failed (%d).\n", r);
-		rdev->accel_working = false;
-	}
-
 	r = r520_startup(rdev);
 	if (r) {
 		/* Somethings want wront with the accel init stop accel */
 		dev_err(rdev->dev, "Disabling GPU acceleration\n");
+		rv515_suspend(rdev);
 		r100_cp_fini(rdev);
-		radeon_wb_fini(rdev);
+		r100_wb_fini(rdev);
 		r100_ib_fini(rdev);
-		radeon_irq_kms_fini(rdev);
 		rv370_pcie_gart_fini(rdev);
 		radeon_agp_fini(rdev);
+		radeon_irq_kms_fini(rdev);
 		rdev->accel_working = false;
 	}
 	return 0;

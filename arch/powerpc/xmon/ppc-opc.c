@@ -22,7 +22,6 @@
 
 #include <linux/stddef.h>
 #include <linux/kernel.h>
-#include <linux/bug.h>
 #include "nonstdio.h"
 #include "ppc.h"
 

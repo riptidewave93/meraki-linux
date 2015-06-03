@@ -3,14 +3,13 @@
 
 #include <linux/types.h>
 #include <linux/input.h>
-#include <linux/of.h>
 
-#define MATRIX_MAX_ROWS		32
-#define MATRIX_MAX_COLS		32
+#define MATRIX_MAX_ROWS		16
+#define MATRIX_MAX_COLS		16
 
 #define KEY(row, col, val)	((((row) & (MATRIX_MAX_ROWS - 1)) << 24) |\
 				 (((col) & (MATRIX_MAX_COLS - 1)) << 16) |\
-				 ((val) & 0xffff))
+				 (val & 0xffff))
 
 #define KEY_ROW(k)		(((k) >> 24) & 0xff)
 #define KEY_COL(k)		(((k) >> 16) & 0xff)
@@ -42,13 +41,6 @@ struct matrix_keymap_data {
  * @col_scan_delay_us: delay, measured in microseconds, that is
  *	needed before we can keypad after activating column gpio
  * @debounce_ms: debounce interval in milliseconds
- * @clustered_irq: may be specified if interrupts of all row/column GPIOs
- *	are bundled to one single irq
- * @clustered_irq_flags: flags that are needed for the clustered irq
- * @active_low: gpio polarity
- * @wakeup: controls whether the device should be set up as wakeup
- *	source
- * @no_autorepeat: disable key autorepeat
  *
  * This structure represents platform-specific data that use used by
  * matrix_keypad driver to perform proper initialization.
@@ -67,12 +59,8 @@ struct matrix_keypad_platform_data {
 	/* key debounce interval in milli-second */
 	unsigned int	debounce_ms;
 
-	unsigned int	clustered_irq;
-	unsigned int	clustered_irq_flags;
-
 	bool		active_low;
 	bool		wakeup;
-	bool		no_autorepeat;
 };
 
 /**
@@ -106,23 +94,5 @@ matrix_keypad_build_keymap(const struct matrix_keymap_data *keymap_data,
 	}
 	__clear_bit(KEY_RESERVED, keybit);
 }
-
-#ifdef CONFIG_INPUT_OF_MATRIX_KEYMAP
-struct matrix_keymap_data *
-matrix_keyboard_of_fill_keymap(struct device_node *np, const char *propname);
-
-void matrix_keyboard_of_free_keymap(const struct matrix_keymap_data *kd);
-#else
-static inline struct matrix_keymap_data *
-matrix_keyboard_of_fill_keymap(struct device_node *np, const char *propname)
-{
-	return NULL;
-}
-
-static inline void
-matrix_keyboard_of_free_keymap(const struct matrix_keymap_data *kd)
-{
-}
-#endif
 
 #endif /* _MATRIX_KEYPAD_H */

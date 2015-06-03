@@ -17,8 +17,6 @@
 #include <linux/input.h>
 #include <linux/delay.h>
 #include <linux/workqueue.h>
-#include <linux/slab.h>
-#include <linux/pm.h>
 
 #define DRIVER_NAME		"synaptics_i2c"
 /* maximum product id is 15 characters */
@@ -185,17 +183,17 @@
 #define NO_DATA_SLEEP_MSECS	(MSEC_PER_SEC / 4)
 
 /* Control touchpad's No Deceleration option */
-static bool no_decel = 1;
+static int no_decel = 1;
 module_param(no_decel, bool, 0644);
 MODULE_PARM_DESC(no_decel, "No Deceleration. Default = 1 (on)");
 
 /* Control touchpad's Reduced Reporting option */
-static bool reduce_report;
+static int reduce_report;
 module_param(reduce_report, bool, 0644);
 MODULE_PARM_DESC(reduce_report, "Reduced Reporting. Default = 0 (off)");
 
 /* Control touchpad's No Filter option */
-static bool no_filter;
+static int no_filter;
 module_param(no_filter, bool, 0644);
 MODULE_PARM_DESC(no_filter, "No Filter. Default = 0 (off)");
 
@@ -422,8 +420,8 @@ static void synaptics_i2c_check_params(struct synaptics_i2c *touch)
 }
 
 /* Control the Device polling rate / Work Handler sleep time */
-static unsigned long synaptics_i2c_adjust_delay(struct synaptics_i2c *touch,
-						bool have_data)
+unsigned long synaptics_i2c_adjust_delay(struct synaptics_i2c *touch,
+					 bool have_data)
 {
 	unsigned long delay, nodata_count_thres;
 
@@ -462,7 +460,7 @@ static void synaptics_i2c_work_handler(struct work_struct *work)
 	 * While interrupt driven, there is no real need to poll the device.
 	 * But touchpads are very sensitive, so there could be errors
 	 * related to physical environment and the attention line isn't
-	 * necessarily asserted. In such case we can lose the touchpad.
+	 * neccesarily asserted. In such case we can lose the touchpad.
 	 * We poll the device once in THREAD_IRQ_SLEEP_SECS and
 	 * if error is detected, we try to reset and reconfigure the touchpad.
 	 */
@@ -522,7 +520,7 @@ static void synaptics_i2c_set_input_params(struct synaptics_i2c *touch)
 	__set_bit(BTN_LEFT, input->keybit);
 }
 
-static struct synaptics_i2c *synaptics_i2c_touch_create(struct i2c_client *client)
+struct synaptics_i2c *synaptics_i2c_touch_create(struct i2c_client *client)
 {
 	struct synaptics_i2c *touch;
 
@@ -570,7 +568,7 @@ static int __devinit synaptics_i2c_probe(struct i2c_client *client,
 			 "Requesting IRQ: %d\n", touch->client->irq);
 
 		ret = request_irq(touch->client->irq, synaptics_i2c_irq,
-				  IRQ_TYPE_EDGE_FALLING,
+				  IRQF_DISABLED|IRQ_TYPE_EDGE_FALLING,
 				  DRIVER_NAME, touch);
 		if (ret) {
 			dev_warn(&touch->client->dev,
@@ -614,15 +612,15 @@ static int __devexit synaptics_i2c_remove(struct i2c_client *client)
 		free_irq(client->irq, touch);
 
 	input_unregister_device(touch->input);
+	i2c_set_clientdata(client, NULL);
 	kfree(touch);
 
 	return 0;
 }
 
-#ifdef CONFIG_PM_SLEEP
-static int synaptics_i2c_suspend(struct device *dev)
+#ifdef CONFIG_PM
+static int synaptics_i2c_suspend(struct i2c_client *client, pm_message_t mesg)
 {
-	struct i2c_client *client = to_i2c_client(dev);
 	struct synaptics_i2c *touch = i2c_get_clientdata(client);
 
 	cancel_delayed_work_sync(&touch->dwork);
@@ -633,10 +631,9 @@ static int synaptics_i2c_suspend(struct device *dev)
 	return 0;
 }
 
-static int synaptics_i2c_resume(struct device *dev)
+static int synaptics_i2c_resume(struct i2c_client *client)
 {
 	int ret;
-	struct i2c_client *client = to_i2c_client(dev);
 	struct synaptics_i2c *touch = i2c_get_clientdata(client);
 
 	ret = synaptics_i2c_reset_config(client);
@@ -648,10 +645,10 @@ static int synaptics_i2c_resume(struct device *dev)
 
 	return 0;
 }
+#else
+#define synaptics_i2c_suspend	NULL
+#define synaptics_i2c_resume	NULL
 #endif
-
-static SIMPLE_DEV_PM_OPS(synaptics_i2c_pm, synaptics_i2c_suspend,
-			 synaptics_i2c_resume);
 
 static const struct i2c_device_id synaptics_i2c_id_table[] = {
 	{ "synaptics_i2c", 0 },
@@ -663,16 +660,28 @@ static struct i2c_driver synaptics_i2c_driver = {
 	.driver = {
 		.name	= DRIVER_NAME,
 		.owner	= THIS_MODULE,
-		.pm	= &synaptics_i2c_pm,
 	},
 
 	.probe		= synaptics_i2c_probe,
 	.remove		= __devexit_p(synaptics_i2c_remove),
 
+	.suspend	= synaptics_i2c_suspend,
+	.resume		= synaptics_i2c_resume,
 	.id_table	= synaptics_i2c_id_table,
 };
 
-module_i2c_driver(synaptics_i2c_driver);
+static int __init synaptics_i2c_init(void)
+{
+	return i2c_add_driver(&synaptics_i2c_driver);
+}
+
+static void __exit synaptics_i2c_exit(void)
+{
+	i2c_del_driver(&synaptics_i2c_driver);
+}
+
+module_init(synaptics_i2c_init);
+module_exit(synaptics_i2c_exit);
 
 MODULE_DESCRIPTION("Synaptics I2C touchpad driver");
 MODULE_AUTHOR("Mike Rapoport, Igor Grinberg, Compulab");

@@ -35,7 +35,7 @@ static void br_hello_timer_expired(unsigned long arg)
 {
 	struct net_bridge *br = (struct net_bridge *)arg;
 
-	br_debug(br, "hello timer expired\n");
+	pr_debug("%s: hello timer expired\n", br->dev->name);
 	spin_lock(&br->lock);
 	if (br->dev->flags & IFF_UP) {
 		br_config_bpdu_generation(br);
@@ -55,9 +55,13 @@ static void br_message_age_timer_expired(unsigned long arg)
 	if (p->state == BR_STATE_DISABLED)
 		return;
 
-	br_info(br, "port %u(%s) neighbor %.2x%.2x.%pM lost\n",
-		(unsigned) p->port_no, p->dev->name,
-		id->prio[0], id->prio[1], &id->addr);
+
+	pr_info("%s: neighbor %.2x%.2x.%.2x:%.2x:%.2x:%.2x:%.2x:%.2x lost on port %d(%s)\n",
+		br->dev->name,
+		id->prio[0], id->prio[1],
+		id->addr[0], id->addr[1], id->addr[2],
+		id->addr[3], id->addr[4], id->addr[5],
+		p->port_no, p->dev->name);
 
 	/*
 	 * According to the spec, the message age timer cannot be
@@ -83,8 +87,8 @@ static void br_forward_delay_timer_expired(unsigned long arg)
 	struct net_bridge_port *p = (struct net_bridge_port *) arg;
 	struct net_bridge *br = p->br;
 
-	br_debug(br, "port %u(%s) forward delay timer\n",
-		 (unsigned) p->port_no, p->dev->name);
+	pr_debug("%s: %d(%s) forward delay timer\n",
+		 br->dev->name, p->port_no, p->dev->name);
 	spin_lock(&br->lock);
 	if (p->state == BR_STATE_LISTENING) {
 		p->state = BR_STATE_LEARNING;
@@ -94,10 +98,8 @@ static void br_forward_delay_timer_expired(unsigned long arg)
 		p->state = BR_STATE_FORWARDING;
 		if (br_is_designated_for_some_port(br))
 			br_topology_change_detection(br);
-		netif_carrier_on(br->dev);
 	}
 	br_log_state(p);
-	br_ifinfo_notify(RTM_NEWLINK, p);
 	spin_unlock(&br->lock);
 }
 
@@ -105,9 +107,9 @@ static void br_tcn_timer_expired(unsigned long arg)
 {
 	struct net_bridge *br = (struct net_bridge *) arg;
 
-	br_debug(br, "tcn timer expired\n");
+	pr_debug("%s: tcn timer expired\n", br->dev->name);
 	spin_lock(&br->lock);
-	if (!br_is_root_bridge(br) && (br->dev->flags & IFF_UP)) {
+	if (br->dev->flags & IFF_UP) {
 		br_transmit_tcn(br);
 
 		mod_timer(&br->tcn_timer,jiffies + br->bridge_hello_time);
@@ -119,7 +121,7 @@ static void br_topology_change_timer_expired(unsigned long arg)
 {
 	struct net_bridge *br = (struct net_bridge *) arg;
 
-	br_debug(br, "topo change timer expired\n");
+	pr_debug("%s: topo change timer expired\n", br->dev->name);
 	spin_lock(&br->lock);
 	br->topology_change_detected = 0;
 	br->topology_change = 0;
@@ -130,8 +132,8 @@ static void br_hold_timer_expired(unsigned long arg)
 {
 	struct net_bridge_port *p = (struct net_bridge_port *) arg;
 
-	br_debug(p->br, "port %u(%s) hold timer expired\n",
-		 (unsigned) p->port_no, p->dev->name);
+	pr_debug("%s: %d(%s) hold timer expired\n",
+		 p->br->dev->name,  p->port_no, p->dev->name);
 
 	spin_lock(&p->br->lock);
 	if (p->config_pending)

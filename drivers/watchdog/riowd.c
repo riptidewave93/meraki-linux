@@ -3,8 +3,6 @@
  * Copyright (C) 2001, 2008 David S. Miller (davem@davemloft.net)
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/types.h>
@@ -12,12 +10,12 @@
 #include <linux/errno.h>
 #include <linux/init.h>
 #include <linux/miscdevice.h>
+#include <linux/smp_lock.h>
 #include <linux/watchdog.h>
 #include <linux/of.h>
 #include <linux/of_device.h>
 #include <linux/io.h>
 #include <linux/uaccess.h>
-#include <linux/slab.h>
 
 
 /* RIO uses the NatSemi Super I/O power management logical device
@@ -77,6 +75,7 @@ static void riowd_writereg(struct riowd *p, u8 val, int index)
 
 static int riowd_open(struct inode *inode, struct file *filp)
 {
+	cycle_kernel_lock();
 	nonseekable_open(inode, filp);
 	return 0;
 }
@@ -88,7 +87,7 @@ static int riowd_release(struct inode *inode, struct file *filp)
 
 static long riowd_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
-	static const struct watchdog_info info = {
+	static struct watchdog_info info = {
 		.options		= WDIOF_SETTIMEOUT,
 		.firmware_version	= 1,
 		.identity		= DRIVER_NAME,
@@ -174,7 +173,8 @@ static struct miscdevice riowd_miscdev = {
 	.fops	= &riowd_fops
 };
 
-static int __devinit riowd_probe(struct platform_device *op)
+static int __devinit riowd_probe(struct of_device *op,
+				 const struct of_device_id *match)
 {
 	struct riowd *p;
 	int err = -EINVAL;
@@ -191,26 +191,24 @@ static int __devinit riowd_probe(struct platform_device *op)
 
 	p->regs = of_ioremap(&op->resource[0], 0, 2, DRIVER_NAME);
 	if (!p->regs) {
-		pr_err("Cannot map registers\n");
+		printk(KERN_ERR PFX "Cannot map registers.\n");
 		goto out_free;
 	}
-	/* Make miscdev useable right away */
-	riowd_device = p;
 
 	err = misc_register(&riowd_miscdev);
 	if (err) {
-		pr_err("Cannot register watchdog misc device\n");
+		printk(KERN_ERR PFX "Cannot register watchdog misc device.\n");
 		goto out_iounmap;
 	}
 
-	pr_info("Hardware watchdog [%i minutes], regs at %p\n",
-		riowd_timeout, p->regs);
+	printk(KERN_INFO PFX "Hardware watchdog [%i minutes], "
+	       "regs at %p\n", riowd_timeout, p->regs);
 
 	dev_set_drvdata(&op->dev, p);
+	riowd_device = p;
 	return 0;
 
 out_iounmap:
-	riowd_device = NULL;
 	of_iounmap(&op->resource[0], p->regs, 2);
 
 out_free:
@@ -220,7 +218,7 @@ out:
 	return err;
 }
 
-static int __devexit riowd_remove(struct platform_device *op)
+static int __devexit riowd_remove(struct of_device *op)
 {
 	struct riowd *p = dev_get_drvdata(&op->dev);
 
@@ -239,14 +237,22 @@ static const struct of_device_id riowd_match[] = {
 };
 MODULE_DEVICE_TABLE(of, riowd_match);
 
-static struct platform_driver riowd_driver = {
-	.driver = {
-		.name = DRIVER_NAME,
-		.owner = THIS_MODULE,
-		.of_match_table = riowd_match,
-	},
+static struct of_platform_driver riowd_driver = {
+	.name		= DRIVER_NAME,
+	.match_table	= riowd_match,
 	.probe		= riowd_probe,
 	.remove		= __devexit_p(riowd_remove),
 };
 
-module_platform_driver(riowd_driver);
+static int __init riowd_init(void)
+{
+	return of_register_driver(&riowd_driver, &of_bus_type);
+}
+
+static void __exit riowd_exit(void)
+{
+	of_unregister_driver(&riowd_driver);
+}
+
+module_init(riowd_init);
+module_exit(riowd_exit);

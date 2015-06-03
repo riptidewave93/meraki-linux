@@ -57,9 +57,9 @@
 #include <linux/netdevice.h>
 #include <linux/inet.h>
 #include <linux/route.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/tcp_states.h>
+#include <asm/system.h>
 #include <linux/fcntl.h>
 #include <linux/mm.h>
 #include <linux/termios.h>
@@ -100,27 +100,23 @@ static void dn_ack(struct sock *sk, struct sk_buff *skb, unsigned short ack)
 	unsigned short type = ((ack >> 12) & 0x0003);
 	int wakeup = 0;
 
-	switch (type) {
-	case 0: /* ACK - Data */
-		if (dn_after(ack, scp->ackrcv_dat)) {
-			scp->ackrcv_dat = ack & 0x0fff;
-			wakeup |= dn_nsp_check_xmit_queue(sk, skb,
-							  &scp->data_xmit_queue,
-							  ack);
-		}
-		break;
-	case 1: /* NAK - Data */
-		break;
-	case 2: /* ACK - OtherData */
-		if (dn_after(ack, scp->ackrcv_oth)) {
-			scp->ackrcv_oth = ack & 0x0fff;
-			wakeup |= dn_nsp_check_xmit_queue(sk, skb,
-							  &scp->other_xmit_queue,
-							  ack);
-		}
-		break;
-	case 3: /* NAK - OtherData */
-		break;
+	switch(type) {
+		case 0: /* ACK - Data */
+			if (dn_after(ack, scp->ackrcv_dat)) {
+				scp->ackrcv_dat = ack & 0x0fff;
+				wakeup |= dn_nsp_check_xmit_queue(sk, skb, &scp->data_xmit_queue, ack);
+			}
+			break;
+		case 1: /* NAK - Data */
+			break;
+		case 2: /* ACK - OtherData */
+			if (dn_after(ack, scp->ackrcv_oth)) {
+				scp->ackrcv_oth = ack & 0x0fff;
+				wakeup |= dn_nsp_check_xmit_queue(sk, skb, &scp->other_xmit_queue, ack);
+			}
+			break;
+		case 3: /* NAK - OtherData */
+			break;
 	}
 
 	if (wakeup && !sock_flag(sk, SOCK_DEAD))
@@ -420,19 +416,19 @@ static void dn_nsp_disc_init(struct sock *sk, struct sk_buff *skb)
 	scp->addrrem = cb->src_port;
 	sk->sk_state = TCP_CLOSE;
 
-	switch (scp->state) {
-	case DN_CI:
-	case DN_CD:
-		scp->state = DN_RJ;
-		sk->sk_err = ECONNREFUSED;
-		break;
-	case DN_RUN:
-		sk->sk_shutdown |= SHUTDOWN_MASK;
-		scp->state = DN_DN;
-		break;
-	case DN_DI:
-		scp->state = DN_DIC;
-		break;
+	switch(scp->state) {
+		case DN_CI:
+		case DN_CD:
+			scp->state = DN_RJ;
+			sk->sk_err = ECONNREFUSED;
+			break;
+		case DN_RUN:
+			sk->sk_shutdown |= SHUTDOWN_MASK;
+			scp->state = DN_DN;
+			break;
+		case DN_DI:
+			scp->state = DN_DIC;
+			break;
 	}
 
 	if (!sock_flag(sk, SOCK_DEAD)) {
@@ -473,23 +469,23 @@ static void dn_nsp_disc_conf(struct sock *sk, struct sk_buff *skb)
 
 	sk->sk_state = TCP_CLOSE;
 
-	switch (scp->state) {
-	case DN_CI:
-		scp->state = DN_NR;
-		break;
-	case DN_DR:
-		if (reason == NSP_REASON_DC)
-			scp->state = DN_DRC;
-		if (reason == NSP_REASON_NL)
+	switch(scp->state) {
+		case DN_CI:
+			scp->state = DN_NR;
+			break;
+		case DN_DR:
+			if (reason == NSP_REASON_DC)
+				scp->state = DN_DRC;
+			if (reason == NSP_REASON_NL)
+				scp->state = DN_CN;
+			break;
+		case DN_DI:
+			scp->state = DN_DIC;
+			break;
+		case DN_RUN:
+			sk->sk_shutdown |= SHUTDOWN_MASK;
+		case DN_CC:
 			scp->state = DN_CN;
-		break;
-	case DN_DI:
-		scp->state = DN_DIC;
-		break;
-	case DN_RUN:
-		sk->sk_shutdown |= SHUTDOWN_MASK;
-	case DN_CC:
-		scp->state = DN_CN;
 	}
 
 	if (!sock_flag(sk, SOCK_DEAD)) {
@@ -695,16 +691,16 @@ static int dn_nsp_no_socket(struct sk_buff *skb, unsigned short reason)
 		goto out;
 
 	if ((reason != NSP_REASON_OK) && ((cb->nsp_flags & 0x0c) == 0x08)) {
-		switch (cb->nsp_flags & 0x70) {
-		case 0x10:
-		case 0x60: /* (Retransmitted) Connect Init */
-			dn_nsp_return_disc(skb, NSP_DISCINIT, reason);
-			ret = NET_RX_SUCCESS;
-			break;
-		case 0x20: /* Connect Confirm */
-			dn_nsp_return_disc(skb, NSP_DISCCONF, reason);
-			ret = NET_RX_SUCCESS;
-			break;
+		switch(cb->nsp_flags & 0x70) {
+			case 0x10:
+			case 0x60: /* (Retransmitted) Connect Init */
+				dn_nsp_return_disc(skb, NSP_DISCINIT, reason);
+				ret = NET_RX_SUCCESS;
+				break;
+			case 0x20: /* Connect Confirm */
+				dn_nsp_return_disc(skb, NSP_DISCCONF, reason);
+				ret = NET_RX_SUCCESS;
+				break;
 		}
 	}
 
@@ -736,17 +732,17 @@ static int dn_nsp_rx_packet(struct sk_buff *skb)
 	 * Filter out conninits and useless packet types
 	 */
 	if ((cb->nsp_flags & 0x0c) == 0x08) {
-		switch (cb->nsp_flags & 0x70) {
-		case 0x00: /* NOP */
-		case 0x70: /* Reserved */
-		case 0x50: /* Reserved, Phase II node init */
-			goto free_out;
-		case 0x10:
-		case 0x60:
-			if (unlikely(cb->rt_flags & DN_RT_F_RTS))
+		switch(cb->nsp_flags & 0x70) {
+			case 0x00: /* NOP */
+			case 0x70: /* Reserved */
+			case 0x50: /* Reserved, Phase II node init */
 				goto free_out;
-			sk = dn_find_listener(skb, &reason);
-			goto got_it;
+			case 0x10:
+			case 0x60:
+				if (unlikely(cb->rt_flags & DN_RT_F_RTS))
+					goto free_out;
+				sk = dn_find_listener(skb, &reason);
+				goto got_it;
 		}
 	}
 
@@ -813,8 +809,7 @@ free_out:
 
 int dn_nsp_rx(struct sk_buff *skb)
 {
-	return NF_HOOK(NFPROTO_DECNET, NF_DN_LOCAL_IN, skb, skb->dev, NULL,
-		       dn_nsp_rx_packet);
+	return NF_HOOK(PF_DECnet, NF_DN_LOCAL_IN, skb, skb->dev, NULL, dn_nsp_rx_packet);
 }
 
 /*
@@ -839,20 +834,20 @@ int dn_nsp_backlog_rcv(struct sock *sk, struct sk_buff *skb)
 	 * Control packet.
 	 */
 	if ((cb->nsp_flags & 0x0c) == 0x08) {
-		switch (cb->nsp_flags & 0x70) {
-		case 0x10:
-		case 0x60:
-			dn_nsp_conn_init(sk, skb);
-			break;
-		case 0x20:
-			dn_nsp_conn_conf(sk, skb);
-			break;
-		case 0x30:
-			dn_nsp_disc_init(sk, skb);
-			break;
-		case 0x40:
-			dn_nsp_disc_conf(sk, skb);
-			break;
+		switch(cb->nsp_flags & 0x70) {
+			case 0x10:
+			case 0x60:
+				dn_nsp_conn_init(sk, skb);
+				break;
+			case 0x20:
+				dn_nsp_conn_conf(sk, skb);
+				break;
+			case 0x30:
+				dn_nsp_disc_init(sk, skb);
+				break;
+			case 0x40:
+				dn_nsp_disc_conf(sk, skb);
+				break;
 		}
 
 	} else if (cb->nsp_flags == 0x24) {
@@ -893,15 +888,15 @@ int dn_nsp_backlog_rcv(struct sock *sk, struct sk_buff *skb)
 			if (scp->state != DN_RUN)
 				goto free_out;
 
-			switch (cb->nsp_flags) {
-			case 0x10: /* LS */
-				dn_nsp_linkservice(sk, skb);
-				break;
-			case 0x30: /* OD */
-				dn_nsp_otherdata(sk, skb);
-				break;
-			default:
-				dn_nsp_data(sk, skb);
+			switch(cb->nsp_flags) {
+				case 0x10: /* LS */
+					dn_nsp_linkservice(sk, skb);
+					break;
+				case 0x30: /* OD */
+					dn_nsp_otherdata(sk, skb);
+					break;
+				default:
+					dn_nsp_data(sk, skb);
 			}
 
 		} else { /* Ack, chuck it out here */

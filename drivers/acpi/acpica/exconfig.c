@@ -5,7 +5,7 @@
  *****************************************************************************/
 
 /*
- * Copyright (C) 2000 - 2012, Intel Corp.
+ * Copyright (C) 2000 - 2008, Intel Corp.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -82,9 +82,8 @@ acpi_ex_add_table(u32 table_index,
 		  struct acpi_namespace_node *parent_node,
 		  union acpi_operand_object **ddb_handle)
 {
-	union acpi_operand_object *obj_desc;
 	acpi_status status;
-	acpi_owner_id owner_id;
+	union acpi_operand_object *obj_desc;
 
 	ACPI_FUNCTION_TRACE(ex_add_table);
 
@@ -120,14 +119,7 @@ acpi_ex_add_table(u32 table_index,
 	acpi_ns_exec_module_code_list();
 	acpi_ex_enter_interpreter();
 
-	/* Update GPEs for any new _Lxx/_Exx methods. Ignore errors */
-
-	status = acpi_tb_get_owner_id(table_index, &owner_id);
-	if (ACPI_SUCCESS(status)) {
-		acpi_ev_update_gpes(owner_id);
-	}
-
-	return_ACPI_STATUS(AE_OK);
+	return_ACPI_STATUS(status);
 }
 
 /*******************************************************************************
@@ -178,12 +170,14 @@ acpi_ex_load_table_op(struct acpi_walk_state *walk_state,
 
 		/* Table not found, return an Integer=0 and AE_OK */
 
-		ddb_handle = acpi_ut_create_integer_object((u64) 0);
+		ddb_handle = acpi_ut_create_internal_object(ACPI_TYPE_INTEGER);
 		if (!ddb_handle) {
 			return_ACPI_STATUS(AE_NO_MEMORY);
 		}
 
+		ddb_handle->integer.value = 0;
 		*return_desc = ddb_handle;
+
 		return_ACPI_STATUS(AE_OK);
 	}
 
@@ -256,8 +250,10 @@ acpi_ex_load_table_op(struct acpi_walk_state *walk_state,
 
 	status = acpi_get_table_by_index(table_index, &table);
 	if (ACPI_SUCCESS(status)) {
-		ACPI_INFO((AE_INFO, "Dynamic OEM Table Load:"));
-		acpi_tb_print_table_header(0, table);
+		ACPI_INFO((AE_INFO,
+			   "Dynamic OEM Table Load - [%.4s] OemId [%.6s] OemTableId [%.8s]",
+			   table->signature, table->oem_id,
+			   table->oem_table_id));
 	}
 
 	/* Invoke table handler if present */
@@ -290,16 +286,16 @@ static acpi_status
 acpi_ex_region_read(union acpi_operand_object *obj_desc, u32 length, u8 *buffer)
 {
 	acpi_status status;
-	u64 value;
+	acpi_integer value;
 	u32 region_offset = 0;
 	u32 i;
 
 	/* Bytewise reads */
 
 	for (i = 0; i < length; i++) {
-		status =
-		    acpi_ev_address_space_dispatch(obj_desc, NULL, ACPI_READ,
-						   region_offset, 8, &value);
+		status = acpi_ev_address_space_dispatch(obj_desc, ACPI_READ,
+							region_offset, 8,
+							&value);
 		if (ACPI_FAILURE(status)) {
 			return status;
 		}
@@ -496,11 +492,7 @@ acpi_ex_load_op(union acpi_operand_object *obj_desc,
 
 	status = acpi_tb_add_table(&table_desc, &table_index);
 	if (ACPI_FAILURE(status)) {
-
-		/* Delete allocated table buffer */
-
-		acpi_tb_delete_table(&table_desc);
-		return_ACPI_STATUS(status);
+		goto cleanup;
 	}
 
 	/*
@@ -531,9 +523,6 @@ acpi_ex_load_op(union acpi_operand_object *obj_desc,
 		return_ACPI_STATUS(status);
 	}
 
-	ACPI_INFO((AE_INFO, "Dynamic OEM Table Load:"));
-	acpi_tb_print_table_header(0, table_desc.pointer);
-
 	/* Remove the reference by added by acpi_ex_store above */
 
 	acpi_ut_remove_reference(ddb_handle);
@@ -546,6 +535,13 @@ acpi_ex_load_op(union acpi_operand_object *obj_desc,
 					     acpi_gbl_table_handler_context);
 	}
 
+      cleanup:
+	if (ACPI_FAILURE(status)) {
+
+		/* Delete allocated table buffer */
+
+		acpi_tb_delete_table(&table_desc);
+	}
 	return_ACPI_STATUS(status);
 }
 

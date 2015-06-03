@@ -354,7 +354,6 @@ retry:
 static const struct file_operations salinfo_event_fops = {
 	.open  = salinfo_event_open,
 	.read  = salinfo_event_read,
-	.llseek = noop_llseek,
 };
 
 static int
@@ -405,9 +404,10 @@ static void
 call_on_cpu(int cpu, void (*fn)(void *), void *arg)
 {
 	cpumask_t save_cpus_allowed = current->cpus_allowed;
-	set_cpus_allowed_ptr(current, cpumask_of(cpu));
+	cpumask_t new_cpus_allowed = cpumask_of_cpu(cpu);
+	set_cpus_allowed(current, new_cpus_allowed);
 	(*fn)(arg);
-	set_cpus_allowed_ptr(current, &save_cpus_allowed);
+	set_cpus_allowed(current, save_cpus_allowed);
 }
 
 static void
@@ -572,7 +572,6 @@ static const struct file_operations salinfo_data_fops = {
 	.release = salinfo_log_release,
 	.read    = salinfo_log_read,
 	.write   = salinfo_log_write,
-	.llseek  = default_llseek,
 };
 
 static int __cpuinit
@@ -644,7 +643,7 @@ salinfo_init(void)
 	for (i = 0; i < ARRAY_SIZE(salinfo_log_name); i++) {
 		data = salinfo_data + i;
 		data->type = i;
-		sema_init(&data->mutex, 1);
+		init_MUTEX(&data->mutex);
 		dir = proc_mkdir(salinfo_log_name[i], salinfo_dir);
 		if (!dir)
 			continue;

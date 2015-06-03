@@ -36,6 +36,7 @@
 #include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/fb.h>
 #include <linux/init.h>
@@ -106,7 +107,7 @@ static DEFINE_SPINLOCK(hga_reg_lock);
 
 /* Framebuffer driver structures */
 
-static struct fb_var_screeninfo hga_default_var __devinitdata = {
+static struct fb_var_screeninfo __initdata hga_default_var = {
 	.xres		= 720,
 	.yres 		= 348,
 	.xres_virtual 	= 720,
@@ -120,7 +121,7 @@ static struct fb_var_screeninfo hga_default_var __devinitdata = {
 	.width 		= -1,
 };
 
-static struct fb_fix_screeninfo hga_fix __devinitdata = {
+static struct fb_fix_screeninfo __initdata hga_fix = {
 	.id 		= "HGA",
 	.type 		= FB_TYPE_PACKED_PIXELS,	/* (not sure) */
 	.visual 	= FB_VISUAL_MONO10,
@@ -133,7 +134,7 @@ static struct fb_fix_screeninfo hga_fix __devinitdata = {
 /* Don't assume that tty1 will be the initial current console. */
 static int release_io_port = 0;
 static int release_io_ports = 0;
-static bool nologo = 0;
+static int nologo = 0;
 
 /* -------------------------------------------------------------------------
  *
@@ -276,7 +277,7 @@ static void hga_blank(int blank_mode)
 	spin_unlock_irqrestore(&hga_reg_lock, flags);
 }
 
-static int __devinit hga_card_detect(void)
+static int __init hga_card_detect(void)
 {
 	int count = 0;
 	void __iomem *p, *q;
@@ -422,8 +423,8 @@ static int hgafb_pan_display(struct fb_var_screeninfo *var,
 		    var->xoffset)
 			return -EINVAL;
 	} else {
-		if (var->xoffset + info->var.xres > info->var.xres_virtual
-		 || var->yoffset + info->var.yres > info->var.yres_virtual
+		if (var->xoffset + var->xres > info->var.xres_virtual
+		 || var->yoffset + var->yres > info->var.yres_virtual
 		 || var->yoffset % 8)
 			return -EINVAL;
 	}
@@ -454,6 +455,7 @@ static int hgafb_blank(int blank_mode, struct fb_info *info)
 /*
  * Accel functions
  */
+#ifdef CONFIG_FB_HGA_ACCEL
 static void hgafb_fillrect(struct fb_info *info, const struct fb_fillrect *rect)
 {
 	u_int rows, y;
@@ -465,7 +467,7 @@ static void hgafb_fillrect(struct fb_info *info, const struct fb_fillrect *rect)
 		dest = rowaddr(info, y) + (rect->dx >> 3);
 		switch (rect->rop) {
 		case ROP_COPY:
-			memset_io(dest, rect->color, (rect->width >> 3));
+			//fb_memset(dest, rect->color, (rect->width >> 3));
 			break;
 		case ROP_XOR:
 			fb_writeb(~(fb_readb(dest)), dest);
@@ -487,7 +489,7 @@ static void hgafb_copyarea(struct fb_info *info, const struct fb_copyarea *area)
 		for (rows = area->height; rows--; ) {
 			src = rowaddr(info, y1) + (area->sx >> 3);
 			dest = rowaddr(info, y2) + (area->dx >> 3);
-			memmove(dest, src, (area->width >> 3));
+			//fb_memmove(dest, src, (area->width >> 3));
 			y1++;
 			y2++;
 		}
@@ -498,7 +500,7 @@ static void hgafb_copyarea(struct fb_info *info, const struct fb_copyarea *area)
 		for (rows = area->height; rows--;) {
 			src = rowaddr(info, y1) + (area->sx >> 3);
 			dest = rowaddr(info, y2) + (area->dx >> 3);
-			memmove(dest, src, (area->width >> 3));
+			//fb_memmove(dest, src, (area->width >> 3));
 			y1--;
 			y2--;
 		}
@@ -510,17 +512,20 @@ static void hgafb_imageblit(struct fb_info *info, const struct fb_image *image)
 	u8 __iomem *dest;
 	u8 *cdat = (u8 *) image->data;
 	u_int rows, y = image->dy;
-	u_int x;
 	u8 d;
 
 	for (rows = image->height; rows--; y++) {
-		for (x = 0; x < image->width; x+= 8) {
-			d = *cdat++;
-			dest = rowaddr(info, y) + ((image->dx + x)>> 3);
-			fb_writeb(d, dest);
-		}
+		d = *cdat++;
+		dest = rowaddr(info, y) + (image->dx >> 3);
+		fb_writeb(d, dest);
 	}
 }
+#else /* !CONFIG_FB_HGA_ACCEL */
+#define hgafb_fillrect cfb_fillrect
+#define hgafb_copyarea cfb_copyarea
+#define hgafb_imageblit cfb_imageblit
+#endif /* CONFIG_FB_HGA_ACCEL */
+
 
 static struct fb_ops hgafb_ops = {
 	.owner		= THIS_MODULE,
@@ -546,7 +551,7 @@ static struct fb_ops hgafb_ops = {
 	 *  Initialization
 	 */
 
-static int __devinit hgafb_probe(struct platform_device *pdev)
+static int __init hgafb_probe(struct platform_device *pdev)
 {
 	struct fb_info *info;
 
@@ -592,7 +597,7 @@ static int __devinit hgafb_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit hgafb_remove(struct platform_device *pdev)
+static int hgafb_remove(struct platform_device *pdev)
 {
 	struct fb_info *info = platform_get_drvdata(pdev);
 
@@ -617,7 +622,7 @@ static int __devexit hgafb_remove(struct platform_device *pdev)
 
 static struct platform_driver hgafb_driver = {
 	.probe = hgafb_probe,
-	.remove = __devexit_p(hgafb_remove),
+	.remove = hgafb_remove,
 	.driver = {
 		.name = "hgafb",
 	},

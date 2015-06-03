@@ -4,8 +4,6 @@
 #ifndef _IPT_TTL_H
 #define _IPT_TTL_H
 
-#include <linux/types.h>
-
 enum {
 	IPT_TTL_EQ = 0,		/* equals */
 	IPT_TTL_NE,		/* not equals */
@@ -15,8 +13,8 @@ enum {
 
 
 struct ipt_ttl_info {
-	__u8	mode;
-	__u8	ttl;
+	u_int8_t	mode;
+	u_int8_t	ttl;
 };
 
 

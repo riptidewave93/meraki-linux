@@ -9,18 +9,19 @@
  *
  * Atomic operations that C can't guarantee us.
  * Useful for resource counting etc.
- * s390 uses 'Compare And Swap' for atomicity in SMP environment.
+ * s390 uses 'Compare And Swap' for atomicity in SMP enviroment.
  *
  */
 
 #include <linux/compiler.h>
 #include <linux/types.h>
-#include <asm/cmpxchg.h>
 
 #define ATOMIC_INIT(i)  { (i) }
 
+#if __GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ > 2)
+
 #define __CS_LOOP(ptr, op_val, op_string) ({				\
-	int old_val, new_val;						\
+	typeof(ptr->counter) old_val, new_val;				\
 	asm volatile(							\
 		"	l	%0,%2\n"				\
 		"0:	lr	%1,%0\n"				\
@@ -34,21 +35,36 @@
 	new_val;							\
 })
 
+#else /* __GNUC__ */
+
+#define __CS_LOOP(ptr, op_val, op_string) ({				\
+	typeof(ptr->counter) old_val, new_val;				\
+	asm volatile(							\
+		"	l	%0,0(%3)\n"				\
+		"0:	lr	%1,%0\n"				\
+		op_string "	%1,%4\n"				\
+		"	cs	%0,%1,0(%3)\n"				\
+		"	jl	0b"					\
+		: "=&d" (old_val), "=&d" (new_val),			\
+		  "=m" (((atomic_t *)(ptr))->counter)			\
+		: "a" (ptr), "d" (op_val),				\
+		  "m" (((atomic_t *)(ptr))->counter)			\
+		: "cc", "memory");					\
+	new_val;							\
+})
+
+#endif /* __GNUC__ */
+
 static inline int atomic_read(const atomic_t *v)
 {
-	int c;
-
-	asm volatile(
-		"	l	%0,%1\n"
-		: "=d" (c) : "Q" (v->counter));
-	return c;
+	barrier();
+	return v->counter;
 }
 
 static inline void atomic_set(atomic_t *v, int i)
 {
-	asm volatile(
-		"	st	%1,%0\n"
-		: "=Q" (v->counter) : "d" (i));
+	v->counter = i;
+	barrier();
 }
 
 static inline int atomic_add_return(int i, atomic_t *v)
@@ -85,15 +101,23 @@ static inline void atomic_set_mask(unsigned long mask, atomic_t *v)
 
 static inline int atomic_cmpxchg(atomic_t *v, int old, int new)
 {
+#if __GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ > 2)
 	asm volatile(
 		"	cs	%0,%2,%1"
 		: "+d" (old), "=Q" (v->counter)
 		: "d" (new), "Q" (v->counter)
 		: "cc", "memory");
+#else /* __GNUC__ */
+	asm volatile(
+		"	cs	%0,%3,0(%2)"
+		: "+d" (old), "=m" (v->counter)
+		: "a" (v), "d" (new), "m" (v->counter)
+		: "cc", "memory");
+#endif /* __GNUC__ */
 	return old;
 }
 
-static inline int __atomic_add_unless(atomic_t *v, int a, int u)
+static inline int atomic_add_unless(atomic_t *v, int a, int u)
 {
 	int c, old;
 	c = atomic_read(v);
@@ -105,9 +129,10 @@ static inline int __atomic_add_unless(atomic_t *v, int a, int u)
 			break;
 		c = old;
 	}
-	return c;
+	return c != u;
 }
 
+#define atomic_inc_not_zero(v) atomic_add_unless((v), 1, 0)
 
 #undef __CS_LOOP
 
@@ -115,8 +140,10 @@ static inline int __atomic_add_unless(atomic_t *v, int a, int u)
 
 #ifdef CONFIG_64BIT
 
+#if __GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ > 2)
+
 #define __CSG_LOOP(ptr, op_val, op_string) ({				\
-	long long old_val, new_val;					\
+	typeof(ptr->counter) old_val, new_val;				\
 	asm volatile(							\
 		"	lg	%0,%2\n"				\
 		"0:	lgr	%1,%0\n"				\
@@ -130,21 +157,36 @@ static inline int __atomic_add_unless(atomic_t *v, int a, int u)
 	new_val;							\
 })
 
+#else /* __GNUC__ */
+
+#define __CSG_LOOP(ptr, op_val, op_string) ({				\
+	typeof(ptr->counter) old_val, new_val;				\
+	asm volatile(							\
+		"	lg	%0,0(%3)\n"				\
+		"0:	lgr	%1,%0\n"				\
+		op_string "	%1,%4\n"				\
+		"	csg	%0,%1,0(%3)\n"				\
+		"	jl	0b"					\
+		: "=&d" (old_val), "=&d" (new_val),			\
+		  "=m" (((atomic_t *)(ptr))->counter)			\
+		: "a" (ptr), "d" (op_val),				\
+		  "m" (((atomic_t *)(ptr))->counter)			\
+		: "cc", "memory");					\
+	new_val;							\
+})
+
+#endif /* __GNUC__ */
+
 static inline long long atomic64_read(const atomic64_t *v)
 {
-	long long c;
-
-	asm volatile(
-		"	lg	%0,%1\n"
-		: "=d" (c) : "Q" (v->counter));
-	return c;
+	barrier();
+	return v->counter;
 }
 
 static inline void atomic64_set(atomic64_t *v, long long i)
 {
-	asm volatile(
-		"	stg	%1,%0\n"
-		: "=Q" (v->counter) : "d" (i));
+	v->counter = i;
+	barrier();
 }
 
 static inline long long atomic64_add_return(long long i, atomic64_t *v)
@@ -172,11 +214,19 @@ static inline void atomic64_set_mask(unsigned long mask, atomic64_t *v)
 static inline long long atomic64_cmpxchg(atomic64_t *v,
 					     long long old, long long new)
 {
+#if __GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ > 2)
 	asm volatile(
 		"	csg	%0,%2,%1"
 		: "+d" (old), "=Q" (v->counter)
 		: "d" (new), "Q" (v->counter)
 		: "cc", "memory");
+#else /* __GNUC__ */
+	asm volatile(
+		"	csg	%0,%3,0(%2)"
+		: "+d" (old), "=m" (v->counter)
+		: "a" (v), "d" (new), "m" (v->counter)
+		: "cc", "memory");
+#endif /* __GNUC__ */
 	return old;
 }
 
@@ -193,8 +243,10 @@ static inline long long atomic64_read(const atomic64_t *v)
 	register_pair rp;
 
 	asm volatile(
-		"	lm	%0,%N0,%1"
-		: "=&d" (rp) : "Q" (v->counter)	);
+		"	lm	%0,%N0,0(%1)"
+		: "=&d" (rp)
+		: "a" (&v->counter), "m" (v->counter)
+		);
 	return rp.pair;
 }
 
@@ -203,8 +255,10 @@ static inline void atomic64_set(atomic64_t *v, long long i)
 	register_pair rp = {.pair = i};
 
 	asm volatile(
-		"	stm	%1,%N1,%0"
-		: "=Q" (v->counter) : "d" (rp) );
+		"	stm	%1,%N1,0(%2)"
+		: "=m" (v->counter)
+		: "d" (rp), "a" (&v->counter)
+		);
 }
 
 static inline long long atomic64_xchg(atomic64_t *v, long long new)
@@ -213,11 +267,11 @@ static inline long long atomic64_xchg(atomic64_t *v, long long new)
 	register_pair rp_old;
 
 	asm volatile(
-		"	lm	%0,%N0,%1\n"
-		"0:	cds	%0,%2,%1\n"
+		"	lm	%0,%N0,0(%2)\n"
+		"0:	cds	%0,%3,0(%2)\n"
 		"	jl	0b\n"
-		: "=&d" (rp_old), "=Q" (v->counter)
-		: "d" (rp_new), "Q" (v->counter)
+		: "=&d" (rp_old), "+m" (v->counter)
+		: "a" (&v->counter), "d" (rp_new)
 		: "cc");
 	return rp_old.pair;
 }
@@ -229,9 +283,9 @@ static inline long long atomic64_cmpxchg(atomic64_t *v,
 	register_pair rp_new = {.pair = new};
 
 	asm volatile(
-		"	cds	%0,%2,%1"
-		: "+&d" (rp_old), "=Q" (v->counter)
-		: "d" (rp_new), "Q" (v->counter)
+		"	cds	%0,%3,0(%2)"
+		: "+&d" (rp_old), "+m" (v->counter)
+		: "a" (&v->counter), "d" (rp_new)
 		: "cc");
 	return rp_old.pair;
 }
@@ -284,7 +338,6 @@ static inline void atomic64_clear_mask(unsigned long long mask, atomic64_t *v)
 static inline int atomic64_add_unless(atomic64_t *v, long long a, long long u)
 {
 	long long c, old;
-
 	c = atomic64_read(v);
 	for (;;) {
 		if (unlikely(c == u))
@@ -295,23 +348,6 @@ static inline int atomic64_add_unless(atomic64_t *v, long long a, long long u)
 		c = old;
 	}
 	return c != u;
-}
-
-static inline long long atomic64_dec_if_positive(atomic64_t *v)
-{
-	long long c, old, dec;
-
-	c = atomic64_read(v);
-	for (;;) {
-		dec = c - 1;
-		if (unlikely(dec < 0))
-			break;
-		old = atomic64_cmpxchg((v), c, dec);
-		if (likely(old == c))
-			break;
-		c = old;
-	}
-	return dec;
 }
 
 #define atomic64_add(_i, _v)		atomic64_add_return(_i, _v)
@@ -330,5 +366,7 @@ static inline long long atomic64_dec_if_positive(atomic64_t *v)
 #define smp_mb__after_atomic_dec()	smp_mb()
 #define smp_mb__before_atomic_inc()	smp_mb()
 #define smp_mb__after_atomic_inc()	smp_mb()
+
+#include <asm-generic/atomic-long.h>
 
 #endif /* __ARCH_S390_ATOMIC__  */

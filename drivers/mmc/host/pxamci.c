@@ -29,7 +29,6 @@
 #include <linux/io.h>
 #include <linux/regulator/consumer.h>
 #include <linux/gpio.h>
-#include <linux/gfp.h>
 
 #include <asm/sizes.h>
 
@@ -43,9 +42,6 @@
 
 #define NR_SG	1
 #define CLKRT_OFF	(~0)
-
-#define mmc_has_26MHz()		(cpu_is_pxa300() || cpu_is_pxa310() \
-				|| cpu_is_pxa935())
 
 struct pxamci_host {
 	struct mmc_host		*mmc;
@@ -99,25 +95,14 @@ static inline void pxamci_init_ocr(struct pxamci_host *host)
 	}
 }
 
-static inline int pxamci_set_power(struct pxamci_host *host,
-				    unsigned char power_mode,
-				    unsigned int vdd)
+static inline void pxamci_set_power(struct pxamci_host *host, unsigned int vdd)
 {
 	int on;
 
-	if (host->vcc) {
-		int ret;
-
-		if (power_mode == MMC_POWER_UP) {
-			ret = mmc_regulator_set_ocr(host->mmc, host->vcc, vdd);
-			if (ret)
-				return ret;
-		} else if (power_mode == MMC_POWER_OFF) {
-			ret = mmc_regulator_set_ocr(host->mmc, host->vcc, 0);
-			if (ret)
-				return ret;
-		}
-	}
+#ifdef CONFIG_REGULATOR
+	if (host->vcc)
+		mmc_regulator_set_ocr(host->vcc, vdd);
+#endif
 	if (!host->vcc && host->pdata &&
 	    gpio_is_valid(host->pdata->gpio_power)) {
 		on = ((1 << vdd) & host->pdata->ocr_mask);
@@ -126,8 +111,6 @@ static inline int pxamci_set_power(struct pxamci_host *host,
 	}
 	if (!host->vcc && host->pdata && host->pdata->setpower)
 		host->pdata->setpower(mmc_dev(host->mmc), vdd);
-
-	return 0;
 }
 
 static void pxamci_stop_clock(struct pxamci_host *host)
@@ -474,7 +457,7 @@ static void pxamci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 			clk_enable(host->clk);
 
 		if (ios->clock == 26000000) {
-			/* to support 26MHz */
+			/* to support 26MHz on pxa300/pxa310 */
 			host->clkrt = 7;
 		} else {
 			/* to handle (19.5MHz, 26MHz) */
@@ -503,21 +486,9 @@ static void pxamci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	}
 
 	if (host->power_mode != ios->power_mode) {
-		int ret;
-
 		host->power_mode = ios->power_mode;
 
-		ret = pxamci_set_power(host, ios->power_mode, ios->vdd);
-		if (ret) {
-			dev_err(mmc_dev(mmc), "unable to set power\n");
-			/*
-			 * The .set_ios() function in the mmc_host_ops
-			 * struct return void, and failing to set the
-			 * power should be rare so we print an error and
-			 * return here.
-			 */
-			return;
-		}
+		pxamci_set_power(host, ios->vdd);
 
 		if (ios->power_mode == MMC_POWER_ON)
 			host->cmdat |= CMDAT_INIT;
@@ -528,8 +499,8 @@ static void pxamci_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 	else
 		host->cmdat &= ~CMDAT_SD_4DAT;
 
-	dev_dbg(mmc_dev(mmc), "PXAMCI: clkrt = %x cmdat = %x\n",
-		host->clkrt, host->cmdat);
+	pr_debug("PXAMCI: clkrt = %x cmdat = %x\n",
+		 host->clkrt, host->cmdat);
 }
 
 static void pxamci_enable_sdio_irq(struct mmc_host *host, int enable)
@@ -558,7 +529,7 @@ static void pxamci_dma_irq(int dma, void *devid)
 	if (dcsr & DCSR_ENDINTR) {
 		writel(BUF_PART_FULL, host->base + MMC_PRTBUF);
 	} else {
-		pr_err("%s: DMA error on channel %d (DCSR=%#x)\n",
+		printk(KERN_ERR "%s: DMA error on channel %d (DCSR=%#x)\n",
 		       mmc_hostname(host->mmc), dma, dcsr);
 		host->data->error = -EIO;
 		pxamci_data_done(host, 0);
@@ -569,7 +540,7 @@ static irqreturn_t pxamci_detect_irq(int irq, void *devid)
 {
 	struct pxamci_host *host = mmc_priv(devid);
 
-	mmc_detect_change(devid, msecs_to_jiffies(host->pdata->detect_delay_ms));
+	mmc_detect_change(devid, host->pdata->detect_delay);
 	return IRQ_HANDLED;
 }
 
@@ -601,7 +572,7 @@ static int pxamci_probe(struct platform_device *pdev)
 	 * We can do SG-DMA, but we don't because we never know how much
 	 * data we successfully wrote to the card.
 	 */
-	mmc->max_segs = NR_SG;
+	mmc->max_phys_segs = NR_SG;
 
 	/*
 	 * Our hardware DMA can handle a maximum of one page per SG entry.
@@ -637,7 +608,8 @@ static int pxamci_probe(struct platform_device *pdev)
 	 * Calculate minimum clock rate, rounding up.
 	 */
 	mmc->f_min = (host->clkrate + 63) / 64;
-	mmc->f_max = (mmc_has_26MHz()) ? 26000000 : host->clkrate;
+	mmc->f_max = (cpu_is_pxa300() || cpu_is_pxa310()) ? 26000000
+							  : host->clkrate;
 
 	pxamci_init_ocr(host);
 
@@ -646,7 +618,7 @@ static int pxamci_probe(struct platform_device *pdev)
 	if (!cpu_is_pxa25x()) {
 		mmc->caps |= MMC_CAP_4_BIT_DATA | MMC_CAP_SDIO_IRQ;
 		host->cmdat |= CMDAT_SDIO_INT_EN;
-		if (mmc_has_26MHz())
+		if (cpu_is_pxa300() || cpu_is_pxa310())
 			mmc->caps |= MMC_CAP_MMC_HIGHSPEED |
 				     MMC_CAP_SD_HIGHSPEED;
 	}
@@ -838,7 +810,7 @@ static int pxamci_suspend(struct device *dev)
 	int ret = 0;
 
 	if (mmc)
-		ret = mmc_suspend_host(mmc);
+		ret = mmc_suspend_host(mmc, PMSG_SUSPEND);
 
 	return ret;
 }
@@ -854,7 +826,7 @@ static int pxamci_resume(struct device *dev)
 	return ret;
 }
 
-static const struct dev_pm_ops pxamci_pm_ops = {
+static struct dev_pm_ops pxamci_pm_ops = {
 	.suspend	= pxamci_suspend,
 	.resume		= pxamci_resume,
 };
@@ -872,7 +844,18 @@ static struct platform_driver pxamci_driver = {
 	},
 };
 
-module_platform_driver(pxamci_driver);
+static int __init pxamci_init(void)
+{
+	return platform_driver_register(&pxamci_driver);
+}
+
+static void __exit pxamci_exit(void)
+{
+	platform_driver_unregister(&pxamci_driver);
+}
+
+module_init(pxamci_init);
+module_exit(pxamci_exit);
 
 MODULE_DESCRIPTION("PXA Multimedia Card Interface Driver");
 MODULE_LICENSE("GPL");

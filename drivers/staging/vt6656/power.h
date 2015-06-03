@@ -18,7 +18,7 @@
  *
  * File: power.h
  *
- * Purpose: Handles 802.11 power management  functions
+ * Purpose: Handles 802.11 power managment  functions
  *
  * Author: Lyndon Chen
  *
@@ -45,17 +45,40 @@
 
 /*---------------------  Export Functions  --------------------------*/
 
-/*  PSDevice pDevice */
-/*  PSDevice hDeviceContext */
+// IN PSDevice pDevice
+// IN PSDevice hDeviceContext
 
-BOOL PSbConsiderPowerDown(void *hDeviceContext,
-			  BOOL bCheckRxDMA,
-			  BOOL bCheckCountToWakeUp);
+BOOL
+PSbConsiderPowerDown(
+    IN HANDLE hDeviceContext,
+    IN BOOL bCheckRxDMA,
+    IN BOOL bCheckCountToWakeUp
+    );
 
-void PSvDisablePowerSaving(void *hDeviceContext);
-void PSvEnablePowerSaving(void *hDeviceContext, WORD wListenInterval);
-void PSvSendPSPOLL(void *hDeviceContext);
-BOOL PSbSendNullPacket(void *hDeviceContext);
-BOOL PSbIsNextTBTTWakeUp(void *hDeviceContext);
+VOID
+PSvDisablePowerSaving(
+    IN HANDLE hDeviceContext
+    );
 
-#endif /* __POWER_H__ */
+VOID
+PSvEnablePowerSaving(
+    IN HANDLE hDeviceContext,
+    IN WORD wListenInterval
+    );
+
+VOID
+PSvSendPSPOLL(
+    IN HANDLE hDeviceContext
+    );
+
+BOOL
+PSbSendNullPacket(
+    IN HANDLE hDeviceContext
+    );
+
+BOOL
+PSbIsNextTBTTWakeUp(
+    IN HANDLE hDeviceContext
+    );
+
+#endif //__POWER_H__

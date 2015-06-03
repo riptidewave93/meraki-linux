@@ -9,8 +9,6 @@
  *
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/input.h>
 #include <linux/slab.h>
@@ -25,7 +23,8 @@ static void system_power_event(unsigned int keycode)
 	switch (keycode) {
 	case KEY_SUSPEND:
 		apm_queue_event(APM_USER_SUSPEND);
-		pr_info("Requesting system suspend...\n");
+
+		printk(KERN_INFO "apm-power: Requesting system suspend...\n");
 		break;
 	default:
 		break;
@@ -66,15 +65,18 @@ static int apmpower_connect(struct input_handler *handler,
 
 	error = input_register_handle(handle);
 	if (error) {
-		pr_err("Failed to register input power handler, error %d\n",
-		       error);
+		printk(KERN_ERR
+			"apm-power: Failed to register input power handler, "
+			"error %d\n", error);
 		kfree(handle);
 		return error;
 	}
 
 	error = input_open_device(handle);
 	if (error) {
-		pr_err("Failed to open input power device, error %d\n", error);
+		printk(KERN_ERR
+			"apm-power: Failed to open input power device, "
+			"error %d\n", error);
 		input_unregister_handle(handle);
 		kfree(handle);
 		return error;

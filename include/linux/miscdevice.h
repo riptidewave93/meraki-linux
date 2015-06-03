@@ -1,14 +1,7 @@
 #ifndef _LINUX_MISCDEVICE_H
 #define _LINUX_MISCDEVICE_H
+#include <linux/module.h>
 #include <linux/major.h>
-#include <linux/list.h>
-#include <linux/types.h>
-
-/*
- *	These allocations are managed by device@lanana.org. If you use an
- *	entry that is not in assigned your entry may well be moved and
- *	reassigned, or set dynamic if a fixed value is not justified.
- */
 
 #define PSMOUSE_MINOR		1
 #define MS_BUSMOUSE_MINOR	2
@@ -19,8 +12,11 @@
 #define APOLLO_MOUSE_MINOR	7
 #define PC110PAD_MINOR		9
 /*#define ADB_MOUSE_MINOR	10	FIXME OBSOLETE */
+#define FACTORY_RESET_MINOR     129     /* Factory reset minor */
 #define WATCHDOG_MINOR		130	/* Watchdog timer     */
 #define TEMP_MINOR		131	/* Temperature Sensor */
+#define ATH_OTP_MINOR		132	/* Atheros OTP */
+#define ATH_CLKSW_MINOR		133	/* Atheros OTP */
 #define RTC_MINOR		135
 #define EFI_RTC_MINOR		136	/* EFI Time services */
 #define SUN_OPENPROM_MINOR	139
@@ -34,15 +30,9 @@
 #define MWAVE_MINOR		219	/* ACP/Mwave Modem */
 #define MPT_MINOR		220
 #define MPT2SAS_MINOR		221
-#define UINPUT_MINOR		223
 #define HPET_MINOR		228
 #define FUSE_MINOR		229
 #define KVM_MINOR		232
-#define BTRFS_MINOR		234
-#define AUTOFS_MINOR		235
-#define MAPPER_CTRL_MINOR	236
-#define LOOP_CTRL_MINOR		237
-#define VHOST_NET_MINOR		238
 #define MISC_DYNAMIC_MINOR	255
 
 struct device;
@@ -55,7 +45,7 @@ struct miscdevice  {
 	struct device *parent;
 	struct device *this_device;
 	const char *nodename;
-	umode_t mode;
+	mode_t mode;
 };
 
 extern int misc_register(struct miscdevice * misc);

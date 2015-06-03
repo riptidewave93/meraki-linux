@@ -19,7 +19,6 @@
  */
 
 #include <linux/time.h>
-#include <linux/export.h>
 #include <sound/core.h>
 #include <sound/gus.h>
 #define __GUS_TABLES_ALLOC__

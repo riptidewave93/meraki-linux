@@ -54,41 +54,41 @@
 
 
 
-void
+VOID
 RATEvParseMaxRate(
-    void *pDeviceHandler,
-    PWLAN_IE_SUPP_RATES pItemRates,
-    PWLAN_IE_SUPP_RATES pItemExtRates,
-    bool bUpdateBasicRate,
-    unsigned short *pwMaxBasicRate,
-    unsigned short *pwMaxSuppRate,
-    unsigned short *pwSuppRate,
-    unsigned char *pbyTopCCKRate,
-    unsigned char *pbyTopOFDMRate
+    IN PVOID pDeviceHandler,
+    IN PWLAN_IE_SUPP_RATES pItemRates,
+    IN PWLAN_IE_SUPP_RATES pItemExtRates,
+    IN BOOL bUpdateBasicRate,
+    OUT PWORD pwMaxBasicRate,
+    OUT PWORD pwMaxSuppRate,
+    OUT PWORD pwSuppRate,
+    OUT PBYTE pbyTopCCKRate,
+    OUT PBYTE pbyTopOFDMRate
     );
 
-void
+VOID
 RATEvTxRateFallBack(
-    void *pDeviceHandler,
-    PKnownNodeDB psNodeDBTable
+    IN PVOID pDeviceHandler,
+    IN PKnownNodeDB psNodeDBTable
     );
 
-unsigned char
+BYTE
 RATEuSetIE(
-    PWLAN_IE_SUPP_RATES pSrcRates,
-    PWLAN_IE_SUPP_RATES pDstRates,
-    unsigned int uRateLen
+    IN PWLAN_IE_SUPP_RATES pSrcRates,
+    IN PWLAN_IE_SUPP_RATES pDstRates,
+    IN UINT                uRateLen
     );
 
-unsigned short
+WORD
 wGetRateIdx(
-    unsigned char byRate
+    IN BYTE byRate
     );
 
 
-unsigned char
+BYTE
 DATARATEbyGetRateIdx(
-    unsigned char byRate
+    IN BYTE byRate
     );
 
 

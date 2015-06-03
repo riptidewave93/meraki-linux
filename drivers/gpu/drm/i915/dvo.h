@@ -30,17 +30,20 @@
 #include "intel_drv.h"
 
 struct intel_dvo_device {
-	const char *name;
+	char *name;
 	int type;
 	/* DVOA/B/C output register */
 	u32 dvo_reg;
 	/* GPIO register used for i2c bus to control this device */
 	u32 gpio;
 	int slave_addr;
+	struct i2c_adapter *i2c_bus;
 
 	const struct intel_dvo_dev_ops *dev_ops;
 	void *dev_priv;
-	struct i2c_adapter *i2c_bus;
+
+	struct drm_display_mode *panel_fixed_mode;
+	bool panel_wants_dither;
 };
 
 struct intel_dvo_dev_ops {
@@ -65,6 +68,16 @@ struct intel_dvo_dev_ops {
 	 * as the DPLL may be disabled afterwards.
 	 */
 	void (*dpms)(struct intel_dvo_device *dvo, int mode);
+
+	/*
+	 * Saves the output's state for restoration on VT switch.
+	 */
+	void (*save)(struct intel_dvo_device *dvo);
+
+	/*
+	 * Restore's the output's state at VT switch.
+	 */
+	void (*restore)(struct intel_dvo_device *dvo);
 
 	/*
 	 * Callback for testing a video mode for a given output.

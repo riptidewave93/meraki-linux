@@ -4,7 +4,7 @@
  * Author:       Michael Hennerich <hennerich@blackfin.uclinux.org>
  *
  * Created:
- * Description:  Blackfin LCD Framebuffer driver
+ * Description:  Blackfin LCD Framebufer driver
  *
  *
  * Modified:
@@ -32,7 +32,6 @@
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/string.h>
-#include <linux/gfp.h>
 #include <linux/fb.h>
 #include <linux/init.h>
 #include <linux/types.h>
@@ -88,6 +87,7 @@ struct bfin_t350mcqbfb_info {
 	struct device *dev;
 	unsigned char *fb_buffer;	/* RGB Buffer */
 	dma_addr_t dma_handle;
+	int lq043_mmap;
 	int lq043_open_cnt;
 	int irq;
 	spinlock_t lock;	/* lock */
@@ -192,7 +192,7 @@ static int bfin_t350mcqb_request_ports(int action)
 {
 	if (action) {
 		if (peripheral_request_list(ppi0_req_8, DRIVER_NAME)) {
-			printk(KERN_ERR "Requesting Peripherals failed\n");
+			printk(KERN_ERR "Requesting Peripherals faild\n");
 			return -EFAULT;
 		}
 	} else
@@ -235,6 +235,7 @@ static int bfin_t350mcqb_fb_release(struct fb_info *info, int user)
 	spin_lock(&fbi->lock);
 
 	fbi->lq043_open_cnt--;
+	fbi->lq043_mmap = 0;
 
 	if (fbi->lq043_open_cnt <= 0) {
 		bfin_t350mcqb_disable_ppi();
@@ -292,6 +293,32 @@ static int bfin_t350mcqb_fb_check_var(struct fb_var_screeninfo *var,
 	return 0;
 }
 
+static int bfin_t350mcqb_fb_mmap(struct fb_info *info, struct vm_area_struct *vma)
+{
+	struct bfin_t350mcqbfb_info *fbi = info->par;
+
+	if (fbi->lq043_mmap)
+		return -1;
+
+	spin_lock(&fbi->lock);
+	fbi->lq043_mmap = 1;
+	spin_unlock(&fbi->lock);
+
+	vma->vm_start = (unsigned long)(fbi->fb_buffer + ACTIVE_VIDEO_MEM_OFFSET);
+
+	vma->vm_end = vma->vm_start + info->fix.smem_len;
+	/* For those who don't understand how mmap works, go read
+	 *   Documentation/nommu-mmap.txt.
+	 * For those that do, you will know that the VM_MAYSHARE flag
+	 * must be set in the vma->vm_flags structure on noMMU
+	 *   Other flags can be set, and are documented in
+	 *   include/linux/mm.h
+	 */
+	vma->vm_flags |= VM_MAYSHARE | VM_SHARED;
+
+	return 0;
+}
+
 int bfin_t350mcqb_fb_cursor(struct fb_info *info, struct fb_cursor *cursor)
 {
 	if (nocursor)
@@ -343,6 +370,7 @@ static struct fb_ops bfin_t350mcqb_fb_ops = {
 	.fb_fillrect = cfb_fillrect,
 	.fb_copyarea = cfb_copyarea,
 	.fb_imageblit = cfb_imageblit,
+	.fb_mmap = bfin_t350mcqb_fb_mmap,
 	.fb_cursor = bfin_t350mcqb_fb_cursor,
 	.fb_setcolreg = bfin_t350mcqb_fb_setcolreg,
 };
@@ -353,7 +381,7 @@ static int bl_get_brightness(struct backlight_device *bd)
 	return 0;
 }
 
-static const struct backlight_ops bfin_lq043fb_bl_ops = {
+static struct backlight_ops bfin_lq043fb_bl_ops = {
 	.get_brightness = bl_get_brightness,
 };
 
@@ -420,9 +448,6 @@ static irqreturn_t bfin_t350mcqb_irq_error(int irq, void *dev_id)
 
 static int __devinit bfin_t350mcqb_probe(struct platform_device *pdev)
 {
-#ifndef NO_BL_SUPPORT
-	struct backlight_properties props;
-#endif
 	struct bfin_t350mcqbfb_info *info;
 	struct fb_info *fbinfo;
 	int ret;
@@ -462,8 +487,8 @@ static int __devinit bfin_t350mcqb_probe(struct platform_device *pdev)
 
 	fbinfo->var.nonstd = 0;
 	fbinfo->var.activate = FB_ACTIVATE_NOW;
-	fbinfo->var.height = 53;
-	fbinfo->var.width = 70;
+	fbinfo->var.height = -1;
+	fbinfo->var.width = -1;
 	fbinfo->var.accel_flags = 0;
 	fbinfo->var.vmode = FB_VMODE_NONINTERLACED;
 
@@ -529,7 +554,7 @@ static int __devinit bfin_t350mcqb_probe(struct platform_device *pdev)
 		goto out7;
 	}
 
-	ret = request_irq(info->irq, bfin_t350mcqb_irq_error, 0,
+	ret = request_irq(info->irq, bfin_t350mcqb_irq_error, IRQF_DISABLED,
 			"PPI ERROR", info);
 	if (ret < 0) {
 		printk(KERN_ERR DRIVER_NAME
@@ -544,18 +569,10 @@ static int __devinit bfin_t350mcqb_probe(struct platform_device *pdev)
 		goto out8;
 	}
 #ifndef NO_BL_SUPPORT
-	memset(&props, 0, sizeof(struct backlight_properties));
-	props.type = BACKLIGHT_RAW;
-	props.max_brightness = 255;
-	bl_dev = backlight_device_register("bf52x-bl", NULL, NULL,
-					   &bfin_lq043fb_bl_ops, &props);
-	if (IS_ERR(bl_dev)) {
-		printk(KERN_ERR DRIVER_NAME
-			": unable to register backlight.\n");
-		ret = -EINVAL;
-		unregister_framebuffer(fbinfo);
-		goto out8;
-	}
+	bl_dev =
+	    backlight_device_register("bf52x-bl", NULL, NULL,
+				      &bfin_lq043fb_bl_ops);
+	bl_dev->props.max_brightness = 255;
 
 	lcd_dev = lcd_device_register(DRIVER_NAME, NULL, &bfin_lcd_ops);
 	lcd_dev->props.max_contrast = 255, printk(KERN_INFO "Done.\n");
@@ -618,35 +635,17 @@ static int __devexit bfin_t350mcqb_remove(struct platform_device *pdev)
 #ifdef CONFIG_PM
 static int bfin_t350mcqb_suspend(struct platform_device *pdev, pm_message_t state)
 {
-	struct fb_info *fbinfo = platform_get_drvdata(pdev);
-	struct bfin_t350mcqbfb_info *fbi = fbinfo->par;
-
-	if (fbi->lq043_open_cnt) {
-		bfin_t350mcqb_disable_ppi();
-		disable_dma(CH_PPI);
-		bfin_t350mcqb_stop_timers();
-		bfin_write_PPI_STATUS(-1);
-	}
-
+	bfin_t350mcqb_disable_ppi();
+	disable_dma(CH_PPI);
+	bfin_write_PPI_STATUS(0xFFFF);
 
 	return 0;
 }
 
 static int bfin_t350mcqb_resume(struct platform_device *pdev)
 {
-	struct fb_info *fbinfo = platform_get_drvdata(pdev);
-	struct bfin_t350mcqbfb_info *fbi = fbinfo->par;
-
-	if (fbi->lq043_open_cnt) {
-		bfin_t350mcqb_config_dma(fbi);
-		bfin_t350mcqb_config_ppi(fbi);
-		bfin_t350mcqb_init_timers();
-
-		/* start dma */
-		enable_dma(CH_PPI);
-		bfin_t350mcqb_enable_ppi();
-		bfin_t350mcqb_start_timers();
-	}
+	enable_dma(CH_PPI);
+	bfin_t350mcqb_enable_ppi();
 
 	return 0;
 }

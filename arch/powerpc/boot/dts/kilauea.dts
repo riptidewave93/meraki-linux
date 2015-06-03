@@ -82,15 +82,6 @@
 		interrupt-parent = <&UIC0>;
 	};
 
-	CPM0: cpm {
-		compatible = "ibm,cpm";
-		dcr-access-method = "native";
-		dcr-reg = <0x0b0 0x003>;
-		unused-units = <0x00000000>;
-		idle-doze = <0x02000000>;
-		standby = <0xe3e74800>;
-	};
-
 	plb {
 		compatible = "ibm,plb-405ex", "ibm,plb4";
 		#address-cells = <1>;
@@ -110,7 +101,7 @@
 			compatible = "amcc,ppc405ex-crypto", "amcc,ppc4xx-crypto";
 			reg = <0xef700000 0x80400>;
 			interrupt-parent = <&UIC0>;
-			interrupts = <0x17 0x2>;
+			interrupts = <0x17 0x4>;
 		};
 
 		MAL0: mcmal {
@@ -119,7 +110,7 @@
 			num-tx-chans = <2>;
 			num-rx-chans = <2>;
 			interrupt-parent = <&MAL0>;
-			interrupts = <0x0 0x1 0x2 0x3 0x4>;
+			interrupts = <0x0 0x1 0x2 0x3 0x4 0x5 0x6 0x7 0x8>;
 			#interrupt-cells = <1>;
 			#address-cells = <0>;
 			#size-cells = <0>;
@@ -127,7 +118,11 @@
 					/*RXEOB*/ 0x1 &UIC0 0xb 0x4
 					/*SERR*/  0x2 &UIC1 0x0 0x4
 					/*TXDE*/  0x3 &UIC1 0x1 0x4
-					/*RXDE*/  0x4 &UIC1 0x2 0x4>;
+					/*RXDE*/  0x4 &UIC1 0x2 0x4
+					/*TX0 COAL*/  0x5 &UIC2 0x7 0x2
+					/*TX1 COAL*/  0x6 &UIC2 0x8 0x2
+					/*RX0 COAL*/  0x7 &UIC2 0x9 0x2
+					/*RX1 COAL*/  0x8 &UIC2 0xa 0x2 >;
 			interrupt-map-mask = <0xffffffff>;
 		};
 
@@ -279,10 +274,8 @@
 				mal-rx-channel = <0>;
 				cell-index = <0>;
 				max-frame-size = <9000>;
-				rx-fifo-size = <4096>;
+				rx-fifo-size = <16384>;
 				tx-fifo-size = <2048>;
-				rx-fifo-size-gige = <16384>;
-				tx-fifo-size-gige = <16384>;
 				phy-mode = "rgmii";
 				phy-map = <0x00000000>;
 				rgmii-device = <&RGMII0>;
@@ -309,10 +302,8 @@
 				mal-rx-channel = <1>;
 				cell-index = <1>;
 				max-frame-size = <9000>;
-				rx-fifo-size = <4096>;
+				rx-fifo-size = <16384>;
 				tx-fifo-size = <2048>;
-				rx-fifo-size-gige = <16384>;
-				tx-fifo-size-gige = <16384>;
 				phy-mode = "rgmii";
 				phy-map = <0x00000000>;
 				rgmii-device = <&RGMII0>;
@@ -402,34 +393,6 @@
 				0x0 0x0 0x0 0x2 &UIC2 0xc 0x4 /* swizzled int B */
 				0x0 0x0 0x0 0x3 &UIC2 0xd 0x4 /* swizzled int C */
 				0x0 0x0 0x0 0x4 &UIC2 0xe 0x4 /* swizzled int D */>;
-		};
-
-		MSI: ppc4xx-msi@C10000000 {
-			compatible = "amcc,ppc4xx-msi", "ppc4xx-msi";
-			reg = < 0x0 0xEF620000 0x100>;
-			sdr-base = <0x4B0>;
-			msi-data = <0x00000000>;
-			msi-mask = <0x44440000>;
-			interrupt-count = <12>;
-			interrupts = <0 1 2 3 4 5 6 7 8 9 0xA 0xB 0xC 0xD>;
-			interrupt-parent = <&UIC2>;
-			#interrupt-cells = <1>;
-			#address-cells = <0>;
-			#size-cells = <0>;
-			interrupt-map = <0 &UIC2 0x10 1
-					1 &UIC2 0x11 1
-					2 &UIC2 0x12 1
-					2 &UIC2 0x13 1
-					2 &UIC2 0x14 1
-					2 &UIC2 0x15 1
-					2 &UIC2 0x16 1
-					2 &UIC2 0x17 1
-					2 &UIC2 0x18 1
-					2 &UIC2 0x19 1
-					2 &UIC2 0x1A 1
-					2 &UIC2 0x1B 1
-					2 &UIC2 0x1C 1
-					3 &UIC2 0x1D 1>;
 		};
 	};
 };

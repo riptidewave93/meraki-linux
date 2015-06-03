@@ -18,8 +18,6 @@
 #include <linux/parport.h>
 #include <linux/ioport.h>
 #include <linux/interrupt.h>
-#include <linux/platform_device.h>
-
 #include <asm/setup.h>
 #include <asm/amigahw.h>
 #include <asm/irq.h>
@@ -33,6 +31,7 @@
 #define DPRINTK(x...)	do { } while (0)
 #endif
 
+static struct parport *this_port = NULL;
 
 static void amiga_write_data(struct parport *p, unsigned char data)
 {
@@ -228,10 +227,17 @@ static struct parport_operations pp_amiga_ops = {
 
 /* ----------- Initialisation code --------------------------------- */
 
-static int __init amiga_parallel_probe(struct platform_device *pdev)
+static int __init parport_amiga_init(void)
 {
 	struct parport *p;
 	int err;
+
+	if (!MACH_IS_AMIGA || !AMIGAHW_PRESENT(AMI_PARALLEL))
+		return -ENODEV;
+
+	err = -EBUSY;
+	if (!request_mem_region(CIAA_PHYSADDR-1+0x100, 0x100, "parallel"))
+		goto out_mem;
 
 	ciaa.ddrb = 0xff;
 	ciab.ddra &= 0xf8;
@@ -240,63 +246,41 @@ static int __init amiga_parallel_probe(struct platform_device *pdev)
 	p = parport_register_port((unsigned long)&ciaa.prb, IRQ_AMIGA_CIAA_FLG,
 				   PARPORT_DMA_NONE, &pp_amiga_ops);
 	if (!p)
-		return -EBUSY;
+		goto out_port;
 
-	err = request_irq(IRQ_AMIGA_CIAA_FLG, parport_irq_handler, 0, p->name,
-			  p);
+	err = request_irq(IRQ_AMIGA_CIAA_FLG, parport_irq_handler, 0, p->name, p);
 	if (err)
 		goto out_irq;
 
+	this_port = p;
 	printk(KERN_INFO "%s: Amiga built-in port using irq\n", p->name);
 	/* XXX: set operating mode */
 	parport_announce_port(p);
-
-	platform_set_drvdata(pdev, p);
 
 	return 0;
 
 out_irq:
 	parport_put_port(p);
+out_port:
+	release_mem_region(CIAA_PHYSADDR-1+0x100, 0x100);
+out_mem:
 	return err;
 }
 
-static int __exit amiga_parallel_remove(struct platform_device *pdev)
+static void __exit parport_amiga_exit(void)
 {
-	struct parport *port = platform_get_drvdata(pdev);
-
-	parport_remove_port(port);
-	if (port->irq != PARPORT_IRQ_NONE)
-		free_irq(IRQ_AMIGA_CIAA_FLG, port);
-	parport_put_port(port);
-	platform_set_drvdata(pdev, NULL);
-	return 0;
+	parport_remove_port(this_port);
+	if (this_port->irq != PARPORT_IRQ_NONE)
+		free_irq(IRQ_AMIGA_CIAA_FLG, this_port);
+	parport_put_port(this_port);
+	release_mem_region(CIAA_PHYSADDR-1+0x100, 0x100);
 }
 
-static struct platform_driver amiga_parallel_driver = {
-	.remove = __exit_p(amiga_parallel_remove),
-	.driver   = {
-		.name	= "amiga-parallel",
-		.owner	= THIS_MODULE,
-	},
-};
-
-static int __init amiga_parallel_init(void)
-{
-	return platform_driver_probe(&amiga_parallel_driver,
-				     amiga_parallel_probe);
-}
-
-module_init(amiga_parallel_init);
-
-static void __exit amiga_parallel_exit(void)
-{
-	platform_driver_unregister(&amiga_parallel_driver);
-}
-
-module_exit(amiga_parallel_exit);
 
 MODULE_AUTHOR("Joerg Dorchain <joerg@dorchain.net>");
 MODULE_DESCRIPTION("Parport Driver for Amiga builtin Port");
 MODULE_SUPPORTED_DEVICE("Amiga builtin Parallel Port");
 MODULE_LICENSE("GPL");
-MODULE_ALIAS("platform:amiga-parallel");
+
+module_init(parport_amiga_init)
+module_exit(parport_amiga_exit)

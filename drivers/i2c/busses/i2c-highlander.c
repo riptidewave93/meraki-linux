@@ -19,7 +19,6 @@
 #include <linux/completion.h>
 #include <linux/io.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
 
 #define SMCR		0x00
 #define SMCR_START	(1 << 0)
@@ -52,7 +51,7 @@ struct highlander_i2c_dev {
 	size_t			buf_len;
 };
 
-static bool iic_force_poll, iic_force_normal;
+static int iic_force_poll, iic_force_normal;
 static int iic_timeout = 1000, iic_read_delay;
 
 static inline void highlander_i2c_irq_enable(struct highlander_i2c_dev *dev)
@@ -227,7 +226,7 @@ static int highlander_i2c_read(struct highlander_i2c_dev *dev)
 
 	/*
 	 * The R0P7780LC0011RL FPGA needs a significant delay between
-	 * data read cycles, otherwise the transceiver gets confused and
+	 * data read cycles, otherwise the transciever gets confused and
 	 * garbage is returned when the read is subsequently aborted.
 	 *
 	 * It is not sufficient to wait for BBSY.
@@ -282,6 +281,7 @@ static int highlander_i2c_smbus_xfer(struct i2c_adapter *adap, u16 addr,
 				  union i2c_smbus_data *data)
 {
 	struct highlander_i2c_dev *dev = i2c_get_adapdata(adap);
+	int read = read_write & I2C_SMBUS_READ;
 	u16 tmp;
 
 	init_completion(&dev->cmd_complete);
@@ -336,11 +336,11 @@ static int highlander_i2c_smbus_xfer(struct i2c_adapter *adap, u16 addr,
 	highlander_i2c_done(dev);
 
 	/* Set slave address */
-	iowrite16((addr << 1) | read_write, dev->base + SMSMADR);
+	iowrite16((addr << 1) | read, dev->base + SMSMADR);
 
 	highlander_i2c_command(dev, command, dev->buf_len);
 
-	if (read_write == I2C_SMBUS_READ)
+	if (read)
 		return highlander_i2c_read(dev);
 	else
 		return highlander_i2c_write(dev);
@@ -387,7 +387,7 @@ static int __devinit highlander_i2c_probe(struct platform_device *pdev)
 		dev->irq = 0;
 
 	if (dev->irq) {
-		ret = request_irq(dev->irq, highlander_i2c_irq, 0,
+		ret = request_irq(dev->irq, highlander_i2c_irq, IRQF_DISABLED,
 				  pdev->name, dev);
 		if (unlikely(ret))
 			goto err_unmap;
@@ -468,7 +468,18 @@ static struct platform_driver highlander_i2c_driver = {
 	.remove		= __devexit_p(highlander_i2c_remove),
 };
 
-module_platform_driver(highlander_i2c_driver);
+static int __init highlander_i2c_init(void)
+{
+	return platform_driver_register(&highlander_i2c_driver);
+}
+
+static void __exit highlander_i2c_exit(void)
+{
+	platform_driver_unregister(&highlander_i2c_driver);
+}
+
+module_init(highlander_i2c_init);
+module_exit(highlander_i2c_exit);
 
 MODULE_AUTHOR("Paul Mundt");
 MODULE_DESCRIPTION("Renesas Highlander FPGA I2C/SMBus adapter");

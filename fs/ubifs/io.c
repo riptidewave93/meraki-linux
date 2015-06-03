@@ -71,7 +71,6 @@
  */
 
 #include <linux/crc32.h>
-#include <linux/slab.h>
 #include "ubifs.h"
 
 /**
@@ -86,125 +85,8 @@ void ubifs_ro_mode(struct ubifs_info *c, int err)
 		c->no_chk_data_crc = 0;
 		c->vfs_sb->s_flags |= MS_RDONLY;
 		ubifs_warn("switched to read-only mode, error %d", err);
-		dump_stack();
-	}
-}
-
-/*
- * Below are simple wrappers over UBI I/O functions which include some
- * additional checks and UBIFS debugging stuff. See corresponding UBI function
- * for more information.
- */
-
-int ubifs_leb_read(const struct ubifs_info *c, int lnum, void *buf, int offs,
-		   int len, int even_ebadmsg)
-{
-	int err;
-
-	err = ubi_read(c->ubi, lnum, buf, offs, len);
-	/*
-	 * In case of %-EBADMSG print the error message only if the
-	 * @even_ebadmsg is true.
-	 */
-	if (err && (err != -EBADMSG || even_ebadmsg)) {
-		ubifs_err("reading %d bytes from LEB %d:%d failed, error %d",
-			  len, lnum, offs, err);
 		dbg_dump_stack();
 	}
-	return err;
-}
-
-int ubifs_leb_write(struct ubifs_info *c, int lnum, const void *buf, int offs,
-		    int len, int dtype)
-{
-	int err;
-
-	ubifs_assert(!c->ro_media && !c->ro_mount);
-	if (c->ro_error)
-		return -EROFS;
-	if (!dbg_is_tst_rcvry(c))
-		err = ubi_leb_write(c->ubi, lnum, buf, offs, len, dtype);
-	else
-		err = dbg_leb_write(c, lnum, buf, offs, len, dtype);
-	if (err) {
-		ubifs_err("writing %d bytes to LEB %d:%d failed, error %d",
-			  len, lnum, offs, err);
-		ubifs_ro_mode(c, err);
-		dbg_dump_stack();
-	}
-	return err;
-}
-
-int ubifs_leb_change(struct ubifs_info *c, int lnum, const void *buf, int len,
-		     int dtype)
-{
-	int err;
-
-	ubifs_assert(!c->ro_media && !c->ro_mount);
-	if (c->ro_error)
-		return -EROFS;
-	if (!dbg_is_tst_rcvry(c))
-		err = ubi_leb_change(c->ubi, lnum, buf, len, dtype);
-	else
-		err = dbg_leb_change(c, lnum, buf, len, dtype);
-	if (err) {
-		ubifs_err("changing %d bytes in LEB %d failed, error %d",
-			  len, lnum, err);
-		ubifs_ro_mode(c, err);
-		dbg_dump_stack();
-	}
-	return err;
-}
-
-int ubifs_leb_unmap(struct ubifs_info *c, int lnum)
-{
-	int err;
-
-	ubifs_assert(!c->ro_media && !c->ro_mount);
-	if (c->ro_error)
-		return -EROFS;
-	if (!dbg_is_tst_rcvry(c))
-		err = ubi_leb_unmap(c->ubi, lnum);
-	else
-		err = dbg_leb_unmap(c, lnum);
-	if (err) {
-		ubifs_err("unmap LEB %d failed, error %d", lnum, err);
-		ubifs_ro_mode(c, err);
-		dbg_dump_stack();
-	}
-	return err;
-}
-
-int ubifs_leb_map(struct ubifs_info *c, int lnum, int dtype)
-{
-	int err;
-
-	ubifs_assert(!c->ro_media && !c->ro_mount);
-	if (c->ro_error)
-		return -EROFS;
-	if (!dbg_is_tst_rcvry(c))
-		err = ubi_leb_map(c->ubi, lnum, dtype);
-	else
-		err = dbg_leb_map(c, lnum, dtype);
-	if (err) {
-		ubifs_err("mapping LEB %d failed, error %d", lnum, err);
-		ubifs_ro_mode(c, err);
-		dbg_dump_stack();
-	}
-	return err;
-}
-
-int ubifs_is_mapped(const struct ubifs_info *c, int lnum)
-{
-	int err;
-
-	err = ubi_is_mapped(c->ubi, lnum);
-	if (err < 0) {
-		ubifs_err("ubi_is_mapped failed for LEB %d, error %d",
-			  lnum, err);
-		dbg_dump_stack();
-	}
-	return err;
 }
 
 /**
@@ -510,7 +392,7 @@ int ubifs_wbuf_sync_nolock(struct ubifs_wbuf *wbuf)
 	ubifs_assert(wbuf->size % c->min_io_size == 0);
 	ubifs_assert(!c->ro_media && !c->ro_mount);
 	if (c->leb_size - wbuf->offs >= c->max_write_size)
-		ubifs_assert(!((wbuf->offs + wbuf->size) % c->max_write_size));
+		ubifs_assert(!((wbuf->offs + wbuf->size) % c->max_write_size ));
 
 	if (c->ro_error)
 		return -EROFS;
@@ -523,10 +405,14 @@ int ubifs_wbuf_sync_nolock(struct ubifs_wbuf *wbuf)
 	dirt = sync_len - wbuf->used;
 	if (dirt)
 		ubifs_pad(c, wbuf->buf + wbuf->used, dirt);
-	err = ubifs_leb_write(c, wbuf->lnum, wbuf->buf, wbuf->offs, sync_len,
-			      wbuf->dtype);
-	if (err)
+	err = ubi_leb_write(c->ubi, wbuf->lnum, wbuf->buf, wbuf->offs,
+			    sync_len, wbuf->dtype);
+	if (err) {
+		ubifs_err("cannot write %d bytes to LEB %d:%d",
+			  sync_len, wbuf->lnum, wbuf->offs);
+		dbg_dump_stack();
 		return err;
+	}
 
 	spin_lock(&wbuf->lock);
 	wbuf->offs += sync_len;
@@ -565,8 +451,8 @@ int ubifs_wbuf_sync_nolock(struct ubifs_wbuf *wbuf)
  * @dtype: data type
  *
  * This function targets the write-buffer to logical eraseblock @lnum:@offs.
- * The write-buffer has to be empty. Returns zero in case of success and a
- * negative error code in case of failure.
+ * The write-buffer is synchronized if it is not empty. Returns zero in case of
+ * success and a negative error code in case of failure.
  */
 int ubifs_wbuf_seek_nolock(struct ubifs_wbuf *wbuf, int lnum, int offs,
 			   int dtype)
@@ -578,7 +464,13 @@ int ubifs_wbuf_seek_nolock(struct ubifs_wbuf *wbuf, int lnum, int offs,
 	ubifs_assert(offs >= 0 && offs <= c->leb_size);
 	ubifs_assert(offs % c->min_io_size == 0 && !(offs & 7));
 	ubifs_assert(lnum != wbuf->lnum);
-	ubifs_assert(wbuf->used == 0);
+
+	if (wbuf->used > 0) {
+		int err = ubifs_wbuf_sync_nolock(wbuf);
+
+		if (err)
+			return err;
+	}
 
 	spin_lock(&wbuf->lock);
 	wbuf->lnum = lnum;
@@ -680,7 +572,7 @@ out_timers:
 int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 {
 	struct ubifs_info *c = wbuf->c;
-	int err, written, n, aligned_len = ALIGN(len, 8);
+	int err, written, n, aligned_len = ALIGN(len, 8), offs;
 
 	dbg_io("%d bytes (%s) to jhead %s wbuf at LEB %d:%d", len,
 	       dbg_ntype(((struct ubifs_ch *)buf)->node_type),
@@ -694,9 +586,8 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 	ubifs_assert(wbuf->size % c->min_io_size == 0);
 	ubifs_assert(mutex_is_locked(&wbuf->io_mutex));
 	ubifs_assert(!c->ro_media && !c->ro_mount);
-	ubifs_assert(!c->space_fixup);
 	if (c->leb_size - wbuf->offs >= c->max_write_size)
-		ubifs_assert(!((wbuf->offs + wbuf->size) % c->max_write_size));
+		ubifs_assert(!((wbuf->offs + wbuf->size) % c->max_write_size ));
 
 	if (c->leb_size - wbuf->offs - wbuf->used < aligned_len) {
 		err = -ENOSPC;
@@ -718,9 +609,9 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 		if (aligned_len == wbuf->avail) {
 			dbg_io("flush jhead %s wbuf to LEB %d:%d",
 			       dbg_jhead(wbuf->jhead), wbuf->lnum, wbuf->offs);
-			err = ubifs_leb_write(c, wbuf->lnum, wbuf->buf,
-					      wbuf->offs, wbuf->size,
-					      wbuf->dtype);
+			err = ubi_leb_write(c->ubi, wbuf->lnum, wbuf->buf,
+					    wbuf->offs, wbuf->size,
+					    wbuf->dtype);
 			if (err)
 				goto out;
 
@@ -744,6 +635,7 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 		goto exit;
 	}
 
+	offs = wbuf->offs;
 	written = 0;
 
 	if (wbuf->used) {
@@ -755,12 +647,12 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 		dbg_io("flush jhead %s wbuf to LEB %d:%d",
 		       dbg_jhead(wbuf->jhead), wbuf->lnum, wbuf->offs);
 		memcpy(wbuf->buf + wbuf->used, buf, wbuf->avail);
-		err = ubifs_leb_write(c, wbuf->lnum, wbuf->buf, wbuf->offs,
-				      wbuf->size, wbuf->dtype);
+		err = ubi_leb_write(c->ubi, wbuf->lnum, wbuf->buf, wbuf->offs,
+				    wbuf->size, wbuf->dtype);
 		if (err)
 			goto out;
 
-		wbuf->offs += wbuf->size;
+		offs += wbuf->size;
 		len -= wbuf->avail;
 		aligned_len -= wbuf->avail;
 		written += wbuf->avail;
@@ -774,12 +666,12 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 		 */
 		dbg_io("write %d bytes to LEB %d:%d",
 		       wbuf->size, wbuf->lnum, wbuf->offs);
-		err = ubifs_leb_write(c, wbuf->lnum, buf, wbuf->offs,
-				      wbuf->size, wbuf->dtype);
+		err = ubi_leb_write(c->ubi, wbuf->lnum, buf, wbuf->offs,
+				    wbuf->size, wbuf->dtype);
 		if (err)
 			goto out;
 
-		wbuf->offs += wbuf->size;
+		offs += wbuf->size;
 		len -= wbuf->size;
 		aligned_len -= wbuf->size;
 		written += wbuf->size;
@@ -794,13 +686,12 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 	n = aligned_len >> c->max_write_shift;
 	if (n) {
 		n <<= c->max_write_shift;
-		dbg_io("write %d bytes to LEB %d:%d", n, wbuf->lnum,
-		       wbuf->offs);
-		err = ubifs_leb_write(c, wbuf->lnum, buf + written,
-				      wbuf->offs, n, wbuf->dtype);
+		dbg_io("write %d bytes to LEB %d:%d", n, wbuf->lnum, offs);
+		err = ubi_leb_write(c->ubi, wbuf->lnum, buf + written, offs, n,
+				    wbuf->dtype);
 		if (err)
 			goto out;
-		wbuf->offs += n;
+		offs += n;
 		aligned_len -= n;
 		len -= n;
 		written += n;
@@ -815,6 +706,7 @@ int ubifs_wbuf_write_nolock(struct ubifs_wbuf *wbuf, void *buf, int len)
 		 */
 		memcpy(wbuf->buf, buf + written, len);
 
+	wbuf->offs = offs;
 	if (c->leb_size - wbuf->offs >= c->max_write_size)
 		wbuf->size = c->max_write_size;
 	else
@@ -873,15 +765,18 @@ int ubifs_write_node(struct ubifs_info *c, void *buf, int len, int lnum,
 	ubifs_assert(lnum >= 0 && lnum < c->leb_cnt && offs >= 0);
 	ubifs_assert(offs % c->min_io_size == 0 && offs < c->leb_size);
 	ubifs_assert(!c->ro_media && !c->ro_mount);
-	ubifs_assert(!c->space_fixup);
 
 	if (c->ro_error)
 		return -EROFS;
 
 	ubifs_prepare_node(c, buf, len, 1);
-	err = ubifs_leb_write(c, lnum, buf, offs, buf_len, dtype);
-	if (err)
+	err = ubi_leb_write(c->ubi, lnum, buf, offs, buf_len, dtype);
+	if (err) {
+		ubifs_err("cannot write %d bytes to LEB %d:%d, error %d",
+			  buf_len, lnum, offs, err);
 		dbg_dump_node(c, buf);
+		dbg_dump_stack();
+	}
 
 	return err;
 }
@@ -933,9 +828,13 @@ int ubifs_read_node_wbuf(struct ubifs_wbuf *wbuf, void *buf, int type, int len,
 
 	if (rlen > 0) {
 		/* Read everything that goes before write-buffer */
-		err = ubifs_leb_read(c, lnum, buf, offs, rlen, 0);
-		if (err && err != -EBADMSG)
+		err = ubi_read(c->ubi, lnum, buf, offs, rlen);
+		if (err && err != -EBADMSG) {
+			ubifs_err("failed to read node %d from LEB %d:%d, "
+				  "error %d", type, lnum, offs, err);
+			dbg_dump_stack();
 			return err;
+		}
 	}
 
 	if (type != ch->node_type) {
@@ -959,7 +858,8 @@ int ubifs_read_node_wbuf(struct ubifs_wbuf *wbuf, void *buf, int type, int len,
 	return 0;
 
 out:
-	ubifs_err("bad node at LEB %d:%d", lnum, offs);
+	ubifs_err("bad node at LEB %d:%d, LEB mapping status %d", lnum, offs,
+		  ubi_is_mapped(c->ubi, lnum));
 	dbg_dump_node(c, buf);
 	dbg_dump_stack();
 	return -EINVAL;
@@ -990,9 +890,12 @@ int ubifs_read_node(const struct ubifs_info *c, void *buf, int type, int len,
 	ubifs_assert(!(offs & 7) && offs < c->leb_size);
 	ubifs_assert(type >= 0 && type < UBIFS_NODE_TYPES_CNT);
 
-	err = ubifs_leb_read(c, lnum, buf, offs, len, 0);
-	if (err && err != -EBADMSG)
+	err = ubi_read(c->ubi, lnum, buf, offs, len);
+	if (err && err != -EBADMSG) {
+		ubifs_err("cannot read node %d from LEB %d:%d, error %d",
+			  type, lnum, offs, err);
 		return err;
+	}
 
 	if (type != ch->node_type) {
 		ubifs_err("bad node type (%d but expected %d)",

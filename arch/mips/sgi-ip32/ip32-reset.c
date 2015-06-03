@@ -20,6 +20,7 @@
 #include <asm/addrspace.h>
 #include <asm/irq.h>
 #include <asm/reboot.h>
+#include <asm/system.h>
 #include <asm/wbflush.h>
 #include <asm/ip32/mace.h>
 #include <asm/ip32/crime.h>

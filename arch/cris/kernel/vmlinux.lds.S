@@ -8,6 +8,7 @@
  * the kernel has booted.
  */
 
+#include <linux/autoconf.h>
 #include <asm-generic/vmlinux.lds.h>
 #include <asm/page.h>
 
@@ -52,15 +53,12 @@ SECTIONS
 
 	EXCEPTION_TABLE(4)
 
-	_sdata = .;
 	RODATA
 
 	. = ALIGN (4);
 	___data_start = . ;
 	__Sdata = . ;
 	.data : {			/* Data */
-		CACHELINE_ALIGNED_DATA(32)
-		READ_MOSTLY_DATA(32)
 		DATA_DATA
 	}
 	__edata = . ;			/* End of data section. */
@@ -73,6 +71,11 @@ SECTIONS
 	INIT_TEXT_SECTION(PAGE_SIZE)
 	.init.data : { INIT_DATA }
 	.init.setup : { INIT_SETUP(16) }
+#ifdef CONFIG_ETRAX_ARCH_V32
+	__start___param = .;
+	__param : { *(__param) }
+	__stop___param = .;
+#endif
 	.initcall.init : {
 		INIT_CALLS
 	}
@@ -81,16 +84,6 @@ SECTIONS
 		CON_INITCALL
 	}
 	SECURITY_INIT
-
-	/* .exit.text is discarded at runtime, not link time,
-	 * to deal with references from __bug_table
-	 */
-	.exit.text : {
-		EXIT_TEXT
-	}
-	.exit.data : {
-		EXIT_DATA
-	}
 
 #ifdef CONFIG_ETRAX_ARCH_V10
 #ifdef CONFIG_BLK_DEV_INITRD
@@ -103,7 +96,7 @@ SECTIONS
 #endif
 	__vmlinux_end = .;		/* Last address of the physical file. */
 #ifdef CONFIG_ETRAX_ARCH_V32
-	PERCPU_SECTION(32)
+	PERCPU(PAGE_SIZE)
 
 	.init.ramfs : {
 		INIT_RAM_FS
@@ -120,7 +113,7 @@ SECTIONS
 	__init_end = .;
 
 	__data_end = . ;		/* Move to _edata ? */
-	BSS_SECTION(1, 1, 1)
+	BSS_SECTION(0, 0, 0)
 
 	. =  ALIGN (0x20);
 	_end = .;

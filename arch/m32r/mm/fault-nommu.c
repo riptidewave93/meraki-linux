@@ -22,6 +22,7 @@
 #include <linux/vt_kern.h>              /* For unblank_screen() */
 
 #include <asm/m32r.h>
+#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/pgalloc.h>
 #include <asm/pgtable.h>
@@ -94,7 +95,7 @@ asmlinkage void do_page_fault(struct pt_regs *regs, unsigned long error_code,
  * update_mmu_cache()
  *======================================================================*/
 void update_mmu_cache(struct vm_area_struct *vma, unsigned long addr,
-	pte_t *ptep)
+	pte_t pte)
 {
 	BUG();
 }

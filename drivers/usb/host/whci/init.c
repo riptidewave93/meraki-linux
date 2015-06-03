@@ -16,7 +16,6 @@
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
 #include <linux/kernel.h>
-#include <linux/gfp.h>
 #include <linux/dma-mapping.h>
 #include <linux/uwb/umc.h>
 
@@ -178,7 +177,7 @@ void whc_clean_up(struct whc *whc)
 	if (whc->qset_pool)
 		dma_pool_destroy(whc->qset_pool);
 
-	len   = resource_size(&whc->umc->resource);
+	len   = whc->umc->resource.end - whc->umc->resource.start + 1;
 	if (whc->base)
 		iounmap(whc->base);
 	if (whc->base_phys)

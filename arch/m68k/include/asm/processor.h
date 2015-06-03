@@ -20,26 +20,23 @@
 
 static inline unsigned long rdusp(void)
 {
-#ifdef CONFIG_COLDFIRE_SW_A7
+#ifdef CONFIG_COLDFIRE
 	extern unsigned int sw_usp;
 	return sw_usp;
 #else
-	register unsigned long usp __asm__("a0");
-	/* move %usp,%a0 */
-	__asm__ __volatile__(".word 0x4e68" : "=a" (usp));
+	unsigned long usp;
+	__asm__ __volatile__("move %/usp,%0" : "=a" (usp));
 	return usp;
 #endif
 }
 
 static inline void wrusp(unsigned long usp)
 {
-#ifdef CONFIG_COLDFIRE_SW_A7
+#ifdef CONFIG_COLDFIRE
 	extern unsigned int sw_usp;
 	sw_usp = usp;
 #else
-	register unsigned long a0 __asm__("a0") = usp;
-	/* move %a0,%usp */
-	__asm__ __volatile__(".word 0x4e60" : : "a" (a0) );
+	__asm__ __volatile__("move %0,%/usp" : : "a" (usp));
 #endif
 }
 
@@ -47,16 +44,10 @@ static inline void wrusp(unsigned long usp)
  * User space process size: 3.75GB. This is hardcoded into a few places,
  * so don't change it unless you know what you are doing.
  */
-#ifdef CONFIG_MMU
-#if defined(CONFIG_COLDFIRE)
-#define TASK_SIZE	(0xC0000000UL)
-#elif defined(CONFIG_SUN3)
-#define TASK_SIZE	(0x0E000000UL)
-#else
+#ifndef CONFIG_SUN3
 #define TASK_SIZE	(0xF0000000UL)
-#endif
 #else
-#define TASK_SIZE	(0xFFFFFFFFUL)
+#define TASK_SIZE	(0x0E000000UL)
 #endif
 
 #ifdef __KERNEL__
@@ -68,12 +59,10 @@ static inline void wrusp(unsigned long usp)
  * space during mmap's.
  */
 #ifdef CONFIG_MMU
-#if defined(CONFIG_COLDFIRE)
-#define TASK_UNMAPPED_BASE	0x60000000UL
-#elif defined(CONFIG_SUN3)
-#define TASK_UNMAPPED_BASE	0x0A000000UL
-#else
+#ifndef CONFIG_SUN3
 #define TASK_UNMAPPED_BASE	0xC0000000UL
+#else
+#define TASK_UNMAPPED_BASE	0x0A000000UL
 #endif
 #define TASK_UNMAPPED_ALIGN(addr, off)	PAGE_ALIGN(addr)
 #else
@@ -92,12 +81,14 @@ struct thread_struct {
 	unsigned long  fp[8*3];
 	unsigned long  fpcntl[3];	/* fp control regs */
 	unsigned char  fpstate[FPSTATESIZE];  /* floating point state */
+	struct thread_info info;
 };
 
 #define INIT_THREAD  {							\
 	.ksp	= sizeof(init_stack) + (unsigned long) init_stack,	\
 	.sr	= PS_S,							\
 	.fs	= __KERNEL_DS,						\
+	.info	= INIT_THREAD_INFO(init_task),				\
 }
 
 #ifdef CONFIG_MMU
@@ -107,12 +98,13 @@ struct thread_struct {
 static inline void start_thread(struct pt_regs * regs, unsigned long pc,
 				unsigned long usp)
 {
+	/* reads from user space */
+	set_fs(USER_DS);
+
 	regs->pc = pc;
 	regs->sr &= ~0x2000;
 	wrusp(usp);
 }
-
-extern int handle_kernel_fault(struct pt_regs *regs);
 
 #else
 
@@ -128,6 +120,7 @@ extern int handle_kernel_fault(struct pt_regs *regs);
 
 #define start_thread(_regs, _pc, _usp)                  \
 do {                                                    \
+	set_fs(USER_DS); /* reads from user space */    \
 	(_regs)->pc = (_pc);                            \
 	((struct switch_stack *)(_regs))[-1].a6 = 0;    \
 	reformat(_regs);                                \
@@ -136,12 +129,6 @@ do {                                                    \
 	(_regs)->sr &= ~0x2000;                         \
 	wrusp(_usp);                                    \
 } while(0)
-
-static inline  int handle_kernel_fault(struct pt_regs *regs)
-{
-	/* Any fault in kernel is fatal on non-mmu */
-	return 0;
-}
 
 #endif
 
@@ -177,8 +164,6 @@ unsigned long get_wchan(struct task_struct *p);
 	      eip = ((struct pt_regs *) (tsk)->thread.esp0)->pc; \
 	eip; })
 #define	KSTK_ESP(tsk)	((tsk) == current ? rdusp() : (tsk)->thread.usp)
-
-#define task_pt_regs(tsk)	((struct pt_regs *) ((tsk)->thread.esp0))
 
 #define cpu_relax()	barrier()
 

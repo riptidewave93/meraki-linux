@@ -19,7 +19,6 @@
 #include <linux/serial.h>
 #include <linux/serial_sci.h>
 #include <linux/sh_timer.h>
-#include <cpu/serial.h>
 
 enum {
 	UNUSED = 0,
@@ -107,78 +106,56 @@ static struct platform_device rtc_device = {
 	.resource	= rtc_resources,
 };
 
-static struct plat_sci_port scif0_platform_data = {
-	.mapbase	= 0xfffffe80,
-	.port_reg	= 0xa4000136,
-	.flags		= UPF_BOOT_AUTOCONF,
-	.scscr		= SCSCR_TE | SCSCR_RE,
-	.scbrr_algo_id	= SCBRR_ALGO_2,
-	.type		= PORT_SCI,
-	.irqs		= { 23, 23, 23, 0 },
-	.ops		= &sh770x_sci_port_ops,
-	.regshift	= 1,
-};
-
-static struct platform_device scif0_device = {
-	.name		= "sh-sci",
-	.id		= 0,
-	.dev		= {
-		.platform_data	= &scif0_platform_data,
+static struct plat_sci_port sci_platform_data[] = {
+	{
+		.mapbase	= 0xfffffe80,
+		.flags		= UPF_BOOT_AUTOCONF,
+		.type		= PORT_SCI,
+		.irqs		= { 23, 23, 23, 0 },
 	},
-};
 #if defined(CONFIG_CPU_SUBTYPE_SH7706) || \
     defined(CONFIG_CPU_SUBTYPE_SH7707) || \
     defined(CONFIG_CPU_SUBTYPE_SH7709)
-static struct plat_sci_port scif1_platform_data = {
-	.mapbase	= 0xa4000150,
-	.flags		= UPF_BOOT_AUTOCONF,
-	.scscr		= SCSCR_TE | SCSCR_RE,
-	.scbrr_algo_id	= SCBRR_ALGO_2,
-	.type		= PORT_SCIF,
-	.irqs		= { 56, 56, 56, 56 },
-	.ops		= &sh770x_sci_port_ops,
-	.regtype	= SCIx_SH3_SCIF_REGTYPE,
-};
-
-static struct platform_device scif1_device = {
-	.name		= "sh-sci",
-	.id		= 1,
-	.dev		= {
-		.platform_data	= &scif1_platform_data,
+	{
+		.mapbase	= 0xa4000150,
+		.flags		= UPF_BOOT_AUTOCONF,
+		.type		= PORT_SCIF,
+		.irqs		= { 56, 56, 56, 56 },
 	},
-};
 #endif
 #if defined(CONFIG_CPU_SUBTYPE_SH7707) || \
     defined(CONFIG_CPU_SUBTYPE_SH7709)
-static struct plat_sci_port scif2_platform_data = {
-	.mapbase	= 0xa4000140,
-	.port_reg	= SCIx_NOT_SUPPORTED,
-	.flags		= UPF_BOOT_AUTOCONF,
-	.scscr		= SCSCR_TE | SCSCR_RE,
-	.scbrr_algo_id	= SCBRR_ALGO_2,
-	.type		= PORT_IRDA,
-	.irqs		= { 52, 52, 52, 52 },
-	.ops		= &sh770x_sci_port_ops,
-	.regshift	= 1,
+	{
+		.mapbase	= 0xa4000140,
+		.flags		= UPF_BOOT_AUTOCONF,
+		.type		= PORT_IRDA,
+		.irqs		= { 52, 52, 52, 52 },
+	},
+#endif
+	{
+		.flags = 0,
+	}
 };
 
-static struct platform_device scif2_device = {
+static struct platform_device sci_device = {
 	.name		= "sh-sci",
-	.id		= 2,
+	.id		= -1,
 	.dev		= {
-		.platform_data	= &scif2_platform_data,
+		.platform_data	= sci_platform_data,
 	},
 };
-#endif
 
 static struct sh_timer_config tmu0_platform_data = {
+	.name = "TMU0",
 	.channel_offset = 0x02,
 	.timer_bit = 0,
+	.clk = "peripheral_clk",
 	.clockevent_rating = 200,
 };
 
 static struct resource tmu0_resources[] = {
 	[0] = {
+		.name	= "TMU0",
 		.start	= 0xfffffe94,
 		.end	= 0xfffffe9f,
 		.flags	= IORESOURCE_MEM,
@@ -200,13 +177,16 @@ static struct platform_device tmu0_device = {
 };
 
 static struct sh_timer_config tmu1_platform_data = {
+	.name = "TMU1",
 	.channel_offset = 0xe,
 	.timer_bit = 1,
+	.clk = "peripheral_clk",
 	.clocksource_rating = 200,
 };
 
 static struct resource tmu1_resources[] = {
 	[0] = {
+		.name	= "TMU1",
 		.start	= 0xfffffea0,
 		.end	= 0xfffffeab,
 		.flags	= IORESOURCE_MEM,
@@ -228,12 +208,15 @@ static struct platform_device tmu1_device = {
 };
 
 static struct sh_timer_config tmu2_platform_data = {
+	.name = "TMU2",
 	.channel_offset = 0x1a,
 	.timer_bit = 2,
+	.clk = "peripheral_clk",
 };
 
 static struct resource tmu2_resources[] = {
 	[0] = {
+		.name	= "TMU2",
 		.start	= 0xfffffeac,
 		.end	= 0xfffffebb,
 		.flags	= IORESOURCE_MEM,
@@ -255,19 +238,10 @@ static struct platform_device tmu2_device = {
 };
 
 static struct platform_device *sh770x_devices[] __initdata = {
-	&scif0_device,
-#if defined(CONFIG_CPU_SUBTYPE_SH7706) || \
-    defined(CONFIG_CPU_SUBTYPE_SH7707) || \
-    defined(CONFIG_CPU_SUBTYPE_SH7709)
-	&scif1_device,
-#endif
-#if defined(CONFIG_CPU_SUBTYPE_SH7707) || \
-    defined(CONFIG_CPU_SUBTYPE_SH7709)
-	&scif2_device,
-#endif
 	&tmu0_device,
 	&tmu1_device,
 	&tmu2_device,
+	&sci_device,
 	&rtc_device,
 };
 
@@ -279,16 +253,6 @@ static int __init sh770x_devices_setup(void)
 arch_initcall(sh770x_devices_setup);
 
 static struct platform_device *sh770x_early_devices[] __initdata = {
-	&scif0_device,
-#if defined(CONFIG_CPU_SUBTYPE_SH7706) || \
-    defined(CONFIG_CPU_SUBTYPE_SH7707) || \
-    defined(CONFIG_CPU_SUBTYPE_SH7709)
-	&scif1_device,
-#endif
-#if defined(CONFIG_CPU_SUBTYPE_SH7707) || \
-    defined(CONFIG_CPU_SUBTYPE_SH7709)
-	&scif2_device,
-#endif
 	&tmu0_device,
 	&tmu1_device,
 	&tmu2_device,

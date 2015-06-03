@@ -19,7 +19,6 @@
 #include "ctree.h"
 #include "disk-io.h"
 #include "transaction.h"
-#include "print-tree.h"
 
 static int find_name_in_backref(struct btrfs_path *path, const char *name,
 			 int name_len, struct btrfs_inode_ref **ref_ret)
@@ -48,33 +47,6 @@ static int find_name_in_backref(struct btrfs_path *path, const char *name,
 		}
 	}
 	return 0;
-}
-
-struct btrfs_inode_ref *
-btrfs_lookup_inode_ref(struct btrfs_trans_handle *trans,
-			struct btrfs_root *root,
-			struct btrfs_path *path,
-			const char *name, int name_len,
-			u64 inode_objectid, u64 ref_objectid, int mod)
-{
-	struct btrfs_key key;
-	struct btrfs_inode_ref *ref;
-	int ins_len = mod < 0 ? -1 : 0;
-	int cow = mod != 0;
-	int ret;
-
-	key.objectid = inode_objectid;
-	key.type = BTRFS_INODE_REF_KEY;
-	key.offset = ref_objectid;
-
-	ret = btrfs_search_slot(trans, root, &key, path, ins_len, cow);
-	if (ret < 0)
-		return ERR_PTR(ret);
-	if (ret > 0)
-		return NULL;
-	if (!find_name_in_backref(path, name, name_len, &ref))
-		return NULL;
-	return ref;
 }
 
 int btrfs_del_inode_ref(struct btrfs_trans_handle *trans,
@@ -129,14 +101,14 @@ int btrfs_del_inode_ref(struct btrfs_trans_handle *trans,
 	item_start = btrfs_item_ptr_offset(leaf, path->slots[0]);
 	memmove_extent_buffer(leaf, ptr, ptr + sub_item_len,
 			      item_size - (ptr + sub_item_len - item_start));
-	btrfs_truncate_item(trans, root, path,
+	ret = btrfs_truncate_item(trans, root, path,
 				  item_size - sub_item_len, 1);
+	BUG_ON(ret);
 out:
 	btrfs_free_path(path);
 	return ret;
 }
 
-/* Will return 0, -ENOMEM, -EMLINK, or -EEXIST or anything from the CoW path */
 int btrfs_insert_inode_ref(struct btrfs_trans_handle *trans,
 			   struct btrfs_root *root,
 			   const char *name, int name_len,
@@ -167,7 +139,8 @@ int btrfs_insert_inode_ref(struct btrfs_trans_handle *trans,
 			goto out;
 
 		old_size = btrfs_item_size_nr(path->nodes[0], path->slots[0]);
-		btrfs_extend_item(trans, root, path, ins_len);
+		ret = btrfs_extend_item(trans, root, path, ins_len);
+		BUG_ON(ret);
 		ref = btrfs_item_ptr(path->nodes[0], path->slots[0],
 				     struct btrfs_inode_ref);
 		ref = (struct btrfs_inode_ref *)((unsigned long)ref + old_size);

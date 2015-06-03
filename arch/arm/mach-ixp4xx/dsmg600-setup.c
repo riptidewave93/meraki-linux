@@ -16,7 +16,7 @@
  * Author: Rod Whitby <rod@whitby.id.au>
  * Maintainers: http://www.nslu2-linux.org/
  */
-#include <linux/gpio.h>
+
 #include <linux/irq.h>
 #include <linux/jiffies.h>
 #include <linux/timer.h>
@@ -31,23 +31,7 @@
 #include <asm/mach/arch.h>
 #include <asm/mach/flash.h>
 #include <asm/mach/time.h>
-
-#define DSMG600_SDA_PIN		5
-#define DSMG600_SCL_PIN		4
-
-/* DSM-G600 Timer Setting */
-#define DSMG600_FREQ		66000000
-
-/* Buttons */
-#define DSMG600_PB_GPIO		15	/* power button */
-#define DSMG600_RB_GPIO		3	/* reset button */
-
-/* Power control */
-#define DSMG600_PO_GPIO		2	/* power off */
-
-/* LEDs */
-#define DSMG600_LED_PWR_GPIO	0
-#define DSMG600_LED_WLAN_GPIO	14
+#include <asm/gpio.h>
 
 static struct flash_platform_data dsmg600_flash_data = {
 	.map_name		= "cfi_probe",
@@ -278,14 +262,11 @@ static void __init dsmg600_init(void)
 
 MACHINE_START(DSMG600, "D-Link DSM-G600 RevA")
 	/* Maintainer: www.nslu2-linux.org */
-	.atag_offset	= 0x100,
+	.phys_io	= IXP4XX_PERIPHERAL_BASE_PHYS,
+	.io_pg_offst	= ((IXP4XX_PERIPHERAL_BASE_VIRT) >> 18) & 0xFFFC,
+	.boot_params	= 0x00000100,
 	.map_io		= ixp4xx_map_io,
-	.init_early	= ixp4xx_init_early,
 	.init_irq	= ixp4xx_init_irq,
 	.timer          = &dsmg600_timer,
 	.init_machine	= dsmg600_init,
-#if defined(CONFIG_PCI)
-	.dma_zone_size	= SZ_64M,
-#endif
-	.restart	= ixp4xx_restart,
 MACHINE_END

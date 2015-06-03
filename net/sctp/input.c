@@ -53,7 +53,6 @@
 #include <linux/socket.h>
 #include <linux/ip.h>
 #include <linux/time.h> /* For struct timeval */
-#include <linux/slab.h>
 #include <net/ip.h>
 #include <net/icmp.h>
 #include <net/snmp.h>
@@ -76,7 +75,7 @@ static struct sctp_association *__sctp_lookup_association(
 					const union sctp_addr *peer,
 					struct sctp_transport **pt);
 
-static int sctp_add_backlog(struct sock *sk, struct sk_buff *skb);
+static void sctp_add_backlog(struct sock *sk, struct sk_buff *skb);
 
 
 /* Calculate the SCTP checksum of an SCTP packet.  */
@@ -105,7 +104,7 @@ static inline int sctp_rcv_checksum(struct sk_buff *skb)
 struct sctp_input_cb {
 	union {
 		struct inet_skb_parm	h4;
-#if IS_ENABLED(CONFIG_IPV6)
+#if defined(CONFIG_IPV6) || defined (CONFIG_IPV6_MODULE)
 		struct inet6_skb_parm	h6;
 #endif
 	} header;
@@ -266,13 +265,8 @@ int sctp_rcv(struct sk_buff *skb)
 	}
 
 	if (sock_owned_by_user(sk)) {
-		if (sctp_add_backlog(sk, skb)) {
-			sctp_bh_unlock_sock(sk);
-			sctp_chunk_free(chunk);
-			skb = NULL; /* sctp_chunk_free already freed the skb */
-			goto discard_release;
-		}
 		SCTP_INC_STATS_BH(SCTP_MIB_IN_PKT_BACKLOG);
+		sctp_add_backlog(sk, skb);
 	} else {
 		SCTP_INC_STATS_BH(SCTP_MIB_IN_PKT_SOFTIRQ);
 		sctp_inq_push(&chunk->rcvr->inqueue, chunk);
@@ -342,10 +336,8 @@ int sctp_backlog_rcv(struct sock *sk, struct sk_buff *skb)
 		sctp_bh_lock_sock(sk);
 
 		if (sock_owned_by_user(sk)) {
-			if (sk_add_backlog(sk, skb))
-				sctp_chunk_free(chunk);
-			else
-				backloged = 1;
+			sk_add_backlog(sk, skb);
+			backloged = 1;
 		} else
 			sctp_inq_push(inqueue, chunk);
 
@@ -370,27 +362,22 @@ done:
 	return 0;
 }
 
-static int sctp_add_backlog(struct sock *sk, struct sk_buff *skb)
+static void sctp_add_backlog(struct sock *sk, struct sk_buff *skb)
 {
 	struct sctp_chunk *chunk = SCTP_INPUT_CB(skb)->chunk;
 	struct sctp_ep_common *rcvr = chunk->rcvr;
-	int ret;
 
-	ret = sk_add_backlog(sk, skb);
-	if (!ret) {
-		/* Hold the assoc/ep while hanging on the backlog queue.
-		 * This way, we know structures we need will not disappear
-		 * from us
-		 */
-		if (SCTP_EP_TYPE_ASSOCIATION == rcvr->type)
-			sctp_association_hold(sctp_assoc(rcvr));
-		else if (SCTP_EP_TYPE_SOCKET == rcvr->type)
-			sctp_endpoint_hold(sctp_ep(rcvr));
-		else
-			BUG();
-	}
-	return ret;
+	/* Hold the assoc/ep while hanging on the backlog queue.
+	 * This way, we know structures we need will not disappear from us
+	 */
+	if (SCTP_EP_TYPE_ASSOCIATION == rcvr->type)
+		sctp_association_hold(sctp_assoc(rcvr));
+	else if (SCTP_EP_TYPE_SOCKET == rcvr->type)
+		sctp_endpoint_hold(sctp_ep(rcvr));
+	else
+		BUG();
 
+	sk_add_backlog(sk, skb);
 }
 
 /* Handle icmp frag needed error. */
@@ -448,7 +435,7 @@ void sctp_icmp_proto_unreachable(struct sock *sk,
 						jiffies + (HZ/20)))
 				sctp_association_hold(asoc);
 		}
-			
+
 	} else {
 		if (timer_pending(&t->proto_unreach_timer) &&
 		    del_timer(&t->proto_unreach_timer))
@@ -510,7 +497,8 @@ struct sock *sctp_err_lookup(int family, struct sk_buff *skb,
 	 * discard the packet.
 	 */
 	if (vtag == 0) {
-		chunkhdr = (void *)sctphdr + sizeof(struct sctphdr);
+		chunkhdr = (struct sctp_init_chunk *)((void *)sctphdr
+				+ sizeof(struct sctphdr));
 		if (len < sizeof(struct sctphdr) + sizeof(sctp_chunkhdr_t)
 			  + sizeof(__be32) ||
 		    chunkhdr->chunk_hdr.type != SCTP_CID_INIT ||
@@ -564,7 +552,7 @@ void sctp_err_finish(struct sock *sk, struct sctp_association *asoc)
  */
 void sctp_v4_err(struct sk_buff *skb, __u32 info)
 {
-	const struct iphdr *iph = (const struct iphdr *)skb->data;
+	struct iphdr *iph = (struct iphdr *)skb->data;
 	const int ihlen = iph->ihl * 4;
 	const int type = icmp_hdr(skb)->type;
 	const int code = icmp_hdr(skb)->code;
@@ -660,6 +648,7 @@ static int sctp_rcv_ootb(struct sk_buff *skb)
 {
 	sctp_chunkhdr_t *ch;
 	__u8 *ch_end;
+	sctp_errhdr_t *err;
 
 	ch = (sctp_chunkhdr_t *) skb->data;
 
@@ -694,6 +683,20 @@ static int sctp_rcv_ootb(struct sk_buff *skb)
 		 */
 		if (SCTP_CID_INIT == ch->type && (void *)ch != skb->data)
 			goto discard;
+
+		/* RFC 8.4, 7) If the packet contains a "Stale cookie" ERROR
+		 * or a COOKIE ACK the SCTP Packet should be silently
+		 * discarded.
+		 */
+		if (SCTP_CID_COOKIE_ACK == ch->type)
+			goto discard;
+
+		if (SCTP_CID_ERROR == ch->type) {
+			sctp_walk_errors(err, ch) {
+				if (SCTP_ERROR_STALE_COOKIE == err->cause)
+					goto discard;
+			}
+		}
 
 		ch = (sctp_chunkhdr_t *) ch_end;
 	} while (ch_end < skb_tail_pointer(skb));
@@ -929,10 +932,13 @@ static struct sctp_association *__sctp_rcv_init_lookup(struct sk_buff *skb,
 	union sctp_addr addr;
 	union sctp_addr *paddr = &addr;
 	struct sctphdr *sh = sctp_hdr(skb);
+	sctp_chunkhdr_t *ch;
 	union sctp_params params;
 	sctp_init_chunk_t *init;
 	struct sctp_transport *transport;
 	struct sctp_af *af;
+
+	ch = (sctp_chunkhdr_t *) skb->data;
 
 	/*
 	 * This code will NOT touch anything inside the chunk--it is
@@ -998,7 +1004,7 @@ static struct sctp_association *__sctp_rcv_asconf_lookup(
 	/* Skip over the ADDIP header and find the Address parameter */
 	param = (union sctp_addr_param *)(asconf + 1);
 
-	af = sctp_get_af_specific(param_type2af(param->p.type));
+	af = sctp_get_af_specific(param_type2af(param->v4.param_hdr.type));
 	if (unlikely(!af))
 		return NULL;
 
@@ -1015,7 +1021,7 @@ static struct sctp_association *__sctp_rcv_asconf_lookup(
 *    association.
 *
 * This means that any chunks that can help us identify the association need
-* to be looked at to find this association.
+* to be looked at to find this assocation.
 */
 static struct sctp_association *__sctp_rcv_walk_lookup(struct sk_buff *skb,
 				      const union sctp_addr *laddr,

@@ -16,7 +16,6 @@
 
 #include <linux/module.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 #include <linux/hrtimer.h>
 #include <linux/err.h>
 #include <linux/gpio.h>
@@ -29,9 +28,9 @@ struct timed_gpio_data {
 	struct timed_output_dev dev;
 	struct hrtimer timer;
 	spinlock_t lock;
-	unsigned gpio;
-	int max_timeout;
-	u8 active_low;
+	unsigned 	gpio;
+	int 		max_timeout;
+	u8 		active_low;
 };
 
 static enum hrtimer_restart gpio_timer_func(struct hrtimer *timer)
@@ -85,7 +84,7 @@ static int timed_gpio_probe(struct platform_device *pdev)
 	struct timed_gpio_platform_data *pdata = pdev->dev.platform_data;
 	struct timed_gpio *cur_gpio;
 	struct timed_gpio_data *gpio_data, *gpio_dat;
-	int i, ret;
+	int i, j, ret = 0;
 
 	if (!pdata)
 		return -EBUSY;
@@ -107,13 +106,12 @@ static int timed_gpio_probe(struct platform_device *pdev)
 		gpio_dat->dev.name = cur_gpio->name;
 		gpio_dat->dev.get_time = gpio_get_time;
 		gpio_dat->dev.enable = gpio_enable;
-		ret = gpio_request(cur_gpio->gpio, cur_gpio->name);
-		if (ret < 0)
-			goto err_out;
 		ret = timed_output_dev_register(&gpio_dat->dev);
 		if (ret < 0) {
-			gpio_free(cur_gpio->gpio);
-			goto err_out;
+			for (j = 0; j < i; j++)
+				timed_output_dev_unregister(&gpio_data[i].dev);
+			kfree(gpio_data);
+			return ret;
 		}
 
 		gpio_dat->gpio = cur_gpio->gpio;
@@ -125,15 +123,6 @@ static int timed_gpio_probe(struct platform_device *pdev)
 	platform_set_drvdata(pdev, gpio_data);
 
 	return 0;
-
-err_out:
-	while (--i >= 0) {
-		timed_output_dev_unregister(&gpio_data[i].dev);
-		gpio_free(gpio_data[i].gpio);
-	}
-	kfree(gpio_data);
-
-	return ret;
 }
 
 static int timed_gpio_remove(struct platform_device *pdev)
@@ -142,10 +131,8 @@ static int timed_gpio_remove(struct platform_device *pdev)
 	struct timed_gpio_data *gpio_data = platform_get_drvdata(pdev);
 	int i;
 
-	for (i = 0; i < pdata->num_gpios; i++) {
+	for (i = 0; i < pdata->num_gpios; i++)
 		timed_output_dev_unregister(&gpio_data[i].dev);
-		gpio_free(gpio_data[i].gpio);
-	}
 
 	kfree(gpio_data);
 

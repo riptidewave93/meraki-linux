@@ -33,7 +33,6 @@
 
 #include <linux/mm.h>
 #include <linux/device.h>
-#include <linux/slab.h>
 #include <linux/sched.h>
 
 #include "ipath_kernel.h"
@@ -53,14 +52,15 @@ static void __ipath_release_user_pages(struct page **p, size_t num_pages,
 }
 
 /* call with current->mm->mmap_sem held */
-static int __ipath_get_user_pages(unsigned long start_page, size_t num_pages,
-				  struct page **p, struct vm_area_struct **vma)
+static int __get_user_pages(unsigned long start_page, size_t num_pages,
+			struct page **p, struct vm_area_struct **vma)
 {
 	unsigned long lock_limit;
 	size_t got;
 	int ret;
 
-	lock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
+	lock_limit = current->signal->rlim[RLIMIT_MEMLOCK].rlim_cur >>
+		PAGE_SHIFT;
 
 	if (num_pages > lock_limit) {
 		ret = -ENOMEM;
@@ -79,7 +79,7 @@ static int __ipath_get_user_pages(unsigned long start_page, size_t num_pages,
 			goto bail_release;
 	}
 
-	current->mm->pinned_vm += num_pages;
+	current->mm->locked_vm += num_pages;
 
 	ret = 0;
 	goto bail;
@@ -165,7 +165,7 @@ int ipath_get_user_pages(unsigned long start_page, size_t num_pages,
 
 	down_write(&current->mm->mmap_sem);
 
-	ret = __ipath_get_user_pages(start_page, num_pages, p, NULL);
+	ret = __get_user_pages(start_page, num_pages, p, NULL);
 
 	up_write(&current->mm->mmap_sem);
 
@@ -178,7 +178,7 @@ void ipath_release_user_pages(struct page **p, size_t num_pages)
 
 	__ipath_release_user_pages(p, num_pages, 1);
 
-	current->mm->pinned_vm -= num_pages;
+	current->mm->locked_vm -= num_pages;
 
 	up_write(&current->mm->mmap_sem);
 }
@@ -195,7 +195,7 @@ static void user_pages_account(struct work_struct *_work)
 		container_of(_work, struct ipath_user_pages_work, work);
 
 	down_write(&work->mm->mmap_sem);
-	work->mm->pinned_vm -= work->num_pages;
+	work->mm->locked_vm -= work->num_pages;
 	up_write(&work->mm->mmap_sem);
 	mmput(work->mm);
 	kfree(work);
@@ -220,7 +220,7 @@ void ipath_release_user_pages_on_close(struct page **p, size_t num_pages)
 	work->mm = mm;
 	work->num_pages = num_pages;
 
-	queue_work(ib_wq, &work->work);
+	schedule_work(&work->work);
 	return;
 
 bail_mm:

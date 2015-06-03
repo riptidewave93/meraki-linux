@@ -17,50 +17,44 @@
  */
 #include <linux/init.h>
 #include <linux/device.h>
+#include <linux/jiffies.h>
 #include <linux/smp.h>
 #include <linux/io.h>
 
-#include <asm/cacheflush.h>
-#include <asm/hardware/gic.h>
+#include <asm/localtimer.h>
 #include <asm/smp_scu.h>
-
 #include <mach/hardware.h>
-#include <mach/omap-secure.h>
 
-#include "iomap.h"
-#include "common.h"
-#include "clockdomain.h"
+/* Registers used for communicating startup information */
+#define OMAP4_AUXCOREBOOT_REG0		(OMAP44XX_VA_WKUPGEN_BASE + 0x800)
+#define OMAP4_AUXCOREBOOT_REG1		(OMAP44XX_VA_WKUPGEN_BASE + 0x804)
 
 /* SCU base address */
-static void __iomem *scu_base;
+static void __iomem *scu_base = OMAP44XX_VA_SCU_BASE;
+
+/*
+ * Use SCU config register to count number of cores
+ */
+static inline unsigned int get_core_count(void)
+{
+	if (scu_base)
+		return scu_get_core_count(scu_base);
+	return 1;
+}
 
 static DEFINE_SPINLOCK(boot_lock);
 
-void __iomem *omap4_get_scu_base(void)
+void __cpuinit platform_secondary_init(unsigned int cpu)
 {
-	return scu_base;
-}
-
-static void __cpuinit omap4_secondary_init(unsigned int cpu)
-{
-	/*
-	 * Configure ACTRL and enable NS SMP bit access on CPU1 on HS device.
-	 * OMAP44XX EMU/HS devices - CPU0 SMP bit access is enabled in PPA
-	 * init and for CPU1, a secure PPA API provided. CPU0 must be ON
-	 * while executing NS_SMP API on CPU1 and PPA version must be 1.4.0+.
-	 * OMAP443X GP devices- SMP bit isn't accessible.
-	 * OMAP446X GP devices - SMP bit access is enabled on both CPUs.
-	 */
-	if (cpu_is_omap443x() && (omap_type() != OMAP2_DEVICE_TYPE_GP))
-		omap_secure_dispatcher(OMAP4_PPA_CPU_ACTRL_SMP_INDEX,
-							4, 0, 0, 0, 0, 0);
+	trace_hardirqs_off();
 
 	/*
 	 * If any interrupts are already enabled for the primary
 	 * core (e.g. timer irq), then they will not have been enabled
 	 * for us: do so
 	 */
-	gic_secondary_init(0);
+
+	gic_cpu_init(0, OMAP2_IO_ADDRESS(OMAP44XX_GIC_CPU_BASE));
 
 	/*
 	 * Synchronise with the boot thread.
@@ -69,10 +63,10 @@ static void __cpuinit omap4_secondary_init(unsigned int cpu)
 	spin_unlock(&boot_lock);
 }
 
-static int __cpuinit omap4_boot_secondary(unsigned int cpu, struct task_struct *idle)
+int __cpuinit boot_secondary(unsigned int cpu, struct task_struct *idle)
 {
-	static struct clockdomain *cpu1_clkdm;
-	static bool booted;
+	unsigned long timeout;
+
 	/*
 	 * Set synchronisation state between this boot processor
 	 * and the secondary one
@@ -80,38 +74,17 @@ static int __cpuinit omap4_boot_secondary(unsigned int cpu, struct task_struct *
 	spin_lock(&boot_lock);
 
 	/*
-	 * Update the AuxCoreBoot0 with boot state for secondary core.
+	 * Update the AuxCoreBoot1 with boot state for secondary core.
 	 * omap_secondary_startup() routine will hold the secondary core till
 	 * the AuxCoreBoot1 register is updated with cpu state
 	 * A barrier is added to ensure that write buffer is drained
 	 */
-	omap_modify_auxcoreboot0(0x200, 0xfffffdff);
-	flush_cache_all();
+	__raw_writel(cpu, OMAP4_AUXCOREBOOT_REG1);
 	smp_wmb();
 
-	if (!cpu1_clkdm)
-		cpu1_clkdm = clkdm_lookup("mpu1_clkdm");
-
-	/*
-	 * The SGI(Software Generated Interrupts) are not wakeup capable
-	 * from low power states. This is known limitation on OMAP4 and
-	 * needs to be worked around by using software forced clockdomain
-	 * wake-up. To wakeup CPU1, CPU0 forces the CPU1 clockdomain to
-	 * software force wakeup. The clockdomain is then put back to
-	 * hardware supervised mode.
-	 * More details can be found in OMAP4430 TRM - Version J
-	 * Section :
-	 *	4.3.4.2 Power States of CPU0 and CPU1
-	 */
-	if (booted) {
-		clkdm_wakeup(cpu1_clkdm);
-		clkdm_allow_idle(cpu1_clkdm);
-	} else {
-		dsb_sev();
-		booted = true;
-	}
-
-	gic_raise_softirq(cpumask_of(cpu), 1);
+	timeout = jiffies + (1 * HZ);
+	while (time_before(jiffies, timeout))
+		;
 
 	/*
 	 * Now the secondary core is starting up let it run its
@@ -126,18 +99,18 @@ static void __init wakeup_secondary(void)
 {
 	/*
 	 * Write the address of secondary startup routine into the
-	 * AuxCoreBoot1 where ROM code will jump and start executing
+	 * AuxCoreBoot0 where ROM code will jump and start executing
 	 * on secondary core once out of WFE
 	 * A barrier is added to ensure that write buffer is drained
 	 */
-	omap_auxcoreboot_addr(virt_to_phys(omap_secondary_startup));
+	__raw_writel(virt_to_phys(omap_secondary_startup),	   \
+					OMAP4_AUXCOREBOOT_REG0);
 	smp_wmb();
 
 	/*
 	 * Send a 'sev' to wake the secondary core from WFE.
-	 * Drain the outstanding writes to memory
 	 */
-	dsb_sev();
+	set_event();
 	mb();
 }
 
@@ -145,49 +118,61 @@ static void __init wakeup_secondary(void)
  * Initialise the CPU possible map early - this describes the CPUs
  * which may be present or become present in the system.
  */
-static void __init omap4_smp_init_cpus(void)
+void __init smp_init_cpus(void)
 {
-	unsigned int i, ncores;
-
-	/*
-	 * Currently we can't call ioremap here because
-	 * SoC detection won't work until after init_early.
-	 */
-	scu_base =  OMAP2_L4_IO_ADDRESS(OMAP44XX_SCU_BASE);
-	BUG_ON(!scu_base);
-
-	ncores = scu_get_core_count(scu_base);
-
-	/* sanity check */
-	if (ncores > nr_cpu_ids) {
-		pr_warn("SMP: %u cores greater than maximum (%u), clipping\n",
-			ncores, nr_cpu_ids);
-		ncores = nr_cpu_ids;
-	}
+	unsigned int i, ncores = get_core_count();
 
 	for (i = 0; i < ncores; i++)
 		set_cpu_possible(i, true);
-
-	set_smp_cross_call(gic_raise_softirq);
 }
 
-static void __init omap4_smp_prepare_cpus(unsigned int max_cpus)
+void __init smp_prepare_cpus(unsigned int max_cpus)
 {
+	unsigned int ncores = get_core_count();
+	unsigned int cpu = smp_processor_id();
+	int i;
+
+	/* sanity check */
+	if (ncores == 0) {
+		printk(KERN_ERR
+		       "OMAP4: strange core count of 0? Default to 1\n");
+		ncores = 1;
+	}
+
+	if (ncores > NR_CPUS) {
+		printk(KERN_WARNING
+		       "OMAP4: no. of cores (%d) greater than configured "
+		       "maximum of %d - clipping\n",
+		       ncores, NR_CPUS);
+		ncores = NR_CPUS;
+	}
+	smp_store_cpu_info(cpu);
 
 	/*
-	 * Initialise the SCU and wake up the secondary core using
-	 * wakeup_secondary().
+	 * are we trying to boot more cores than exist?
 	 */
-	scu_enable(scu_base);
-	wakeup_secondary();
-}
+	if (max_cpus > ncores)
+		max_cpus = ncores;
 
-struct smp_operations omap4_smp_ops __initdata = {
-	.smp_init_cpus		= omap4_smp_init_cpus,
-	.smp_prepare_cpus	= omap4_smp_prepare_cpus,
-	.smp_secondary_init	= omap4_secondary_init,
-	.smp_boot_secondary	= omap4_boot_secondary,
-#ifdef CONFIG_HOTPLUG_CPU
-	.cpu_die		= omap4_cpu_die,
-#endif
-};
+	/*
+	 * Initialise the present map, which describes the set of CPUs
+	 * actually populated at the present time.
+	 */
+	for (i = 0; i < max_cpus; i++)
+		set_cpu_present(i, true);
+
+	if (max_cpus > 1) {
+		/*
+		 * Enable the local timer or broadcast device for the
+		 * boot CPU, but only if we have more than one CPU.
+		 */
+		percpu_timer_setup();
+
+		/*
+		 * Initialise the SCU and wake up the secondary core using
+		 * wakeup_secondary().
+		 */
+		scu_enable(scu_base);
+		wakeup_secondary();
+	}
+}

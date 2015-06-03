@@ -23,7 +23,6 @@
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
 #include <linux/mg_disk.h>
-#include <linux/slab.h>
 
 #define MG_RES_SEC (CONFIG_MG_DISK_RES << 1)
 
@@ -670,7 +669,7 @@ static void mg_request_poll(struct request_queue *q)
 				break;
 		}
 
-		if (unlikely(host->req->cmd_type != REQ_TYPE_FS)) {
+		if (unlikely(!blk_fs_request(host->req))) {
 			mg_end_request_cur(host, -EIO);
 			continue;
 		}
@@ -756,7 +755,7 @@ static void mg_request(struct request_queue *q)
 			continue;
 		}
 
-		if (unlikely(req->cmd_type != REQ_TYPE_FS)) {
+		if (unlikely(!blk_fs_request(req))) {
 			mg_end_request_cur(host, -EIO);
 			continue;
 		}
@@ -861,7 +860,7 @@ static int mg_probe(struct platform_device *plat_dev)
 		err = -EINVAL;
 		goto probe_err_2;
 	}
-	host->dev_base = ioremap(rsc->start, resource_size(rsc));
+	host->dev_base = ioremap(rsc->start , rsc->end + 1);
 	if (!host->dev_base) {
 		printk(KERN_ERR "%s:%d ioremap fail\n",
 				__func__, __LINE__);
@@ -974,13 +973,14 @@ static int mg_probe(struct platform_device *plat_dev)
 	host->breq->queuedata = host;
 
 	/* mflash is random device, thanx for the noop */
-	err = elevator_change(host->breq, "noop");
+	elevator_exit(host->breq->elevator);
+	err = elevator_init(host->breq, "noop");
 	if (err) {
 		printk(KERN_ERR "%s:%d (elevator_init) fail\n",
 				__func__, __LINE__);
 		goto probe_err_6;
 	}
-	blk_queue_max_hw_sectors(host->breq, MG_MAX_SECTS);
+	blk_queue_max_sectors(host->breq, MG_MAX_SECTS);
 	blk_queue_logical_block_size(host->breq, MG_SECTOR_SIZE);
 
 	init_timer(&host->timer);

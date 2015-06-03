@@ -170,7 +170,7 @@ aic7770_config(struct ahc_softc *ahc, struct aic7770_identity *entry, u_int io)
 	case 15:
 		break;
 	default:
-		printk("aic7770_config: invalid irq setting %d\n", intdef);
+		printf("aic7770_config: invalid irq setting %d\n", intdef);
 		return (ENXIO);
 	}
 
@@ -221,7 +221,7 @@ aic7770_config(struct ahc_softc *ahc, struct aic7770_identity *entry, u_int io)
 		break;
 	}
 	if (have_seeprom == 0) {
-		kfree(ahc->seep_config);
+		free(ahc->seep_config, M_DEVBUF);
 		ahc->seep_config = NULL;
 	}
 
@@ -293,7 +293,7 @@ aha2840_load_seeprom(struct ahc_softc *ahc)
 	sc = ahc->seep_config;
 
 	if (bootverbose)
-		printk("%s: Reading SEEPROM...", ahc_name(ahc));
+		printf("%s: Reading SEEPROM...", ahc_name(ahc));
 	have_seeprom = ahc_read_seeprom(&sd, (uint16_t *)sc,
 					/*start_addr*/0, sizeof(*sc)/2);
 
@@ -301,16 +301,16 @@ aha2840_load_seeprom(struct ahc_softc *ahc)
 
 		if (ahc_verify_cksum(sc) == 0) {
 			if(bootverbose)
-				printk ("checksum error\n");
+				printf ("checksum error\n");
 			have_seeprom = 0;
 		} else if (bootverbose) {
-			printk("done.\n");
+			printf("done.\n");
 		}
 	}
 
 	if (!have_seeprom) {
 		if (bootverbose)
-			printk("%s: No SEEPROM available\n", ahc_name(ahc));
+			printf("%s: No SEEPROM available\n", ahc_name(ahc));
 		ahc->flags |= AHC_USEDEFAULTS;
 	} else {
 		/*

@@ -9,7 +9,7 @@
   the Free Software Foundation; either version 2 of the License, or
   (at your option) any later version.
 
-  See http://blemings.org/hugh/keyspan.html for more information.
+  See http://misc.nu/hugh/keyspan.html for more information.
   
   Code in this driver inspired by and in a number of places taken
   from Brian Warner's original Keyspan-PDA driver.
@@ -58,9 +58,10 @@ static void keyspan_set_termios		(struct tty_struct *tty,
 					 struct ktermios *old);
 static void keyspan_break_ctl		(struct tty_struct *tty,
 					 int break_state);
-static int  keyspan_tiocmget		(struct tty_struct *tty);
+static int  keyspan_tiocmget		(struct tty_struct *tty,
+					 struct file *file);
 static int  keyspan_tiocmset		(struct tty_struct *tty,
-					 unsigned int set,
+					 struct file *file, unsigned int set,
 					 unsigned int clear);
 static int  keyspan_fake_startup	(struct usb_serial *serial);
 
@@ -455,7 +456,7 @@ static const struct keyspan_device_details *keyspan_devices[] = {
 	NULL,
 };
 
-static const struct usb_device_id keyspan_ids_combined[] = {
+static struct usb_device_id keyspan_ids_combined[] = {
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa18x_pre_product_id) },
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa19_pre_product_id) },
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa19w_pre_product_id) },
@@ -492,10 +493,11 @@ static struct usb_driver keyspan_driver = {
 	.probe =	usb_serial_probe,
 	.disconnect =	usb_serial_disconnect,
 	.id_table =	keyspan_ids_combined,
+	.no_dynamic_id = 	1,
 };
 
 /* usb_device_id table for the pre-firmware download keyspan devices */
-static const struct usb_device_id keyspan_pre_ids[] = {
+static struct usb_device_id keyspan_pre_ids[] = {
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa18x_pre_product_id) },
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa19_pre_product_id) },
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa19qi_pre_product_id) },
@@ -511,7 +513,7 @@ static const struct usb_device_id keyspan_pre_ids[] = {
 	{ } /* Terminating entry */
 };
 
-static const struct usb_device_id keyspan_1port_ids[] = {
+static struct usb_device_id keyspan_1port_ids[] = {
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa18x_product_id) },
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa19_product_id) },
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa19qi_product_id) },
@@ -522,7 +524,7 @@ static const struct usb_device_id keyspan_1port_ids[] = {
 	{ } /* Terminating entry */
 };
 
-static const struct usb_device_id keyspan_2port_ids[] = {
+static struct usb_device_id keyspan_2port_ids[] = {
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa28_product_id) },
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa28x_product_id) },
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa28xa_product_id) },
@@ -530,7 +532,7 @@ static const struct usb_device_id keyspan_2port_ids[] = {
 	{ } /* Terminating entry */
 };
 
-static const struct usb_device_id keyspan_4port_ids[] = {
+static struct usb_device_id keyspan_4port_ids[] = {
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa49w_product_id) },
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa49wlc_product_id)},
 	{ USB_DEVICE(KEYSPAN_VENDOR_ID, keyspan_usa49wg_product_id)},
@@ -613,11 +615,6 @@ static struct usb_serial_driver keyspan_4port_device = {
 	.attach			= keyspan_startup,
 	.disconnect		= keyspan_disconnect,
 	.release		= keyspan_release,
-};
-
-static struct usb_serial_driver * const serial_drivers[] = {
-	&keyspan_pre_device, &keyspan_1port_device,
-	&keyspan_2port_device, &keyspan_4port_device, NULL
 };
 
 #endif

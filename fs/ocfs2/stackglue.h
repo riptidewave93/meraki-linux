@@ -56,6 +56,17 @@ struct ocfs2_protocol_version {
 };
 
 /*
+ * The ocfs2_locking_protocol defines the handlers called on ocfs2's behalf.
+ */
+struct ocfs2_locking_protocol {
+	struct ocfs2_protocol_version lp_max_version;
+	void (*lp_lock_ast)(void *astarg);
+	void (*lp_blocking_ast)(void *astarg, int level);
+	void (*lp_unlock_ast)(void *astarg, int error);
+};
+
+
+/*
  * The dlm_lockstatus struct includes lvb space, but the dlm_lksb struct only
  * has a pointer to separately allocated lvb space.  This struct exists only to
  * include in the lksb union to make space for a combined dlm_lksb and lvb.
@@ -70,26 +81,11 @@ struct fsdlm_lksb_plus_lvb {
  * size of the union is known.  Lock status structures are embedded in
  * ocfs2 inodes.
  */
-struct ocfs2_cluster_connection;
-struct ocfs2_dlm_lksb {
-	 union {
-		 struct dlm_lockstatus lksb_o2dlm;
-		 struct dlm_lksb lksb_fsdlm;
-		 struct fsdlm_lksb_plus_lvb padding;
-	 };
-	 struct ocfs2_cluster_connection *lksb_conn;
+union ocfs2_dlm_lksb {
+	struct dlm_lockstatus lksb_o2dlm;
+	struct dlm_lksb lksb_fsdlm;
+	struct fsdlm_lksb_plus_lvb padding;
 };
-
-/*
- * The ocfs2_locking_protocol defines the handlers called on ocfs2's behalf.
- */
-struct ocfs2_locking_protocol {
-	struct ocfs2_protocol_version lp_max_version;
-	void (*lp_lock_ast)(struct ocfs2_dlm_lksb *lksb);
-	void (*lp_blocking_ast)(struct ocfs2_dlm_lksb *lksb, int level);
-	void (*lp_unlock_ast)(struct ocfs2_dlm_lksb *lksb, int error);
-};
-
 
 /*
  * A cluster connection.  Mostly opaque to ocfs2, the connection holds
@@ -100,7 +96,6 @@ struct ocfs2_cluster_connection {
 	char cc_name[GROUP_NAME_MAX];
 	int cc_namelen;
 	struct ocfs2_protocol_version cc_version;
-	struct ocfs2_locking_protocol *cc_proto;
 	void (*cc_recovery_handler)(int node_num, void *recovery_data);
 	void *cc_recovery_data;
 	void *cc_lockspace;
@@ -126,7 +121,7 @@ struct ocfs2_stack_operations {
 	 *
 	 * ->connect() must not return until it is guaranteed that
 	 *
-	 *  - Node down notifications for the filesystem will be received
+	 *  - Node down notifications for the filesystem will be recieved
 	 *    and passed to conn->cc_recovery_handler().
 	 *  - Locking requests for the filesystem will be processed.
 	 */
@@ -160,29 +155,27 @@ struct ocfs2_stack_operations {
 	 *
 	 * ast and bast functions are not part of the call because the
 	 * stack will likely want to wrap ast and bast calls before passing
-	 * them to stack->sp_proto.  There is no astarg.  The lksb will
-	 * be passed back to the ast and bast functions.  The caller can
-	 * use this to find their object.
+	 * them to stack->sp_proto.
 	 */
 	int (*dlm_lock)(struct ocfs2_cluster_connection *conn,
 			int mode,
-			struct ocfs2_dlm_lksb *lksb,
+			union ocfs2_dlm_lksb *lksb,
 			u32 flags,
 			void *name,
-			unsigned int namelen);
+			unsigned int namelen,
+			void *astarg);
 
 	/*
 	 * Call the underlying dlm unlock function.  The ->dlm_unlock()
 	 * function should convert the flags as appropriate.
 	 *
 	 * The unlock ast is not passed, as the stack will want to wrap
-	 * it before calling stack->sp_proto->lp_unlock_ast().  There is
-	 * no astarg.  The lksb will be passed back to the unlock ast
-	 * function.  The caller can use this to find their object.
+	 * it before calling stack->sp_proto->lp_unlock_ast().
 	 */
 	int (*dlm_unlock)(struct ocfs2_cluster_connection *conn,
-			  struct ocfs2_dlm_lksb *lksb,
-			  u32 flags);
+			  union ocfs2_dlm_lksb *lksb,
+			  u32 flags,
+			  void *astarg);
 
 	/*
 	 * Return the status of the current lock status block.  The fs
@@ -190,17 +183,17 @@ struct ocfs2_stack_operations {
 	 * callback pulls out the stack-specific lksb, converts the status
 	 * to a proper errno, and returns it.
 	 */
-	int (*lock_status)(struct ocfs2_dlm_lksb *lksb);
+	int (*lock_status)(union ocfs2_dlm_lksb *lksb);
 
 	/*
 	 * Return non-zero if the LVB is valid.
 	 */
-	int (*lvb_valid)(struct ocfs2_dlm_lksb *lksb);
+	int (*lvb_valid)(union ocfs2_dlm_lksb *lksb);
 
 	/*
 	 * Pull the lvb pointer off of the stack-specific lksb.
 	 */
-	void *(*lock_lvb)(struct ocfs2_dlm_lksb *lksb);
+	void *(*lock_lvb)(union ocfs2_dlm_lksb *lksb);
 
 	/*
 	 * Cluster-aware posix locks
@@ -217,7 +210,7 @@ struct ocfs2_stack_operations {
 	 * This is an optoinal debugging hook.  If provided, the
 	 * stack can dump debugging information about this lock.
 	 */
-	void (*dump_lksb)(struct ocfs2_dlm_lksb *lksb);
+	void (*dump_lksb)(union ocfs2_dlm_lksb *lksb);
 };
 
 /*
@@ -233,7 +226,7 @@ struct ocfs2_stack_plugin {
 	/* These are managed by the stackglue code. */
 	struct list_head sp_list;
 	unsigned int sp_count;
-	struct ocfs2_protocol_version sp_max_proto;
+	struct ocfs2_locking_protocol *sp_proto;
 };
 
 
@@ -241,22 +234,10 @@ struct ocfs2_stack_plugin {
 int ocfs2_cluster_connect(const char *stack_name,
 			  const char *group,
 			  int grouplen,
-			  struct ocfs2_locking_protocol *lproto,
 			  void (*recovery_handler)(int node_num,
 						   void *recovery_data),
 			  void *recovery_data,
 			  struct ocfs2_cluster_connection **conn);
-/*
- * Used by callers that don't store their stack name.  They must ensure
- * all nodes have the same stack.
- */
-int ocfs2_cluster_connect_agnostic(const char *group,
-				   int grouplen,
-				   struct ocfs2_locking_protocol *lproto,
-				   void (*recovery_handler)(int node_num,
-							    void *recovery_data),
-				   void *recovery_data,
-				   struct ocfs2_cluster_connection **conn);
 int ocfs2_cluster_disconnect(struct ocfs2_cluster_connection *conn,
 			     int hangup_pending);
 void ocfs2_cluster_hangup(const char *group, int grouplen);
@@ -265,24 +246,26 @@ int ocfs2_cluster_this_node(unsigned int *node);
 struct ocfs2_lock_res;
 int ocfs2_dlm_lock(struct ocfs2_cluster_connection *conn,
 		   int mode,
-		   struct ocfs2_dlm_lksb *lksb,
+		   union ocfs2_dlm_lksb *lksb,
 		   u32 flags,
 		   void *name,
-		   unsigned int namelen);
+		   unsigned int namelen,
+		   struct ocfs2_lock_res *astarg);
 int ocfs2_dlm_unlock(struct ocfs2_cluster_connection *conn,
-		     struct ocfs2_dlm_lksb *lksb,
-		     u32 flags);
+		     union ocfs2_dlm_lksb *lksb,
+		     u32 flags,
+		     struct ocfs2_lock_res *astarg);
 
-int ocfs2_dlm_lock_status(struct ocfs2_dlm_lksb *lksb);
-int ocfs2_dlm_lvb_valid(struct ocfs2_dlm_lksb *lksb);
-void *ocfs2_dlm_lvb(struct ocfs2_dlm_lksb *lksb);
-void ocfs2_dlm_dump_lksb(struct ocfs2_dlm_lksb *lksb);
+int ocfs2_dlm_lock_status(union ocfs2_dlm_lksb *lksb);
+int ocfs2_dlm_lvb_valid(union ocfs2_dlm_lksb *lksb);
+void *ocfs2_dlm_lvb(union ocfs2_dlm_lksb *lksb);
+void ocfs2_dlm_dump_lksb(union ocfs2_dlm_lksb *lksb);
 
 int ocfs2_stack_supports_plocks(void);
 int ocfs2_plock(struct ocfs2_cluster_connection *conn, u64 ino,
 		struct file *file, int cmd, struct file_lock *fl);
 
-void ocfs2_stack_glue_set_max_proto_version(struct ocfs2_protocol_version *max_proto);
+void ocfs2_stack_glue_set_locking_protocol(struct ocfs2_locking_protocol *proto);
 
 
 /* Used by stack plugins */

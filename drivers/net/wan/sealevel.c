@@ -12,8 +12,6 @@
  *
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
@@ -25,7 +23,6 @@
 #include <linux/hdlc.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <net/arp.h>
 
 #include <asm/irq.h>
@@ -87,7 +84,8 @@ static int sealevel_open(struct net_device *d)
 	 *	Link layer up.
 	 */
 
-	switch (unit) {
+	switch (unit)
+	{
 		case 0:
 			err = z8530_sync_dma_open(d, slvl->chan);
 			break;
@@ -135,7 +133,8 @@ static int sealevel_close(struct net_device *d)
 	hdlc_close(d);
 	netif_stop_queue(d);
 
-	switch (unit) {
+	switch (unit)
+	{
 		case 0:
 			z8530_sync_dma_close(d, slvl->chan);
 			break;
@@ -192,7 +191,7 @@ static int slvl_setup(struct slvl_device *sv, int iobase, int irq)
 	dev->irq = irq;
 
 	if (register_hdlc_device(dev)) {
-		pr_err("unable to register HDLC device\n");
+		printk(KERN_ERR "sealevel: unable to register HDLC device\n");
 		free_netdev(dev);
 		return -1;
 	}
@@ -217,7 +216,8 @@ static __init struct slvl_board *slvl_init(int iobase, int irq,
 	 */
 
 	if (!request_region(iobase, 8, "Sealevel 4021")) {
-		pr_warn("I/O 0x%X already in use\n", iobase);
+		printk(KERN_WARNING "sealevel: I/O 0x%X already in use.\n",
+		       iobase);
 		return NULL;
 	}
 
@@ -266,9 +266,9 @@ static __init struct slvl_board *slvl_init(int iobase, int irq,
 	/* We want a fast IRQ for this device. Actually we'd like an even faster
 	   IRQ ;) - This is one driver RtLinux is made for */
 
-	if (request_irq(irq, z8530_interrupt, IRQF_DISABLED,
+	if (request_irq(irq, &z8530_interrupt, IRQF_DISABLED,
 			"SeaLevel", dev) < 0) {
-		pr_warn("IRQ %d already in use\n", irq);
+		printk(KERN_WARNING "sealevel: IRQ %d already in use.\n", irq);
 		goto err_request_irq;
 	}
 
@@ -293,7 +293,7 @@ static __init struct slvl_board *slvl_init(int iobase, int irq,
 	 */
 
 	if (z8530_init(dev) != 0) {
-		pr_err("Z8530 series device not found\n");
+		printk(KERN_ERR "Z8530 series device not found.\n");
 		enable_irq(irq);
 		goto free_hw;
 	}
@@ -342,7 +342,8 @@ static void __exit slvl_shutdown(struct slvl_board *b)
 
 	z8530_shutdown(&b->board);
 
-	for (u = 0; u < 2; u++) {
+	for (u = 0; u < 2; u++)
+	{
 		struct net_device *d = b->dev[u].chan->netdevice;
 		unregister_hdlc_device(d);
 		free_netdev(d);
@@ -362,7 +363,7 @@ static int io=0x238;
 static int txdma=1;
 static int rxdma=3;
 static int irq=5;
-static bool slow=false;
+static int slow=0;
 
 module_param(io, int, 0);
 MODULE_PARM_DESC(io, "The I/O base of the Sealevel card");
@@ -390,7 +391,7 @@ static int __init slvl_init_module(void)
 
 static void __exit slvl_cleanup_module(void)
 {
-	if (slvl_unit)
+	if(slvl_unit)
 		slvl_shutdown(slvl_unit);
 }
 

@@ -30,7 +30,7 @@
   changelog for the 1.x series, David?
 
 2.00  Dec  2, 1997 -- Erik Andersen <andersee@debian.org>
-  -- New maintainer! As David A. van Leeuwen has been too busy to actively
+  -- New maintainer! As David A. van Leeuwen has been too busy to activly
   maintain and improve this driver, I am now carrying on the torch. If
   you have a problem with this driver, please feel free to contact me.
 
@@ -242,8 +242,6 @@
 
 -------------------------------------------------------------------------*/
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #define REVISION "Revision: 3.20"
 #define VERSION "Id: cdrom.c 3.20 2003/12/17"
 
@@ -267,6 +265,7 @@
 
 #include <linux/module.h>
 #include <linux/fs.h>
+#include <linux/buffer_head.h>
 #include <linux/major.h>
 #include <linux/types.h>
 #include <linux/errno.h>
@@ -285,15 +284,17 @@
 #include <asm/uaccess.h>
 
 /* used to tell the module to turn on full debugging messages */
-static bool debug;
+static int debug;
+/* used to keep tray locked at all times */
+static int keeplocked;
 /* default compatibility mode */
-static bool autoclose=1;
-static bool autoeject;
-static bool lockdoor = 1;
+static int autoclose=1;
+static int autoeject;
+static int lockdoor = 1;
 /* will we ever get to use this... sigh. */
-static bool check_media_type;
+static int check_media_type;
 /* automatically restart mrw format */
-static bool mrw_format_restart = 1;
+static int mrw_format_restart = 1;
 module_param(debug, bool, 0);
 module_param(autoclose, bool, 0);
 module_param(autoeject, bool, 0);
@@ -313,17 +314,11 @@ static const char *mrw_format_status[] = {
 static const char *mrw_address_space[] = { "DMA", "GAA" };
 
 #if (ERRLOGMASK!=CD_NOTHING)
-#define cdinfo(type, fmt, args...)			\
-do {							\
-	if ((ERRLOGMASK & type) || debug == 1)		\
-		pr_info(fmt, ##args);			\
-} while (0)
+#define cdinfo(type, fmt, args...) \
+        if ((ERRLOGMASK & type) || debug==1 ) \
+            printk(KERN_INFO "cdrom: " fmt, ## args)
 #else
-#define cdinfo(type, fmt, args...)			\
-do {							\
-	if (0 && (ERRLOGMASK & type) || debug == 1)	\
-		pr_info(fmt, ##args);			\
-} while (0)
+#define cdinfo(type, fmt, args...) 
 #endif
 
 /* These are used to simplify getting data in from and back to user land */
@@ -400,14 +395,13 @@ int register_cdrom(struct cdrom_device_info *cdi)
 	if (cdo->open == NULL || cdo->release == NULL)
 		return -EINVAL;
 	if (!banner_printed) {
-		pr_info("Uniform CD-ROM driver " REVISION "\n");
+		printk(KERN_INFO "Uniform CD-ROM driver " REVISION "\n");
 		banner_printed = 1;
 		cdrom_sysctl_register();
 	}
 
 	ENSURE(drive_status, CDC_DRIVE_STATUS );
-	if (cdo->check_events == NULL && cdo->media_changed == NULL)
-		*change_capability = ~(CDC_MEDIA_CHANGED | CDC_SELECT_DISC);
+	ENSURE(media_changed, CDC_MEDIA_CHANGED);
 	ENSURE(tray_move, CDC_CLOSE_TRAY | CDC_OPEN_TRAY);
 	ENSURE(lock_door, CDC_LOCK);
 	ENSURE(select_speed, CDC_SELECT_SPEED);
@@ -552,7 +546,7 @@ static int cdrom_mrw_bgformat(struct cdrom_device_info *cdi, int cont)
 	unsigned char buffer[12];
 	int ret;
 
-	pr_info("%sstarting format\n", cont ? "Re" : "");
+	printk(KERN_INFO "cdrom: %sstarting format\n", cont ? "Re" : "");
 
 	/*
 	 * FmtData bit set (bit 4), format type is 1
@@ -582,7 +576,7 @@ static int cdrom_mrw_bgformat(struct cdrom_device_info *cdi, int cont)
 
 	ret = cdi->ops->generic_packet(cdi, &cgc);
 	if (ret)
-		pr_info("bgformat failed\n");
+		printk(KERN_INFO "cdrom: bgformat failed\n");
 
 	return ret;
 }
@@ -628,7 +622,8 @@ static int cdrom_mrw_exit(struct cdrom_device_info *cdi)
 
 	ret = 0;
 	if (di.mrw_status == CDM_MRW_BGFORMAT_ACTIVE) {
-		pr_info("issuing MRW background format suspend\n");
+		printk(KERN_INFO "cdrom: issuing MRW back ground "
+				"format suspend\n");
 		ret = cdrom_mrw_bgformat_susp(cdi, 0);
 	}
 
@@ -663,8 +658,7 @@ static int cdrom_mrw_set_lba_space(struct cdrom_device_info *cdi, int space)
 	if ((ret = cdrom_mode_select(cdi, &cgc)))
 		return ret;
 
-	pr_info("%s: mrw address space %s selected\n",
-		cdi->name, mrw_address_space[space]);
+	printk(KERN_INFO "cdrom: %s: mrw address space %s selected\n", cdi->name, mrw_address_space[space]);
 	return 0;
 }
 
@@ -768,7 +762,7 @@ static int cdrom_mrw_open_write(struct cdrom_device_info *cdi)
 	 * always reset to DMA lba space on open
 	 */
 	if (cdrom_mrw_set_lba_space(cdi, MRW_LBA_DMA)) {
-		pr_err("failed setting lba address space\n");
+		printk(KERN_ERR "cdrom: failed setting lba address space\n");
 		return 1;
 	}
 
@@ -787,7 +781,8 @@ static int cdrom_mrw_open_write(struct cdrom_device_info *cdi)
 	 * 3	-	MRW formatting complete
 	 */
 	ret = 0;
-	pr_info("open: mrw_status '%s'\n", mrw_format_status[di.mrw_status]);
+	printk(KERN_INFO "cdrom open: mrw_status '%s'\n",
+			mrw_format_status[di.mrw_status]);
 	if (!di.mrw_status)
 		ret = 1;
 	else if (di.mrw_status == CDM_MRW_BGFORMAT_INACTIVE &&
@@ -937,7 +932,8 @@ static void cdrom_dvd_rw_close_write(struct cdrom_device_info *cdi)
 		return;
 	}
 
-	pr_info("%s: dirty DVD+RW media, \"finalizing\"\n", cdi->name);
+	printk(KERN_INFO "cdrom: %s: dirty DVD+RW media, \"finalizing\"\n",
+	       cdi->name);
 
 	init_cdrom_command(&cgc, NULL, 0, CGC_DATA_NONE);
 	cgc.cmd[0] = GPCMD_FLUSH_CACHE;
@@ -983,9 +979,6 @@ int cdrom_open(struct cdrom_device_info *cdi, struct block_device *bdev, fmode_t
 
 	cdinfo(CD_OPEN, "entering cdrom_open\n"); 
 
-	/* open is event synchronization point, check events first */
-	check_disk_change(bdev);
-
 	/* if this was a O_NONBLOCK open and we should honor the flags,
 	 * do a quick open without drive/disc integrity checks. */
 	cdi->use_count++;
@@ -1012,6 +1005,9 @@ int cdrom_open(struct cdrom_device_info *cdi, struct block_device *bdev, fmode_t
 
 	cdinfo(CD_OPEN, "Use count for \"/dev/%s\" now %d\n",
 			cdi->name, cdi->use_count);
+	/* Do this on open.  Don't wait for mount, because they might
+	    not be mounting, but opening with O_NONBLOCK */
+	check_disk_change(bdev);
 	return 0;
 err_release:
 	if (CDROM_CAN(CDC_LOCK) && cdi->options & CDO_LOCK) {
@@ -1202,7 +1198,7 @@ void cdrom_release(struct cdrom_device_info *cdi, fmode_t mode)
 		cdinfo(CD_CLOSE, "Use count for \"/dev/%s\" now zero\n", cdi->name);
 		cdrom_dvd_rw_close_write(cdi);
 
-		if ((cdo->capability & CDC_LOCK) && !cdi->keeplocked) {
+		if ((cdo->capability & CDC_LOCK) && !keeplocked) {
 			cdinfo(CD_CLOSE, "Unlocking door!\n");
 			cdo->lock_door(cdi, 0);
 		}
@@ -1346,10 +1342,7 @@ static int cdrom_select_disc(struct cdrom_device_info *cdi, int slot)
 	if (!CDROM_CAN(CDC_SELECT_DISC))
 		return -EDRIVE_CANT_DO_THIS;
 
-	if (cdi->ops->check_events)
-		cdi->ops->check_events(cdi, 0, slot);
-	else
-		cdi->ops->media_changed(cdi, slot);
+	(void) cdi->ops->media_changed(cdi, slot);
 
 	if (slot == CDSL_NONE) {
 		/* set media changed bits, on both queues */
@@ -1369,7 +1362,7 @@ static int cdrom_select_disc(struct cdrom_device_info *cdi, int slot)
 	curslot = info->hdr.curslot;
 	kfree(info);
 
-	if (cdi->use_count > 1 || cdi->keeplocked) {
+	if (cdi->use_count > 1 || keeplocked) {
 		if (slot == CDSL_CURRENT) {
 	    		return curslot;
 		} else {
@@ -1393,42 +1386,6 @@ static int cdrom_select_disc(struct cdrom_device_info *cdi, int slot)
 	return slot;
 }
 
-/*
- * As cdrom implements an extra ioctl consumer for media changed
- * event, it needs to buffer ->check_events() output, such that event
- * is not lost for both the usual VFS and ioctl paths.
- * cdi->{vfs|ioctl}_events are used to buffer pending events for each
- * path.
- *
- * XXX: Locking is non-existent.  cdi->ops->check_events() can be
- * called in parallel and buffering fields are accessed without any
- * exclusion.  The original media_changed code had the same problem.
- * It might be better to simply deprecate CDROM_MEDIA_CHANGED ioctl
- * and remove this cruft altogether.  It doesn't have much usefulness
- * at this point.
- */
-static void cdrom_update_events(struct cdrom_device_info *cdi,
-				unsigned int clearing)
-{
-	unsigned int events;
-
-	events = cdi->ops->check_events(cdi, clearing, CDSL_CURRENT);
-	cdi->vfs_events |= events;
-	cdi->ioctl_events |= events;
-}
-
-unsigned int cdrom_check_events(struct cdrom_device_info *cdi,
-				unsigned int clearing)
-{
-	unsigned int events;
-
-	cdrom_update_events(cdi, clearing);
-	events = cdi->vfs_events;
-	cdi->vfs_events = 0;
-	return events;
-}
-EXPORT_SYMBOL(cdrom_check_events);
-
 /* We want to make media_changed accessible to the user through an
  * ioctl. The main problem now is that we must double-buffer the
  * low-level implementation, to assure that the VFS and the user both
@@ -1440,26 +1397,15 @@ int media_changed(struct cdrom_device_info *cdi, int queue)
 {
 	unsigned int mask = (1 << (queue & 1));
 	int ret = !!(cdi->mc_flags & mask);
-	bool changed;
 
 	if (!CDROM_CAN(CDC_MEDIA_CHANGED))
-		return ret;
-
+	    return ret;
 	/* changed since last call? */
-	if (cdi->ops->check_events) {
-		BUG_ON(!queue);	/* shouldn't be called from VFS path */
-		cdrom_update_events(cdi, DISK_EVENT_MEDIA_CHANGE);
-		changed = cdi->ioctl_events & DISK_EVENT_MEDIA_CHANGE;
-		cdi->ioctl_events = 0;
-	} else
-		changed = cdi->ops->media_changed(cdi, CDSL_CURRENT);
-
-	if (changed) {
+	if (cdi->ops->media_changed(cdi, CDSL_CURRENT)) {
 		cdi->mc_flags = 0x3;    /* set bit on both queues */
 		ret |= 1;
 		cdi->media_written = 0;
 	}
-
 	cdi->mc_flags &= ~mask;         /* clear bit */
 	return ret;
 }
@@ -1926,17 +1872,11 @@ static int dvd_read_manufact(struct cdrom_device_info *cdi, dvd_struct *s,
 		goto out;
 
 	s->manufact.len = buf[0] << 8 | buf[1];
-	if (s->manufact.len < 0) {
+	if (s->manufact.len < 0 || s->manufact.len > 2048) {
 		cdinfo(CD_WARNING, "Received invalid manufacture info length"
 				   " (%d)\n", s->manufact.len);
 		ret = -EIO;
 	} else {
-		if (s->manufact.len > 2048) {
-			cdinfo(CD_WARNING, "Received invalid manufacture info "
-					"length (%d): truncating to 2048\n",
-					s->manufact.len);
-			s->manufact.len = 2048;
-		}
 		memcpy(s->manufact.value, &buf[4], s->manufact.len);
 	}
 
@@ -2230,7 +2170,7 @@ retry:
 	 * frame dma, so drop to single frame dma if we need to
 	 */
 	if (cdi->cdda_method == CDDA_BPC_FULL && nframes > 1) {
-		pr_info("dropping to single frame dma\n");
+		printk("cdrom: dropping to single frame dma\n");
 		cdi->cdda_method = CDDA_BPC_SINGLE;
 		goto retry;
 	}
@@ -2243,7 +2183,7 @@ retry:
 	if (cdi->last_sense != 0x04 && cdi->last_sense != 0x0b)
 		return ret;
 
-	pr_info("dropping to old style cdda (sense=%x)\n", cdi->last_sense);
+	printk("cdrom: dropping to old style cdda (sense=%x)\n", cdi->last_sense);
 	cdi->cdda_method = CDDA_OLD;
 	return cdrom_read_cdda_old(cdi, ubuf, lba, nframes);	
 }
@@ -2287,7 +2227,7 @@ static int cdrom_ioctl_eject(struct cdrom_device_info *cdi)
 
 	if (!CDROM_CAN(CDC_OPEN_TRAY))
 		return -ENOSYS;
-	if (cdi->use_count != 1 || cdi->keeplocked)
+	if (cdi->use_count != 1 || keeplocked)
 		return -EBUSY;
 	if (CDROM_CAN(CDC_LOCK)) {
 		int ret = cdi->ops->lock_door(cdi, 0);
@@ -2314,7 +2254,7 @@ static int cdrom_ioctl_eject_sw(struct cdrom_device_info *cdi,
 
 	if (!CDROM_CAN(CDC_OPEN_TRAY))
 		return -ENOSYS;
-	if (cdi->keeplocked)
+	if (keeplocked)
 		return -EBUSY;
 
 	cdi->options &= ~(CDO_AUTO_CLOSE | CDO_AUTO_EJECT);
@@ -2445,7 +2385,7 @@ static int cdrom_ioctl_lock_door(struct cdrom_device_info *cdi,
 	if (!CDROM_CAN(CDC_LOCK))
 		return -EDRIVE_CANT_DO_THIS;
 
-	cdi->keeplocked = arg ? 1 : 0;
+	keeplocked = arg ? 1 : 0;
 
 	/*
 	 * Don't unlock the door on multiple opens by default, but allow
@@ -2517,7 +2457,7 @@ static int cdrom_ioctl_drive_status(struct cdrom_device_info *cdi,
 /*
  * Ok, this is where problems start.  The current interface for the
  * CDROM_DISC_STATUS ioctl is flawed.  It makes the false assumption that
- * CDs are all CDS_DATA_1 or all CDS_AUDIO, etc.  Unfortunately, while this
+ * CDs are all CDS_DATA_1 or all CDS_AUDIO, etc.  Unfortunatly, while this
  * is often the case, it is also very common for CDs to have some tracks
  * with data, and some tracks with audio.  Just because I feel like it,
  * I declare the following to be the best way to cope.  If the CD has ANY
@@ -3454,7 +3394,7 @@ static int cdrom_print_info(const char *header, int val, char *info,
 					"\t%d", CDROM_CAN(val) != 0);
 			break;
 		default:
-			pr_info("invalid option%d\n", option);
+			printk(KERN_INFO "cdrom: invalid option%d\n", option);
 			return 1;
 		}
 		if (!ret)
@@ -3544,7 +3484,7 @@ doit:
 	mutex_unlock(&cdrom_mutex);
 	return proc_dostring(ctl, write, buffer, lenp, ppos);
 done:
-	pr_info("info buffer too small\n");
+	printk(KERN_INFO "cdrom: info buffer too small\n");
 	goto doit;
 }
 
@@ -3610,65 +3550,67 @@ static ctl_table cdrom_table[] = {
 		.data		= &cdrom_sysctl_settings.info, 
 		.maxlen		= CDROM_STR_SIZE,
 		.mode		= 0444,
-		.proc_handler	= cdrom_sysctl_info,
+		.proc_handler	= &cdrom_sysctl_info,
 	},
 	{
 		.procname	= "autoclose",
 		.data		= &cdrom_sysctl_settings.autoclose,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= cdrom_sysctl_handler,
+		.proc_handler	= &cdrom_sysctl_handler,
 	},
 	{
 		.procname	= "autoeject",
 		.data		= &cdrom_sysctl_settings.autoeject,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= cdrom_sysctl_handler,
+		.proc_handler	= &cdrom_sysctl_handler,
 	},
 	{
 		.procname	= "debug",
 		.data		= &cdrom_sysctl_settings.debug,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= cdrom_sysctl_handler,
+		.proc_handler	= &cdrom_sysctl_handler,
 	},
 	{
 		.procname	= "lock",
 		.data		= &cdrom_sysctl_settings.lock,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= cdrom_sysctl_handler,
+		.proc_handler	= &cdrom_sysctl_handler,
 	},
 	{
 		.procname	= "check_media",
 		.data		= &cdrom_sysctl_settings.check,
 		.maxlen		= sizeof(int),
 		.mode		= 0644,
-		.proc_handler	= cdrom_sysctl_handler
+		.proc_handler	= &cdrom_sysctl_handler
 	},
-	{ }
+	{ .ctl_name = 0 }
 };
 
 static ctl_table cdrom_cdrom_table[] = {
 	{
+		.ctl_name	= DEV_CDROM,
 		.procname	= "cdrom",
 		.maxlen		= 0,
 		.mode		= 0555,
 		.child		= cdrom_table,
 	},
-	{ }
+	{ .ctl_name = 0 }
 };
 
 /* Make sure that /proc/sys/dev is there */
 static ctl_table cdrom_root_table[] = {
 	{
+		.ctl_name	= CTL_DEV,
 		.procname	= "dev",
 		.maxlen		= 0,
 		.mode		= 0555,
 		.child		= cdrom_cdrom_table,
 	},
-	{ }
+	{ .ctl_name = 0 }
 };
 static struct ctl_table_header *cdrom_sysctl_header;
 
@@ -3718,7 +3660,7 @@ static int __init cdrom_init(void)
 
 static void __exit cdrom_exit(void)
 {
-	pr_info("Uniform CD-ROM driver unloaded\n");
+	printk(KERN_INFO "Uniform CD-ROM driver unloaded\n");
 	cdrom_sysctl_unregister();
 }
 

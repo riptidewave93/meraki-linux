@@ -105,29 +105,46 @@ typedef enum tagCMD_STATE {
     WLAN_CMD_IDLE
 } CMD_STATE, *PCMD_STATE;
 
+
+
 /*---------------------  Export Classes  ----------------------------*/
 
 /*---------------------  Export Variables  --------------------------*/
 
+
 /*---------------------  Export Types  ------------------------------*/
 
+
 /*---------------------  Export Functions  --------------------------*/
+VOID
+vResetCommandTimer(
+    IN HANDLE      hDeviceContext
+    );
 
-void vResetCommandTimer(void *hDeviceContext);
+BOOL
+bScheduleCommand(
+    IN HANDLE      hDeviceContext,
+    IN CMD_CODE    eCommand,
+    IN PBYTE       pbyItem0
+    );
 
-BOOL bScheduleCommand(void *hDeviceContext,
-		      CMD_CODE eCommand,
-		      PBYTE pbyItem0);
-
-void vRunCommand(void *hDeviceContext);
-
+VOID
+vRunCommand(
+    IN  HANDLE      hDeviceContext
+    );
 /*
-void
+VOID
 WCMDvCommandThread(
-    void * Context
+    PVOID Context
     );
 */
 
-void BSSvSecondTxData(void *hDeviceContext);
+//2007-0115-09<Add>by MikeLiu
+#ifdef TxInSleep
+VOID
+BSSvSecondTxData(
+    IN  HANDLE      hDeviceContext
+    );
+#endif
 
-#endif /* __WCMD_H__ */
+#endif //__WCMD_H__

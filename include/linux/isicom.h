@@ -67,7 +67,6 @@
 
 #define		FIRMWARE_LOADED		0x0001
 #define		BOARD_ACTIVE		0x0002
-#define		BOARD_INIT		0x0004
 
  	/* isi_port status bitmap  */
 

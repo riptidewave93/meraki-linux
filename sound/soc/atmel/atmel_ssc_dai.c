@@ -205,7 +205,8 @@ static irqreturn_t atmel_ssc_interrupt(int irq, void *dev_id)
 static int atmel_ssc_startup(struct snd_pcm_substream *substream,
 			     struct snd_soc_dai *dai)
 {
-	struct atmel_ssc_info *ssc_p = &ssc_info[dai->id];
+	struct snd_soc_pcm_runtime *rtd = snd_pcm_substream_chip(substream);
+	struct atmel_ssc_info *ssc_p = &ssc_info[rtd->dai->cpu_dai->id];
 	int dir_mask;
 
 	pr_debug("atmel_ssc_startup: SSC_SR=0x%u\n",
@@ -234,7 +235,8 @@ static int atmel_ssc_startup(struct snd_pcm_substream *substream,
 static void atmel_ssc_shutdown(struct snd_pcm_substream *substream,
 			       struct snd_soc_dai *dai)
 {
-	struct atmel_ssc_info *ssc_p = &ssc_info[dai->id];
+	struct snd_soc_pcm_runtime *rtd = snd_pcm_substream_chip(substream);
+	struct atmel_ssc_info *ssc_p = &ssc_info[rtd->dai->cpu_dai->id];
 	struct atmel_pcm_dma_params *dma_params;
 	int dir, dir_mask;
 
@@ -336,7 +338,7 @@ static int atmel_ssc_hw_params(struct snd_pcm_substream *substream,
 	struct snd_soc_dai *dai)
 {
 	struct snd_soc_pcm_runtime *rtd = snd_pcm_substream_chip(substream);
-	int id = dai->id;
+	int id = rtd->dai->cpu_dai->id;
 	struct atmel_ssc_info *ssc_p = &ssc_info[id];
 	struct atmel_pcm_dma_params *dma_params;
 	int dir, channels, bits;
@@ -361,12 +363,12 @@ static int atmel_ssc_hw_params(struct snd_pcm_substream *substream,
 	ssc_p->dma_params[dir] = dma_params;
 
 	/*
-	 * The snd_soc_pcm_stream->dma_data field is only used to communicate
-	 * the appropriate DMA parameters to the pcm driver hw_params()
+	 * The cpu_dai->dma_data field is only used to communicate the
+	 * appropriate DMA parameters to the pcm driver hw_params()
 	 * function.  It should not be used for other purposes
 	 * as it is common to all substreams.
 	 */
-	snd_soc_dai_set_dma_data(rtd->cpu_dai, substream, dma_params);
+	rtd->dai->cpu_dai->dma_data = dma_params;
 
 	channels = params_channels(params);
 
@@ -402,7 +404,7 @@ static int atmel_ssc_hw_params(struct snd_pcm_substream *substream,
 	if ((ssc_p->daifmt & SND_SOC_DAIFMT_FORMAT_MASK) == SND_SOC_DAIFMT_I2S
 		&& bits > 16) {
 		printk(KERN_WARNING
-				"atmel_ssc_dai: sample size %d "
+				"atmel_ssc_dai: sample size %d"
 				"is too large for I2S\n", bits);
 		return -EINVAL;
 	}
@@ -547,6 +549,7 @@ static int atmel_ssc_hw_params(struct snd_pcm_substream *substream,
 		printk(KERN_WARNING "atmel_ssc_dai: unsupported DAI format 0x%x\n",
 			ssc_p->daifmt);
 		return -EINVAL;
+		break;
 	}
 	pr_debug("atmel_ssc_hw_params: "
 			"RCMR=%08x RFMR=%08x TCMR=%08x TFMR=%08x\n",
@@ -603,7 +606,8 @@ static int atmel_ssc_hw_params(struct snd_pcm_substream *substream,
 static int atmel_ssc_prepare(struct snd_pcm_substream *substream,
 			     struct snd_soc_dai *dai)
 {
-	struct atmel_ssc_info *ssc_p = &ssc_info[dai->id];
+	struct snd_soc_pcm_runtime *rtd = snd_pcm_substream_chip(substream);
+	struct atmel_ssc_info *ssc_p = &ssc_info[rtd->dai->cpu_dai->id];
 	struct atmel_pcm_dma_params *dma_params;
 	int dir;
 
@@ -672,7 +676,7 @@ static int atmel_ssc_resume(struct snd_soc_dai *cpu_dai)
 	/* re-enable interrupts */
 	ssc_writel(ssc_p->ssc->regs, IER, ssc_p->ssc_state.ssc_imr);
 
-	/* Re-enable receive and transmit as appropriate */
+	/* Re-enable recieve and transmit as appropriate */
 	cr = 0;
 	cr |=
 	    (ssc_p->ssc_state.ssc_sr & SSC_BIT(SR_RXEN)) ? SSC_BIT(CR_RXEN) : 0;
@@ -687,39 +691,13 @@ static int atmel_ssc_resume(struct snd_soc_dai *cpu_dai)
 #  define atmel_ssc_resume	NULL
 #endif /* CONFIG_PM */
 
-static int atmel_ssc_probe(struct snd_soc_dai *dai)
-{
-	struct atmel_ssc_info *ssc_p = &ssc_info[dai->id];
-	int ret = 0;
-
-	snd_soc_dai_set_drvdata(dai, ssc_p);
-
-	/*
-	 * Request SSC device
-	 */
-	ssc_p->ssc = ssc_request(dai->id);
-	if (IS_ERR(ssc_p->ssc)) {
-		printk(KERN_ERR "ASoC: Failed to request SSC %d\n", dai->id);
-		ret = PTR_ERR(ssc_p->ssc);
-	}
-
-	return ret;
-}
-
-static int atmel_ssc_remove(struct snd_soc_dai *dai)
-{
-	struct atmel_ssc_info *ssc_p = snd_soc_dai_get_drvdata(dai);
-
-	ssc_free(ssc_p->ssc);
-	return 0;
-}
 
 #define ATMEL_SSC_RATES (SNDRV_PCM_RATE_8000_96000)
 
 #define ATMEL_SSC_FORMATS (SNDRV_PCM_FMTBIT_S8     | SNDRV_PCM_FMTBIT_S16_LE |\
 			  SNDRV_PCM_FMTBIT_S24_LE | SNDRV_PCM_FMTBIT_S32_LE)
 
-static const struct snd_soc_dai_ops atmel_ssc_dai_ops = {
+static struct snd_soc_dai_ops atmel_ssc_dai_ops = {
 	.startup	= atmel_ssc_startup,
 	.shutdown	= atmel_ssc_shutdown,
 	.prepare	= atmel_ssc_prepare,
@@ -728,11 +706,9 @@ static const struct snd_soc_dai_ops atmel_ssc_dai_ops = {
 	.set_clkdiv	= atmel_ssc_set_dai_clkdiv,
 };
 
-static struct snd_soc_dai_driver atmel_ssc_dai[NUM_SSC_DEVICES] = {
-	{
-		.name = "atmel-ssc-dai.0",
-		.probe = atmel_ssc_probe,
-		.remove = atmel_ssc_remove,
+struct snd_soc_dai atmel_ssc_dai[NUM_SSC_DEVICES] = {
+	{	.name = "atmel-ssc0",
+		.id = 0,
 		.suspend = atmel_ssc_suspend,
 		.resume = atmel_ssc_resume,
 		.playback = {
@@ -746,12 +722,11 @@ static struct snd_soc_dai_driver atmel_ssc_dai[NUM_SSC_DEVICES] = {
 			.rates = ATMEL_SSC_RATES,
 			.formats = ATMEL_SSC_FORMATS,},
 		.ops = &atmel_ssc_dai_ops,
+		.private_data = &ssc_info[0],
 	},
 #if NUM_SSC_DEVICES == 3
-	{
-		.name = "atmel-ssc-dai.1",
-		.probe = atmel_ssc_probe,
-		.remove = atmel_ssc_remove,
+	{	.name = "atmel-ssc1",
+		.id = 1,
 		.suspend = atmel_ssc_suspend,
 		.resume = atmel_ssc_resume,
 		.playback = {
@@ -765,11 +740,10 @@ static struct snd_soc_dai_driver atmel_ssc_dai[NUM_SSC_DEVICES] = {
 			.rates = ATMEL_SSC_RATES,
 			.formats = ATMEL_SSC_FORMATS,},
 		.ops = &atmel_ssc_dai_ops,
+		.private_data = &ssc_info[1],
 	},
-	{
-		.name = "atmel-ssc-dai.2",
-		.probe = atmel_ssc_probe,
-		.remove = atmel_ssc_remove,
+	{	.name = "atmel-ssc2",
+		.id = 2,
 		.suspend = atmel_ssc_suspend,
 		.resume = atmel_ssc_resume,
 		.playback = {
@@ -783,83 +757,23 @@ static struct snd_soc_dai_driver atmel_ssc_dai[NUM_SSC_DEVICES] = {
 			.rates = ATMEL_SSC_RATES,
 			.formats = ATMEL_SSC_FORMATS,},
 		.ops = &atmel_ssc_dai_ops,
+		.private_data = &ssc_info[2],
 	},
 #endif
 };
+EXPORT_SYMBOL_GPL(atmel_ssc_dai);
 
-static __devinit int asoc_ssc_probe(struct platform_device *pdev)
+static int __init atmel_ssc_modinit(void)
 {
-	BUG_ON(pdev->id < 0);
-	BUG_ON(pdev->id >= ARRAY_SIZE(atmel_ssc_dai));
-	return snd_soc_register_dai(&pdev->dev, &atmel_ssc_dai[pdev->id]);
+	return snd_soc_register_dais(atmel_ssc_dai, ARRAY_SIZE(atmel_ssc_dai));
 }
+module_init(atmel_ssc_modinit);
 
-static int __devexit asoc_ssc_remove(struct platform_device *pdev)
+static void __exit atmel_ssc_modexit(void)
 {
-	snd_soc_unregister_dai(&pdev->dev);
-	return 0;
+	snd_soc_unregister_dais(atmel_ssc_dai, ARRAY_SIZE(atmel_ssc_dai));
 }
-
-static struct platform_driver asoc_ssc_driver = {
-	.driver = {
-			.name = "atmel-ssc-dai",
-			.owner = THIS_MODULE,
-	},
-
-	.probe = asoc_ssc_probe,
-	.remove = __devexit_p(asoc_ssc_remove),
-};
-
-/**
- * atmel_ssc_set_audio - Allocate the specified SSC for audio use.
- */
-int atmel_ssc_set_audio(int ssc_id)
-{
-	struct ssc_device *ssc;
-	static struct platform_device *dma_pdev;
-	struct platform_device *ssc_pdev;
-	int ret;
-
-	if (ssc_id < 0 || ssc_id >= ARRAY_SIZE(atmel_ssc_dai))
-		return -EINVAL;
-
-	/* Allocate a dummy device for DMA if we don't have one already */
-	if (!dma_pdev) {
-		dma_pdev = platform_device_alloc("atmel-pcm-audio", -1);
-		if (!dma_pdev)
-			return -ENOMEM;
-
-		ret = platform_device_add(dma_pdev);
-		if (ret < 0) {
-			platform_device_put(dma_pdev);
-			dma_pdev = NULL;
-			return ret;
-		}
-	}
-
-	ssc_pdev = platform_device_alloc("atmel-ssc-dai", ssc_id);
-	if (!ssc_pdev)
-		return -ENOMEM;
-
-	/* If we can grab the SSC briefly to parent the DAI device off it */
-	ssc = ssc_request(ssc_id);
-	if (IS_ERR(ssc))
-		pr_warn("Unable to parent ASoC SSC DAI on SSC: %ld\n",
-			PTR_ERR(ssc));
-	else {
-		ssc_pdev->dev.parent = &(ssc->pdev->dev);
-		ssc_free(ssc);
-	}
-
-	ret = platform_device_add(ssc_pdev);
-	if (ret < 0)
-		platform_device_put(ssc_pdev);
-
-	return ret;
-}
-EXPORT_SYMBOL_GPL(atmel_ssc_set_audio);
-
-module_platform_driver(asoc_ssc_driver);
+module_exit(atmel_ssc_modexit);
 
 /* Module information */
 MODULE_AUTHOR("Sedji Gaouaou, sedji.gaouaou@atmel.com, www.atmel.com");

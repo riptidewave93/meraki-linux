@@ -1,8 +1,6 @@
 #ifndef _FIREWIRE_CORE_H
 #define _FIREWIRE_CORE_H
 
-#include <linux/compiler.h>
-#include <linux/device.h>
 #include <linux/fs.h>
 #include <linux/list.h>
 #include <linux/idr.h>
@@ -11,7 +9,7 @@
 #include <linux/slab.h>
 #include <linux/types.h>
 
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 struct device;
 struct fw_card;
@@ -25,28 +23,15 @@ struct fw_packet;
 
 /* -card */
 
-extern __printf(2, 3)
-void fw_err(const struct fw_card *card, const char *fmt, ...);
-extern __printf(2, 3)
-void fw_notice(const struct fw_card *card, const char *fmt, ...);
-
 /* bitfields within the PHY registers */
 #define PHY_LINK_ACTIVE		0x80
 #define PHY_CONTENDER		0x40
 #define PHY_BUS_RESET		0x40
-#define PHY_EXTENDED_REGISTERS	0xe0
 #define PHY_BUS_SHORT_RESET	0x40
-#define PHY_INT_STATUS_BITS	0x3c
-#define PHY_ENABLE_ACCEL	0x02
-#define PHY_ENABLE_MULTI	0x01
-#define PHY_PAGE_SELECT		0xe0
 
 #define BANDWIDTH_AVAILABLE_INITIAL	4915
 #define BROADCAST_CHANNEL_INITIAL	(1 << 31 | 31)
 #define BROADCAST_CHANNEL_VALID		(1 << 30)
-
-#define CSR_STATE_BIT_CMSTR	(1 << 8)
-#define CSR_STATE_BIT_ABDICATE	(1 << 10)
 
 struct fw_card_driver {
 	/*
@@ -55,20 +40,18 @@ struct fw_card_driver {
 	 * enable the PHY or set the link_on bit and initiate a bus
 	 * reset.
 	 */
-	int (*enable)(struct fw_card *card,
-		      const __be32 *config_rom, size_t length);
+	int (*enable)(struct fw_card *card, u32 *config_rom, size_t length);
 
-	int (*read_phy_reg)(struct fw_card *card, int address);
 	int (*update_phy_reg)(struct fw_card *card, int address,
 			      int clear_bits, int set_bits);
 
 	/*
 	 * Update the config rom for an enabled card.  This function
 	 * should change the config rom that is presented on the bus
-	 * and initiate a bus reset.
+	 * an initiate a bus reset.
 	 */
 	int (*set_config_rom)(struct fw_card *card,
-			      const __be32 *config_rom, size_t length);
+			      u32 *config_rom, size_t length);
 
 	void (*send_request)(struct fw_card *card, struct fw_packet *packet);
 	void (*send_response)(struct fw_card *card, struct fw_packet *packet);
@@ -86,8 +69,7 @@ struct fw_card_driver {
 	int (*enable_phys_dma)(struct fw_card *card,
 			       int node_id, int generation);
 
-	u32 (*read_csr)(struct fw_card *card, int csr_offset);
-	void (*write_csr)(struct fw_card *card, int csr_offset, u32 value);
+	u64 (*get_bus_time)(struct fw_card *card);
 
 	struct fw_iso_context *
 	(*allocate_iso_context)(struct fw_card *card,
@@ -97,16 +79,10 @@ struct fw_card_driver {
 	int (*start_iso)(struct fw_iso_context *ctx,
 			 s32 cycle, u32 sync, u32 tags);
 
-	int (*set_iso_channels)(struct fw_iso_context *ctx, u64 *channels);
-
 	int (*queue_iso)(struct fw_iso_context *ctx,
 			 struct fw_iso_packet *packet,
 			 struct fw_iso_buffer *buffer,
 			 unsigned long payload);
-
-	void (*flush_queue_iso)(struct fw_iso_context *ctx);
-
-	int (*flush_iso_completions)(struct fw_iso_context *ctx);
 
 	int (*stop_iso)(struct fw_iso_context *ctx);
 };
@@ -116,8 +92,8 @@ void fw_card_initialize(struct fw_card *card,
 int fw_card_add(struct fw_card *card,
 		u32 max_receive, u32 link_speed, u64 guid);
 void fw_core_remove_card(struct fw_card *card);
-int fw_compute_block_crc(__be32 *block);
-void fw_schedule_bus_reset(struct fw_card *card, bool delayed, bool short_reset);
+int fw_core_initiate_bus_reset(struct fw_card *card, int short_reset);
+int fw_compute_block_crc(u32 *block);
 void fw_schedule_bm_work(struct fw_card *card, unsigned long delay);
 
 static inline struct fw_card *fw_card_get(struct fw_card *card)
@@ -141,7 +117,6 @@ extern const struct file_operations fw_device_ops;
 
 void fw_device_cdev_update(struct fw_device *device);
 void fw_device_cdev_remove(struct fw_device *device);
-void fw_cdev_handle_phy_packet(struct fw_card *card, struct fw_packet *p);
 
 
 /* -device */
@@ -149,18 +124,6 @@ void fw_cdev_handle_phy_packet(struct fw_card *card, struct fw_packet *p);
 extern struct rw_semaphore fw_device_rwsem;
 extern struct idr fw_device_idr;
 extern int fw_cdev_major;
-
-static inline struct fw_device *fw_device_get(struct fw_device *device)
-{
-	get_device(&device->device);
-
-	return device;
-}
-
-static inline void fw_device_put(struct fw_device *device)
-{
-	put_device(&device->device);
-}
 
 struct fw_device *fw_device_get_by_devt(dev_t devt);
 int fw_device_set_broadcast_channel(struct device *dev, void *gen);
@@ -170,6 +133,9 @@ void fw_node_event(struct fw_card *card, struct fw_node *node, int event);
 /* -iso */
 
 int fw_iso_buffer_map(struct fw_iso_buffer *buffer, struct vm_area_struct *vma);
+void fw_iso_resource_manage(struct fw_card *card, int generation,
+			    u64 channels_mask, int *channel, int *bandwidth,
+			    bool allocate, __be32 buffer[2]);
 
 
 /* -topology */
@@ -220,7 +186,7 @@ static inline void fw_node_put(struct fw_node *node)
 }
 
 void fw_core_handle_bus_reset(struct fw_card *card, int node_id,
-	int generation, int self_id_count, u32 *self_ids, bool bm_abdicate);
+			      int generation, int self_id_count, u32 *self_ids);
 void fw_destroy_nodes(struct fw_card *card);
 
 /*
@@ -235,11 +201,8 @@ static inline bool is_next_generation(int new_generation, int old_generation)
 
 /* -transaction */
 
-#define TCODE_LINK_INTERNAL		0xe
-
 #define TCODE_IS_READ_REQUEST(tcode)	(((tcode) & ~1) == 4)
 #define TCODE_IS_BLOCK_PACKET(tcode)	(((tcode) &  1) != 0)
-#define TCODE_IS_LINK_INTERNAL(tcode)	((tcode) == TCODE_LINK_INTERNAL)
 #define TCODE_IS_REQUEST(tcode)		(((tcode) &  2) == 0)
 #define TCODE_IS_RESPONSE(tcode)	(((tcode) &  2) != 0)
 #define TCODE_HAS_REQUEST_DATA(tcode)	(((tcode) & 12) != 4)
@@ -249,18 +212,10 @@ static inline bool is_next_generation(int new_generation, int old_generation)
 
 void fw_core_handle_request(struct fw_card *card, struct fw_packet *request);
 void fw_core_handle_response(struct fw_card *card, struct fw_packet *packet);
-int fw_get_response_length(struct fw_request *request);
 void fw_fill_response(struct fw_packet *response, u32 *request_header,
 		      int rcode, void *payload, size_t length);
-
-#define FW_PHY_CONFIG_NO_NODE_ID	-1
-#define FW_PHY_CONFIG_CURRENT_GAP_COUNT	-1
+void fw_flush_transactions(struct fw_card *card);
 void fw_send_phy_config(struct fw_card *card,
 			int node_id, int generation, int gap_count);
-
-static inline bool is_ping_packet(u32 *data)
-{
-	return (data[0] & 0xc0ffffff) == 0 && ~data[0] == data[1];
-}
 
 #endif /* _FIREWIRE_CORE_H */

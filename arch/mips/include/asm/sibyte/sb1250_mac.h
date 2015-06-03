@@ -212,7 +212,7 @@
 #define G_MAC_TXD_WEIGHT1(x)        _SB_GETVALUE(x, S_MAC_TXD_WEIGHT1, M_MAC_TXD_WEIGHT1)
 
 /*
- * MAC Fifo Threshold registers (Table 9-14)
+ * MAC Fifo Threshhold registers (Table 9-14)
  * Register: MAC_THRSH_CFG_0
  * Register: MAC_THRSH_CFG_1
  * Register: MAC_THRSH_CFG_2
@@ -520,7 +520,7 @@
 #define G_MAC_RX_EOP_COUNTER(x)     _SB_GETVALUE(x, S_MAC_RX_EOP_COUNTER, M_MAC_RX_EOP_COUNTER)
 
 /*
- * MAC Receive Address Filter Exact Match Registers (Table 9-21)
+ * MAC Recieve Address Filter Exact Match Registers (Table 9-21)
  * Registers: MAC_ADDR0_0 through MAC_ADDR7_0
  * Registers: MAC_ADDR0_1 through MAC_ADDR7_1
  * Registers: MAC_ADDR0_2 through MAC_ADDR7_2
@@ -538,7 +538,7 @@
 /* No bitfields */
 
 /*
- * MAC Receive Address Filter Hash Match Registers (Table 9-22)
+ * MAC Recieve Address Filter Hash Match Registers (Table 9-22)
  * Registers: MAC_HASH0_0 through MAC_HASH7_0
  * Registers: MAC_HASH0_1 through MAC_HASH7_1
  * Registers: MAC_HASH0_2 through MAC_HASH7_2

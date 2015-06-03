@@ -19,7 +19,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
@@ -31,12 +30,14 @@
 
 #define HTSIZE (PAGE_SIZE/sizeof(struct fw_filter *))
 
-struct fw_head {
+struct fw_head
+{
 	struct fw_filter *ht[HTSIZE];
 	u32 mask;
 };
 
-struct fw_filter {
+struct fw_filter
+{
 	struct fw_filter	*next;
 	u32			id;
 	struct tcf_result	res;
@@ -51,7 +52,7 @@ static const struct tcf_ext_map fw_ext_map = {
 	.police = TCA_FW_POLICE
 };
 
-static inline int fw_hash(u32 handle)
+static __inline__ int fw_hash(u32 handle)
 {
 	if (HTSIZE == 4096)
 		return ((handle >> 24) & 0xFFF) ^
@@ -77,17 +78,17 @@ static inline int fw_hash(u32 handle)
 		return handle & (HTSIZE - 1);
 }
 
-static int fw_classify(struct sk_buff *skb, const struct tcf_proto *tp,
+static int fw_classify(struct sk_buff *skb, struct tcf_proto *tp,
 			  struct tcf_result *res)
 {
-	struct fw_head *head = (struct fw_head *)tp->root;
+	struct fw_head *head = (struct fw_head*)tp->root;
 	struct fw_filter *f;
 	int r;
 	u32 id = skb->mark;
 
 	if (head != NULL) {
 		id &= head->mask;
-		for (f = head->ht[fw_hash(id)]; f; f = f->next) {
+		for (f=head->ht[fw_hash(id)]; f; f=f->next) {
 			if (f->id == id) {
 				*res = f->res;
 #ifdef CONFIG_NET_CLS_IND
@@ -103,8 +104,7 @@ static int fw_classify(struct sk_buff *skb, const struct tcf_proto *tp,
 		}
 	} else {
 		/* old method */
-		if (id && (TC_H_MAJ(id) == 0 ||
-			   !(TC_H_MAJ(id ^ tp->q->handle)))) {
+		if (id && (TC_H_MAJ(id) == 0 || !(TC_H_MAJ(id^tp->q->handle)))) {
 			res->classid = id;
 			res->class = 0;
 			return 0;
@@ -116,13 +116,13 @@ static int fw_classify(struct sk_buff *skb, const struct tcf_proto *tp,
 
 static unsigned long fw_get(struct tcf_proto *tp, u32 handle)
 {
-	struct fw_head *head = (struct fw_head *)tp->root;
+	struct fw_head *head = (struct fw_head*)tp->root;
 	struct fw_filter *f;
 
 	if (head == NULL)
 		return 0;
 
-	for (f = head->ht[fw_hash(handle)]; f; f = f->next) {
+	for (f=head->ht[fw_hash(handle)]; f; f=f->next) {
 		if (f->id == handle)
 			return (unsigned long)f;
 	}
@@ -138,7 +138,8 @@ static int fw_init(struct tcf_proto *tp)
 	return 0;
 }
 
-static void fw_delete_filter(struct tcf_proto *tp, struct fw_filter *f)
+static inline void
+fw_delete_filter(struct tcf_proto *tp, struct fw_filter *f)
 {
 	tcf_unbind_filter(tp, &f->res);
 	tcf_exts_destroy(tp, &f->exts);
@@ -154,8 +155,8 @@ static void fw_destroy(struct tcf_proto *tp)
 	if (head == NULL)
 		return;
 
-	for (h = 0; h < HTSIZE; h++) {
-		while ((f = head->ht[h]) != NULL) {
+	for (h=0; h<HTSIZE; h++) {
+		while ((f=head->ht[h]) != NULL) {
 			head->ht[h] = f->next;
 			fw_delete_filter(tp, f);
 		}
@@ -165,14 +166,14 @@ static void fw_destroy(struct tcf_proto *tp)
 
 static int fw_delete(struct tcf_proto *tp, unsigned long arg)
 {
-	struct fw_head *head = (struct fw_head *)tp->root;
-	struct fw_filter *f = (struct fw_filter *)arg;
+	struct fw_head *head = (struct fw_head*)tp->root;
+	struct fw_filter *f = (struct fw_filter*)arg;
 	struct fw_filter **fp;
 
 	if (head == NULL || f == NULL)
 		goto out;
 
-	for (fp = &head->ht[fw_hash(f->id)]; *fp; fp = &(*fp)->next) {
+	for (fp=&head->ht[fw_hash(f->id)]; *fp; fp = &(*fp)->next) {
 		if (*fp == f) {
 			tcf_tree_lock(tp);
 			*fp = f->next;
@@ -238,7 +239,7 @@ static int fw_change(struct tcf_proto *tp, unsigned long base,
 		     struct nlattr **tca,
 		     unsigned long *arg)
 {
-	struct fw_head *head = (struct fw_head *)tp->root;
+	struct fw_head *head = (struct fw_head*)tp->root;
 	struct fw_filter *f = (struct fw_filter *) *arg;
 	struct nlattr *opt = tca[TCA_OPTIONS];
 	struct nlattr *tb[TCA_FW_MAX + 1];
@@ -300,7 +301,7 @@ errout:
 
 static void fw_walk(struct tcf_proto *tp, struct tcf_walker *arg)
 {
-	struct fw_head *head = (struct fw_head *)tp->root;
+	struct fw_head *head = (struct fw_head*)tp->root;
 	int h;
 
 	if (head == NULL)
@@ -330,7 +331,7 @@ static int fw_dump(struct tcf_proto *tp, unsigned long fh,
 		   struct sk_buff *skb, struct tcmsg *t)
 {
 	struct fw_head *head = (struct fw_head *)tp->root;
-	struct fw_filter *f = (struct fw_filter *)fh;
+	struct fw_filter *f = (struct fw_filter*)fh;
 	unsigned char *b = skb_tail_pointer(skb);
 	struct nlattr *nest;
 

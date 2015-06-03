@@ -16,151 +16,7 @@
 #include <acpi/acpi_bus.h>
 
 #include <linux/pci-acpi.h>
-#include <linux/pm_runtime.h>
 #include "pci.h"
-
-static DEFINE_MUTEX(pci_acpi_pm_notify_mtx);
-
-/**
- * pci_acpi_wake_bus - Wake-up notification handler for root buses.
- * @handle: ACPI handle of a device the notification is for.
- * @event: Type of the signaled event.
- * @context: PCI root bus to wake up devices on.
- */
-static void pci_acpi_wake_bus(acpi_handle handle, u32 event, void *context)
-{
-	struct pci_bus *pci_bus = context;
-
-	if (event == ACPI_NOTIFY_DEVICE_WAKE && pci_bus)
-		pci_pme_wakeup_bus(pci_bus);
-}
-
-/**
- * pci_acpi_wake_dev - Wake-up notification handler for PCI devices.
- * @handle: ACPI handle of a device the notification is for.
- * @event: Type of the signaled event.
- * @context: PCI device object to wake up.
- */
-static void pci_acpi_wake_dev(acpi_handle handle, u32 event, void *context)
-{
-	struct pci_dev *pci_dev = context;
-
-	if (event != ACPI_NOTIFY_DEVICE_WAKE || !pci_dev)
-		return;
-
-	if (!pci_dev->pm_cap || !pci_dev->pme_support
-	     || pci_check_pme_status(pci_dev)) {
-		if (pci_dev->pme_poll)
-			pci_dev->pme_poll = false;
-
-		pci_wakeup_event(pci_dev);
-		pm_runtime_resume(&pci_dev->dev);
-	}
-
-	if (pci_dev->subordinate)
-		pci_pme_wakeup_bus(pci_dev->subordinate);
-}
-
-/**
- * add_pm_notifier - Register PM notifier for given ACPI device.
- * @dev: ACPI device to add the notifier for.
- * @context: PCI device or bus to check for PME status if an event is signaled.
- *
- * NOTE: @dev need not be a run-wake or wake-up device to be a valid source of
- * PM wake-up events.  For example, wake-up events may be generated for bridges
- * if one of the devices below the bridge is signaling PME, even if the bridge
- * itself doesn't have a wake-up GPE associated with it.
- */
-static acpi_status add_pm_notifier(struct acpi_device *dev,
-				   acpi_notify_handler handler,
-				   void *context)
-{
-	acpi_status status = AE_ALREADY_EXISTS;
-
-	mutex_lock(&pci_acpi_pm_notify_mtx);
-
-	if (dev->wakeup.flags.notifier_present)
-		goto out;
-
-	status = acpi_install_notify_handler(dev->handle,
-					     ACPI_SYSTEM_NOTIFY,
-					     handler, context);
-	if (ACPI_FAILURE(status))
-		goto out;
-
-	dev->wakeup.flags.notifier_present = true;
-
- out:
-	mutex_unlock(&pci_acpi_pm_notify_mtx);
-	return status;
-}
-
-/**
- * remove_pm_notifier - Unregister PM notifier from given ACPI device.
- * @dev: ACPI device to remove the notifier from.
- */
-static acpi_status remove_pm_notifier(struct acpi_device *dev,
-				      acpi_notify_handler handler)
-{
-	acpi_status status = AE_BAD_PARAMETER;
-
-	mutex_lock(&pci_acpi_pm_notify_mtx);
-
-	if (!dev->wakeup.flags.notifier_present)
-		goto out;
-
-	status = acpi_remove_notify_handler(dev->handle,
-					    ACPI_SYSTEM_NOTIFY,
-					    handler);
-	if (ACPI_FAILURE(status))
-		goto out;
-
-	dev->wakeup.flags.notifier_present = false;
-
- out:
-	mutex_unlock(&pci_acpi_pm_notify_mtx);
-	return status;
-}
-
-/**
- * pci_acpi_add_bus_pm_notifier - Register PM notifier for given PCI bus.
- * @dev: ACPI device to add the notifier for.
- * @pci_bus: PCI bus to walk checking for PME status if an event is signaled.
- */
-acpi_status pci_acpi_add_bus_pm_notifier(struct acpi_device *dev,
-					 struct pci_bus *pci_bus)
-{
-	return add_pm_notifier(dev, pci_acpi_wake_bus, pci_bus);
-}
-
-/**
- * pci_acpi_remove_bus_pm_notifier - Unregister PCI bus PM notifier.
- * @dev: ACPI device to remove the notifier from.
- */
-acpi_status pci_acpi_remove_bus_pm_notifier(struct acpi_device *dev)
-{
-	return remove_pm_notifier(dev, pci_acpi_wake_bus);
-}
-
-/**
- * pci_acpi_add_pm_notifier - Register PM notifier for given PCI device.
- * @dev: ACPI device to add the notifier for.
- * @pci_dev: PCI device to check for the PME status if an event is signaled.
- */
-acpi_status pci_acpi_add_pm_notifier(struct acpi_device *dev,
-				     struct pci_dev *pci_dev)
-{
-	return add_pm_notifier(dev, pci_acpi_wake_dev, pci_dev);
-}
-
-/**
- * pci_acpi_remove_pm_notifier - Unregister PCI device PM notifier.
- * @dev: ACPI device to remove the notifier from.
- */
-acpi_status pci_acpi_remove_pm_notifier(struct acpi_device *dev)
-{
-	return remove_pm_notifier(dev, pci_acpi_wake_dev);
-}
 
 /*
  * _SxD returns the D-state with the highest power
@@ -200,10 +56,8 @@ static pci_power_t acpi_pci_choose_state(struct pci_dev *pdev)
 		return PCI_D1;
 	case ACPI_STATE_D2:
 		return PCI_D2;
-	case ACPI_STATE_D3_HOT:
+	case ACPI_STATE_D3:
 		return PCI_D3hot;
-	case ACPI_STATE_D3_COLD:
-		return PCI_D3cold;
 	}
 	return PCI_POWER_ERROR;
 }
@@ -258,7 +112,11 @@ static bool acpi_pci_can_wakeup(struct pci_dev *dev)
 static void acpi_pci_propagate_wakeup_enable(struct pci_bus *bus, bool enable)
 {
 	while (bus->parent) {
-		if (!acpi_pm_device_sleep_wake(&bus->self->dev, enable))
+		struct pci_dev *bridge = bus->self;
+		int ret;
+
+		ret = acpi_pm_device_sleep_wake(&bridge->dev, enable);
+		if (!ret || bridge->is_pcie)
 			return;
 		bus = bus->parent;
 	}
@@ -273,36 +131,9 @@ static int acpi_pci_sleep_wake(struct pci_dev *dev, bool enable)
 	if (acpi_pci_can_wakeup(dev))
 		return acpi_pm_device_sleep_wake(&dev->dev, enable);
 
-	acpi_pci_propagate_wakeup_enable(dev->bus, enable);
-	return 0;
-}
+	if (!dev->is_pcie)
+		acpi_pci_propagate_wakeup_enable(dev->bus, enable);
 
-static void acpi_pci_propagate_run_wake(struct pci_bus *bus, bool enable)
-{
-	while (bus->parent) {
-		struct pci_dev *bridge = bus->self;
-
-		if (bridge->pme_interrupt)
-			return;
-		if (!acpi_pm_device_run_wake(&bridge->dev, enable))
-			return;
-		bus = bus->parent;
-	}
-
-	/* We have reached the root bus. */
-	if (bus->bridge)
-		acpi_pm_device_run_wake(bus->bridge, enable);
-}
-
-static int acpi_pci_run_wake(struct pci_dev *dev, bool enable)
-{
-	if (dev->pme_interrupt)
-		return 0;
-
-	if (!acpi_pm_device_run_wake(&dev->dev, enable))
-		return 0;
-
-	acpi_pci_propagate_run_wake(dev->bus, enable);
 	return 0;
 }
 
@@ -312,14 +143,13 @@ static struct pci_platform_pm_ops acpi_pci_platform_pm = {
 	.choose_state = acpi_pci_choose_state,
 	.can_wakeup = acpi_pci_can_wakeup,
 	.sleep_wake = acpi_pci_sleep_wake,
-	.run_wake = acpi_pci_run_wake,
 };
 
 /* ACPI bus type */
 static int acpi_pci_find_device(struct device *dev, acpi_handle *handle)
 {
 	struct pci_dev * pci_dev;
-	u64	addr;
+	acpi_integer	addr;
 
 	pci_dev = to_pci_dev(dev);
 	/* Please ref to ACPI spec for the syntax of _ADR */

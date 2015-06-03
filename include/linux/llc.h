@@ -12,20 +12,16 @@
  *
  * See the GNU General Public License for more details.
  */
-
-#include <linux/socket.h>
-
 #define __LLC_SOCK_SIZE__ 16	/* sizeof(sockaddr_llc), word align. */
 struct sockaddr_llc {
-	__kernel_sa_family_t sllc_family; /* AF_LLC */
-	__kernel_sa_family_t sllc_arphrd; /* ARPHRD_ETHER */
+	sa_family_t     sllc_family;	/* AF_LLC */
+	sa_family_t	sllc_arphrd;	/* ARPHRD_ETHER */
 	unsigned char   sllc_test;
 	unsigned char   sllc_xid;
 	unsigned char	sllc_ua;	/* UA data, only for SOCK_STREAM. */
 	unsigned char   sllc_sap;
 	unsigned char   sllc_mac[IFHWADDRLEN];
-	unsigned char   __pad[__LLC_SOCK_SIZE__ -
-			      sizeof(__kernel_sa_family_t) * 2 -
+	unsigned char   __pad[__LLC_SOCK_SIZE__ - sizeof(sa_family_t) * 2 -
 			      sizeof(unsigned char) * 4 - IFHWADDRLEN];
 };
 
@@ -40,7 +36,6 @@ enum llc_sockopts {
 	LLC_OPT_BUSY_TMR_EXP,	/* busy state expire time (secs). */
 	LLC_OPT_TX_WIN,		/* tx window size. */
 	LLC_OPT_RX_WIN,		/* rx window size. */
-	LLC_OPT_PKTINFO,	/* ancillary packet information. */
 	LLC_OPT_MAX
 };
 
@@ -74,12 +69,6 @@ enum llc_sockopts {
 #define LLC_SAP_LAR	0xDC		/* LAN Address Resolution 	*/
 #define LLC_SAP_RM	0xD4		/* Resource Management 		*/
 #define LLC_SAP_GLOBAL	0xFF		/* Global SAP. 			*/
-
-struct llc_pktinfo {
-	int lpi_ifindex;
-	unsigned char lpi_sap;
-	unsigned char lpi_mac[IFHWADDRLEN];
-};
 
 #ifdef __KERNEL__
 #define LLC_SAP_DYN_START	0xC0

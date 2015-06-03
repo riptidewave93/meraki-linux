@@ -2,8 +2,6 @@
 #define _ASM_POWERPC_IO_H
 #ifdef __KERNEL__
 
-#define ARCH_HAS_IOREMAP_WC
-
 /*
  * This program is free software; you can redistribute it and/or
  * modify it under the terms of the GNU General Public License
@@ -394,7 +392,7 @@ __do_out_asm(_rec_outl, "stwbrx")
 #endif /* CONFIG_PPC32 */
 
 /* The "__do_*" operations below provide the actual "base" implementation
- * for each of the defined accessors. Some of them use the out_* functions
+ * for each of the defined acccessor. Some of them use the out_* functions
  * directly, some of them still use EEH, though we might change that in the
  * future. Those macros below provide the necessary argument swapping and
  * handling of the IO base for PIO.
@@ -408,30 +406,30 @@ __do_out_asm(_rec_outl, "stwbrx")
  * possible to hook directly at the toplevel PIO operation if they have to
  * be handled differently
  */
-#define __do_writeb(val, addr)	out_8(PCI_FIX_ADDR(addr), val)
-#define __do_writew(val, addr)	out_le16(PCI_FIX_ADDR(addr), val)
-#define __do_writel(val, addr)	out_le32(PCI_FIX_ADDR(addr), val)
-#define __do_writeq(val, addr)	out_le64(PCI_FIX_ADDR(addr), val)
-#define __do_writew_be(val, addr) out_be16(PCI_FIX_ADDR(addr), val)
-#define __do_writel_be(val, addr) out_be32(PCI_FIX_ADDR(addr), val)
-#define __do_writeq_be(val, addr) out_be64(PCI_FIX_ADDR(addr), val)
+#define __do_writeb(val, addr)	out_8((volatile u8 *)(PCI_FIX_ADDR(addr)), val)
+#define __do_writew(val, addr)	out_le16((volatile u16 *)(PCI_FIX_ADDR(addr)), val)
+#define __do_writel(val, addr)	out_le32((volatile u32 *)(PCI_FIX_ADDR(addr)), val)
+#define __do_writeq(val, addr)	out_le64((volatile u64 *)(PCI_FIX_ADDR(addr)), val)
+#define __do_writew_be(val, addr) out_be16((volatile u16 *)(PCI_FIX_ADDR(addr)), val)
+#define __do_writel_be(val, addr) out_be32((volatile u32 *)(PCI_FIX_ADDR(addr)), val)
+#define __do_writeq_be(val, addr) out_be64((volatile u64 *)(PCI_FIX_ADDR(addr)), val)
 
 #ifdef CONFIG_EEH
-#define __do_readb(addr)	eeh_readb(PCI_FIX_ADDR(addr))
-#define __do_readw(addr)	eeh_readw(PCI_FIX_ADDR(addr))
-#define __do_readl(addr)	eeh_readl(PCI_FIX_ADDR(addr))
-#define __do_readq(addr)	eeh_readq(PCI_FIX_ADDR(addr))
-#define __do_readw_be(addr)	eeh_readw_be(PCI_FIX_ADDR(addr))
-#define __do_readl_be(addr)	eeh_readl_be(PCI_FIX_ADDR(addr))
-#define __do_readq_be(addr)	eeh_readq_be(PCI_FIX_ADDR(addr))
+#define __do_readb(addr)	eeh_readb((const u8 *)(PCI_FIX_ADDR(addr)))
+#define __do_readw(addr)	eeh_readw((const u16 *)(PCI_FIX_ADDR(addr)))
+#define __do_readl(addr)	eeh_readl((const u32 *)(PCI_FIX_ADDR(addr)))
+#define __do_readq(addr)	eeh_readq((const u64 *)(PCI_FIX_ADDR(addr)))
+#define __do_readw_be(addr)	eeh_readw_be((const u16 *)(PCI_FIX_ADDR(addr)))
+#define __do_readl_be(addr)	eeh_readl_be((const u32 *)(PCI_FIX_ADDR(addr)))
+#define __do_readq_be(addr)	eeh_readq_be((const u64 *)(PCI_FIX_ADDR(addr)))
 #else /* CONFIG_EEH */
-#define __do_readb(addr)	in_8(PCI_FIX_ADDR(addr))
-#define __do_readw(addr)	in_le16(PCI_FIX_ADDR(addr))
-#define __do_readl(addr)	in_le32(PCI_FIX_ADDR(addr))
-#define __do_readq(addr)	in_le64(PCI_FIX_ADDR(addr))
-#define __do_readw_be(addr)	in_be16(PCI_FIX_ADDR(addr))
-#define __do_readl_be(addr)	in_be32(PCI_FIX_ADDR(addr))
-#define __do_readq_be(addr)	in_be64(PCI_FIX_ADDR(addr))
+#define __do_readb(addr)	in_8((const u8 *)(PCI_FIX_ADDR(addr)))
+#define __do_readw(addr)	in_le16((const u16 *)(PCI_FIX_ADDR(addr)))
+#define __do_readl(addr)	in_le32((const u32 *)(PCI_FIX_ADDR(addr)))
+#define __do_readq(addr)	in_le64((const u64 *)(PCI_FIX_ADDR(addr)))
+#define __do_readw_be(addr)	in_be16((const u16 *)(PCI_FIX_ADDR(addr)))
+#define __do_readl_be(addr)	in_be32((const u32 *)(PCI_FIX_ADDR(addr)))
+#define __do_readq_be(addr)	in_be64((const u64 *)(PCI_FIX_ADDR(addr)))
 #endif /* !defined(CONFIG_EEH) */
 
 #ifdef CONFIG_PPC32
@@ -451,17 +449,17 @@ __do_out_asm(_rec_outl, "stwbrx")
 #endif /* !CONFIG_PPC32 */
 
 #ifdef CONFIG_EEH
-#define __do_readsb(a, b, n)	eeh_readsb(PCI_FIX_ADDR(a), (b), (n))
-#define __do_readsw(a, b, n)	eeh_readsw(PCI_FIX_ADDR(a), (b), (n))
-#define __do_readsl(a, b, n)	eeh_readsl(PCI_FIX_ADDR(a), (b), (n))
+#define __do_readsb(a, b, n)	eeh_readsb((const u8 *)(PCI_FIX_ADDR(a)), (b), (n))
+#define __do_readsw(a, b, n)	eeh_readsw((const u16 *)(PCI_FIX_ADDR(a)), (b), (n))
+#define __do_readsl(a, b, n)	eeh_readsl((const u32 *)(PCI_FIX_ADDR(a)), (b), (n))
 #else /* CONFIG_EEH */
-#define __do_readsb(a, b, n)	_insb(PCI_FIX_ADDR(a), (b), (n))
-#define __do_readsw(a, b, n)	_insw(PCI_FIX_ADDR(a), (b), (n))
-#define __do_readsl(a, b, n)	_insl(PCI_FIX_ADDR(a), (b), (n))
+#define __do_readsb(a, b, n)	_insb((const u8 *)(PCI_FIX_ADDR(a)), (b), (n))
+#define __do_readsw(a, b, n)	_insw((const u16 *)(PCI_FIX_ADDR(a)), (b), (n))
+#define __do_readsl(a, b, n)	_insl((const u32 *)(PCI_FIX_ADDR(a)), (b), (n))
 #endif /* !CONFIG_EEH */
-#define __do_writesb(a, b, n)	_outsb(PCI_FIX_ADDR(a),(b),(n))
-#define __do_writesw(a, b, n)	_outsw(PCI_FIX_ADDR(a),(b),(n))
-#define __do_writesl(a, b, n)	_outsl(PCI_FIX_ADDR(a),(b),(n))
+#define __do_writesb(a, b, n)	_outsb((volatile u8 *)(PCI_FIX_ADDR(a)),(b),(n))
+#define __do_writesw(a, b, n)	_outsw((volatile u16 *)(PCI_FIX_ADDR(a)),(b),(n))
+#define __do_writesl(a, b, n)	_outsl((volatile u32 *)(PCI_FIX_ADDR(a)),(b),(n))
 
 #define __do_insb(p, b, n)	readsb((PCI_IO_ADDR)_IO_BASE+(p), (b), (n))
 #define __do_insw(p, b, n)	readsw((PCI_IO_ADDR)_IO_BASE+(p), (b), (n))
@@ -483,16 +481,10 @@ __do_out_asm(_rec_outl, "stwbrx")
 				_memcpy_fromio(dst,PCI_FIX_ADDR(src),n)
 #endif /* !CONFIG_EEH */
 
-#ifdef CONFIG_PPC_INDIRECT_PIO
-#define DEF_PCI_HOOK_pio(x)	x
+#ifdef CONFIG_PPC_INDIRECT_IO
+#define DEF_PCI_HOOK(x)		x
 #else
-#define DEF_PCI_HOOK_pio(x)	NULL
-#endif
-
-#ifdef CONFIG_PPC_INDIRECT_MMIO
-#define DEF_PCI_HOOK_mem(x)	x
-#else
-#define DEF_PCI_HOOK_mem(x)	NULL
+#define DEF_PCI_HOOK(x)		NULL
 #endif
 
 /* Structure containing all the hooks */
@@ -512,7 +504,7 @@ extern struct ppc_pci_io {
 #define DEF_PCI_AC_RET(name, ret, at, al, space, aa)		\
 static inline ret name at					\
 {								\
-	if (DEF_PCI_HOOK_##space(ppc_pci_io.name) != NULL)	\
+	if (DEF_PCI_HOOK(ppc_pci_io.name) != NULL)		\
 		return ppc_pci_io.name al;			\
 	return __do_##name al;					\
 }
@@ -520,7 +512,7 @@ static inline ret name at					\
 #define DEF_PCI_AC_NORET(name, at, al, space, aa)		\
 static inline void name at					\
 {								\
-	if (DEF_PCI_HOOK_##space(ppc_pci_io.name) != NULL)		\
+	if (DEF_PCI_HOOK(ppc_pci_io.name) != NULL)		\
 		ppc_pci_io.name al;				\
 	else							\
 		__do_##name al;					\
@@ -624,12 +616,11 @@ static inline void iosync(void)
  * * ioremap is the standard one and provides non-cacheable guarded mappings
  *   and can be hooked by the platform via ppc_md
  *
- * * ioremap_prot allows to specify the page flags as an argument and can
- *   also be hooked by the platform via ppc_md.
+ * * ioremap_flags allows to specify the page flags as an argument and can
+ *   also be hooked by the platform via ppc_md. ioremap_prot is the exact
+ *   same thing as ioremap_flags.
  *
  * * ioremap_nocache is identical to ioremap
- *
- * * ioremap_wc enables write combining
  *
  * * iounmap undoes such a mapping and can be hooked
  *
@@ -638,7 +629,7 @@ static inline void iosync(void)
  *   currently be hooked. Must be page aligned.
  *
  * * __ioremap is the low level implementation used by ioremap and
- *   ioremap_prot and cannot be hooked (but can be used by a hook on one
+ *   ioremap_flags and cannot be hooked (but can be used by a hook on one
  *   of the previous ones)
  *
  * * __ioremap_caller is the same as above but takes an explicit caller
@@ -649,10 +640,10 @@ static inline void iosync(void)
  *
  */
 extern void __iomem *ioremap(phys_addr_t address, unsigned long size);
-extern void __iomem *ioremap_prot(phys_addr_t address, unsigned long size,
-				  unsigned long flags);
-extern void __iomem *ioremap_wc(phys_addr_t address, unsigned long size);
+extern void __iomem *ioremap_flags(phys_addr_t address, unsigned long size,
+				   unsigned long flags);
 #define ioremap_nocache(addr, size)	ioremap((addr), (size))
+#define ioremap_prot(addr, size, prot)	ioremap_flags((addr), (size), (prot))
 
 extern void iounmap(volatile void __iomem *addr);
 

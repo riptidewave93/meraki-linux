@@ -20,10 +20,7 @@
  */
 
 #include <linux/init.h>
-#include <linux/export.h>
-#include <linux/moduleparam.h>
 #include <linux/time.h>
-#include <linux/slab.h>
 #include <linux/ioport.h>
 #include <sound/core.h>
 
@@ -60,6 +57,26 @@ static const char *sanity_file_name(const char *path)
 	else
 		return path;
 }
+
+/* print file and line with a certain printk prefix */
+static int print_snd_pfx(unsigned int level, const char *path, int line,
+			 const char *format)
+{
+	const char *file = sanity_file_name(path);
+	char tmp[] = "<0>";
+	const char *pfx = level ? KERN_DEBUG : KERN_DEFAULT;
+	int ret = 0;
+
+	if (format[0] == '<' && format[2] == '>') {
+		tmp[1] = format[1];
+		pfx = tmp;
+		ret = 1;
+	}
+	printk("%sALSA %s:%d: ", pfx, file, line);
+	return ret;
+}
+#else
+#define print_snd_pfx(level, path, line, format)	0
 #endif
 
 #if defined(CONFIG_SND_DEBUG) || defined(CONFIG_SND_VERBOSE_PRINTK)
@@ -67,29 +84,15 @@ void __snd_printk(unsigned int level, const char *path, int line,
 		  const char *format, ...)
 {
 	va_list args;
-#ifdef CONFIG_SND_VERBOSE_PRINTK
-	struct va_format vaf;
-	char verbose_fmt[] = KERN_DEFAULT "ALSA %s:%d %pV";
-#endif
-
-#ifdef CONFIG_SND_DEBUG
+	
+#ifdef CONFIG_SND_DEBUG	
 	if (debug < level)
 		return;
 #endif
-
 	va_start(args, format);
-#ifdef CONFIG_SND_VERBOSE_PRINTK
-	vaf.fmt = format;
-	vaf.va = &args;
-	if (format[0] == '<' && format[2] == '>') {
-		memcpy(verbose_fmt, format, 3);
-		vaf.fmt = format + 3;
-	} else if (level)
-		memcpy(verbose_fmt, KERN_DEBUG, 3);
-	printk(verbose_fmt, sanity_file_name(path), line, &vaf);
-#else
+	if (print_snd_pfx(level, path, line, format))
+		format += 3; /* skip the printk level-prefix */
 	vprintk(format, args);
-#endif
 	va_end(args);
 }
 EXPORT_SYMBOL_GPL(__snd_printk);
@@ -97,35 +100,6 @@ EXPORT_SYMBOL_GPL(__snd_printk);
 
 #ifdef CONFIG_PCI
 #include <linux/pci.h>
-/**
- * snd_pci_quirk_lookup_id - look up a PCI SSID quirk list
- * @vendor: PCI SSV id
- * @device: PCI SSD id
- * @list: quirk list, terminated by a null entry
- *
- * Look through the given quirk list and finds a matching entry
- * with the same PCI SSID.  When subdevice is 0, all subdevice
- * values may match.
- *
- * Returns the matched entry pointer, or NULL if nothing matched.
- */
-const struct snd_pci_quirk *
-snd_pci_quirk_lookup_id(u16 vendor, u16 device,
-			const struct snd_pci_quirk *list)
-{
-	const struct snd_pci_quirk *q;
-
-	for (q = list; q->subvendor; q++) {
-		if (q->subvendor != vendor)
-			continue;
-		if (!q->subdevice ||
-		    (device & q->subdevice_mask) == q->subdevice)
-			return q;
-	}
-	return NULL;
-}
-EXPORT_SYMBOL(snd_pci_quirk_lookup_id);
-
 /**
  * snd_pci_quirk_lookup - look up a PCI SSID quirk list
  * @pci: pci_dev handle
@@ -140,9 +114,16 @@ EXPORT_SYMBOL(snd_pci_quirk_lookup_id);
 const struct snd_pci_quirk *
 snd_pci_quirk_lookup(struct pci_dev *pci, const struct snd_pci_quirk *list)
 {
-	return snd_pci_quirk_lookup_id(pci->subsystem_vendor,
-				       pci->subsystem_device,
-				       list);
+	const struct snd_pci_quirk *q;
+
+	for (q = list; q->subvendor; q++) {
+		if (q->subvendor != pci->subsystem_vendor)
+			continue;
+		if (!q->subdevice ||
+		    (pci->subsystem_device & q->subdevice_mask) == q->subdevice)
+			return q;
+	}
+	return NULL;
 }
 EXPORT_SYMBOL(snd_pci_quirk_lookup);
 #endif

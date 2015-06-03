@@ -32,17 +32,13 @@
 #include <linux/device.h>
 #include <linux/proc_fs.h>
 #include <linux/acpi.h>
-#include <linux/slab.h>
-#include <linux/regulator/machine.h>
 #ifdef CONFIG_X86
 #include <asm/mpspec.h>
 #endif
 #include <linux/pci.h>
 #include <acpi/acpi_bus.h>
 #include <acpi/acpi_drivers.h>
-#include <acpi/apei.h>
 #include <linux/dmi.h>
-#include <linux/suspend.h>
 
 #include "internal.h"
 
@@ -55,43 +51,22 @@ EXPORT_SYMBOL(acpi_root_dir);
 
 #define STRUCT_TO_INT(s)	(*((int*)&s))
 
-
-#ifdef CONFIG_X86
-#ifdef CONFIG_ACPI_CUSTOM_DSDT
-static inline int set_copy_dsdt(const struct dmi_system_id *id)
+static int set_power_nocheck(const struct dmi_system_id *id)
 {
+	printk(KERN_NOTICE PREFIX "%s detected - "
+		"disable power check in power transistion\n", id->ident);
+	acpi_power_nocheck = 1;
 	return 0;
 }
-#else
-static int set_copy_dsdt(const struct dmi_system_id *id)
-{
-	printk(KERN_NOTICE "%s detected - "
-		"force copy of DSDT to local memory\n", id->ident);
-	acpi_gbl_copy_dsdt_locally = 1;
-	return 0;
-}
-#endif
-
-static struct dmi_system_id dsdt_dmi_table[] __initdata = {
-	/*
-	 * Invoke DSDT corruption work-around on all Toshiba Satellite.
-	 * https://bugzilla.kernel.org/show_bug.cgi?id=14679
-	 */
+static struct dmi_system_id __cpuinitdata power_nocheck_dmi_table[] = {
 	{
-	 .callback = set_copy_dsdt,
-	 .ident = "TOSHIBA Satellite",
-	 .matches = {
-		DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
-		DMI_MATCH(DMI_PRODUCT_NAME, "Satellite"),
-		},
-	},
-	{}
+	set_power_nocheck, "HP Pavilion 05", {
+	DMI_MATCH(DMI_BIOS_VENDOR, "Phoenix Technologies LTD"),
+	DMI_MATCH(DMI_SYS_VENDOR, "HP Pavilion 05"),
+	DMI_MATCH(DMI_PRODUCT_VERSION, "2001211RE101GLEND") }, NULL},
+	{},
 };
-#else
-static struct dmi_system_id dsdt_dmi_table[] __initdata = {
-	{}
-};
-#endif
+
 
 /* --------------------------------------------------------------------------
                                 Device Management
@@ -190,58 +165,93 @@ EXPORT_SYMBOL(acpi_bus_get_private_data);
                                  Power Management
    -------------------------------------------------------------------------- */
 
-static int __acpi_bus_get_power(struct acpi_device *device, int *state)
+int acpi_bus_get_power(acpi_handle handle, int *state)
 {
 	int result = 0;
 	acpi_status status = 0;
+	struct acpi_device *device = NULL;
 	unsigned long long psc = 0;
 
-	if (!device || !state)
-		return -EINVAL;
+
+	result = acpi_bus_get_device(handle, &device);
+	if (result)
+		return result;
 
 	*state = ACPI_STATE_UNKNOWN;
 
-	if (device->flags.power_manageable) {
+	if (!device->flags.power_manageable) {
+		/* TBD: Non-recursive algorithm for walking up hierarchy */
+		if (device->parent)
+			*state = device->parent->power.state;
+		else
+			*state = ACPI_STATE_D0;
+	} else {
 		/*
 		 * Get the device's power state either directly (via _PSC) or
 		 * indirectly (via power resources).
 		 */
-		if (device->power.flags.power_resources) {
-			result = acpi_power_get_inferred_state(device, state);
-			if (result)
-				return result;
-		} else if (device->power.flags.explicit_get) {
+		if (device->power.flags.explicit_get) {
 			status = acpi_evaluate_integer(device->handle, "_PSC",
 						       NULL, &psc);
 			if (ACPI_FAILURE(status))
 				return -ENODEV;
-			*state = (int)psc;
+			device->power.state = (int)psc;
+		} else if (device->power.flags.power_resources) {
+			result = acpi_power_get_inferred_state(device);
+			if (result)
+				return result;
 		}
-	} else {
-		/* TBD: Non-recursive algorithm for walking up hierarchy. */
-		*state = device->parent ?
-			device->parent->power.state : ACPI_STATE_D0;
+
+		*state = device->power.state;
 	}
 
 	ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Device [%s] power state is D%d\n",
-			  device->pnp.bus_id, *state));
+			  device->pnp.bus_id, device->power.state));
 
 	return 0;
 }
 
+EXPORT_SYMBOL(acpi_bus_get_power);
 
-static int __acpi_bus_set_power(struct acpi_device *device, int state)
+int acpi_bus_set_power(acpi_handle handle, int state)
 {
 	int result = 0;
 	acpi_status status = AE_OK;
+	struct acpi_device *device = NULL;
 	char object_name[5] = { '_', 'P', 'S', '0' + state, '\0' };
 
-	if (!device || (state < ACPI_STATE_D0) || (state > ACPI_STATE_D3_COLD))
+
+	result = acpi_bus_get_device(handle, &device);
+	if (result)
+		return result;
+
+	if ((state < ACPI_STATE_D0) || (state > ACPI_STATE_D3))
 		return -EINVAL;
 
 	/* Make sure this is a valid target state */
 
-	if (state == device->power.state) {
+	if (!device->flags.power_manageable) {
+		ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Device `[%s]' is not power manageable\n",
+				kobject_name(&device->dev.kobj)));
+		return -ENODEV;
+	}
+	/*
+	 * Get device's current power state
+	 */
+	if (!acpi_power_nocheck) {
+		/*
+		 * Maybe the incorrect power state is returned on the bogus
+		 * bios, which is different with the real power state.
+		 * For example: the bios returns D0 state and the real power
+		 * state is D3. OS expects to set the device to D0 state. In
+		 * such case if OS uses the power state returned by the BIOS,
+		 * the device can't be transisted to the correct power state.
+		 * So if the acpi_power_nocheck is set, it is unnecessary to
+		 * get the power state by calling acpi_bus_get_power.
+		 */
+		acpi_bus_get_power(device->handle, &device->power.state);
+	}
+	if ((state == device->power.state) && !device->flags.force_power_state) {
 		ACPI_DEBUG_PRINT((ACPI_DB_INFO, "Device is already at D%d\n",
 				  state));
 		return 0;
@@ -257,10 +267,6 @@ static int __acpi_bus_set_power(struct acpi_device *device, int state)
 			      " state than parent\n");
 		return -ENODEV;
 	}
-
-	/* For D3cold we should execute _PS3, not _PS4. */
-	if (state == ACPI_STATE_D3_COLD)
-		object_name[3] = '3';
 
 	/*
 	 * Transition Power
@@ -314,74 +320,7 @@ static int __acpi_bus_set_power(struct acpi_device *device, int state)
 	return result;
 }
 
-
-int acpi_bus_set_power(acpi_handle handle, int state)
-{
-	struct acpi_device *device;
-	int result;
-
-	result = acpi_bus_get_device(handle, &device);
-	if (result)
-		return result;
-
-	if (!device->flags.power_manageable) {
-		ACPI_DEBUG_PRINT((ACPI_DB_INFO,
-				"Device [%s] is not power manageable\n",
-				dev_name(&device->dev)));
-		return -ENODEV;
-	}
-
-	return __acpi_bus_set_power(device, state);
-}
 EXPORT_SYMBOL(acpi_bus_set_power);
-
-
-int acpi_bus_init_power(struct acpi_device *device)
-{
-	int state;
-	int result;
-
-	if (!device)
-		return -EINVAL;
-
-	device->power.state = ACPI_STATE_UNKNOWN;
-
-	result = __acpi_bus_get_power(device, &state);
-	if (result)
-		return result;
-
-	if (device->power.flags.power_resources)
-		result = acpi_power_on_resources(device, state);
-
-	if (!result)
-		device->power.state = state;
-
-	return result;
-}
-
-
-int acpi_bus_update_power(acpi_handle handle, int *state_p)
-{
-	struct acpi_device *device;
-	int state;
-	int result;
-
-	result = acpi_bus_get_device(handle, &device);
-	if (result)
-		return result;
-
-	result = __acpi_bus_get_power(device, &state);
-	if (result)
-		return result;
-
-	result = __acpi_bus_set_power(device, state);
-	if (!result && state_p)
-		*state_p = state;
-
-	return result;
-}
-EXPORT_SYMBOL_GPL(acpi_bus_update_power);
-
 
 bool acpi_bus_power_manageable(acpi_handle handle)
 {
@@ -423,6 +362,11 @@ static void acpi_print_osc_error(acpi_handle handle,
 	printk("\n");
 }
 
+static u8 hex_val(unsigned char c)
+{
+	return isdigit(c) ? c - '0' : toupper(c) - 'A' + 10;
+}
+
 static acpi_status acpi_str_to_uuid(char *str, u8 *uuid)
 {
 	int i;
@@ -439,8 +383,8 @@ static acpi_status acpi_str_to_uuid(char *str, u8 *uuid)
 			return AE_BAD_PARAMETER;
 	}
 	for (i = 0; i < 16; i++) {
-		uuid[i] = hex_to_bin(str[opc_map_to_uuid[i]]) << 4;
-		uuid[i] |= hex_to_bin(str[opc_map_to_uuid[i] + 1]);
+		uuid[i] = hex_val(str[opc_map_to_uuid[i]]) << 4;
+		uuid[i] |= hex_val(str[opc_map_to_uuid[i] + 1]);
 	}
 	return AE_OK;
 }
@@ -532,7 +476,6 @@ out_kfree:
 }
 EXPORT_SYMBOL(acpi_run_osc);
 
-bool osc_sb_apei_support_acked;
 static u8 sb_uuid_str[] = "0811B06E-4A27-44F9-8D60-3CBBC22E7B48";
 static void acpi_bus_osc_support(void)
 {
@@ -555,19 +498,11 @@ static void acpi_bus_osc_support(void)
 #if defined(CONFIG_ACPI_PROCESSOR) || defined(CONFIG_ACPI_PROCESSOR_MODULE)
 	capbuf[OSC_SUPPORT_TYPE] |= OSC_SB_PPC_OST_SUPPORT;
 #endif
-
-	if (!ghes_disable)
-		capbuf[OSC_SUPPORT_TYPE] |= OSC_SB_APEI_SUPPORT;
 	if (ACPI_FAILURE(acpi_get_handle(NULL, "\\_SB", &handle)))
 		return;
-	if (ACPI_SUCCESS(acpi_run_osc(handle, &context))) {
-		u32 *capbuf_ret = context.ret.pointer;
-		if (context.ret.length > OSC_SUPPORT_TYPE)
-			osc_sb_apei_support_acked =
-				capbuf_ret[OSC_SUPPORT_TYPE] & OSC_SB_APEI_SUPPORT;
+	if (ACPI_SUCCESS(acpi_run_osc(handle, &context)))
 		kfree(context.ret.pointer);
-	}
-	/* do we need to check other returned cap? Sounds no */
+	/* do we need to check the returned cap? Sounds no */
 }
 
 /* --------------------------------------------------------------------------
@@ -591,7 +526,7 @@ int acpi_bus_generate_proc_event4(const char *device_class, const char *bus_id, 
 	if (!event_is_open)
 		return 0;
 
-	event = kzalloc(sizeof(struct acpi_bus_event), GFP_ATOMIC);
+	event = kmalloc(sizeof(struct acpi_bus_event), GFP_ATOMIC);
 	if (!event)
 		return -ENOMEM;
 
@@ -877,12 +812,6 @@ void __init acpi_early_init(void)
 
 	acpi_gbl_permanent_mmap = 1;
 
-	/*
-	 * If the machine falls into the DMI check table,
-	 * DSDT will be copied to memory
-	 */
-	dmi_check_system(dsdt_dmi_table);
-
 	status = acpi_reallocate_root_table();
 	if (ACPI_FAILURE(status)) {
 		printk(KERN_ERR PREFIX
@@ -923,19 +852,14 @@ void __init acpi_early_init(void)
 	}
 #endif
 
-	status = acpi_enable_subsystem(~ACPI_NO_ACPI_ENABLE);
+	status =
+	    acpi_enable_subsystem(~
+				  (ACPI_NO_HARDWARE_INIT |
+				   ACPI_NO_ACPI_ENABLE));
 	if (ACPI_FAILURE(status)) {
 		printk(KERN_ERR PREFIX "Unable to enable ACPI\n");
 		goto error0;
 	}
-
-	/*
-	 * If the system is using ACPI then we can be reasonably
-	 * confident that any regulators are managed by the firmware
-	 * so tell the regulator core it has everything it needs to
-	 * know.
-	 */
-	regulator_has_full_constraints();
 
 	return;
 
@@ -952,7 +876,8 @@ static int __init acpi_bus_init(void)
 
 	acpi_os_initialize1();
 
-	status = acpi_enable_subsystem(ACPI_NO_ACPI_ENABLE);
+	status =
+	    acpi_enable_subsystem(ACPI_NO_HARDWARE_INIT | ACPI_NO_ACPI_ENABLE);
 	if (ACPI_FAILURE(status)) {
 		printk(KERN_ERR PREFIX
 		       "Unable to start the ACPI Interpreter\n");
@@ -970,25 +895,13 @@ static int __init acpi_bus_init(void)
 	status = acpi_ec_ecdt_probe();
 	/* Ignore result. Not having an ECDT is not fatal. */
 
+	acpi_bus_osc_support();
+
 	status = acpi_initialize_objects(ACPI_FULL_INITIALIZATION);
 	if (ACPI_FAILURE(status)) {
 		printk(KERN_ERR PREFIX "Unable to initialize ACPI objects\n");
 		goto error1;
 	}
-
-	/*
-	 * _OSC method may exist in module level code,
-	 * so it must be run after ACPI_FULL_INITIALIZATION
-	 */
-	acpi_bus_osc_support();
-
-	/*
-	 * _PDC control method may load dynamic SSDT tables,
-	 * and we need to install the table handler before that.
-	 */
-	acpi_sysfs_init();
-
-	acpi_early_processor_set_pdc();
 
 	/*
 	 * Maybe EC region is required at bus_scan/acpi_get_devices. So it
@@ -1034,11 +947,11 @@ static int __init acpi_bus_init(void)
 }
 
 struct kobject *acpi_kobj;
-EXPORT_SYMBOL_GPL(acpi_kobj);
 
 static int __init acpi_init(void)
 {
-	int result;
+	int result = 0;
+
 
 	if (acpi_disabled) {
 		printk(KERN_INFO PREFIX "Interpreter disabled.\n");
@@ -1053,18 +966,37 @@ static int __init acpi_init(void)
 
 	init_acpi_device_notify();
 	result = acpi_bus_init();
-	if (result) {
-		disable_acpi();
-		return result;
-	}
 
-	pci_mmcfg_late_init();
+	if (!result) {
+		pci_mmcfg_late_init();
+		if (!(pm_flags & PM_APM))
+			pm_flags |= PM_ACPI;
+		else {
+			printk(KERN_INFO PREFIX
+			       "APM is already active, exiting\n");
+			disable_acpi();
+			result = -ENODEV;
+		}
+	} else
+		disable_acpi();
+
+	if (acpi_disabled)
+		return result;
+
+	/*
+	 * If the laptop falls into the DMI check table, the power state check
+	 * will be disabled in the course of device power transistion.
+	 */
+	dmi_check_system(power_nocheck_dmi_table);
+
 	acpi_scan_init();
 	acpi_ec_init();
-	acpi_debugfs_init();
+	acpi_power_init();
+	acpi_system_init();
+	acpi_debug_init();
 	acpi_sleep_proc_init();
 	acpi_wakeup_device_init();
-	return 0;
+	return result;
 }
 
 subsys_initcall(acpi_init);

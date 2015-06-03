@@ -130,3 +130,4 @@ pfn_t node_getfirstfree(cnodeid_t cnode)
 		return (KDM_TO_PHYS(PAGE_ALIGN(SYMMON_STK_ADDR(nasid, 0))) >>
 								PAGE_SHIFT);
 }
+

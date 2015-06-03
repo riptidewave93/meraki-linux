@@ -28,6 +28,7 @@
  */
 
 #include <linux/kernel.h>
+#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/acpi.h>
 #include <acpi/acpi_bus.h>
@@ -182,8 +183,6 @@ static int __init dmi_disable_osi_vista(const struct dmi_system_id *d)
 {
 	printk(KERN_NOTICE PREFIX "DMI detected: %s\n", d->ident);
 	acpi_osi_setup("!Windows 2006");
-	acpi_osi_setup("!Windows 2006 SP1");
-	acpi_osi_setup("!Windows 2006 SP2");
 	return 0;
 }
 static int __init dmi_disable_osi_win7(const struct dmi_system_id *d)
@@ -203,23 +202,6 @@ static struct dmi_system_id acpi_osi_dmi_table[] __initdata = {
 		},
 	},
 	{
-	/*
-	 * There have a NVIF method in MSI GX723 DSDT need call by Nvidia
-	 * driver (e.g. nouveau) when user press brightness hotkey.
-	 * Currently, nouveau driver didn't do the job and it causes there
-	 * have a infinite while loop in DSDT when user press hotkey.
-	 * We add MSI GX723's dmi information to this table for workaround
-	 * this issue.
-	 * Will remove MSI GX723 from the table after nouveau grows support.
-	 */
-	.callback = dmi_disable_osi_vista,
-	.ident = "MSI GX723",
-	.matches = {
-		     DMI_MATCH(DMI_SYS_VENDOR, "Micro-Star International"),
-		     DMI_MATCH(DMI_PRODUCT_NAME, "GX723"),
-		},
-	},
-	{
 	.callback = dmi_disable_osi_vista,
 	.ident = "Sony VGN-NS10J_S",
 	.matches = {
@@ -232,15 +214,15 @@ static struct dmi_system_id acpi_osi_dmi_table[] __initdata = {
 	.ident = "Sony VGN-SR290J",
 	.matches = {
 		     DMI_MATCH(DMI_SYS_VENDOR, "Sony Corporation"),
-		     DMI_MATCH(DMI_PRODUCT_NAME, "VGN-SR290J"),
+		     DMI_MATCH(DMI_PRODUCT_NAME, "Sony VGN-SR290J"),
 		},
 	},
 	{
 	.callback = dmi_disable_osi_vista,
-	.ident = "VGN-NS50B_L",
+	.ident = "Toshiba Satellite L355",
 	.matches = {
-		     DMI_MATCH(DMI_SYS_VENDOR, "Sony Corporation"),
-		     DMI_MATCH(DMI_PRODUCT_NAME, "VGN-NS50B_L"),
+		     DMI_MATCH(DMI_SYS_VENDOR, "TOSHIBA"),
+		     DMI_MATCH(DMI_PRODUCT_VERSION, "Satellite L355"),
 		},
 	},
 	{
@@ -325,19 +307,6 @@ static struct dmi_system_id acpi_osi_dmi_table[] __initdata = {
 	.matches = {
 		     DMI_MATCH(DMI_SYS_VENDOR, "LENOVO"),
 		     DMI_MATCH(DMI_PRODUCT_VERSION, "ThinkPad T500"),
-		},
-	},
-	/*
-	 * Without this this EEEpc exports a non working WMI interface, with
-	 * this it exports a working "good old" eeepc_laptop interface, fixing
-	 * both brightness control, and rfkill not working.
-	 */
-	{
-	.callback = dmi_enable_osi_linux,
-	.ident = "Asus EEE PC 1015PX",
-	.matches = {
-		     DMI_MATCH(DMI_SYS_VENDOR, "ASUSTeK Computer INC."),
-		     DMI_MATCH(DMI_PRODUCT_NAME, "1015PX"),
 		},
 	},
 	{}

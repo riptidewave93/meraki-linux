@@ -5,23 +5,23 @@
 # including <linux/version.h> that don't need it.
 # Copyright (C) 2003, Randy Dunlap <rdunlap@xenotime.net>
 
-use strict;
-
 $| = 1;
 
-my $debugging;
+my $debugging = 0;
 
-foreach my $file (@ARGV) {
-    next if $file =~ "include/linux/version\.h";
+foreach $file (@ARGV)
+{
     # Open this file.
-    open( my $f, '<', $file )
-      or die "Can't open $file: $!\n";
+    open(FILE, $file) || die "Can't open $file: $!\n";
 
     # Initialize variables.
-    my ($fInComment, $fInString, $fUseVersion);
+    my $fInComment   = 0;
+    my $fInString    = 0;
+    my $fUseVersion   = 0;
     my $iLinuxVersion = 0;
 
-    while (<$f>) {
+    LINE: while ( <FILE> )
+    {
 	# Strip comments.
 	$fInComment && (s+^.*?\*/+ +o ? ($fInComment = 0) : next);
 	m+/\*+o && (s+/\*.*?\*/+ +go, (s+/\*.*$+ +o && ($fInComment = 1)));
@@ -43,8 +43,8 @@ foreach my $file (@ARGV) {
 	# Look for uses: LINUX_VERSION_CODE, KERNEL_VERSION, UTS_RELEASE
 	if (($_ =~ /LINUX_VERSION_CODE/) || ($_ =~ /\WKERNEL_VERSION/)) {
 	    $fUseVersion = 1;
-            last if $iLinuxVersion;
-        }
+	    last LINE if $iLinuxVersion;
+	}
     }
 
     # Report used version IDs without include?
@@ -67,5 +67,5 @@ foreach my $file (@ARGV) {
         }
     }
 
-    close($f);
+    close(FILE);
 }

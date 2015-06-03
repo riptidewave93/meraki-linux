@@ -29,7 +29,6 @@ struct vdso_data {
 	__u32 tz_minuteswest;		/* Minutes west of Greenwich	0x30 */
 	__u32 tz_dsttime;		/* Type of dst correction	0x34 */
 	__u32 ectg_available;
-	__u32 ntp_mult;			/* NTP adjusted multiplier	0x3C */
 };
 
 struct vdso_per_cpu_data {
@@ -40,8 +39,8 @@ struct vdso_per_cpu_data {
 extern struct vdso_data *vdso_data;
 
 #ifdef CONFIG_64BIT
-int vdso_alloc_per_cpu(struct _lowcore *lowcore);
-void vdso_free_per_cpu(struct _lowcore *lowcore);
+int vdso_alloc_per_cpu(int cpu, struct _lowcore *lowcore);
+void vdso_free_per_cpu(int cpu, struct _lowcore *lowcore);
 #endif
 
 #endif /* __ASSEMBLY__ */

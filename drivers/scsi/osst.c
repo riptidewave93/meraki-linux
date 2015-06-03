@@ -38,7 +38,6 @@ static const char * osst_version = "0.99.4";
 #include <linux/sched.h>
 #include <linux/proc_fs.h>
 #include <linux/mm.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/string.h>
 #include <linux/errno.h>
@@ -51,9 +50,10 @@ static const char * osst_version = "0.99.4";
 #include <linux/moduleparam.h>
 #include <linux/delay.h>
 #include <linux/jiffies.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <asm/uaccess.h>
 #include <asm/dma.h>
+#include <asm/system.h>
 
 /* The driver prints some debugging information on the console if DEBUG
    is defined and non-zero. */
@@ -79,7 +79,6 @@ static const char * osst_version = "0.99.4";
 #include "osst_options.h"
 #include "osst_detect.h"
 
-static DEFINE_MUTEX(osst_int_mutex);
 static int max_dev = 0;
 static int write_threshold_kbs = 0;
 static int max_sg_segs = 0;
@@ -1365,7 +1364,7 @@ error:
 /* The values below are based on the OnStream frame payload size of 32K == 2**15,
  * that is, OSST_FRAME_SHIFT + OSST_SECTOR_SHIFT must be 15. With a minimum block
  * size of 512 bytes, we need to be able to resolve 32K/512 == 64 == 2**6 positions
- * inside each frame. Finally, OSST_SECTOR_MASK == 2**OSST_FRAME_SHIFT - 1.
+ * inside each frame. Finaly, OSST_SECTOR_MASK == 2**OSST_FRAME_SHIFT - 1.
  */
 #define OSST_FRAME_SHIFT  6
 #define OSST_SECTOR_SHIFT 9
@@ -1483,7 +1482,7 @@ static int osst_read_back_buffer_and_rewrite(struct osst_tape * STp, struct osst
 	int			dbg              = debugging;
 #endif
 
-	if ((buffer = vmalloc((nframes + 1) * OS_DATA_SIZE)) == NULL)
+	if ((buffer = (unsigned char *)vmalloc((nframes + 1) * OS_DATA_SIZE)) == NULL)
 		return (-EIO);
 
 	printk(KERN_INFO "%s:I: Reading back %d frames from drive buffer%s\n",
@@ -2295,7 +2294,7 @@ static int osst_write_header(struct osst_tape * STp, struct osst_request ** aSRp
 	if (STp->raw) return 0;
 
 	if (STp->header_cache == NULL) {
-		if ((STp->header_cache = vmalloc(sizeof(os_header_t))) == NULL) {
+		if ((STp->header_cache = (os_header_t *)vmalloc(sizeof(os_header_t))) == NULL) {
 			printk(KERN_ERR "%s:E: Failed to allocate header cache\n", name);
 			return (-ENOMEM);
 		}
@@ -2483,7 +2482,7 @@ static int __osst_analyze_headers(struct osst_tape * STp, struct osst_request **
 				   name, ppos, update_frame_cntr);
 #endif
 		if (STp->header_cache == NULL) {
-			if ((STp->header_cache = vmalloc(sizeof(os_header_t))) == NULL) {
+			if ((STp->header_cache = (os_header_t *)vmalloc(sizeof(os_header_t))) == NULL) {
 				printk(KERN_ERR "%s:E: Failed to allocate header cache\n", name);
 				return 0;
 			}
@@ -3130,7 +3129,7 @@ static int osst_flush_write_buffer(struct osst_tape *STp, struct osst_request **
 		}
 #if DEBUG
 		if (debugging)
-			printk(OSST_DEB_MSG "%s:D: Flushing %d bytes, Transferring %d bytes in %d lblocks.\n",
+			printk(OSST_DEB_MSG "%s:D: Flushing %d bytes, Transfering %d bytes in %d lblocks.\n",
 			  			 name, offset, transfer, blks);
 #endif
 
@@ -3587,7 +3586,7 @@ if (SRpnt) printk(KERN_ERR "%s:A: Not supposed to have SRpnt at line %d\n", name
 		if (i == (-ENOSPC)) {
 			transfer = STp->buffer->writing;	/* FIXME -- check this logic */
 			if (transfer <= do_count) {
-				*ppos += do_count - transfer;
+				filp->f_pos += do_count - transfer;
 				count -= do_count - transfer;
 				if (STps->drv_block >= 0) {
 					STps->drv_block += (do_count - transfer) / STp->block_size;
@@ -3625,7 +3624,7 @@ if (SRpnt) printk(KERN_ERR "%s:A: Not supposed to have SRpnt at line %d\n", name
 			goto out;
 		}
 
-		*ppos += do_count;
+		filp->f_pos += do_count;
 		b_point += do_count;
 		count -= do_count;
 		if (STps->drv_block >= 0) {
@@ -3647,7 +3646,7 @@ if (SRpnt) printk(KERN_ERR "%s:A: Not supposed to have SRpnt at line %d\n", name
 		if (STps->drv_block >= 0) {
 			STps->drv_block += blks;
 		}
-		*ppos += count;
+		filp->f_pos += count;
 		count = 0;
 	}
 
@@ -3810,7 +3809,7 @@ static ssize_t osst_read(struct file * filp, char __user * buf, size_t count, lo
 
 			if (transfer == 0) {
 				printk(KERN_WARNING
-				  "%s:W: Nothing can be transferred, requested %Zd, tape block size (%d%c).\n",
+				  "%s:W: Nothing can be transfered, requested %Zd, tape block size (%d%c).\n",
 			   		name, count, STp->block_size < 1024?
 					STp->block_size:STp->block_size/1024,
 				       	STp->block_size<1024?'b':'k');
@@ -3823,7 +3822,7 @@ static ssize_t osst_read(struct file * filp, char __user * buf, size_t count, lo
 			}
 			STp->logical_blk_num += transfer / STp->block_size;
 			STps->drv_block      += transfer / STp->block_size;
-			*ppos          += transfer;
+			filp->f_pos          += transfer;
 			buf                  += transfer;
 			total                += transfer;
 		}
@@ -4697,14 +4696,12 @@ static int __os_scsi_tape_open(struct inode * inode, struct file * filp)
 			break;
 
 			if ((SRpnt->sense[2] & 0x0f) == UNIT_ATTENTION) {
-				int j;
-
 				STp->pos_unknown = 0;
 				STp->partition = STp->new_partition = 0;
 				if (STp->can_partitions)
 					STp->nbr_partitions = 1;  /* This guess will be updated later if necessary */
-				for (j = 0; j < ST_NBR_PARTITIONS; j++) {
-					STps = &(STp->ps[j]);
+				for (i=0; i < ST_NBR_PARTITIONS; i++) {
+					STps = &(STp->ps[i]);
 					STps->rw = ST_IDLE;
 					STps->eof = ST_NOEOF;
 					STps->at_sm = 0;
@@ -4809,9 +4806,9 @@ static int os_scsi_tape_open(struct inode * inode, struct file * filp)
 {
 	int ret;
 
-	mutex_lock(&osst_int_mutex);
+	lock_kernel();
 	ret = __os_scsi_tape_open(inode, filp);
-	mutex_unlock(&osst_int_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -4934,7 +4931,7 @@ static int os_scsi_tape_close(struct inode * inode, struct file * filp)
 
 
 /* The ioctl command */
-static long osst_ioctl(struct file * file,
+static int osst_ioctl(struct inode * inode,struct file * file,
 	 unsigned int cmd_in, unsigned long arg)
 {
 	int		      i, cmd_nr, cmd_type, blk, retval = 0;
@@ -4945,11 +4942,8 @@ static long osst_ioctl(struct file * file,
 	char		    * name  = tape_name(STp);
 	void	    __user  * p     = (void __user *)arg;
 
-	mutex_lock(&osst_int_mutex);
-	if (mutex_lock_interruptible(&STp->lock)) {
-		mutex_unlock(&osst_int_mutex);
+	if (mutex_lock_interruptible(&STp->lock))
 		return -ERESTARTSYS;
-	}
 
 #if DEBUG
 	if (debugging && !STp->in_use) {
@@ -5261,15 +5255,12 @@ static long osst_ioctl(struct file * file,
 
 	mutex_unlock(&STp->lock);
 
-	retval = scsi_ioctl(STp->device, cmd_in, p);
-	mutex_unlock(&osst_int_mutex);
-	return retval;
+	return scsi_ioctl(STp->device, cmd_in, p);
 
 out:
 	if (SRpnt) osst_release_request(SRpnt);
 
 	mutex_unlock(&STp->lock);
-	mutex_unlock(&osst_int_mutex);
 
 	return retval;
 }
@@ -5621,14 +5612,13 @@ static const struct file_operations osst_fops = {
 	.owner =        THIS_MODULE,
 	.read =         osst_read,
 	.write =        osst_write,
-	.unlocked_ioctl = osst_ioctl,
+	.ioctl =        osst_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl = osst_compat_ioctl,
 #endif
 	.open =         os_scsi_tape_open,
 	.flush =        os_scsi_tape_flush,
 	.release =      os_scsi_tape_close,
-	.llseek =	noop_llseek,
 };
 
 static int osst_supports(struct scsi_device * SDp)
@@ -5852,7 +5842,9 @@ static int osst_probe(struct device *dev)
 	/* if this is the first attach, build the infrastructure */
 	write_lock(&os_scsi_tapes_lock);
 	if (os_scsi_tapes == NULL) {
-		os_scsi_tapes = kmalloc(osst_max_dev * sizeof(struct osst_tape *), GFP_ATOMIC);
+		os_scsi_tapes =
+			(struct osst_tape **)kmalloc(osst_max_dev * sizeof(struct osst_tape *),
+				   GFP_ATOMIC);
 		if (os_scsi_tapes == NULL) {
 			write_unlock(&os_scsi_tapes_lock);
 			printk(KERN_ERR "osst :E: Unable to allocate array for OnStream SCSI tapes.\n");
@@ -5868,8 +5860,7 @@ static int osst_probe(struct device *dev)
 	}
 
 	/* find a free minor number */
-	for (i = 0; i < osst_max_dev && os_scsi_tapes[i]; i++)
-		;
+	for (i=0; os_scsi_tapes[i] && i<osst_max_dev; i++);
 	if(i >= osst_max_dev) panic ("Scsi_devices corrupt (osst)");
 	dev_num = i;
 

@@ -41,6 +41,7 @@
 #include <linux/errno.h>
 #include <linux/poll.h>
 #include <linux/init.h>
+#include <linux/slab.h>
 #include <linux/spinlock.h>
 
 #include "sisusb.h"

@@ -7,9 +7,6 @@
 #define MAX_CODADEVS  5	   /* how many do we allow */
 
 #ifdef __KERNEL__
-#include <linux/backing-dev.h>
-#include <linux/mutex.h>
-
 struct kstatfs;
 
 /* communication pending/processing queues */
@@ -20,8 +17,6 @@ struct venus_comm {
 	struct list_head    vc_processing;
 	int                 vc_inuse;
 	struct super_block *vc_sb;
-	struct backing_dev_info bdi;
-	struct mutex	    vc_mutex;
 };
 
 
@@ -65,7 +60,7 @@ int venus_symlink(struct super_block *sb, struct CodaFid *fid,
 int venus_access(struct super_block *sb, struct CodaFid *fid, int mask);
 int venus_pioctl(struct super_block *sb, struct CodaFid *fid,
 		 unsigned int cmd, struct PioctlData *data);
-int coda_downcall(struct venus_comm *vcp, int opcode, union outputArgs *out);
+int coda_downcall(int opcode, union outputArgs *out, struct super_block *sb);
 int venus_fsync(struct super_block *sb, struct CodaFid *fid);
 int venus_statfs(struct dentry *dentry, struct kstatfs *sfs);
 
@@ -88,9 +83,9 @@ struct upc_req {
 	wait_queue_head_t   uc_sleep;   /* process' wait queue */
 };
 
-#define CODA_REQ_ASYNC  0x1
-#define CODA_REQ_READ   0x2
-#define CODA_REQ_WRITE  0x4
-#define CODA_REQ_ABORT  0x8
+#define REQ_ASYNC  0x1
+#define REQ_READ   0x2
+#define REQ_WRITE  0x4
+#define REQ_ABORT  0x8
 
 #endif

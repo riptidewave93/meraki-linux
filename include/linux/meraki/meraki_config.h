@@ -12,9 +12,8 @@
 #define MERAKI_CONFIG_H
 
 struct meraki_config_platform_data {
-    struct at24_platform_data* eeprom_data;
-    int write_protect_gpio;     // If there is no GPIO for write protect, set this to -1.
-    bool write_protect_active_low;
+    unsigned int i2c_adapter_id;
+    unsigned short i2c_address;
 };
 
 enum {
@@ -29,8 +28,6 @@ enum {
     MERAKI_BOARD_MS320_48,
     MERAKI_BOARD_MS320_48LP,
     MERAKI_BOARD_MS320_48FP,
-    MERAKI_BOARD_MS420_24,
-    MERAKI_BOARD_MS420_48,
 };
 
 extern int meraki_config_get_product(void);

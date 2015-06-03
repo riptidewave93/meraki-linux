@@ -11,7 +11,6 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/platform_device.h>
-#include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/clk.h>
 #include <linux/io.h>
@@ -60,7 +59,7 @@ int pwm_config(struct pwm_device *pwm, int duty_ns, int period_ns)
 	if (pwm == NULL || period_ns == 0 || duty_ns > period_ns)
 		return -EINVAL;
 
-	if (!(cpu_is_mx1() || cpu_is_mx21())) {
+	if (cpu_is_mx27() || cpu_is_mx3() || cpu_is_mx25()) {
 		unsigned long long c;
 		unsigned long period_cycles, duty_cycles, prescale;
 		u32 cr;
@@ -109,7 +108,7 @@ int pwm_config(struct pwm_device *pwm, int duty_ns, int period_ns)
 		 * register to follow the ratio of duty_ns vs. period_ns
 		 * accordingly.
 		 *
-		 * This is good enough for programming the brightness of
+		 * This is good enought for programming the brightness of
 		 * the LCD backlight.
 		 *
 		 * The real implementation would divide PERCLK[0] first by
@@ -132,7 +131,7 @@ int pwm_enable(struct pwm_device *pwm)
 	int rc = 0;
 
 	if (!pwm->clk_enabled) {
-		rc = clk_prepare_enable(pwm->clk);
+		rc = clk_enable(pwm->clk);
 		if (!rc)
 			pwm->clk_enabled = 1;
 	}
@@ -145,7 +144,7 @@ void pwm_disable(struct pwm_device *pwm)
 	writel(0, pwm->mmio_base + MX3_PWMCR);
 
 	if (pwm->clk_enabled) {
-		clk_disable_unprepare(pwm->clk);
+		clk_disable(pwm->clk);
 		pwm->clk_enabled = 0;
 	}
 }
@@ -228,14 +227,14 @@ static int __devinit mxc_pwm_probe(struct platform_device *pdev)
 		goto err_free_clk;
 	}
 
-	r = request_mem_region(r->start, resource_size(r), pdev->name);
+	r = request_mem_region(r->start, r->end - r->start + 1, pdev->name);
 	if (r == NULL) {
 		dev_err(&pdev->dev, "failed to request memory resource\n");
 		ret = -EBUSY;
 		goto err_free_clk;
 	}
 
-	pwm->mmio_base = ioremap(r->start, resource_size(r));
+	pwm->mmio_base = ioremap(r->start, r->end - r->start + 1);
 	if (pwm->mmio_base == NULL) {
 		dev_err(&pdev->dev, "failed to ioremap() registers\n");
 		ret = -ENODEV;
@@ -250,7 +249,7 @@ static int __devinit mxc_pwm_probe(struct platform_device *pdev)
 	return 0;
 
 err_free_mem:
-	release_mem_region(r->start, resource_size(r));
+	release_mem_region(r->start, r->end - r->start + 1);
 err_free_clk:
 	clk_put(pwm->clk);
 err_free:
@@ -274,7 +273,7 @@ static int __devexit mxc_pwm_remove(struct platform_device *pdev)
 	iounmap(pwm->mmio_base);
 
 	r = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	release_mem_region(r->start, resource_size(r));
+	release_mem_region(r->start, r->end - r->start + 1);
 
 	clk_put(pwm->clk);
 

@@ -9,7 +9,6 @@
  */
 #include <linux/init.h>
 #include <linux/kernel.h>
-#include <linux/export.h>
 #include <linux/pci.h>
 #include <linux/smp.h>
 #include <asm/sn/arch.h>
@@ -50,7 +49,7 @@ int __cpuinit bridge_probe(nasid_t nasid, int widget_id, int masterwid)
 	bridge_t *bridge;
 	int slot;
 
-	pci_set_flags(PCI_PROBE_ONLY);
+	pci_probe_only = 1;
 
 	printk("a bridge\n");
 

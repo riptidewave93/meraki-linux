@@ -21,7 +21,6 @@
  */
 
 #include <linux/efi.h>
-#include <linux/export.h>
 #include <asm/xen/hypervisor.h>
 #include <asm/xen/privop.h>
 

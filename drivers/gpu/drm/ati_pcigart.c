@@ -31,7 +31,6 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#include <linux/export.h>
 #include "drmP.h"
 
 # define ATI_PCIGART_PAGE_SIZE		4096	/**< PCI GART page size */
@@ -114,7 +113,7 @@ int drm_ati_pcigart_init(struct drm_device *dev, struct drm_ati_pcigart_info *ga
 
 		if (pci_set_dma_mask(dev->pdev, gart_info->table_mask)) {
 			DRM_ERROR("fail to set dma mask to 0x%Lx\n",
-				  (unsigned long long)gart_info->table_mask);
+				  gart_info->table_mask);
 			ret = 1;
 			goto done;
 		}
@@ -153,7 +152,7 @@ int drm_ati_pcigart_init(struct drm_device *dev, struct drm_ati_pcigart_info *ga
 		/* we need to support large memory configurations */
 		entry->busaddr[i] = pci_map_page(dev->pdev, entry->pagelist[i],
 						 0, PAGE_SIZE, PCI_DMA_BIDIRECTIONAL);
-		if (pci_dma_mapping_error(dev->pdev, entry->busaddr[i])) {
+		if (entry->busaddr[i] == 0) {
 			DRM_ERROR("unable to map PCIGART pages!\n");
 			drm_ati_pcigart_cleanup(dev, gart_info);
 			address = NULL;

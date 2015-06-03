@@ -86,15 +86,6 @@ typedef struct xfs_inode_log_format_64 {
 #define	XFS_ILOG_AEXT	0x080	/* log i_af.if_extents */
 #define	XFS_ILOG_ABROOT	0x100	/* log i_af.i_broot */
 
-
-/*
- * The timestamps are dirty, but not necessarily anything else in the inode
- * core.  Unlike the other fields above this one must never make it to disk
- * in the ilf_fields of the inode_log_format, but is purely store in-memory in
- * ili_fields in the inode_log_item.
- */
-#define XFS_ILOG_TIMESTAMP	0x4000
-
 #define	XFS_ILOG_NONCORE	(XFS_ILOG_DDATA | XFS_ILOG_DEXT | \
 				 XFS_ILOG_DBROOT | XFS_ILOG_DEV | \
 				 XFS_ILOG_UUID | XFS_ILOG_ADATA | \
@@ -110,7 +101,13 @@ typedef struct xfs_inode_log_format_64 {
 				 XFS_ILOG_DEXT | XFS_ILOG_DBROOT | \
 				 XFS_ILOG_DEV | XFS_ILOG_UUID | \
 				 XFS_ILOG_ADATA | XFS_ILOG_AEXT | \
-				 XFS_ILOG_ABROOT | XFS_ILOG_TIMESTAMP)
+				 XFS_ILOG_ABROOT)
+
+#define	XFS_ILI_HOLD		0x1
+#define	XFS_ILI_IOLOCKED_EXCL	0x2
+#define	XFS_ILI_IOLOCKED_SHARED	0x4
+
+#define	XFS_ILI_IOLOCKED_ANY   (XFS_ILI_IOLOCKED_EXCL | XFS_ILI_IOLOCKED_SHARED)
 
 static inline int xfs_ilog_fbroot(int w)
 {
@@ -130,7 +127,7 @@ static inline int xfs_ilog_fdata(int w)
 #ifdef __KERNEL__
 
 struct xfs_buf;
-struct xfs_bmbt_rec;
+struct xfs_bmbt_rec_64;
 struct xfs_inode;
 struct xfs_mount;
 
@@ -140,14 +137,19 @@ typedef struct xfs_inode_log_item {
 	struct xfs_inode	*ili_inode;	   /* inode ptr */
 	xfs_lsn_t		ili_flush_lsn;	   /* lsn at last flush */
 	xfs_lsn_t		ili_last_lsn;	   /* lsn at last transaction */
-	unsigned short		ili_lock_flags;	   /* lock flags */
+	unsigned short		ili_flags;	   /* misc flags */
 	unsigned short		ili_logged;	   /* flushed logged data */
 	unsigned int		ili_last_fields;   /* fields when flushed */
-	unsigned int		ili_fields;	   /* fields to be logged */
-	struct xfs_bmbt_rec	*ili_extents_buf;  /* array of logged
+	struct xfs_bmbt_rec_64	*ili_extents_buf;  /* array of logged
 						      data exts */
-	struct xfs_bmbt_rec	*ili_aextents_buf; /* array of logged
+	struct xfs_bmbt_rec_64	*ili_aextents_buf; /* array of logged
 						      attr exts */
+	unsigned int            ili_pushbuf_flag;  /* one bit used in push_ail */
+
+#ifdef DEBUG
+	uint64_t                ili_push_owner;    /* one who sets pushbuf_flag
+						      above gets to push the buf */
+#endif
 #ifdef XFS_TRANS_DEBUG
 	int			ili_root_size;
 	char			*ili_orig_root;
@@ -158,13 +160,15 @@ typedef struct xfs_inode_log_item {
 
 static inline int xfs_inode_clean(xfs_inode_t *ip)
 {
-	return !ip->i_itemp || !(ip->i_itemp->ili_fields & XFS_ILOG_ALL);
+	return (!ip->i_itemp ||
+		!(ip->i_itemp->ili_format.ilf_fields & XFS_ILOG_ALL)) &&
+	       !ip->i_update_core;
 }
 
 extern void xfs_inode_item_init(struct xfs_inode *, struct xfs_mount *);
 extern void xfs_inode_item_destroy(struct xfs_inode *);
-extern void xfs_iflush_done(struct xfs_buf *, struct xfs_log_item *);
-extern void xfs_istale_done(struct xfs_buf *, struct xfs_log_item *);
+extern void xfs_iflush_done(struct xfs_buf *, xfs_inode_log_item_t *);
+extern void xfs_istale_done(struct xfs_buf *, xfs_inode_log_item_t *);
 extern void xfs_iflush_abort(struct xfs_inode *);
 extern int xfs_inode_item_format_convert(xfs_log_iovec_t *,
 					 xfs_inode_log_format_t *);

@@ -24,7 +24,6 @@
 
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/types.h>
 #include <linux/notifier.h>
@@ -43,7 +42,7 @@ MODULE_AUTHOR("Kristen Carlson Accardi");
 MODULE_DESCRIPTION(ACPI_DOCK_DRIVER_DESCRIPTION);
 MODULE_LICENSE("GPL");
 
-static bool immediate_undock = 1;
+static int immediate_undock = 1;
 module_param(immediate_undock, bool, 0644);
 MODULE_PARM_DESC(immediate_undock, "1 (default) will cause the driver to "
 	"undock immediately when the undock button is pressed, 0 will cause"
@@ -51,6 +50,7 @@ MODULE_PARM_DESC(immediate_undock, "1 (default) will cause the driver to "
 	" before undocking");
 
 static struct atomic_notifier_head dock_notifier_list;
+static char dock_device_name[] = "dock";
 
 static const struct acpi_device_id dock_device_ids[] = {
 	{"LNXDOCK", 0},
@@ -77,7 +77,7 @@ struct dock_dependent_device {
 	struct list_head list;
 	struct list_head hotplug_list;
 	acpi_handle handle;
-	const struct acpi_dock_ops *ops;
+	struct acpi_dock_ops *ops;
 	void *context;
 };
 
@@ -93,30 +93,40 @@ struct dock_dependent_device {
  *                         Dock Dependent device functions                   *
  *****************************************************************************/
 /**
- * add_dock_dependent_device - associate a device with the dock station
- * @ds: The dock station
- * @handle: handle of the dependent device
+ *  alloc_dock_dependent_device - allocate and init a dependent device
+ *  @handle: the acpi_handle of the dependent device
  *
- * Add the dependent device to the dock's dependent device list.
+ *  Allocate memory for a dependent device structure for a device referenced
+ *  by the acpi handle
  */
-static int
-add_dock_dependent_device(struct dock_station *ds, acpi_handle handle)
+static struct dock_dependent_device *
+alloc_dock_dependent_device(acpi_handle handle)
 {
 	struct dock_dependent_device *dd;
 
 	dd = kzalloc(sizeof(*dd), GFP_KERNEL);
-	if (!dd)
-		return -ENOMEM;
+	if (dd) {
+		dd->handle = handle;
+		INIT_LIST_HEAD(&dd->list);
+		INIT_LIST_HEAD(&dd->hotplug_list);
+	}
+	return dd;
+}
 
-	dd->handle = handle;
-	INIT_LIST_HEAD(&dd->list);
-	INIT_LIST_HEAD(&dd->hotplug_list);
-
+/**
+ * add_dock_dependent_device - associate a device with the dock station
+ * @ds: The dock station
+ * @dd: The dependent device
+ *
+ * Add the dependent device to the dock's dependent device list.
+ */
+static void
+add_dock_dependent_device(struct dock_station *ds,
+			  struct dock_dependent_device *dd)
+{
 	spin_lock(&ds->dd_lock);
 	list_add_tail(&dd->list, &ds->dependent_devices);
 	spin_unlock(&ds->dd_lock);
-
-	return 0;
 }
 
 /**
@@ -239,7 +249,6 @@ static int is_battery(acpi_handle handle)
 static int is_ejectable_bay(acpi_handle handle)
 {
 	acpi_handle phandle;
-
 	if (!is_ejectable(handle))
 		return 0;
 	if (is_battery(handle) || is_ata(handle))
@@ -266,13 +275,14 @@ int is_dock_device(acpi_handle handle)
 
 	if (is_dock(handle))
 		return 1;
-
-	list_for_each_entry(dock_station, &dock_stations, sibling)
+	list_for_each_entry(dock_station, &dock_stations, sibling) {
 		if (find_dock_dependent_device(dock_station, handle))
 			return 1;
+	}
 
 	return 0;
 }
+
 EXPORT_SYMBOL_GPL(is_dock_device);
 
 /**
@@ -295,6 +305,8 @@ static int dock_present(struct dock_station *ds)
 	return 0;
 }
 
+
+
 /**
  * dock_create_acpi_device - add new devices to acpi
  * @handle - handle of the device to add
@@ -308,7 +320,7 @@ static int dock_present(struct dock_station *ds)
  */
 static struct acpi_device * dock_create_acpi_device(acpi_handle handle)
 {
-	struct acpi_device *device;
+	struct acpi_device *device = NULL;
 	struct acpi_device *parent_device;
 	acpi_handle parent;
 	int ret;
@@ -325,7 +337,8 @@ static struct acpi_device * dock_create_acpi_device(acpi_handle handle)
 		ret = acpi_bus_add(&device, parent_device, handle,
 			ACPI_BUS_TYPE_DEVICE);
 		if (ret) {
-			pr_debug("error adding bus, %x\n", -ret);
+			pr_debug("error adding bus, %x\n",
+				-ret);
 			return NULL;
 		}
 	}
@@ -351,6 +364,7 @@ static void dock_remove_acpi_device(acpi_handle handle)
 	}
 }
 
+
 /**
  * hotplug_dock_devices - insert or remove devices on the dock station
  * @ds: the dock station
@@ -370,9 +384,10 @@ static void hotplug_dock_devices(struct dock_station *ds, u32 event)
 	/*
 	 * First call driver specific hotplug functions
 	 */
-	list_for_each_entry(dd, &ds->hotplug_devices, hotplug_list)
+	list_for_each_entry(dd, &ds->hotplug_devices, hotplug_list) {
 		if (dd->ops && dd->ops->handler)
 			dd->ops->handler(dd->handle, event, dd->context);
+	}
 
 	/*
 	 * Now make sure that an acpi_device is created for each
@@ -411,7 +426,6 @@ static void dock_event(struct dock_station *ds, u32 event, int num)
 	list_for_each_entry(dd, &ds->hotplug_devices, hotplug_list)
 		if (dd->ops && dd->ops->uevent)
 			dd->ops->uevent(dd->handle, event, dd->context);
-
 	if (num != DOCK_EVENT)
 		kobject_uevent_env(&dev->kobj, KOBJ_CHANGE, envp);
 }
@@ -442,8 +456,8 @@ static void eject_dock(struct dock_station *ds)
 	arg.type = ACPI_TYPE_INTEGER;
 	arg.integer.value = 1;
 
-	status = acpi_evaluate_object(ds->handle, "_EJ0", &arg_list, NULL);
-	if (ACPI_FAILURE(status))
+	if (ACPI_FAILURE(acpi_evaluate_object(ds->handle, "_EJ0",
+					      &arg_list, NULL)))
 		pr_debug("Failed to evaluate _EJ0!\n");
 }
 
@@ -563,6 +577,7 @@ int register_dock_notifier(struct notifier_block *nb)
 
 	return atomic_notifier_chain_register(&dock_notifier_list, nb);
 }
+
 EXPORT_SYMBOL_GPL(register_dock_notifier);
 
 /**
@@ -576,6 +591,7 @@ void unregister_dock_notifier(struct notifier_block *nb)
 
 	atomic_notifier_chain_unregister(&dock_notifier_list, nb);
 }
+
 EXPORT_SYMBOL_GPL(unregister_dock_notifier);
 
 /**
@@ -589,7 +605,7 @@ EXPORT_SYMBOL_GPL(unregister_dock_notifier);
  * the dock driver after _DCK is executed.
  */
 int
-register_hotplug_dock_device(acpi_handle handle, const struct acpi_dock_ops *ops,
+register_hotplug_dock_device(acpi_handle handle, struct acpi_dock_ops *ops,
 			     void *context)
 {
 	struct dock_dependent_device *dd;
@@ -606,7 +622,7 @@ register_hotplug_dock_device(acpi_handle handle, const struct acpi_dock_ops *ops
 	list_for_each_entry(dock_station, &dock_stations, sibling) {
 		/*
 		 * An ATA bay can be in a dock and itself can be ejected
-		 * separately, so there are two 'dock stations' which need the
+		 * seperately, so there are two 'dock stations' which need the
 		 * ops
 		 */
 		dd = find_dock_dependent_device(dock_station, handle);
@@ -620,6 +636,7 @@ register_hotplug_dock_device(acpi_handle handle, const struct acpi_dock_ops *ops
 
 	return ret;
 }
+
 EXPORT_SYMBOL_GPL(register_hotplug_dock_device);
 
 /**
@@ -640,6 +657,7 @@ void unregister_hotplug_dock_device(acpi_handle handle)
 			dock_del_hotplug_device(dock_station, dd);
 	}
 }
+
 EXPORT_SYMBOL_GPL(unregister_hotplug_dock_device);
 
 /**
@@ -725,7 +743,6 @@ static void dock_notify(acpi_handle handle, u32 event, void *data)
 			complete_dock(ds);
 			dock_event(ds, event, DOCK_EVENT);
 			dock_lock(ds, 1);
-			acpi_update_all_gpes();
 			break;
 		}
 		if (dock_present(ds) || dock_in_progress(ds))
@@ -755,7 +772,7 @@ struct dock_data {
 
 static void acpi_dock_deferred_cb(void *context)
 {
-	struct dock_data *data = context;
+	struct dock_data *data = (struct dock_data *)context;
 
 	dock_notify(data->handle, data->event, data->ds);
 	kfree(data);
@@ -765,22 +782,23 @@ static int acpi_dock_notifier_call(struct notifier_block *this,
 	unsigned long event, void *data)
 {
 	struct dock_station *dock_station;
-	acpi_handle handle = data;
+	acpi_handle handle = (acpi_handle)data;
 
 	if (event != ACPI_NOTIFY_BUS_CHECK && event != ACPI_NOTIFY_DEVICE_CHECK
 	   && event != ACPI_NOTIFY_EJECT_REQUEST)
 		return 0;
 	list_for_each_entry(dock_station, &dock_stations, sibling) {
 		if (dock_station->handle == handle) {
-			struct dock_data *dd;
+			struct dock_data *dock_data;
 
-			dd = kmalloc(sizeof(*dd), GFP_KERNEL);
-			if (!dd)
+			dock_data = kmalloc(sizeof(*dock_data), GFP_KERNEL);
+			if (!dock_data)
 				return 0;
-			dd->handle = handle;
-			dd->event = event;
-			dd->ds = dock_station;
-			acpi_os_hotplug_execute(acpi_dock_deferred_cb, dd);
+			dock_data->handle = handle;
+			dock_data->event = event;
+			dock_data->ds = dock_station;
+			acpi_os_hotplug_execute(acpi_dock_deferred_cb,
+				dock_data);
 			return 0 ;
 		}
 	}
@@ -808,6 +826,7 @@ find_dock_devices(acpi_handle handle, u32 lvl, void *context, void **rv)
 	acpi_status status;
 	acpi_handle tmp, parent;
 	struct dock_station *ds = context;
+	struct dock_dependent_device *dd;
 
 	status = acpi_bus_get_ejd(handle, &tmp);
 	if (ACPI_FAILURE(status)) {
@@ -821,9 +840,11 @@ find_dock_devices(acpi_handle handle, u32 lvl, void *context, void **rv)
 			goto fdd_out;
 	}
 
-	if (tmp == ds->handle)
-		add_dock_dependent_device(ds, handle);
-
+	if (tmp == ds->handle) {
+		dd = alloc_dock_dependent_device(handle);
+		if (dd)
+			add_dock_dependent_device(ds, dd);
+	}
 fdd_out:
 	return AE_OK;
 }
@@ -836,7 +857,8 @@ static ssize_t show_docked(struct device *dev,
 {
 	struct acpi_device *tmp;
 
-	struct dock_station *dock_station = dev->platform_data;
+	struct dock_station *dock_station = *((struct dock_station **)
+		dev->platform_data);
 
 	if (ACPI_SUCCESS(acpi_bus_get_device(dock_station->handle, &tmp)))
 		return snprintf(buf, PAGE_SIZE, "1\n");
@@ -850,7 +872,8 @@ static DEVICE_ATTR(docked, S_IRUGO, show_docked, NULL);
 static ssize_t show_flags(struct device *dev,
 			  struct device_attribute *attr, char *buf)
 {
-	struct dock_station *dock_station = dev->platform_data;
+	struct dock_station *dock_station = *((struct dock_station **)
+		dev->platform_data);
 	return snprintf(buf, PAGE_SIZE, "%d\n", dock_station->flags);
 
 }
@@ -863,7 +886,8 @@ static ssize_t write_undock(struct device *dev, struct device_attribute *attr,
 			   const char *buf, size_t count)
 {
 	int ret;
-	struct dock_station *dock_station = dev->platform_data;
+	struct dock_station *dock_station = *((struct dock_station **)
+		dev->platform_data);
 
 	if (!count)
 		return -EINVAL;
@@ -881,7 +905,8 @@ static ssize_t show_dock_uid(struct device *dev,
 			     struct device_attribute *attr, char *buf)
 {
 	unsigned long long lbuf;
-	struct dock_station *dock_station = dev->platform_data;
+	struct dock_station *dock_station = *((struct dock_station **)
+		dev->platform_data);
 	acpi_status status = acpi_evaluate_integer(dock_station->handle,
 					"_UID", NULL, &lbuf);
 	if (ACPI_FAILURE(status))
@@ -894,7 +919,8 @@ static DEVICE_ATTR(uid, S_IRUGO, show_dock_uid, NULL);
 static ssize_t show_dock_type(struct device *dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct dock_station *dock_station = dev->platform_data;
+	struct dock_station *dock_station = *((struct dock_station **)
+		dev->platform_data);
 	char *type;
 
 	if (dock_station->flags & DOCK_IS_DOCK)
@@ -910,19 +936,6 @@ static ssize_t show_dock_type(struct device *dev,
 }
 static DEVICE_ATTR(type, S_IRUGO, show_dock_type, NULL);
 
-static struct attribute *dock_attributes[] = {
-	&dev_attr_docked.attr,
-	&dev_attr_flags.attr,
-	&dev_attr_undock.attr,
-	&dev_attr_uid.attr,
-	&dev_attr_type.attr,
-	NULL
-};
-
-static struct attribute_group dock_attribute_group = {
-	.attrs = dock_attributes
-};
-
 /**
  * dock_add - add a new dock station
  * @handle: the dock station handle
@@ -930,33 +943,41 @@ static struct attribute_group dock_attribute_group = {
  * allocated and initialize a new dock station device.  Find all devices
  * that are on the dock station, and register for dock event notifications.
  */
-static int __init dock_add(acpi_handle handle)
+static int dock_add(acpi_handle handle)
 {
-	int ret, id;
-	struct dock_station ds, *dock_station;
-	struct platform_device *dd;
+	int ret;
+	struct dock_dependent_device *dd;
+	struct dock_station *dock_station;
+	struct platform_device *dock_device;
 
-	id = dock_station_count;
-	memset(&ds, 0, sizeof(ds));
-	dd = platform_device_register_data(NULL, "dock", id, &ds, sizeof(ds));
-	if (IS_ERR(dd))
-		return PTR_ERR(dd);
-
-	dock_station = dd->dev.platform_data;
-
+	/* allocate & initialize the dock_station private data */
+	dock_station = kzalloc(sizeof(*dock_station), GFP_KERNEL);
+	if (!dock_station)
+		return -ENOMEM;
 	dock_station->handle = handle;
-	dock_station->dock_device = dd;
 	dock_station->last_dock_time = jiffies - HZ;
-
-	mutex_init(&dock_station->hp_lock);
-	spin_lock_init(&dock_station->dd_lock);
-	INIT_LIST_HEAD(&dock_station->sibling);
-	INIT_LIST_HEAD(&dock_station->hotplug_devices);
-	ATOMIC_INIT_NOTIFIER_HEAD(&dock_notifier_list);
 	INIT_LIST_HEAD(&dock_station->dependent_devices);
+	INIT_LIST_HEAD(&dock_station->hotplug_devices);
+	INIT_LIST_HEAD(&dock_station->sibling);
+	spin_lock_init(&dock_station->dd_lock);
+	mutex_init(&dock_station->hp_lock);
+	ATOMIC_INIT_NOTIFIER_HEAD(&dock_notifier_list);
+
+	/* initialize platform device stuff */
+	dock_station->dock_device =
+		platform_device_register_simple(dock_device_name,
+			dock_station_count, NULL, 0);
+	dock_device = dock_station->dock_device;
+	if (IS_ERR(dock_device)) {
+		kfree(dock_station);
+		dock_station = NULL;
+		return PTR_ERR(dock_device);
+	}
+	platform_device_add_data(dock_device, &dock_station,
+		sizeof(struct dock_station *));
 
 	/* we want the dock device to send uevents */
-	dev_set_uevent_suppress(&dd->dev, 0);
+	dev_set_uevent_suppress(&dock_device->dev, 0);
 
 	if (is_dock(handle))
 		dock_station->flags |= DOCK_IS_DOCK;
@@ -965,53 +986,106 @@ static int __init dock_add(acpi_handle handle)
 	if (is_battery(handle))
 		dock_station->flags |= DOCK_IS_BAT;
 
-	ret = sysfs_create_group(&dd->dev.kobj, &dock_attribute_group);
+	ret = device_create_file(&dock_device->dev, &dev_attr_docked);
+	if (ret) {
+		printk(KERN_ERR "Error %d adding sysfs file\n", ret);
+		platform_device_unregister(dock_device);
+		kfree(dock_station);
+		dock_station = NULL;
+		return ret;
+	}
+	ret = device_create_file(&dock_device->dev, &dev_attr_undock);
+	if (ret) {
+		printk(KERN_ERR "Error %d adding sysfs file\n", ret);
+		device_remove_file(&dock_device->dev, &dev_attr_docked);
+		platform_device_unregister(dock_device);
+		kfree(dock_station);
+		dock_station = NULL;
+		return ret;
+	}
+	ret = device_create_file(&dock_device->dev, &dev_attr_uid);
+	if (ret) {
+		printk(KERN_ERR "Error %d adding sysfs file\n", ret);
+		device_remove_file(&dock_device->dev, &dev_attr_docked);
+		device_remove_file(&dock_device->dev, &dev_attr_undock);
+		platform_device_unregister(dock_device);
+		kfree(dock_station);
+		dock_station = NULL;
+		return ret;
+	}
+	ret = device_create_file(&dock_device->dev, &dev_attr_flags);
+	if (ret) {
+		printk(KERN_ERR "Error %d adding sysfs file\n", ret);
+		device_remove_file(&dock_device->dev, &dev_attr_docked);
+		device_remove_file(&dock_device->dev, &dev_attr_undock);
+		device_remove_file(&dock_device->dev, &dev_attr_uid);
+		platform_device_unregister(dock_device);
+		kfree(dock_station);
+		dock_station = NULL;
+		return ret;
+	}
+	ret = device_create_file(&dock_device->dev, &dev_attr_type);
 	if (ret)
-		goto err_unregister;
+		printk(KERN_ERR"Error %d adding sysfs file\n", ret);
 
 	/* Find dependent devices */
 	acpi_walk_namespace(ACPI_TYPE_DEVICE, ACPI_ROOT_OBJECT,
-			    ACPI_UINT32_MAX, find_dock_devices, NULL,
-			    dock_station, NULL);
+			    ACPI_UINT32_MAX, find_dock_devices, dock_station,
+			    NULL);
 
 	/* add the dock station as a device dependent on itself */
-	ret = add_dock_dependent_device(dock_station, handle);
-	if (ret)
-		goto err_rmgroup;
+	dd = alloc_dock_dependent_device(handle);
+	if (!dd) {
+		kfree(dock_station);
+		dock_station = NULL;
+		ret = -ENOMEM;
+		goto dock_add_err_unregister;
+	}
+	add_dock_dependent_device(dock_station, dd);
 
 	dock_station_count++;
 	list_add(&dock_station->sibling, &dock_stations);
 	return 0;
 
-err_rmgroup:
-	sysfs_remove_group(&dd->dev.kobj, &dock_attribute_group);
-err_unregister:
-	platform_device_unregister(dd);
-	printk(KERN_ERR "%s encountered error %d\n", __func__, ret);
+dock_add_err_unregister:
+	device_remove_file(&dock_device->dev, &dev_attr_type);
+	device_remove_file(&dock_device->dev, &dev_attr_docked);
+	device_remove_file(&dock_device->dev, &dev_attr_undock);
+	device_remove_file(&dock_device->dev, &dev_attr_uid);
+	device_remove_file(&dock_device->dev, &dev_attr_flags);
+	platform_device_unregister(dock_device);
+	kfree(dock_station);
+	dock_station = NULL;
 	return ret;
 }
 
 /**
  * dock_remove - free up resources related to the dock station
  */
-static int dock_remove(struct dock_station *ds)
+static int dock_remove(struct dock_station *dock_station)
 {
 	struct dock_dependent_device *dd, *tmp;
-	struct platform_device *dock_device = ds->dock_device;
+	struct platform_device *dock_device = dock_station->dock_device;
 
 	if (!dock_station_count)
 		return 0;
 
 	/* remove dependent devices */
-	list_for_each_entry_safe(dd, tmp, &ds->dependent_devices, list)
-		kfree(dd);
-
-	list_del(&ds->sibling);
+	list_for_each_entry_safe(dd, tmp, &dock_station->dependent_devices,
+				 list)
+	    kfree(dd);
 
 	/* cleanup sysfs */
-	sysfs_remove_group(&dock_device->dev.kobj, &dock_attribute_group);
+	device_remove_file(&dock_device->dev, &dev_attr_type);
+	device_remove_file(&dock_device->dev, &dev_attr_docked);
+	device_remove_file(&dock_device->dev, &dev_attr_undock);
+	device_remove_file(&dock_device->dev, &dev_attr_uid);
+	device_remove_file(&dock_device->dev, &dev_attr_flags);
 	platform_device_unregister(dock_device);
 
+	/* free dock station memory */
+	kfree(dock_station);
+	dock_station = NULL;
 	return 0;
 }
 
@@ -1024,16 +1098,20 @@ static int dock_remove(struct dock_station *ds)
  *
  * This is called by acpi_walk_namespace to look for dock stations.
  */
-static __init acpi_status
+static acpi_status
 find_dock(acpi_handle handle, u32 lvl, void *context, void **rv)
 {
-	if (is_dock(handle))
-		dock_add(handle);
+	acpi_status status = AE_OK;
 
-	return AE_OK;
+	if (is_dock(handle)) {
+		if (dock_add(handle) >= 0) {
+			status = AE_CTRL_TERMINATE;
+		}
+	}
+	return status;
 }
 
-static __init acpi_status
+static acpi_status
 find_bay(acpi_handle handle, u32 lvl, void *context, void **rv)
 {
 	/* If bay is a dock, it's already handled */
@@ -1049,11 +1127,11 @@ static int __init dock_init(void)
 
 	/* look for a dock station */
 	acpi_walk_namespace(ACPI_TYPE_DEVICE, ACPI_ROOT_OBJECT,
-			    ACPI_UINT32_MAX, find_dock, NULL, NULL, NULL);
+			    ACPI_UINT32_MAX, find_dock, NULL, NULL);
 
 	/* look for bay */
 	acpi_walk_namespace(ACPI_TYPE_DEVICE, ACPI_ROOT_OBJECT,
-			ACPI_UINT32_MAX, find_bay, NULL, NULL, NULL);
+			ACPI_UINT32_MAX, find_bay, NULL, NULL);
 	if (!dock_station_count) {
 		printk(KERN_INFO PREFIX "No dock devices found.\n");
 		return 0;
@@ -1067,7 +1145,8 @@ static int __init dock_init(void)
 
 static void __exit dock_exit(void)
 {
-	struct dock_station *tmp, *dock_station;
+	struct dock_station *dock_station;
+	struct dock_station *tmp;
 
 	unregister_acpi_bus_notifier(&dock_acpi_notifier);
 	list_for_each_entry_safe(dock_station, tmp, &dock_stations, sibling)

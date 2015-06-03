@@ -16,6 +16,7 @@
 #include <linux/init.h>
 
 #include <asm/ptrace.h>
+#include <asm/system.h>
 #include <asm/dma.h>
 #include <asm/irq.h>
 #include <asm/mmu_context.h>
@@ -28,7 +29,7 @@
 #include "irq_impl.h"
 #include "pci_impl.h"
 #include "machvec_impl.h"
-#include "pc873xx.h"
+
 
 /* Note mask bit is true for DISABLED irqs.  */
 static unsigned long cached_irq_mask[2] = { -1, -1 };
@@ -44,28 +45,43 @@ takara_update_irq_hw(unsigned long irq, unsigned long mask)
 }
 
 static inline void
-takara_enable_irq(struct irq_data *d)
+takara_enable_irq(unsigned int irq)
 {
-	unsigned int irq = d->irq;
 	unsigned long mask;
 	mask = (cached_irq_mask[irq >= 64] &= ~(1UL << (irq & 63)));
 	takara_update_irq_hw(irq, mask);
 }
 
 static void
-takara_disable_irq(struct irq_data *d)
+takara_disable_irq(unsigned int irq)
 {
-	unsigned int irq = d->irq;
 	unsigned long mask;
 	mask = (cached_irq_mask[irq >= 64] |= 1UL << (irq & 63));
 	takara_update_irq_hw(irq, mask);
 }
 
+static unsigned int
+takara_startup_irq(unsigned int irq)
+{
+	takara_enable_irq(irq);
+	return 0; /* never anything pending */
+}
+
+static void
+takara_end_irq(unsigned int irq)
+{
+	if (!(irq_desc[irq].status & (IRQ_DISABLED|IRQ_INPROGRESS)))
+		takara_enable_irq(irq);
+}
+
 static struct irq_chip takara_irq_type = {
 	.name		= "TAKARA",
-	.irq_unmask	= takara_enable_irq,
-	.irq_mask	= takara_disable_irq,
-	.irq_mask_ack	= takara_disable_irq,
+	.startup	= takara_startup_irq,
+	.shutdown	= takara_disable_irq,
+	.enable		= takara_enable_irq,
+	.disable	= takara_disable_irq,
+	.ack		= takara_disable_irq,
+	.end		= takara_end_irq,
 };
 
 static void
@@ -137,9 +153,8 @@ takara_init_irq(void)
 		takara_update_irq_hw(i, -1);
 
 	for (i = 16; i < 128; ++i) {
-		irq_set_chip_and_handler(i, &takara_irq_type,
-					 handle_level_irq);
-		irq_set_status_flags(i, IRQ_LEVEL);
+		irq_desc[i].status = IRQ_DISABLED | IRQ_LEVEL;
+		irq_desc[i].chip = &takara_irq_type;
 	}
 
 	common_init_isa_dma();
@@ -156,7 +171,7 @@ takara_init_irq(void)
  */
 
 static int __init
-takara_map_irq_srm(const struct pci_dev *dev, u8 slot, u8 pin)
+takara_map_irq_srm(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	static char irq_tab[15][5] __initdata = {
 		{ 16+3, 16+3, 16+3, 16+3, 16+3},   /* slot  6 == device 3 */
@@ -187,7 +202,7 @@ takara_map_irq_srm(const struct pci_dev *dev, u8 slot, u8 pin)
 }
 
 static int __init
-takara_map_irq(const struct pci_dev *dev, u8 slot, u8 pin)
+takara_map_irq(struct pci_dev *dev, u8 slot, u8 pin)
 {
 	static char irq_tab[15][5] __initdata = {
 		{ 16+3, 16+3, 16+3, 16+3, 16+3},   /* slot  6 == device 3 */
@@ -249,14 +264,7 @@ takara_init_pci(void)
 		alpha_mv.pci_map_irq = takara_map_irq_srm;
 
 	cia_init_pci();
-
-	if (pc873xx_probe() == -1) {
-		printk(KERN_ERR "Probing for PC873xx Super IO chip failed.\n");
-	} else {
-		printk(KERN_INFO "Found %s Super IO chip at 0x%x\n",
-			pc873xx_get_model(), pc873xx_get_base());
-		pc873xx_enable_ide();
-	}
+	ns87312_enable_ide(0x26e);
 }
 
 

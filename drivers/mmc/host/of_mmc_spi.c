@@ -14,23 +14,13 @@
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/device.h>
-#include <linux/slab.h>
-#include <linux/irq.h>
 #include <linux/gpio.h>
 #include <linux/of.h>
 #include <linux/of_gpio.h>
-#include <linux/of_irq.h>
 #include <linux/spi/spi.h>
 #include <linux/spi/mmc_spi.h>
 #include <linux/mmc/core.h>
 #include <linux/mmc/host.h>
-
-/* For archs that don't support NO_IRQ (such as mips), provide a dummy value */
-#ifndef NO_IRQ
-#define NO_IRQ 0
-#endif
-
-MODULE_LICENSE("GPL");
 
 enum {
 	CD_GPIO = 0,
@@ -41,7 +31,6 @@ enum {
 struct of_mmc_spi {
 	int gpios[NUM_GPIOS];
 	bool alow_gpios[NUM_GPIOS];
-	int detect_irq;
 	struct mmc_spi_platform_data pdata;
 };
 
@@ -69,26 +58,10 @@ static int of_mmc_spi_get_ro(struct device *dev)
 	return of_mmc_spi_read_gpio(dev, WP_GPIO);
 }
 
-static int of_mmc_spi_init(struct device *dev,
-			   irqreturn_t (*irqhandler)(int, void *), void *mmc)
-{
-	struct of_mmc_spi *oms = to_of_mmc_spi(dev);
-
-	return request_threaded_irq(oms->detect_irq, NULL, irqhandler, 0,
-				    dev_name(dev), mmc);
-}
-
-static void of_mmc_spi_exit(struct device *dev, void *mmc)
-{
-	struct of_mmc_spi *oms = to_of_mmc_spi(dev);
-
-	free_irq(oms->detect_irq, mmc);
-}
-
 struct mmc_spi_platform_data *mmc_spi_get_pdata(struct spi_device *spi)
 {
 	struct device *dev = &spi->dev;
-	struct device_node *np = dev->of_node;
+	struct device_node *np = dev_archdata_get_node(&dev->archdata);
 	struct of_mmc_spi *oms;
 	const u32 *voltage_ranges;
 	int num_ranges;
@@ -113,8 +86,8 @@ struct mmc_spi_platform_data *mmc_spi_get_pdata(struct spi_device *spi)
 		const int j = i * 2;
 		u32 mask;
 
-		mask = mmc_vddrange_to_ocrmask(be32_to_cpu(voltage_ranges[j]),
-					       be32_to_cpu(voltage_ranges[j + 1]));
+		mask = mmc_vddrange_to_ocrmask(voltage_ranges[j],
+					       voltage_ranges[j + 1]);
 		if (!mask) {
 			ret = -EINVAL;
 			dev_err(dev, "OF: voltage-range #%d is invalid\n", i);
@@ -145,13 +118,8 @@ struct mmc_spi_platform_data *mmc_spi_get_pdata(struct spi_device *spi)
 	if (gpio_is_valid(oms->gpios[WP_GPIO]))
 		oms->pdata.get_ro = of_mmc_spi_get_ro;
 
-	oms->detect_irq = irq_of_parse_and_map(np, 0);
-	if (oms->detect_irq != NO_IRQ) {
-		oms->pdata.init = of_mmc_spi_init;
-		oms->pdata.exit = of_mmc_spi_exit;
-	} else {
-		oms->pdata.caps |= MMC_CAP_NEEDS_POLL;
-	}
+	/* We don't support interrupts yet, let's poll. */
+	oms->pdata.caps |= MMC_CAP_NEEDS_POLL;
 
 	dev->platform_data = &oms->pdata;
 	return dev->platform_data;
@@ -164,7 +132,7 @@ EXPORT_SYMBOL(mmc_spi_get_pdata);
 void mmc_spi_put_pdata(struct spi_device *spi)
 {
 	struct device *dev = &spi->dev;
-	struct device_node *np = dev->of_node;
+	struct device_node *np = dev_archdata_get_node(&dev->archdata);
 	struct of_mmc_spi *oms = to_of_mmc_spi(dev);
 	int i;
 

@@ -5,7 +5,7 @@
 
 #include <linux/compiler.h>
 #include <linux/types.h>
-#include <asm/cmpxchg.h>
+#include <asm/system.h>
 #include <arch/atomic.h>
 
 /*
@@ -15,7 +15,7 @@
 
 #define ATOMIC_INIT(i)  { (i) }
 
-#define atomic_read(v) (*(volatile int *)&(v)->counter)
+#define atomic_read(v) ((v)->counter)
 #define atomic_set(v,i) (((v)->counter) = (i))
 
 /* These should be written in asm but we do it in C for now. */
@@ -138,7 +138,7 @@ static inline int atomic_cmpxchg(atomic_t *v, int old, int new)
 
 #define atomic_xchg(v, new) (xchg(&((v)->counter), new))
 
-static inline int __atomic_add_unless(atomic_t *v, int a, int u)
+static inline int atomic_add_unless(atomic_t *v, int a, int u)
 {
 	int ret;
 	unsigned long flags;
@@ -148,8 +148,9 @@ static inline int __atomic_add_unless(atomic_t *v, int a, int u)
 	if (ret != u)
 		v->counter += a;
 	cris_atomic_restore(v, flags);
-	return ret;
+	return ret != u;
 }
+#define atomic_inc_not_zero(v) atomic_add_unless((v), 1, 0)
 
 /* Atomic operations are already serializing */
 #define smp_mb__before_atomic_dec()    barrier()
@@ -157,4 +158,5 @@ static inline int __atomic_add_unless(atomic_t *v, int a, int u)
 #define smp_mb__before_atomic_inc()    barrier()
 #define smp_mb__after_atomic_inc()     barrier()
 
+#include <asm-generic/atomic-long.h>
 #endif

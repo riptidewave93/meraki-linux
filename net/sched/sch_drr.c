@@ -9,7 +9,6 @@
  */
 
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 #include <linux/errno.h>
 #include <linux/netdevice.h>
@@ -110,7 +109,7 @@ static int drr_change_class(struct Qdisc *sch, u32 classid, u32 parentid,
 	cl->refcnt	   = 1;
 	cl->common.classid = classid;
 	cl->quantum	   = quantum;
-	cl->qdisc	   = qdisc_create_dflt(sch->dev_queue,
+	cl->qdisc	   = qdisc_create_dflt(qdisc_dev(sch), sch->dev_queue,
 					       &pfifo_qdisc_ops, classid);
 	if (cl->qdisc == NULL)
 		cl->qdisc = &noop_qdisc;
@@ -218,7 +217,7 @@ static int drr_graft_class(struct Qdisc *sch, unsigned long arg,
 	struct drr_class *cl = (struct drr_class *)arg;
 
 	if (new == NULL) {
-		new = qdisc_create_dflt(sch->dev_queue,
+		new = qdisc_create_dflt(qdisc_dev(sch), sch->dev_queue,
 					&pfifo_qdisc_ops, cl->common.classid);
 		if (new == NULL)
 			new = &noop_qdisc;
@@ -281,7 +280,7 @@ static int drr_dump_class_stats(struct Qdisc *sch, unsigned long arg,
 	}
 
 	if (gnet_stats_copy_basic(d, &cl->bstats) < 0 ||
-	    gnet_stats_copy_rate_est(d, &cl->bstats, &cl->rate_est) < 0 ||
+	    gnet_stats_copy_rate_est(d, &cl->rate_est) < 0 ||
 	    gnet_stats_copy_queue(d, &cl->qdisc->qstats) < 0)
 		return -1;
 
@@ -351,6 +350,7 @@ static int drr_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 {
 	struct drr_sched *q = qdisc_priv(sch);
 	struct drr_class *cl;
+	unsigned int len;
 	int err;
 
 	cl = drr_classify(skb, sch, &err);
@@ -361,6 +361,7 @@ static int drr_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 		return err;
 	}
 
+	len = qdisc_pkt_len(skb);
 	err = qdisc_enqueue(skb, cl->qdisc);
 	if (unlikely(err != NET_XMIT_SUCCESS)) {
 		if (net_xmit_drop_count(err)) {
@@ -375,7 +376,10 @@ static int drr_enqueue(struct sk_buff *skb, struct Qdisc *sch)
 		cl->deficit = cl->quantum;
 	}
 
-	bstats_update(&cl->bstats, skb);
+	cl->bstats.packets++;
+	cl->bstats.bytes += len;
+	sch->bstats.packets++;
+	sch->bstats.bytes += len;
 
 	sch->q.qlen++;
 	return err;
@@ -402,7 +406,6 @@ static struct sk_buff *drr_dequeue(struct Qdisc *sch)
 			skb = qdisc_dequeue_peeked(cl->qdisc);
 			if (cl->qdisc->q.qlen == 0)
 				list_del(&cl->alist);
-			qdisc_bstats_update(sch, skb);
 			sch->q.qlen--;
 			return skb;
 		}

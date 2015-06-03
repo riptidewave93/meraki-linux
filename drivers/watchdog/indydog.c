@@ -12,8 +12,6 @@
  *	based on softdog.c by Alan Cox <alan@lxorguk.ukuu.org.uk>
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/types.h>
@@ -28,13 +26,14 @@
 #include <linux/uaccess.h>
 #include <asm/sgi/mc.h>
 
+#define PFX "indydog: "
 static unsigned long indydog_alive;
-static DEFINE_SPINLOCK(indydog_lock);
+static spinlock_t indydog_lock;
 
 #define WATCHDOG_TIMEOUT 30		/* 30 sec default timeout */
 
-static bool nowayout = WATCHDOG_NOWAYOUT;
-module_param(nowayout, bool, 0);
+static int nowayout = WATCHDOG_NOWAYOUT;
+module_param(nowayout, int, 0);
 MODULE_PARM_DESC(nowayout,
 		"Watchdog cannot be stopped once started (default="
 				__MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
@@ -61,7 +60,7 @@ static void indydog_stop(void)
 	sgimc->cpuctrl0 = mc_ctrl0;
 	spin_unlock(&indydog_lock);
 
-	pr_info("Stopped watchdog timer\n");
+	printk(KERN_INFO PFX "Stopped watchdog timer.\n");
 }
 
 static void indydog_ping(void)
@@ -84,7 +83,7 @@ static int indydog_open(struct inode *inode, struct file *file)
 	indydog_start();
 	indydog_ping();
 
-	pr_info("Started watchdog timer\n");
+	printk(KERN_INFO "Started watchdog timer.\n");
 
 	return nonseekable_open(inode, file);
 }
@@ -112,7 +111,7 @@ static long indydog_ioctl(struct file *file, unsigned int cmd,
 							unsigned long arg)
 {
 	int options, retval = -EINVAL;
-	static const struct watchdog_info ident = {
+	static struct watchdog_info ident = {
 		.options		= WDIOF_KEEPALIVEPING,
 		.firmware_version	= 0,
 		.identity		= "Hardware Watchdog for SGI IP22",
@@ -179,25 +178,32 @@ static struct notifier_block indydog_notifier = {
 	.notifier_call = indydog_notify_sys,
 };
 
+static char banner[] __initdata =
+	KERN_INFO PFX "Hardware Watchdog Timer for SGI IP22: 0.3\n";
+
 static int __init watchdog_init(void)
 {
 	int ret;
 
+	spin_lock_init(&indydog_lock);
+
 	ret = register_reboot_notifier(&indydog_notifier);
 	if (ret) {
-		pr_err("cannot register reboot notifier (err=%d)\n", ret);
+		printk(KERN_ERR PFX
+			"cannot register reboot notifier (err=%d)\n", ret);
 		return ret;
 	}
 
 	ret = misc_register(&indydog_miscdev);
 	if (ret) {
-		pr_err("cannot register miscdev on minor=%d (err=%d)\n",
-		       WATCHDOG_MINOR, ret);
+		printk(KERN_ERR PFX
+			"cannot register miscdev on minor=%d (err=%d)\n",
+							WATCHDOG_MINOR, ret);
 		unregister_reboot_notifier(&indydog_notifier);
 		return ret;
 	}
 
-	pr_info("Hardware Watchdog Timer for SGI IP22: 0.3\n");
+	printk(banner);
 
 	return 0;
 }

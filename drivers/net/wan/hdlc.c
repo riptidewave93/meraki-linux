@@ -22,8 +22,6 @@
  * - proto->start() and stop() are called with spin_lock_irq held.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/errno.h>
 #include <linux/hdlc.h>
 #include <linux/if_arp.h>
@@ -59,7 +57,7 @@ static int hdlc_rcv(struct sk_buff *skb, struct net_device *dev,
 {
 	struct hdlc_device *hdlc = dev_to_hdlc(dev);
 
-	if (!net_eq(dev_net(dev), &init_net)) {
+	if (dev_net(dev) != &init_net) {
 		kfree_skb(skb);
 		return 0;
 	}
@@ -104,14 +102,14 @@ static int hdlc_device_event(struct notifier_block *this, unsigned long event,
 	unsigned long flags;
 	int on;
 
-	if (!net_eq(dev_net(dev), &init_net))
+	if (dev_net(dev) != &init_net)
 		return NOTIFY_DONE;
 
 	if (!(dev->priv_flags & IFF_WAN_HDLC))
 		return NOTIFY_DONE; /* not an HDLC device */
 
 	if (event != NETDEV_CHANGE)
-		return NOTIFY_DONE; /* Only interested in carrier changes */
+		return NOTIFY_DONE; /* Only interrested in carrier changes */
 
 	on = netif_carrier_ok(dev);
 
@@ -132,10 +130,10 @@ static int hdlc_device_event(struct notifier_block *this, unsigned long event,
 		goto carrier_exit;
 
 	if (hdlc->carrier) {
-		netdev_info(dev, "Carrier detected\n");
+		printk(KERN_INFO "%s: Carrier detected\n", dev->name);
 		hdlc_proto_start(dev);
 	} else {
-		netdev_info(dev, "Carrier lost\n");
+		printk(KERN_INFO "%s: Carrier lost\n", dev->name);
 		hdlc_proto_stop(dev);
 	}
 
@@ -167,10 +165,10 @@ int hdlc_open(struct net_device *dev)
 	spin_lock_irq(&hdlc->state_lock);
 
 	if (hdlc->carrier) {
-		netdev_info(dev, "Carrier detected\n");
+		printk(KERN_INFO "%s: Carrier detected\n", dev->name);
 		hdlc_proto_start(dev);
 	} else
-		netdev_info(dev, "No carrier\n");
+		printk(KERN_INFO "%s: No carrier\n", dev->name);
 
 	hdlc->open = 1;
 
@@ -283,8 +281,8 @@ int attach_hdlc_protocol(struct net_device *dev, struct hdlc_proto *proto,
 	if (size)
 		if ((dev_to_hdlc(dev)->state = kmalloc(size,
 						       GFP_KERNEL)) == NULL) {
-			netdev_warn(dev,
-				    "Memory squeeze on hdlc_proto_attach()\n");
+			printk(KERN_WARNING "Memory squeeze on"
+			       " hdlc_proto_attach()\n");
 			module_put(proto->module);
 			return -ENOBUFS;
 		}
@@ -365,7 +363,7 @@ static int __init hdlc_module_init(void)
 {
 	int result;
 
-	pr_info("%s\n", version);
+	printk(KERN_INFO "%s\n", version);
 	if ((result = register_netdevice_notifier(&hdlc_notifier)) != 0)
 		return result;
 	dev_add_pack(&hdlc_packet_type);

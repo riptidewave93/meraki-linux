@@ -4,8 +4,6 @@
 #include <linux/proc_fs.h>
 #include <linux/module.h>
 #include <linux/ctype.h>
-#include <linux/string.h>
-#include <linux/slab.h>
 #include <linux/init.h>
 
 #define LINE_SIZE 80
@@ -135,7 +133,8 @@ mtrr_write(struct file *file, const char __user *buf, size_t len, loff_t * ppos)
 		return -EINVAL;
 
 	base = simple_strtoull(line + 5, &ptr, 0);
-	ptr = skip_spaces(ptr);
+	while (isspace(*ptr))
+		ptr++;
 
 	if (strncmp(ptr, "size=", 5))
 		return -EINVAL;
@@ -143,11 +142,14 @@ mtrr_write(struct file *file, const char __user *buf, size_t len, loff_t * ppos)
 	size = simple_strtoull(ptr + 5, &ptr, 0);
 	if ((base & 0xfff) || (size & 0xfff))
 		return -EINVAL;
-	ptr = skip_spaces(ptr);
+	while (isspace(*ptr))
+		ptr++;
 
 	if (strncmp(ptr, "type=", 5))
 		return -EINVAL;
-	ptr = skip_spaces(ptr + 5);
+	ptr += 5;
+	while (isspace(*ptr))
+		ptr++;
 
 	for (i = 0; i < MTRR_NUM_TYPES; ++i) {
 		if (strcmp(ptr, mtrr_strings[i]))
@@ -167,7 +169,6 @@ mtrr_ioctl(struct file *file, unsigned int cmd, unsigned long __arg)
 {
 	int err = 0;
 	mtrr_type type;
-	unsigned long base;
 	unsigned long size;
 	struct mtrr_sentry sentry;
 	struct mtrr_gentry gentry;
@@ -268,14 +269,14 @@ mtrr_ioctl(struct file *file, unsigned int cmd, unsigned long __arg)
 #endif
 		if (gentry.regnum >= num_var_ranges)
 			return -EINVAL;
-		mtrr_if->get(gentry.regnum, &base, &size, &type);
+		mtrr_if->get(gentry.regnum, &gentry.base, &size, &type);
 
 		/* Hide entries that go above 4GB */
-		if (base + size - 1 >= (1UL << (8 * sizeof(gentry.size) - PAGE_SHIFT))
+		if (gentry.base + size - 1 >= (1UL << (8 * sizeof(gentry.size) - PAGE_SHIFT))
 		    || size >= (1UL << (8 * sizeof(gentry.size) - PAGE_SHIFT)))
 			gentry.base = gentry.size = gentry.type = 0;
 		else {
-			gentry.base = base << PAGE_SHIFT;
+			gentry.base <<= PAGE_SHIFT;
 			gentry.size = size << PAGE_SHIFT;
 			gentry.type = type;
 		}
@@ -322,12 +323,11 @@ mtrr_ioctl(struct file *file, unsigned int cmd, unsigned long __arg)
 #endif
 		if (gentry.regnum >= num_var_ranges)
 			return -EINVAL;
-		mtrr_if->get(gentry.regnum, &base, &size, &type);
+		mtrr_if->get(gentry.regnum, &gentry.base, &size, &type);
 		/* Hide entries that would overflow */
 		if (size != (__typeof__(gentry.size))size)
 			gentry.base = gentry.size = gentry.type = 0;
 		else {
-			gentry.base = base;
 			gentry.size = size;
 			gentry.type = type;
 		}

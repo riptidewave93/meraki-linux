@@ -1,5 +1,5 @@
 /*
- * Driver for the HP iLO management processor.
+ * Driver for HP iLO/iLO2 management processor.
  *
  * Copyright (C) 2008 Hewlett-Packard Development Company, L.P.
  *	David Altobelli <david.altobelli@hp.com>
@@ -25,7 +25,6 @@
 #include <linux/io.h>
 #include <linux/wait.h>
 #include <linux/poll.h>
-#include <linux/slab.h>
 #include "hpilo.h"
 
 static struct class *ilo_class;
@@ -256,8 +255,7 @@ static void ilo_ccb_close(struct pci_dev *pdev, struct ccb_data *data)
 
 static int ilo_ccb_setup(struct ilo_hwinfo *hw, struct ccb_data *data, int slot)
 {
-	char *dma_va;
-	dma_addr_t dma_pa;
+	char *dma_va, *dma_pa;
 	struct ccb *driver_ccb, *ilo_ccb;
 
 	driver_ccb = &data->driver_ccb;
@@ -273,12 +271,12 @@ static int ilo_ccb_setup(struct ilo_hwinfo *hw, struct ccb_data *data, int slot)
 		return -ENOMEM;
 
 	dma_va = (char *)data->dma_va;
-	dma_pa = data->dma_pa;
+	dma_pa = (char *)data->dma_pa;
 
 	memset(dma_va, 0, data->dma_size);
 
 	dma_va = (char *)roundup((unsigned long)dma_va, ILO_START_ALIGN);
-	dma_pa = roundup(dma_pa, ILO_START_ALIGN);
+	dma_pa = (char *)roundup((unsigned long)dma_pa, ILO_START_ALIGN);
 
 	/*
 	 * Create two ccb's, one with virt addrs, one with phys addrs.
@@ -289,26 +287,26 @@ static int ilo_ccb_setup(struct ilo_hwinfo *hw, struct ccb_data *data, int slot)
 
 	fifo_setup(dma_va, NR_QENTRY);
 	driver_ccb->ccb_u1.send_fifobar = dma_va + FIFOHANDLESIZE;
-	ilo_ccb->ccb_u1.send_fifobar_pa = dma_pa + FIFOHANDLESIZE;
+	ilo_ccb->ccb_u1.send_fifobar = dma_pa + FIFOHANDLESIZE;
 	dma_va += fifo_sz(NR_QENTRY);
 	dma_pa += fifo_sz(NR_QENTRY);
 
 	dma_va = (char *)roundup((unsigned long)dma_va, ILO_CACHE_SZ);
-	dma_pa = roundup(dma_pa, ILO_CACHE_SZ);
+	dma_pa = (char *)roundup((unsigned long)dma_pa, ILO_CACHE_SZ);
 
 	fifo_setup(dma_va, NR_QENTRY);
 	driver_ccb->ccb_u3.recv_fifobar = dma_va + FIFOHANDLESIZE;
-	ilo_ccb->ccb_u3.recv_fifobar_pa = dma_pa + FIFOHANDLESIZE;
+	ilo_ccb->ccb_u3.recv_fifobar = dma_pa + FIFOHANDLESIZE;
 	dma_va += fifo_sz(NR_QENTRY);
 	dma_pa += fifo_sz(NR_QENTRY);
 
 	driver_ccb->ccb_u2.send_desc = dma_va;
-	ilo_ccb->ccb_u2.send_desc_pa = dma_pa;
+	ilo_ccb->ccb_u2.send_desc = dma_pa;
 	dma_pa += desc_mem_sz(NR_QENTRY);
 	dma_va += desc_mem_sz(NR_QENTRY);
 
 	driver_ccb->ccb_u4.recv_desc = dma_va;
-	ilo_ccb->ccb_u4.recv_desc_pa = dma_pa;
+	ilo_ccb->ccb_u4.recv_desc = dma_pa;
 
 	driver_ccb->channel = slot;
 	ilo_ccb->channel = slot;
@@ -640,7 +638,6 @@ static const struct file_operations ilo_fops = {
 	.poll		= ilo_poll,
 	.open 		= ilo_open,
 	.release 	= ilo_close,
-	.llseek		= noop_llseek,
 };
 
 static irqreturn_t ilo_isr(int irq, void *data)
@@ -735,14 +732,7 @@ static void ilo_remove(struct pci_dev *pdev)
 	free_irq(pdev->irq, ilo_hw);
 	ilo_unmap_device(pdev, ilo_hw);
 	pci_release_regions(pdev);
-	/*
-	 * pci_disable_device(pdev) used to be here. But this PCI device has
-	 * two functions with interrupt lines connected to a single pin. The
-	 * other one is a USB host controller. So when we disable the PIN here
-	 * e.g. by rmmod hpilo, the controller stops working. It is because
-	 * the interrupt link is disabled in ACPI since it is not refcounted
-	 * yet. See acpi_pci_link_free_irq called from acpi_pci_irq_disable.
-	 */
+	pci_disable_device(pdev);
 	kfree(ilo_hw);
 	ilo_hwdev[(minor / MAX_CCB)] = 0;
 }
@@ -827,7 +817,7 @@ unmap:
 free_regions:
 	pci_release_regions(pdev);
 disable:
-/*	pci_disable_device(pdev);  see comment in ilo_remove */
+	pci_disable_device(pdev);
 free:
 	kfree(ilo_hw);
 out:

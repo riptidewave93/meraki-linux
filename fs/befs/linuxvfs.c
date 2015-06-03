@@ -75,6 +75,7 @@ static const struct inode_operations befs_dir_inode_operations = {
 
 static const struct address_space_operations befs_aops = {
 	.readpage	= befs_readpage,
+	.sync_page	= block_sync_page,
 	.bmap		= befs_bmap,
 };
 
@@ -283,15 +284,10 @@ befs_alloc_inode(struct super_block *sb)
         return &bi->vfs_inode;
 }
 
-static void befs_i_callback(struct rcu_head *head)
+static void
+befs_destroy_inode(struct inode *inode)
 {
-	struct inode *inode = container_of(head, struct inode, i_rcu);
         kmem_cache_free(befs_inode_cachep, BEFS_I(inode));
-}
-
-static void befs_destroy_inode(struct inode *inode)
-{
-	call_rcu(&inode->i_rcu, befs_i_callback);
 }
 
 static void init_once(void *foo)
@@ -356,7 +352,7 @@ static struct inode *befs_iget(struct super_block *sb, unsigned long ino)
 	inode->i_gid = befs_sb->mount_opts.use_gid ?
 	    befs_sb->mount_opts.gid : (gid_t) fs32_to_cpu(sb, raw_inode->gid);
 
-	set_nlink(inode, 1);
+	inode->i_nlink = 1;
 
 	/*
 	 * BEFS's time is 64 bits, but current VFS is 32 bits...
@@ -388,7 +384,7 @@ static struct inode *befs_iget(struct super_block *sb, unsigned long ino)
 		int num_blks;
 
 		befs_ino->i_data.ds =
-		    fsds_to_cpu(sb, &raw_inode->data.datastream);
+		    fsds_to_cpu(sb, raw_inode->data.datastream);
 
 		num_blks = befs_count_blocks(sb, &befs_ino->i_data.ds);
 		inode->i_blocks =
@@ -440,7 +436,7 @@ befs_init_inodecache(void)
 					      init_once);
 	if (befs_inode_cachep == NULL) {
 		printk(KERN_ERR "befs_init_inodecache: "
-		       "Couldn't initialize inode slabcache\n");
+		       "Couldn't initalize inode slabcache\n");
 		return -ENOMEM;
 	}
 
@@ -738,7 +734,7 @@ parse_options(char *options, befs_mount_options * opts)
 
 /* This function has the responsibiltiy of getting the
  * filesystem ready for unmounting. 
- * Basically, we free everything that we allocated in
+ * Basicly, we free everything that we allocated in
  * befs_read_inode
  */
 static void
@@ -852,8 +848,9 @@ befs_fill_super(struct super_block *sb, void *data, int silent)
 		ret = PTR_ERR(root);
 		goto unacquire_priv_sbp;
 	}
-	sb->s_root = d_make_root(root);
+	sb->s_root = d_alloc_root(root);
 	if (!sb->s_root) {
+		iput(root);
 		befs_error(sb, "get root inode failed");
 		goto unacquire_priv_sbp;
 	}
@@ -921,17 +918,18 @@ befs_statfs(struct dentry *dentry, struct kstatfs *buf)
 	return 0;
 }
 
-static struct dentry *
-befs_mount(struct file_system_type *fs_type, int flags, const char *dev_name,
-	    void *data)
+static int
+befs_get_sb(struct file_system_type *fs_type, int flags, const char *dev_name,
+	    void *data, struct vfsmount *mnt)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, befs_fill_super);
+	return get_sb_bdev(fs_type, flags, dev_name, data, befs_fill_super,
+			   mnt);
 }
 
 static struct file_system_type befs_fs_type = {
 	.owner		= THIS_MODULE,
 	.name		= "befs",
-	.mount		= befs_mount,
+	.get_sb		= befs_get_sb,
 	.kill_sb	= kill_block_super,
 	.fs_flags	= FS_REQUIRES_DEV,	
 };

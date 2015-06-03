@@ -20,7 +20,6 @@
 #include <linux/maple.h>
 #include <linux/dma-mapping.h>
 #include <linux/delay.h>
-#include <linux/module.h>
 #include <asm/cacheflush.h>
 #include <asm/dma.h>
 #include <asm/io.h>
@@ -95,9 +94,9 @@ EXPORT_SYMBOL_GPL(maple_driver_unregister);
 /* set hardware registers to enable next round of dma */
 static void maple_dma_reset(void)
 {
-	__raw_writel(MAPLE_MAGIC, MAPLE_RESET);
+	ctrl_outl(MAPLE_MAGIC, MAPLE_RESET);
 	/* set trig type to 0 for software trigger, 1 for hardware (VBLANK) */
-	__raw_writel(1, MAPLE_TRIGTYPE);
+	ctrl_outl(1, MAPLE_TRIGTYPE);
 	/*
 	* Maple system register
 	* bits 31 - 16	timeout in units of 20nsec
@@ -106,9 +105,9 @@ static void maple_dma_reset(void)
 	* bits 3 - 0	delay (in 1.3ms) between VBLANK and start of DMA
 	* max delay is 11
 	*/
-	__raw_writel(MAPLE_2MBPS | MAPLE_TIMEOUT(0xFFFF), MAPLE_SPEED);
-	__raw_writel(virt_to_phys(maple_sendbuf), MAPLE_DMAADDR);
-	__raw_writel(1, MAPLE_ENABLE);
+	ctrl_outl(MAPLE_2MBPS | MAPLE_TIMEOUT(0xFFFF), MAPLE_SPEED);
+	ctrl_outl(PHYSADDR(maple_sendbuf), MAPLE_DMAADDR);
+	ctrl_outl(1, MAPLE_ENABLE);
 }
 
 /**
@@ -131,7 +130,7 @@ EXPORT_SYMBOL_GPL(maple_getcond_callback);
 
 static int maple_dma_done(void)
 {
-	return (__raw_readl(MAPLE_STATE) & 1) == 0;
+	return (ctrl_inl(MAPLE_STATE) & 1) == 0;
 }
 
 static void maple_release_device(struct device *dev)
@@ -259,7 +258,7 @@ static void maple_build_block(struct mapleq *mq)
 	maple_lastptr = maple_sendptr;
 
 	*maple_sendptr++ = (port << 16) | len | 0x80000000;
-	*maple_sendptr++ = virt_to_phys(mq->recvbuf->buf);
+	*maple_sendptr++ = PHYSADDR(mq->recvbuf->buf);
 	*maple_sendptr++ =
 	    mq->command | (to << 8) | (from << 16) | (len << 24);
 	while (len-- > 0)
@@ -276,7 +275,7 @@ static void maple_send(void)
 		return;
 
 	/* disable DMA */
-	__raw_writel(0, MAPLE_ENABLE);
+	ctrl_outl(0, MAPLE_ENABLE);
 
 	if (!list_empty(&maple_sentq))
 		goto finish;
@@ -451,7 +450,7 @@ static void maple_vblank_handler(struct work_struct *work)
 	if (!maple_dma_done())
 		return;
 
-	__raw_writel(0, MAPLE_ENABLE);
+	ctrl_outl(0, MAPLE_ENABLE);
 
 	if (!list_empty(&maple_sentq))
 		goto finish;
@@ -637,7 +636,7 @@ static void maple_dma_handler(struct work_struct *work)
 
 	if (!maple_dma_done())
 		return;
-	__raw_writel(0, MAPLE_ENABLE);
+	ctrl_outl(0, MAPLE_ENABLE);
 	if (!list_empty(&maple_sentq)) {
 		list_for_each_entry_safe(mq, nmq, &maple_sentq, list) {
 			mdev = mq->dev;
@@ -797,7 +796,7 @@ static int __init maple_bus_init(void)
 	int retval, i;
 	struct maple_device *mdev[MAPLE_PORTS];
 
-	__raw_writel(0, MAPLE_ENABLE);
+	ctrl_outl(0, MAPLE_ENABLE);
 
 	retval = device_register(&maple_bus);
 	if (retval)

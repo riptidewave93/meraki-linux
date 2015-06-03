@@ -8,13 +8,11 @@
 
 #include <linux/compiler.h>
 #include <linux/netdevice.h>
-#include <linux/gfp.h>
 #include <linux/skbuff.h>
 #include <linux/types.h>
 #include <linux/pagemap.h>
 #include <linux/udp.h>
 #include <linux/sunrpc/xdr.h>
-#include <linux/export.h>
 
 
 /**
@@ -114,7 +112,7 @@ ssize_t xdr_partial_copy_from_skb(struct xdr_buf *xdr, unsigned int base, struct
 		}
 
 		len = PAGE_CACHE_SIZE;
-		kaddr = kmap_atomic(*ppage);
+		kaddr = kmap_atomic(*ppage, KM_SKB_SUNRPC_DATA);
 		if (base) {
 			len -= base;
 			if (pglen < len)
@@ -127,7 +125,7 @@ ssize_t xdr_partial_copy_from_skb(struct xdr_buf *xdr, unsigned int base, struct
 			ret = copy_actor(desc, kaddr, len);
 		}
 		flush_dcache_page(*ppage);
-		kunmap_atomic(kaddr);
+		kunmap_atomic(kaddr, KM_SKB_SUNRPC_DATA);
 		copied += ret;
 		if (ret != len || !desc->count)
 			goto out;

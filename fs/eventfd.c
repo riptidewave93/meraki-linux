@@ -11,12 +11,11 @@
 #include <linux/fs.h>
 #include <linux/sched.h>
 #include <linux/kernel.h>
-#include <linux/slab.h>
 #include <linux/list.h>
 #include <linux/spinlock.h>
 #include <linux/anon_inodes.h>
 #include <linux/syscalls.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/kref.h>
 #include <linux/eventfd.h>
 
@@ -99,7 +98,7 @@ EXPORT_SYMBOL_GPL(eventfd_ctx_get);
  * @ctx: [in] Pointer to eventfd context.
  *
  * The eventfd context reference must have been previously acquired either
- * with eventfd_ctx_get() or eventfd_ctx_fdget().
+ * with eventfd_ctx_get() or eventfd_ctx_fdget()).
  */
 void eventfd_ctx_put(struct eventfd_ctx *ctx)
 {
@@ -136,71 +135,26 @@ static unsigned int eventfd_poll(struct file *file, poll_table *wait)
 	return events;
 }
 
-static void eventfd_ctx_do_read(struct eventfd_ctx *ctx, __u64 *cnt)
+static ssize_t eventfd_read(struct file *file, char __user *buf, size_t count,
+			    loff_t *ppos)
 {
-	*cnt = (ctx->flags & EFD_SEMAPHORE) ? 1 : ctx->count;
-	ctx->count -= *cnt;
-}
-
-/**
- * eventfd_ctx_remove_wait_queue - Read the current counter and removes wait queue.
- * @ctx: [in] Pointer to eventfd context.
- * @wait: [in] Wait queue to be removed.
- * @cnt: [out] Pointer to the 64-bit counter value.
- *
- * Returns %0 if successful, or the following error codes:
- *
- * -EAGAIN      : The operation would have blocked.
- *
- * This is used to atomically remove a wait queue entry from the eventfd wait
- * queue head, and read/reset the counter value.
- */
-int eventfd_ctx_remove_wait_queue(struct eventfd_ctx *ctx, wait_queue_t *wait,
-				  __u64 *cnt)
-{
-	unsigned long flags;
-
-	spin_lock_irqsave(&ctx->wqh.lock, flags);
-	eventfd_ctx_do_read(ctx, cnt);
-	__remove_wait_queue(&ctx->wqh, wait);
-	if (*cnt != 0 && waitqueue_active(&ctx->wqh))
-		wake_up_locked_poll(&ctx->wqh, POLLOUT);
-	spin_unlock_irqrestore(&ctx->wqh.lock, flags);
-
-	return *cnt != 0 ? 0 : -EAGAIN;
-}
-EXPORT_SYMBOL_GPL(eventfd_ctx_remove_wait_queue);
-
-/**
- * eventfd_ctx_read - Reads the eventfd counter or wait if it is zero.
- * @ctx: [in] Pointer to eventfd context.
- * @no_wait: [in] Different from zero if the operation should not block.
- * @cnt: [out] Pointer to the 64-bit counter value.
- *
- * Returns %0 if successful, or the following error codes:
- *
- * -EAGAIN      : The operation would have blocked but @no_wait was non-zero.
- * -ERESTARTSYS : A signal interrupted the wait operation.
- *
- * If @no_wait is zero, the function might sleep until the eventfd internal
- * counter becomes greater than zero.
- */
-ssize_t eventfd_ctx_read(struct eventfd_ctx *ctx, int no_wait, __u64 *cnt)
-{
+	struct eventfd_ctx *ctx = file->private_data;
 	ssize_t res;
+	__u64 ucnt = 0;
 	DECLARE_WAITQUEUE(wait, current);
 
+	if (count < sizeof(ucnt))
+		return -EINVAL;
 	spin_lock_irq(&ctx->wqh.lock);
-	*cnt = 0;
 	res = -EAGAIN;
 	if (ctx->count > 0)
-		res = 0;
-	else if (!no_wait) {
+		res = sizeof(ucnt);
+	else if (!(file->f_flags & O_NONBLOCK)) {
 		__add_wait_queue(&ctx->wqh, &wait);
-		for (;;) {
+		for (res = 0;;) {
 			set_current_state(TASK_INTERRUPTIBLE);
 			if (ctx->count > 0) {
-				res = 0;
+				res = sizeof(ucnt);
 				break;
 			}
 			if (signal_pending(current)) {
@@ -214,31 +168,17 @@ ssize_t eventfd_ctx_read(struct eventfd_ctx *ctx, int no_wait, __u64 *cnt)
 		__remove_wait_queue(&ctx->wqh, &wait);
 		__set_current_state(TASK_RUNNING);
 	}
-	if (likely(res == 0)) {
-		eventfd_ctx_do_read(ctx, cnt);
+	if (likely(res > 0)) {
+		ucnt = (ctx->flags & EFD_SEMAPHORE) ? 1 : ctx->count;
+		ctx->count -= ucnt;
 		if (waitqueue_active(&ctx->wqh))
 			wake_up_locked_poll(&ctx->wqh, POLLOUT);
 	}
 	spin_unlock_irq(&ctx->wqh.lock);
+	if (res > 0 && put_user(ucnt, (__u64 __user *) buf))
+		return -EFAULT;
 
 	return res;
-}
-EXPORT_SYMBOL_GPL(eventfd_ctx_read);
-
-static ssize_t eventfd_read(struct file *file, char __user *buf, size_t count,
-			    loff_t *ppos)
-{
-	struct eventfd_ctx *ctx = file->private_data;
-	ssize_t res;
-	__u64 cnt;
-
-	if (count < sizeof(cnt))
-		return -EINVAL;
-	res = eventfd_ctx_read(ctx, file->f_flags & O_NONBLOCK, &cnt);
-	if (res < 0)
-		return res;
-
-	return put_user(cnt, (__u64 __user *) buf) ? -EFAULT : sizeof(cnt);
 }
 
 static ssize_t eventfd_write(struct file *file, const char __user *buf, size_t count,
@@ -293,7 +233,6 @@ static const struct file_operations eventfd_fops = {
 	.poll		= eventfd_poll,
 	.read		= eventfd_read,
 	.write		= eventfd_write,
-	.llseek		= noop_llseek,
 };
 
 /**
@@ -400,7 +339,7 @@ struct file *eventfd_file_create(unsigned int count, int flags)
 	ctx->flags = flags;
 
 	file = anon_inode_getfile("[eventfd]", &eventfd_fops, ctx,
-				  O_RDWR | (flags & EFD_SHARED_FCNTL_FLAGS));
+				  flags & EFD_SHARED_FCNTL_FLAGS);
 	if (IS_ERR(file))
 		eventfd_free_ctx(ctx);
 

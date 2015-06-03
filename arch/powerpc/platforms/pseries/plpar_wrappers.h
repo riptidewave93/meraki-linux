@@ -1,10 +1,7 @@
 #ifndef _PSERIES_PLPAR_WRAPPERS_H
 #define _PSERIES_PLPAR_WRAPPERS_H
 
-#include <linux/string.h>
-
 #include <asm/hvcall.h>
-#include <asm/paca.h>
 #include <asm/page.h>
 
 /* Get state of physical CPU from query_cpu_stopped */
@@ -20,31 +17,9 @@ static inline long poll_pending(void)
 	return plpar_hcall_norets(H_POLL_PENDING);
 }
 
-static inline u8 get_cede_latency_hint(void)
-{
-	return get_lppaca()->gpr5_dword.fields.cede_latency_hint;
-}
-
-static inline void set_cede_latency_hint(u8 latency_hint)
-{
-	get_lppaca()->gpr5_dword.fields.cede_latency_hint = latency_hint;
-}
-
 static inline long cede_processor(void)
 {
 	return plpar_hcall_norets(H_CEDE);
-}
-
-static inline long extended_cede_processor(unsigned long latency_hint)
-{
-	long rc;
-	u8 old_latency_hint = get_cede_latency_hint();
-
-	set_cede_latency_hint(latency_hint);
-	rc = cede_processor();
-	set_cede_latency_hint(old_latency_hint);
-
-	return rc;
 }
 
 static inline long vpa_call(unsigned long flags, unsigned long cpu,
@@ -56,9 +31,9 @@ static inline long vpa_call(unsigned long flags, unsigned long cpu,
 	return plpar_hcall_norets(H_REGISTER_VPA, flags, cpu, vpa);
 }
 
-static inline long unregister_vpa(unsigned long cpu)
+static inline long unregister_vpa(unsigned long cpu, unsigned long vpa)
 {
-	return vpa_call(0x5, cpu, 0);
+	return vpa_call(0x5, cpu, vpa);
 }
 
 static inline long register_vpa(unsigned long cpu, unsigned long vpa)
@@ -66,9 +41,9 @@ static inline long register_vpa(unsigned long cpu, unsigned long vpa)
 	return vpa_call(0x1, cpu, vpa);
 }
 
-static inline long unregister_slb_shadow(unsigned long cpu)
+static inline long unregister_slb_shadow(unsigned long cpu, unsigned long vpa)
 {
-	return vpa_call(0x7, cpu, 0);
+	return vpa_call(0x7, cpu, vpa);
 }
 
 static inline long register_slb_shadow(unsigned long cpu, unsigned long vpa)
@@ -76,9 +51,9 @@ static inline long register_slb_shadow(unsigned long cpu, unsigned long vpa)
 	return vpa_call(0x3, cpu, vpa);
 }
 
-static inline long unregister_dtl(unsigned long cpu)
+static inline long unregister_dtl(unsigned long cpu, unsigned long vpa)
 {
-	return vpa_call(0x6, cpu, 0);
+	return vpa_call(0x6, cpu, vpa);
 }
 
 static inline long register_dtl(unsigned long cpu, unsigned long vpa)
@@ -271,6 +246,33 @@ static inline long plpar_put_term_char(unsigned long termno, unsigned long len,
 	unsigned long *lbuf = (unsigned long *)buffer;	/* TODO: alignment? */
 	return plpar_hcall_norets(H_PUT_TERM_CHAR, termno, len, lbuf[0],
 			lbuf[1]);
+}
+
+static inline long plpar_eoi(unsigned long xirr)
+{
+	return plpar_hcall_norets(H_EOI, xirr);
+}
+
+static inline long plpar_cppr(unsigned long cppr)
+{
+	return plpar_hcall_norets(H_CPPR, cppr);
+}
+
+static inline long plpar_ipi(unsigned long servernum, unsigned long mfrr)
+{
+	return plpar_hcall_norets(H_IPI, servernum, mfrr);
+}
+
+static inline long plpar_xirr(unsigned long *xirr_ret)
+{
+	long rc;
+	unsigned long retbuf[PLPAR_HCALL_BUFSIZE];
+
+	rc = plpar_hcall(H_XIRR, retbuf);
+
+	*xirr_ret = retbuf[0];
+
+	return rc;
 }
 
 #endif /* _PSERIES_PLPAR_WRAPPERS_H */

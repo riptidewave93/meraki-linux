@@ -20,7 +20,6 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/netfilter.h>
-#include <linux/slab.h>
 #include <linux/in.h>
 #include <linux/tcp.h>
 #include <net/netfilter/nf_conntrack.h>
@@ -78,7 +77,7 @@ static int help(struct sk_buff *skb,
 	ct_sane_info = &nfct_help(ct)->help.ct_sane_info;
 	/* Until there's been traffic both ways, don't look in packets. */
 	if (ctinfo != IP_CT_ESTABLISHED &&
-	    ctinfo != IP_CT_ESTABLISHED_REPLY)
+	    ctinfo != IP_CT_ESTABLISHED+IP_CT_IS_REPLY)
 		return NF_ACCEPT;
 
 	/* Not a full tcp header? */

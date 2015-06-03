@@ -5,7 +5,25 @@
  * 'tty.h' defines some structures used by tty_io.c and some defines.
  */
 
-#define NR_LDISCS		30
+#ifdef __KERNEL__
+#include <linux/fs.h>
+#include <linux/major.h>
+#include <linux/termios.h>
+#include <linux/workqueue.h>
+#include <linux/tty_driver.h>
+#include <linux/tty_ldisc.h>
+#include <linux/mutex.h>
+
+#include <asm/system.h>
+
+
+/*
+ * (Note: the *_driver.minor_start values 1, 64, 128, 192 are
+ * hardcoded at present.)
+ */
+#define NR_UNIX98_PTY_DEFAULT	4096      /* Default maximum for Unix98 ptys */
+#define NR_UNIX98_PTY_MAX	(1 << MINORBITS) /* Absolute limit */
+#define NR_LDISCS		20
 
 /* line disciplines */
 #define N_TTY		0
@@ -28,31 +46,8 @@
 #define N_GIGASET_M101	16	/* Siemens Gigaset M101 serial DECT adapter */
 #define N_SLCAN		17	/* Serial / USB serial CAN Adaptors */
 #define N_PPS		18	/* Pulse per Second */
+
 #define N_V253		19	/* Codec control over voice modem */
-#define N_CAIF		20      /* CAIF protocol for talking to modems */
-#define N_GSM0710	21	/* GSM 0710 Mux */
-#define N_TI_WL		22	/* for TI's WL BT, FM, GPS combo chips */
-#define N_TRACESINK	23	/* Trace data routing for MIPI P1149.7 */
-#define N_TRACEROUTER	24	/* Trace data routing for MIPI P1149.7 */
-
-#ifdef __KERNEL__
-#include <linux/fs.h>
-#include <linux/major.h>
-#include <linux/termios.h>
-#include <linux/workqueue.h>
-#include <linux/tty_driver.h>
-#include <linux/tty_ldisc.h>
-#include <linux/mutex.h>
-
-
-
-/*
- * (Note: the *_driver.minor_start values 1, 64, 128, 192 are
- * hardcoded at present.)
- */
-#define NR_UNIX98_PTY_DEFAULT	4096      /* Default maximum for Unix98 ptys */
-#define NR_UNIX98_PTY_RESERVE	1024	  /* Default reserve for main devpts */
-#define NR_UNIX98_PTY_MAX	(1 << MINORBITS) /* Absolute limit */
 
 /*
  * This character is the same as _POSIX_VDISABLE: it cannot be used as
@@ -85,7 +80,7 @@ struct tty_buffer {
 
 
 struct tty_bufhead {
-	struct work_struct work;
+	struct delayed_work work;
 	spinlock_t lock;
 	struct tty_buffer *head;	/* Queue head */
 	struct tty_buffer *tail;	/* Active buffer */
@@ -183,7 +178,6 @@ struct tty_bufhead {
 #define L_FLUSHO(tty)	_L_FLAG((tty), FLUSHO)
 #define L_PENDIN(tty)	_L_FLAG((tty), PENDIN)
 #define L_IEXTEN(tty)	_L_FLAG((tty), IEXTEN)
-#define L_EXTPROC(tty)	_L_FLAG((tty), EXTPROC)
 
 struct device;
 struct signal_struct;
@@ -207,17 +201,9 @@ struct tty_port_operations {
 	/* Control the DTR line */
 	void (*dtr_rts)(struct tty_port *port, int raise);
 	/* Called when the last close completes or a hangup finishes
-	   IFF the port was initialized. Do not use to free resources. Called
-	   under the port mutex to serialize against activate/shutdowns */
+	   IFF the port was initialized. Do not use to free resources */
 	void (*shutdown)(struct tty_port *port);
 	void (*drop)(struct tty_port *port);
-	/* Called under the port mutex from tty_port_open, serialized using
-	   the port mutex */
-        /* FIXME: long term getting the tty argument *out* of this would be
-           good for consoles */
-	int (*activate)(struct tty_port *port, struct tty_struct *tty);
-	/* Called on the final put of a port */
-	void (*destruct)(struct tty_port *port);
 };
 	
 struct tty_port {
@@ -230,16 +216,13 @@ struct tty_port {
 	wait_queue_head_t	close_wait;	/* Close waiters */
 	wait_queue_head_t	delta_msr_wait;	/* Modem status change */
 	unsigned long		flags;		/* TTY flags ASY_*/
-	unsigned char		console:1;	/* port is a console */
 	struct mutex		mutex;		/* Locking */
-	struct mutex		buf_mutex;	/* Buffer alloc lock */
 	unsigned char		*xmit_buf;	/* Optional buffer */
 	unsigned int		close_delay;	/* Close port delay */
 	unsigned int		closing_wait;	/* Delay for output */
 	int			drain_delay;	/* Set to zero if no pure time
 						   based drain is needed else
 						   set to size of fifo */
-	struct kref		kref;		/* Ref counter */
 };
 
 /*
@@ -259,7 +242,6 @@ struct tty_operations;
 struct tty_struct {
 	int	magic;
 	struct kref kref;
-	struct device *dev;
 	struct tty_driver *driver;
 	const struct tty_operations *ops;
 	int index;
@@ -333,13 +315,6 @@ struct tty_struct {
 	struct tty_port *port;
 };
 
-/* Each of a tty's open files has private_data pointing to tty_file_private */
-struct tty_file_private {
-	struct tty_struct *tty;
-	struct file *file;
-	struct list_head list;
-};
-
 /* tty magic number */
 #define TTY_MAGIC		0x5401
 
@@ -369,13 +344,14 @@ struct tty_file_private {
 #define TTY_HUPPED 		18	/* Post driver->hangup() */
 #define TTY_FLUSHING		19	/* Flushing to ldisc in progress */
 #define TTY_FLUSHPENDING	20	/* Queued buffer flush pending */
-#define TTY_HUPPING 		21	/* ->hangup() in progress */
 
 #define TTY_WRITE_FLUSH(tty) tty_write_flush((tty))
 
 extern void tty_write_flush(struct tty_struct *);
 
 extern struct ktermios tty_std_termios;
+
+extern int kmsg_redirect;
 
 extern void console_init(void);
 extern int vcs_init(void);
@@ -421,8 +397,6 @@ extern void tty_driver_flush_buffer(struct tty_struct *tty);
 extern void tty_throttle(struct tty_struct *tty);
 extern void tty_unthrottle(struct tty_struct *tty);
 extern int tty_do_resize(struct tty_struct *tty, struct winsize *ws);
-extern void tty_driver_remove_tty(struct tty_driver *driver,
-				  struct tty_struct *tty);
 extern void tty_shutdown(struct tty_struct *tty);
 extern void tty_free_termios(struct tty_struct *tty);
 extern int is_current_pgrp_orphaned(void);
@@ -431,7 +405,6 @@ extern int is_ignored(int sig);
 extern int tty_signal(int sig, struct tty_struct *tty);
 extern void tty_hangup(struct tty_struct *tty);
 extern void tty_vhangup(struct tty_struct *tty);
-extern void tty_vhangup_locked(struct tty_struct *tty);
 extern void tty_vhangup_self(void);
 extern void tty_unhangup(struct file *filp);
 extern int tty_hung_up_p(struct file *filp);
@@ -453,7 +426,6 @@ extern void tty_encode_baud_rate(struct tty_struct *tty,
 						speed_t ibaud, speed_t obaud);
 extern void tty_termios_copy_hw(struct ktermios *new, struct ktermios *old);
 extern int tty_termios_hw_change(struct ktermios *a, struct ktermios *b);
-extern int tty_set_termios(struct tty_struct *tty, struct ktermios *kt);
 
 extern struct tty_ldisc *tty_ldisc_ref(struct tty_struct *);
 extern void tty_ldisc_deref(struct tty_ldisc *);
@@ -473,24 +445,18 @@ extern void proc_clear_tty(struct task_struct *p);
 extern struct tty_struct *get_current_tty(void);
 extern void tty_default_fops(struct file_operations *fops);
 extern struct tty_struct *alloc_tty_struct(void);
-extern int tty_alloc_file(struct file *file);
-extern void tty_add_file(struct tty_struct *tty, struct file *file);
-extern void tty_free_file(struct file *file);
 extern void free_tty_struct(struct tty_struct *tty);
 extern void initialize_tty_struct(struct tty_struct *tty,
 		struct tty_driver *driver, int idx);
-extern void deinitialize_tty_struct(struct tty_struct *tty);
-extern struct tty_struct *tty_init_dev(struct tty_driver *driver, int idx);
-extern int tty_release(struct inode *inode, struct file *filp);
+extern struct tty_struct *tty_init_dev(struct tty_driver *driver, int idx,
+								int first_ok);
+extern void tty_release_dev(struct file *filp);
 extern int tty_init_termios(struct tty_struct *tty);
-extern int tty_standard_install(struct tty_driver *driver,
-		struct tty_struct *tty);
 
 extern struct tty_struct *tty_pair_get_tty(struct tty_struct *tty);
 extern struct tty_struct *tty_pair_get_pty(struct tty_struct *tty);
 
 extern struct mutex tty_mutex;
-extern spinlock_t tty_files_lock;
 
 extern void tty_write_unlock(struct tty_struct *tty);
 extern int tty_write_lock(struct tty_struct *tty, int ndelay);
@@ -499,15 +465,6 @@ extern int tty_write_lock(struct tty_struct *tty, int ndelay);
 extern void tty_port_init(struct tty_port *port);
 extern int tty_port_alloc_xmit_buf(struct tty_port *port);
 extern void tty_port_free_xmit_buf(struct tty_port *port);
-extern void tty_port_put(struct tty_port *port);
-
-static inline struct tty_port *tty_port_get(struct tty_port *port)
-{
-	if (port)
-		kref_get(&port->kref);
-	return port;
-}
-
 extern struct tty_struct *tty_port_tty_get(struct tty_port *port);
 extern void tty_port_tty_set(struct tty_port *port, struct tty_struct *tty);
 extern int tty_port_carrier_raised(struct tty_port *port);
@@ -521,9 +478,7 @@ extern int tty_port_close_start(struct tty_port *port,
 extern void tty_port_close_end(struct tty_port *port, struct tty_struct *tty);
 extern void tty_port_close(struct tty_port *port,
 				struct tty_struct *tty, struct file *filp);
-extern int tty_port_open(struct tty_port *port,
-				struct tty_struct *tty, struct file *filp);
-static inline int tty_port_users(struct tty_port *port)
+extern inline int tty_port_users(struct tty_port *port)
 {
 	return port->count + port->blocked_open;
 }
@@ -534,7 +489,6 @@ extern int tty_set_ldisc(struct tty_struct *tty, int ldisc);
 extern int tty_ldisc_setup(struct tty_struct *tty, struct tty_struct *o_tty);
 extern void tty_ldisc_release(struct tty_struct *tty, struct tty_struct *o_tty);
 extern void tty_ldisc_init(struct tty_struct *tty);
-extern void tty_ldisc_deinit(struct tty_struct *tty);
 extern void tty_ldisc_begin(void);
 /* This last one is just for the tty layer internals and shouldn't be used elsewhere */
 extern void tty_ldisc_enable(struct tty_struct *tty);
@@ -542,7 +496,6 @@ extern void tty_ldisc_enable(struct tty_struct *tty);
 
 /* n_tty.c */
 extern struct tty_ldisc_ops tty_ldisc_N_TTY;
-extern void n_tty_inherit_ops(struct tty_ldisc_ops *ops);
 
 /* tty_audit.c */
 #ifdef CONFIG_AUDIT
@@ -552,8 +505,8 @@ extern void tty_audit_exit(void);
 extern void tty_audit_fork(struct signal_struct *sig);
 extern void tty_audit_tiocsti(struct tty_struct *tty, char ch);
 extern void tty_audit_push(struct tty_struct *tty);
-extern int tty_audit_push_task(struct task_struct *tsk,
-			       uid_t loginuid, u32 sessionid);
+extern void tty_audit_push_task(struct task_struct *tsk,
+					uid_t loginuid, u32 sessionid);
 #else
 static inline void tty_audit_add_data(struct tty_struct *tty,
 				      unsigned char *data, size_t size)
@@ -571,20 +524,14 @@ static inline void tty_audit_fork(struct signal_struct *sig)
 static inline void tty_audit_push(struct tty_struct *tty)
 {
 }
-static inline int tty_audit_push_task(struct task_struct *tsk,
-				      uid_t loginuid, u32 sessionid)
+static inline void tty_audit_push_task(struct task_struct *tsk,
+					uid_t loginuid, u32 sessionid)
 {
-	return 0;
 }
 #endif
 
-/* tty_io.c */
-extern int __init tty_init(void);
-
 /* tty_ioctl.c */
 extern int n_tty_ioctl_helper(struct tty_struct *tty, struct file *file,
-		       unsigned int cmd, unsigned long arg);
-extern long n_tty_compat_ioctl_helper(struct tty_struct *tty, struct file *file,
 		       unsigned int cmd, unsigned long arg);
 
 /* serial.c */
@@ -597,76 +544,11 @@ extern int pcxe_open(struct tty_struct *tty, struct file *filp);
 
 /* vt.c */
 
-extern int vt_ioctl(struct tty_struct *tty,
+extern int vt_ioctl(struct tty_struct *tty, struct file *file,
 		    unsigned int cmd, unsigned long arg);
 
-extern long vt_compat_ioctl(struct tty_struct *tty,
+extern long vt_compat_ioctl(struct tty_struct *tty, struct file * file,
 		     unsigned int cmd, unsigned long arg);
-
-/* tty_mutex.c */
-/* functions for preparation of BKL removal */
-extern void __lockfunc tty_lock(void) __acquires(tty_lock);
-extern void __lockfunc tty_unlock(void) __releases(tty_lock);
-
-/*
- * this shall be called only from where BTM is held (like close)
- *
- * We need this to ensure nobody waits for us to finish while we are waiting.
- * Without this we were encountering system stalls.
- *
- * This should be indeed removed with BTM removal later.
- *
- * Locking: BTM required. Nobody is allowed to hold port->mutex.
- */
-static inline void tty_wait_until_sent_from_close(struct tty_struct *tty,
-		long timeout)
-{
-	tty_unlock(); /* tty->ops->close holds the BTM, drop it while waiting */
-	tty_wait_until_sent(tty, timeout);
-	tty_lock();
-}
-
-/*
- * wait_event_interruptible_tty -- wait for a condition with the tty lock held
- *
- * The condition we are waiting for might take a long time to
- * become true, or might depend on another thread taking the
- * BTM. In either case, we need to drop the BTM to guarantee
- * forward progress. This is a leftover from the conversion
- * from the BKL and should eventually get removed as the BTM
- * falls out of use.
- *
- * Do not use in new code.
- */
-#define wait_event_interruptible_tty(wq, condition)			\
-({									\
-	int __ret = 0;							\
-	if (!(condition)) {						\
-		__wait_event_interruptible_tty(wq, condition, __ret);	\
-	}								\
-	__ret;								\
-})
-
-#define __wait_event_interruptible_tty(wq, condition, ret)		\
-do {									\
-	DEFINE_WAIT(__wait);						\
-									\
-	for (;;) {							\
-		prepare_to_wait(&wq, &__wait, TASK_INTERRUPTIBLE);	\
-		if (condition)						\
-			break;						\
-		if (!signal_pending(current)) {				\
-			tty_unlock();					\
-			schedule();					\
-			tty_lock();					\
-			continue;					\
-		}							\
-		ret = -ERESTARTSYS;					\
-		break;							\
-	}								\
-	finish_wait(&wq, &__wait);					\
-} while (0)
-
 
 #endif /* __KERNEL__ */
 #endif

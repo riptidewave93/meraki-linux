@@ -22,7 +22,6 @@
 #define __TUNER_I2C_H__
 
 #include <linux/i2c.h>
-#include <linux/slab.h>
 
 struct tuner_i2c_props {
 	u8 addr;

@@ -10,11 +10,10 @@
 #include <linux/audit.h>
 #include <linux/capability.h>
 #include <linux/mm.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/security.h>
 #include <linux/syscalls.h>
 #include <linux/pid_namespace.h>
-#include <linux/user_namespace.h>
 #include <asm/uaccess.h>
 
 /*
@@ -22,9 +21,14 @@
  */
 
 const kernel_cap_t __cap_empty_set = CAP_EMPTY_SET;
+const kernel_cap_t __cap_full_set = CAP_FULL_SET;
+const kernel_cap_t __cap_init_eff_set = CAP_INIT_EFF_SET;
 
 EXPORT_SYMBOL(__cap_empty_set);
+EXPORT_SYMBOL(__cap_full_set);
+EXPORT_SYMBOL(__cap_init_eff_set);
 
+#ifdef CONFIG_SECURITY_FILE_CAPABILITIES
 int file_caps_enabled = 1;
 
 static int __init file_caps_disable(char *str)
@@ -33,6 +37,7 @@ static int __init file_caps_disable(char *str)
 	return 1;
 }
 __setup("no_file_caps", file_caps_disable);
+#endif
 
 /*
  * More recent versions of libcap are available from:
@@ -131,7 +136,7 @@ static inline int cap_get_target_pid(pid_t pid, kernel_cap_t *pEp,
 	if (pid && (pid != task_pid_vnr(current))) {
 		struct task_struct *target;
 
-		rcu_read_lock();
+		read_lock(&tasklist_lock);
 
 		target = find_task_by_vpid(pid);
 		if (!target)
@@ -139,7 +144,7 @@ static inline int cap_get_target_pid(pid_t pid, kernel_cap_t *pEp,
 		else
 			ret = security_capget(target, pEp, pIp, pPp);
 
-		rcu_read_unlock();
+		read_unlock(&tasklist_lock);
 	} else
 		ret = security_capget(current, pEp, pIp, pPp);
 
@@ -163,8 +168,8 @@ SYSCALL_DEFINE2(capget, cap_user_header_t, header, cap_user_data_t, dataptr)
 	kernel_cap_t pE, pI, pP;
 
 	ret = cap_validate_magic(header, &tocopy);
-	if ((dataptr == NULL) || (ret != 0))
-		return ((dataptr == NULL) && (ret == -EINVAL)) ? 0 : ret;
+	if (ret != 0)
+		return ret;
 
 	if (get_user(pid, &header->pid))
 		return -EFAULT;
@@ -232,7 +237,7 @@ SYSCALL_DEFINE2(capget, cap_user_header_t, header, cap_user_data_t, dataptr)
 SYSCALL_DEFINE2(capset, cap_user_header_t, header, const cap_user_data_t, data)
 {
 	struct __user_cap_data_struct kdata[_KERNEL_CAPABILITY_U32S];
-	unsigned i, tocopy, copybytes;
+	unsigned i, tocopy;
 	kernel_cap_t inheritable, permitted, effective;
 	struct cred *new;
 	int ret;
@@ -249,11 +254,8 @@ SYSCALL_DEFINE2(capset, cap_user_header_t, header, const cap_user_data_t, data)
 	if (pid != 0 && pid != task_pid_vnr(current))
 		return -EPERM;
 
-	copybytes = tocopy * sizeof(struct __user_cap_data_struct);
-	if (copybytes > sizeof(kdata))
-		return -EFAULT;
-
-	if (copy_from_user(&kdata, data, copybytes))
+	if (copy_from_user(&kdata, data,
+			   tocopy * sizeof(struct __user_cap_data_struct)))
 		return -EFAULT;
 
 	for (i = 0; i < tocopy; i++) {
@@ -287,112 +289,6 @@ error:
 }
 
 /**
- * has_ns_capability - Does a task have a capability in a specific user ns
- * @t: The task in question
- * @ns: target user namespace
- * @cap: The capability to be tested for
- *
- * Return true if the specified task has the given superior capability
- * currently in effect to the specified user namespace, false if not.
- *
- * Note that this does not set PF_SUPERPRIV on the task.
- */
-bool has_ns_capability(struct task_struct *t,
-		       struct user_namespace *ns, int cap)
-{
-	int ret;
-
-	rcu_read_lock();
-	ret = security_capable(__task_cred(t), ns, cap);
-	rcu_read_unlock();
-
-	return (ret == 0);
-}
-
-/**
- * has_capability - Does a task have a capability in init_user_ns
- * @t: The task in question
- * @cap: The capability to be tested for
- *
- * Return true if the specified task has the given superior capability
- * currently in effect to the initial user namespace, false if not.
- *
- * Note that this does not set PF_SUPERPRIV on the task.
- */
-bool has_capability(struct task_struct *t, int cap)
-{
-	return has_ns_capability(t, &init_user_ns, cap);
-}
-
-/**
- * has_ns_capability_noaudit - Does a task have a capability (unaudited)
- * in a specific user ns.
- * @t: The task in question
- * @ns: target user namespace
- * @cap: The capability to be tested for
- *
- * Return true if the specified task has the given superior capability
- * currently in effect to the specified user namespace, false if not.
- * Do not write an audit message for the check.
- *
- * Note that this does not set PF_SUPERPRIV on the task.
- */
-bool has_ns_capability_noaudit(struct task_struct *t,
-			       struct user_namespace *ns, int cap)
-{
-	int ret;
-
-	rcu_read_lock();
-	ret = security_capable_noaudit(__task_cred(t), ns, cap);
-	rcu_read_unlock();
-
-	return (ret == 0);
-}
-
-/**
- * has_capability_noaudit - Does a task have a capability (unaudited) in the
- * initial user ns
- * @t: The task in question
- * @cap: The capability to be tested for
- *
- * Return true if the specified task has the given superior capability
- * currently in effect to init_user_ns, false if not.  Don't write an
- * audit message for the check.
- *
- * Note that this does not set PF_SUPERPRIV on the task.
- */
-bool has_capability_noaudit(struct task_struct *t, int cap)
-{
-	return has_ns_capability_noaudit(t, &init_user_ns, cap);
-}
-
-/**
- * ns_capable - Determine if the current task has a superior capability in effect
- * @ns:  The usernamespace we want the capability in
- * @cap: The capability to be tested for
- *
- * Return true if the current task has the given superior capability currently
- * available for use, false if not.
- *
- * This sets PF_SUPERPRIV on the task if the capability is available on the
- * assumption that it's about to be used.
- */
-bool ns_capable(struct user_namespace *ns, int cap)
-{
-	if (unlikely(!cap_valid(cap))) {
-		printk(KERN_CRIT "capable() called with invalid cap=%u\n", cap);
-		BUG();
-	}
-
-	if (security_capable(current_cred(), ns, cap) == 0) {
-		current->flags |= PF_SUPERPRIV;
-		return true;
-	}
-	return false;
-}
-EXPORT_SYMBOL(ns_capable);
-
-/**
  * capable - Determine if the current task has a superior capability in effect
  * @cap: The capability to be tested for
  *
@@ -402,20 +298,17 @@ EXPORT_SYMBOL(ns_capable);
  * This sets PF_SUPERPRIV on the task if the capability is available on the
  * assumption that it's about to be used.
  */
-bool capable(int cap)
+int capable(int cap)
 {
-	return ns_capable(&init_user_ns, cap);
+	if (unlikely(!cap_valid(cap))) {
+		printk(KERN_CRIT "capable() called with invalid cap=%u\n", cap);
+		BUG();
+	}
+
+	if (security_capable(cap) == 0) {
+		current->flags |= PF_SUPERPRIV;
+		return 1;
+	}
+	return 0;
 }
 EXPORT_SYMBOL(capable);
-
-/**
- * nsown_capable - Check superior capability to one's own user_ns
- * @cap: The capability in question
- *
- * Return true if the current task has the given superior capability
- * targeted at its own user namespace.
- */
-bool nsown_capable(int cap)
-{
-	return ns_capable(current_user_ns(), cap);
-}

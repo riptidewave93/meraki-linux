@@ -47,10 +47,6 @@
  *   overwriting the new data.  We don't even need to clear the revoke
  *   bit here.
  *
- * We cache revoke status of a buffer in the current transaction in b_states
- * bits.  As the name says, revokevalid flag indicates that the cached revoke
- * status of a buffer is valid and we can rely on the cached status.
- *
  * Revoke information on buffers is a tri-state value:
  *
  * RevokeValid clear:	no cached revoke status, need to look it up
@@ -75,7 +71,7 @@
  * switching hash tables under them. For operations on the lists of entries in
  * the hash table j_revoke_lock is used.
  *
- * Finally, also replay code uses the hash tables but at this moment no one else
+ * Finally, also replay code uses the hash tables but at this moment noone else
  * can touch them (filesystem isn't mounted yet) and hence no locking is
  * needed.
  */
@@ -483,36 +479,6 @@ int journal_cancel_revoke(handle_t *handle, struct journal_head *jh)
 	return did_revoke;
 }
 
-/*
- * journal_clear_revoked_flags clears revoked flag of buffers in
- * revoke table to reflect there is no revoked buffer in the next
- * transaction which is going to be started.
- */
-void journal_clear_buffer_revoked_flags(journal_t *journal)
-{
-	struct jbd_revoke_table_s *revoke = journal->j_revoke;
-	int i = 0;
-
-	for (i = 0; i < revoke->hash_size; i++) {
-		struct list_head *hash_list;
-		struct list_head *list_entry;
-		hash_list = &revoke->hash_table[i];
-
-		list_for_each(list_entry, hash_list) {
-			struct jbd_revoke_record_s *record;
-			struct buffer_head *bh;
-			record = (struct jbd_revoke_record_s *)list_entry;
-			bh = __find_get_block(journal->j_fs_dev,
-					      record->blocknr,
-					      journal->j_blocksize);
-			if (bh) {
-				clear_buffer_revoked(bh);
-				__brelse(bh);
-			}
-		}
-	}
-}
-
 /* journal_switch_revoke table select j_revoke for next transaction
  * we do not want to suspend any processing until all revokes are
  * written -bzzz
@@ -651,7 +617,7 @@ static void flush_descriptor(journal_t *journal,
 	set_buffer_jwrite(bh);
 	BUFFER_TRACE(bh, "write");
 	set_buffer_dirty(bh);
-	write_dirty_buffer(bh, write_op);
+	ll_rw_block((write_op == WRITE) ? SWRITE : SWRITE_SYNC_PLUG, 1, &bh);
 }
 #endif
 

@@ -29,14 +29,12 @@
 /**
  * enum rfkill_type - type of rfkill switch.
  *
- * @RFKILL_TYPE_ALL: toggles all switches (requests only - not a switch type)
+ * @RFKILL_TYPE_ALL: toggles all switches (userspace only)
  * @RFKILL_TYPE_WLAN: switch is on a 802.11 wireless network device.
  * @RFKILL_TYPE_BLUETOOTH: switch is on a bluetooth device.
  * @RFKILL_TYPE_UWB: switch is on a ultra wideband device.
  * @RFKILL_TYPE_WIMAX: switch is on a WiMAX device.
  * @RFKILL_TYPE_WWAN: switch is on a wireless WAN device.
- * @RFKILL_TYPE_GPS: switch is on a GPS device.
- * @RFKILL_TYPE_FM: switch is on a FM radio device.
  * @NUM_RFKILL_TYPES: number of defined rfkill types
  */
 enum rfkill_type {
@@ -47,7 +45,6 @@ enum rfkill_type {
 	RFKILL_TYPE_WIMAX,
 	RFKILL_TYPE_WWAN,
 	RFKILL_TYPE_GPS,
-	RFKILL_TYPE_FM,
 	NUM_RFKILL_TYPES,
 };
 
@@ -81,7 +78,7 @@ struct rfkill_event {
 	__u8  type;
 	__u8  op;
 	__u8  soft, hard;
-} __attribute__((packed));
+} __packed;
 
 /*
  * We are planning to be backward and forward compatible with changes
@@ -117,10 +114,10 @@ enum rfkill_user_states {
 #include <linux/kernel.h>
 #include <linux/list.h>
 #include <linux/mutex.h>
+#include <linux/device.h>
 #include <linux/leds.h>
 #include <linux/err.h>
 
-struct device;
 /* this is opaque */
 struct rfkill;
 
@@ -353,6 +350,37 @@ static inline bool rfkill_blocked(struct rfkill *rfkill)
 	return false;
 }
 #endif /* RFKILL || RFKILL_MODULE */
+
+
+#ifdef CONFIG_RFKILL_LEDS
+/**
+ * rfkill_get_led_trigger_name - Get the LED trigger name for the button's LED.
+ * This function might return a NULL pointer if registering of the
+ * LED trigger failed. Use this as "default_trigger" for the LED.
+ */
+const char *rfkill_get_led_trigger_name(struct rfkill *rfkill);
+
+/**
+ * rfkill_set_led_trigger_name -- set the LED trigger name
+ * @rfkill: rfkill struct
+ * @name: LED trigger name
+ *
+ * This function sets the LED trigger name of the radio LED
+ * trigger that rfkill creates. It is optional, but if called
+ * must be called before rfkill_register() to be effective.
+ */
+void rfkill_set_led_trigger_name(struct rfkill *rfkill, const char *name);
+#else
+static inline const char *rfkill_get_led_trigger_name(struct rfkill *rfkill)
+{
+	return NULL;
+}
+
+static inline void
+rfkill_set_led_trigger_name(struct rfkill *rfkill, const char *name)
+{
+}
+#endif
 
 #endif /* __KERNEL__ */
 

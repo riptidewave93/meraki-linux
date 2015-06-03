@@ -39,10 +39,8 @@
 #include <linux/init.h>
 #include <linux/kernel.h>
 #include <linux/string.h>
-#include <linux/slab.h>
 #include <linux/rtc.h>
 #include <linux/spi/spi.h>
-#include <linux/module.h>
 
 #define DRV_VERSION "0.6"
 
@@ -264,7 +262,6 @@ static int __devinit pcf2123_probe(struct spi_device *spi)
 
 	if (!(rxbuf[0] & 0x20)) {
 		dev_err(&spi->dev, "chip not found\n");
-		ret = -ENODEV;
 		goto kfree_exit;
 	}
 
@@ -318,7 +315,7 @@ kfree_exit:
 	return ret;
 }
 
-static int __devexit pcf2123_remove(struct spi_device *spi)
+static int pcf2123_remove(struct spi_device *spi)
 {
 	struct pcf2123_plat_data *pdata = spi->dev.platform_data;
 	int i;
@@ -341,15 +338,27 @@ static int __devexit pcf2123_remove(struct spi_device *spi)
 static struct spi_driver pcf2123_driver = {
 	.driver	= {
 			.name	= "rtc-pcf2123",
+			.bus	= &spi_bus_type,
 			.owner	= THIS_MODULE,
 	},
 	.probe	= pcf2123_probe,
 	.remove	= __devexit_p(pcf2123_remove),
 };
 
-module_spi_driver(pcf2123_driver);
+static int __init pcf2123_init(void)
+{
+	return spi_register_driver(&pcf2123_driver);
+}
+
+static void __exit pcf2123_exit(void)
+{
+	spi_unregister_driver(&pcf2123_driver);
+}
 
 MODULE_AUTHOR("Chris Verges <chrisv@cyberswitching.com>");
 MODULE_DESCRIPTION("NXP PCF2123 RTC driver");
 MODULE_LICENSE("GPL");
 MODULE_VERSION(DRV_VERSION);
+
+module_init(pcf2123_init);
+module_exit(pcf2123_exit);

@@ -8,7 +8,7 @@ Copyright (C) 2004,2005  ADDI-DATA GmbH for the source code of this module.
 	D-77833 Ottersweier
 	Tel: +19(0)7223/9493-0
 	Fax: +49(0)7223/9493-92
-	http://www.addi-data.com
+	http://www.addi-data-com
 	info@addi-data.com
 
 This program is free software; you can redistribute it and/or modify it under the terms of the GNU General Public License as published by the Free Software Foundation; either version 2 of the License, or (at your option) any later version.
@@ -17,7 +17,7 @@ This program is distributed in the hope that it will be useful, but WITHOUT ANY 
 
 You should have received a copy of the GNU General Public License along with this program; if not, write to the Free Software Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
 
-You should also find the complete GPL in the COPYING file accompanying this source code.
+You shoud also find the complete GPL in the COPYING file accompanying this source code.
 
 @endverbatim
 */
@@ -34,7 +34,7 @@ You should also find the complete GPL in the COPYING file accompanying this sour
   +-------------------------------+---------------------------------------+
   | Project manager: Eric Stolz   | Date       :  02/12/2002              |
   +-------------------------------+---------------------------------------+
-  | Description :   Hardware Layer Access For APCI-1500                   |
+  | Description :   Hardware Layer Acces For APCI-1500                    |
   +-----------------------------------------------------------------------+
   |                             UPDATES                                   |
   +----------+-----------+------------------------------------------------+
@@ -47,16 +47,16 @@ You should also find the complete GPL in the COPYING file accompanying this sour
 */
 #include "hwdrv_apci1500.h"
 
-static int i_TimerCounter1Init = 0;
-static int i_TimerCounter2Init = 0;
-static int i_WatchdogCounter3Init = 0;
-static int i_Event1Status = 0, i_Event2Status = 0;
-static int i_TimerCounterWatchdogInterrupt = 0;
-static int i_Logic = 0, i_CounterLogic = 0;
-static int i_InterruptMask = 0;
-static int i_InputChannel = 0;
-static int i_TimerCounter1Enabled = 0, i_TimerCounter2Enabled = 0,
-	   i_WatchdogCounter3Enabled = 0;
+int i_TimerCounter1Init = 0;
+int i_TimerCounter2Init = 0;
+int i_WatchdogCounter3Init = 0;
+int i_Event1Status = 0, i_Event2Status = 0;
+int i_TimerCounterWatchdogInterrupt = 0;
+int i_Logic = 0, i_CounterLogic = 0;
+int i_InterruptMask = 0;
+int i_InputChannel = 0;
+int i_TimerCounter1Enabled = 0, i_TimerCounter2Enabled =
+	0, i_WatchdogCounter3Enabled = 0;
 
 /*
   +----------------------------------------------------------------------------+
@@ -136,10 +136,9 @@ static int i_TimerCounter1Enabled = 0, i_TimerCounter2Enabled = 0,
 |			                                                         |
 +----------------------------------------------------------------------------+
 */
-static int i_APCI1500_ConfigDigitalInputEvent(struct comedi_device *dev,
-					      struct comedi_subdevice *s,
-					      struct comedi_insn *insn,
-					      unsigned int *data)
+
+int i_APCI1500_ConfigDigitalInputEvent(struct comedi_device *dev,
+	struct comedi_subdevice *s, struct comedi_insn *insn, unsigned int *data)
 {
 	int i_PatternPolarity = 0, i_PatternTransition = 0, i_PatternMask = 0;
 	int i_MaxChannel = 0, i_Count = 0, i_EventMask = 0;
@@ -520,10 +519,8 @@ static int i_APCI1500_ConfigDigitalInputEvent(struct comedi_device *dev,
 |			                                                         |
 +----------------------------------------------------------------------------+
 */
-static int i_APCI1500_StartStopInputEvent(struct comedi_device *dev,
-					  struct comedi_subdevice *s,
-					  struct comedi_insn *insn,
-					  unsigned int *data)
+int i_APCI1500_StartStopInputEvent(struct comedi_device *dev, struct comedi_subdevice *s,
+	struct comedi_insn *insn, unsigned int *data)
 {
 	int i_Event1InterruptStatus = 0, i_Event2InterruptStatus =
 		0, i_RegValue;
@@ -787,10 +784,8 @@ static int i_APCI1500_StartStopInputEvent(struct comedi_device *dev,
 |			                                                         |
 +----------------------------------------------------------------------------+
 */
-static int i_APCI1500_Initialisation(struct comedi_device *dev,
-				     struct comedi_subdevice *s,
-				     struct comedi_insn *insn,
-				     unsigned int *data)
+int i_APCI1500_Initialisation(struct comedi_device *dev, struct comedi_subdevice *s,
+	struct comedi_insn *insn, unsigned int *data)
 {
 	int i_DummyRead = 0;
     /******************/
@@ -961,10 +956,9 @@ static int i_APCI1500_Initialisation(struct comedi_device *dev,
 |			                                                         |
 +----------------------------------------------------------------------------+
 */
-static int i_APCI1500_ReadMoreDigitalInput(struct comedi_device *dev,
-					   struct comedi_subdevice *s,
-					   struct comedi_insn *insn,
-					   unsigned int *data)
+
+int i_APCI1500_ReadMoreDigitalInput(struct comedi_device *dev, struct comedi_subdevice *s,
+	struct comedi_insn *insn, unsigned int *data)
 {
 	unsigned int ui_PortValue = data[1];
 	unsigned int ui_Mask = 0;
@@ -974,7 +968,7 @@ static int i_APCI1500_ReadMoreDigitalInput(struct comedi_device *dev,
 
 	switch (data[0]) {
 	case 0:
-		if (ui_Channel <= 15) {
+		if (ui_Channel >= 0 && ui_Channel <= 15) {
 			ui_TmpValue =
 				(unsigned int) inw(devpriv->i_IobaseAddon +
 				APCI1500_DIGITAL_IP);
@@ -1046,10 +1040,8 @@ static int i_APCI1500_ReadMoreDigitalInput(struct comedi_device *dev,
 |			                                                         |
 +----------------------------------------------------------------------------+
 */
-static int i_APCI1500_ConfigDigitalOutputErrorInterrupt(struct comedi_device *dev,
-							struct comedi_subdevice *s,
-							struct comedi_insn *insn,
-							unsigned int *data)
+int i_APCI1500_ConfigDigitalOutputErrorInterrupt(struct comedi_device *dev,
+	struct comedi_subdevice *s, struct comedi_insn *insn, unsigned int *data)
 {
 	devpriv->b_OutputMemoryStatus = data[0];
 	return insn->n;
@@ -1074,10 +1066,9 @@ static int i_APCI1500_ConfigDigitalOutputErrorInterrupt(struct comedi_device *de
 |			                                                         |
 +----------------------------------------------------------------------------+
 */
-static int i_APCI1500_WriteDigitalOutput(struct comedi_device *dev,
-					 struct comedi_subdevice *s,
-					 struct comedi_insn *insn,
-					 unsigned int *data)
+
+int i_APCI1500_WriteDigitalOutput(struct comedi_device *dev, struct comedi_subdevice *s,
+	struct comedi_insn *insn, unsigned int *data)
 {
 	static unsigned int ui_Temp = 0;
 	unsigned int ui_Temp1;
@@ -1269,10 +1260,9 @@ static int i_APCI1500_WriteDigitalOutput(struct comedi_device *dev,
 |			                                                         |
 +----------------------------------------------------------------------------+
 */
-static int i_APCI1500_ConfigCounterTimerWatchdog(struct comedi_device *dev,
-						 struct comedi_subdevice *s,
-						 struct comedi_insn *insn,
-						 unsigned int *data)
+
+int i_APCI1500_ConfigCounterTimerWatchdog(struct comedi_device *dev,
+	struct comedi_subdevice *s, struct comedi_insn *insn, unsigned int *data)
 {
 	int i_TimerCounterMode, i_MasterConfiguration;
 
@@ -1870,10 +1860,8 @@ static int i_APCI1500_ConfigCounterTimerWatchdog(struct comedi_device *dev,
 |			                                                         |
 +----------------------------------------------------------------------------+
 */
-static int i_APCI1500_StartStopTriggerTimerCounterWatchdog(struct comedi_device *dev,
-							   struct comedi_subdevice *s,
-							   struct comedi_insn *insn,
-							   unsigned int *data)
+int i_APCI1500_StartStopTriggerTimerCounterWatchdog(struct comedi_device *dev,
+	struct comedi_subdevice *s, struct comedi_insn *insn, unsigned int *data)
 {
 	int i_CommandAndStatusValue;
 
@@ -2193,10 +2181,9 @@ static int i_APCI1500_StartStopTriggerTimerCounterWatchdog(struct comedi_device 
 |			                                                         |
 +----------------------------------------------------------------------------+
 */
-static int i_APCI1500_ReadCounterTimerWatchdog(struct comedi_device *dev,
-					       struct comedi_subdevice *s,
-					       struct comedi_insn *insn,
-					       unsigned int *data)
+
+int i_APCI1500_ReadCounterTimerWatchdog(struct comedi_device *dev,
+	struct comedi_subdevice *s, struct comedi_insn *insn, unsigned int *data)
 {
 	int i_CommandAndStatusValue;
 	switch (data[0]) {
@@ -2383,10 +2370,8 @@ static int i_APCI1500_ReadCounterTimerWatchdog(struct comedi_device *dev,
 |			                                                         |
 +----------------------------------------------------------------------------+
 */
-static int i_APCI1500_ReadInterruptMask(struct comedi_device *dev,
-					struct comedi_subdevice *s,
-					struct comedi_insn *insn,
-					unsigned int *data)
+int i_APCI1500_ReadInterruptMask(struct comedi_device *dev, struct comedi_subdevice *s,
+	struct comedi_insn *insn, unsigned int *data)
 {
 	data[0] = i_InterruptMask;
 	data[1] = i_InputChannel;
@@ -2416,10 +2401,8 @@ static int i_APCI1500_ReadInterruptMask(struct comedi_device *dev,
 |			                                                         |
 +----------------------------------------------------------------------------+
 */
-static int i_APCI1500_ConfigureInterrupt(struct comedi_device *dev,
-					 struct comedi_subdevice *s,
-					 struct comedi_insn *insn,
-					 unsigned int *data)
+int i_APCI1500_ConfigureInterrupt(struct comedi_device *dev, struct comedi_subdevice *s,
+	struct comedi_insn *insn, unsigned int *data)
 {
 	unsigned int ui_Status;
 	int i_RegValue;
@@ -2838,7 +2821,8 @@ static void v_APCI1500_Interrupt(int irq, void *d)
 |			                                                         |
 +----------------------------------------------------------------------------+
 */
-static int i_APCI1500_Reset(struct comedi_device *dev)
+
+int i_APCI1500_Reset(struct comedi_device *dev)
 {
 	int i_DummyRead = 0;
 	i_TimerCounter1Init = 0;
@@ -2850,7 +2834,7 @@ static int i_APCI1500_Reset(struct comedi_device *dev)
 	i_Logic = 0;
 	i_CounterLogic = 0;
 	i_InterruptMask = 0;
-	i_InputChannel = 0;
+	i_InputChannel = 0;;
 	i_TimerCounter1Enabled = 0;
 	i_TimerCounter2Enabled = 0;
 	i_WatchdogCounter3Enabled = 0;

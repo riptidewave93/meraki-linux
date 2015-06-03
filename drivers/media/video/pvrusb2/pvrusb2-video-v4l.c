@@ -37,6 +37,7 @@
 #include <media/v4l2-common.h>
 #include <media/saa7115.h>
 #include <linux/errno.h>
+#include <linux/slab.h>
 
 struct routing_scheme {
 	const int *def;

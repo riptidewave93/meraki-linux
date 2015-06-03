@@ -5,6 +5,7 @@
 #define _ASM_X86_MC146818RTC_H
 
 #include <asm/io.h>
+#include <asm/system.h>
 #include <asm/processor.h>
 #include <linux/mc146818rtc.h>
 
@@ -80,8 +81,8 @@ static inline unsigned char current_lock_cmos_reg(void)
 #else
 #define lock_cmos_prefix(reg) do {} while (0)
 #define lock_cmos_suffix(reg) do {} while (0)
-#define lock_cmos(reg) do { } while (0)
-#define unlock_cmos() do { } while (0)
+#define lock_cmos(reg)
+#define unlock_cmos()
 #define do_i_have_lock_cmos() 0
 #define current_lock_cmos_reg() 0
 #endif

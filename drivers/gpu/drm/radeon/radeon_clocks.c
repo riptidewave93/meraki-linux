@@ -44,10 +44,6 @@ uint32_t radeon_legacy_get_engine_clock(struct radeon_device *rdev)
 
 	ref_div =
 	    RREG32_PLL(RADEON_M_SPLL_REF_FB_DIV) & RADEON_M_SPLL_REF_DIV_MASK;
-
-	if (ref_div == 0)
-		return 0;
-
 	sclk = fb_div / ref_div;
 
 	post_div = RREG32_PLL(RADEON_SCLK_CNTL) & RADEON_SCLK_SRC_SEL_MASK;
@@ -56,13 +52,13 @@ uint32_t radeon_legacy_get_engine_clock(struct radeon_device *rdev)
 	else if (post_div == 3)
 		sclk >>= 2;
 	else if (post_div == 4)
-		sclk >>= 3;
+		sclk >>= 4;
 
 	return sclk;
 }
 
 /* 10 khz */
-uint32_t radeon_legacy_get_memory_clock(struct radeon_device *rdev)
+static uint32_t radeon_legacy_get_memory_clock(struct radeon_device *rdev)
 {
 	struct radeon_pll *mpll = &rdev->clock.mpll;
 	uint32_t fb_div, ref_div, post_div, mclk;
@@ -74,10 +70,6 @@ uint32_t radeon_legacy_get_memory_clock(struct radeon_device *rdev)
 
 	ref_div =
 	    RREG32_PLL(RADEON_M_SPLL_REF_FB_DIV) & RADEON_M_SPLL_REF_DIV_MASK;
-
-	if (ref_div == 0)
-		return 0;
-
 	mclk = fb_div / ref_div;
 
 	post_div = RREG32_PLL(RADEON_MCLK_CNTL) & 0x7;
@@ -86,98 +78,16 @@ uint32_t radeon_legacy_get_memory_clock(struct radeon_device *rdev)
 	else if (post_div == 3)
 		mclk >>= 2;
 	else if (post_div == 4)
-		mclk >>= 3;
+		mclk >>= 4;
 
 	return mclk;
 }
-
-#ifdef CONFIG_OF
-/*
- * Read XTAL (ref clock), SCLK and MCLK from Open Firmware device
- * tree. Hopefully, ATI OF driver is kind enough to fill these
- */
-static bool radeon_read_clocks_OF(struct drm_device *dev)
-{
-	struct radeon_device *rdev = dev->dev_private;
-	struct device_node *dp = rdev->pdev->dev.of_node;
-	const u32 *val;
-	struct radeon_pll *p1pll = &rdev->clock.p1pll;
-	struct radeon_pll *p2pll = &rdev->clock.p2pll;
-	struct radeon_pll *spll = &rdev->clock.spll;
-	struct radeon_pll *mpll = &rdev->clock.mpll;
-
-	if (dp == NULL)
-		return false;
-	val = of_get_property(dp, "ATY,RefCLK", NULL);
-	if (!val || !*val) {
-		printk(KERN_WARNING "radeonfb: No ATY,RefCLK property !\n");
-		return false;
-	}
-	p1pll->reference_freq = p2pll->reference_freq = (*val) / 10;
-	p1pll->reference_div = RREG32_PLL(RADEON_PPLL_REF_DIV) & 0x3ff;
-	if (p1pll->reference_div < 2)
-		p1pll->reference_div = 12;
-	p2pll->reference_div = p1pll->reference_div;
-
-	/* These aren't in the device-tree */
-	if (rdev->family >= CHIP_R420) {
-		p1pll->pll_in_min = 100;
-		p1pll->pll_in_max = 1350;
-		p1pll->pll_out_min = 20000;
-		p1pll->pll_out_max = 50000;
-		p2pll->pll_in_min = 100;
-		p2pll->pll_in_max = 1350;
-		p2pll->pll_out_min = 20000;
-		p2pll->pll_out_max = 50000;
-	} else {
-		p1pll->pll_in_min = 40;
-		p1pll->pll_in_max = 500;
-		p1pll->pll_out_min = 12500;
-		p1pll->pll_out_max = 35000;
-		p2pll->pll_in_min = 40;
-		p2pll->pll_in_max = 500;
-		p2pll->pll_out_min = 12500;
-		p2pll->pll_out_max = 35000;
-	}
-	/* not sure what the max should be in all cases */
-	rdev->clock.max_pixel_clock = 35000;
-
-	spll->reference_freq = mpll->reference_freq = p1pll->reference_freq;
-	spll->reference_div = mpll->reference_div =
-		RREG32_PLL(RADEON_M_SPLL_REF_FB_DIV) &
-			    RADEON_M_SPLL_REF_DIV_MASK;
-
-	val = of_get_property(dp, "ATY,SCLK", NULL);
-	if (val && *val)
-		rdev->clock.default_sclk = (*val) / 10;
-	else
-		rdev->clock.default_sclk =
-			radeon_legacy_get_engine_clock(rdev);
-
-	val = of_get_property(dp, "ATY,MCLK", NULL);
-	if (val && *val)
-		rdev->clock.default_mclk = (*val) / 10;
-	else
-		rdev->clock.default_mclk =
-			radeon_legacy_get_memory_clock(rdev);
-
-	DRM_INFO("Using device-tree clock info\n");
-
-	return true;
-}
-#else
-static bool radeon_read_clocks_OF(struct drm_device *dev)
-{
-	return false;
-}
-#endif /* CONFIG_OF */
 
 void radeon_get_clock_info(struct drm_device *dev)
 {
 	struct radeon_device *rdev = dev->dev_private;
 	struct radeon_pll *p1pll = &rdev->clock.p1pll;
 	struct radeon_pll *p2pll = &rdev->clock.p2pll;
-	struct radeon_pll *dcpll = &rdev->clock.dcpll;
 	struct radeon_pll *spll = &rdev->clock.spll;
 	struct radeon_pll *mpll = &rdev->clock.mpll;
 	int ret;
@@ -186,23 +96,10 @@ void radeon_get_clock_info(struct drm_device *dev)
 		ret = radeon_atom_get_clock_info(dev);
 	else
 		ret = radeon_combios_get_clock_info(dev);
-	if (!ret)
-		ret = radeon_read_clocks_OF(dev);
 
 	if (ret) {
-		if (p1pll->reference_div < 2) {
-			if (!ASIC_IS_AVIVO(rdev)) {
-				u32 tmp = RREG32_PLL(RADEON_PPLL_REF_DIV);
-				if (ASIC_IS_R300(rdev))
-					p1pll->reference_div =
-						(tmp & R300_PPLL_REF_DIV_ACC_MASK) >> R300_PPLL_REF_DIV_ACC_SHIFT;
-				else
-					p1pll->reference_div = tmp & RADEON_PPLL_REF_DIV_MASK;
-				if (p1pll->reference_div < 2)
-					p1pll->reference_div = 12;
-			} else
-				p1pll->reference_div = 12;
-		}
+		if (p1pll->reference_div < 2)
+			p1pll->reference_div = 12;
 		if (p2pll->reference_div < 2)
 			p2pll->reference_div = 12;
 		if (rdev->family < CHIP_RS600) {
@@ -218,9 +115,6 @@ void radeon_get_clock_info(struct drm_device *dev)
 			/* TODO FALLBACK */
 		} else {
 			DRM_INFO("Using generic clock info\n");
-
-			/* may need to be per card */
-			rdev->clock.max_pixel_clock = 35000;
 
 			if (rdev->flags & RADEON_IS_IGP) {
 				p1pll->reference_freq = 1432;
@@ -291,17 +185,6 @@ void radeon_get_clock_info(struct drm_device *dev)
 		p2pll->max_frac_feedback_div = 0;
 	}
 
-	/* dcpll is DCE4 only */
-	dcpll->min_post_div = 2;
-	dcpll->max_post_div = 0x7f;
-	dcpll->min_frac_feedback_div = 0;
-	dcpll->max_frac_feedback_div = 9;
-	dcpll->min_ref_div = 2;
-	dcpll->max_ref_div = 0x3ff;
-	dcpll->min_feedback_div = 4;
-	dcpll->max_feedback_div = 0xfff;
-	dcpll->best_vco = 0;
-
 	p1pll->min_ref_div = 2;
 	p1pll->max_ref_div = 0x3ff;
 	p1pll->min_feedback_div = 4;
@@ -331,14 +214,6 @@ void radeon_get_clock_info(struct drm_device *dev)
 	mpll->min_feedback_div = 4;
 	mpll->max_feedback_div = 0xff;
 	mpll->best_vco = 0;
-
-	if (!rdev->clock.default_sclk)
-		rdev->clock.default_sclk = radeon_get_engine_clock(rdev);
-	if ((!rdev->clock.default_mclk) && rdev->asic->pm.get_memory_clock)
-		rdev->clock.default_mclk = radeon_get_memory_clock(rdev);
-
-	rdev->pm.current_sclk = rdev->clock.default_sclk;
-	rdev->pm.current_mclk = rdev->clock.default_mclk;
 
 }
 
@@ -633,7 +508,7 @@ void radeon_legacy_set_clock_gating(struct radeon_device *rdev, int enable)
 				tmp &= ~(R300_SCLK_FORCE_VAP);
 				tmp |= RADEON_SCLK_FORCE_CP;
 				WREG32_PLL(RADEON_SCLK_CNTL, tmp);
-				mdelay(15);
+				udelay(15000);
 
 				tmp = RREG32_PLL(R300_SCLK_CNTL2);
 				tmp &= ~(R300_SCLK_FORCE_TCL |
@@ -651,12 +526,12 @@ void radeon_legacy_set_clock_gating(struct radeon_device *rdev, int enable)
 			tmp |= (RADEON_ENGIN_DYNCLK_MODE |
 				(0x01 << RADEON_ACTIVE_HILO_LAT_SHIFT));
 			WREG32_PLL(RADEON_CLK_PWRMGT_CNTL, tmp);
-			mdelay(15);
+			udelay(15000);
 
 			tmp = RREG32_PLL(RADEON_CLK_PIN_CNTL);
 			tmp |= RADEON_SCLK_DYN_START_CNTL;
 			WREG32_PLL(RADEON_CLK_PIN_CNTL, tmp);
-			mdelay(15);
+			udelay(15000);
 
 			/* When DRI is enabled, setting DYN_STOP_LAT to zero can cause some R200
 			   to lockup randomly, leave them as set by BIOS.
@@ -696,7 +571,7 @@ void radeon_legacy_set_clock_gating(struct radeon_device *rdev, int enable)
 					tmp |= RADEON_SCLK_MORE_FORCEON;
 				}
 				WREG32_PLL(RADEON_SCLK_MORE_CNTL, tmp);
-				mdelay(15);
+				udelay(15000);
 			}
 
 			/* RV200::A11 A12, RV250::A11 A12 */
@@ -709,7 +584,7 @@ void radeon_legacy_set_clock_gating(struct radeon_device *rdev, int enable)
 				tmp |= RADEON_TCL_BYPASS_DISABLE;
 				WREG32_PLL(RADEON_PLL_PWRMGT_CNTL, tmp);
 			}
-			mdelay(15);
+			udelay(15000);
 
 			/*enable dynamic mode for display clocks (PIXCLK and PIX2CLK) */
 			tmp = RREG32_PLL(RADEON_PIXCLKS_CNTL);
@@ -722,14 +597,14 @@ void radeon_legacy_set_clock_gating(struct radeon_device *rdev, int enable)
 				RADEON_PIXCLK_TMDS_ALWAYS_ONb);
 
 			WREG32_PLL(RADEON_PIXCLKS_CNTL, tmp);
-			mdelay(15);
+			udelay(15000);
 
 			tmp = RREG32_PLL(RADEON_VCLK_ECP_CNTL);
 			tmp |= (RADEON_PIXCLK_ALWAYS_ONb |
 				RADEON_PIXCLK_DAC_ALWAYS_ONb);
 
 			WREG32_PLL(RADEON_VCLK_ECP_CNTL, tmp);
-			mdelay(15);
+			udelay(15000);
 		}
 	} else {
 		/* Turn everything OFF (ForceON to everything) */
@@ -861,7 +736,7 @@ void radeon_legacy_set_clock_gating(struct radeon_device *rdev, int enable)
 			}
 			WREG32_PLL(RADEON_SCLK_CNTL, tmp);
 
-			mdelay(16);
+			udelay(16000);
 
 			if ((rdev->family == CHIP_R300) ||
 			    (rdev->family == CHIP_R350)) {
@@ -870,7 +745,7 @@ void radeon_legacy_set_clock_gating(struct radeon_device *rdev, int enable)
 					R300_SCLK_FORCE_GA |
 					R300_SCLK_FORCE_CBA);
 				WREG32_PLL(R300_SCLK_CNTL2, tmp);
-				mdelay(16);
+				udelay(16000);
 			}
 
 			if (rdev->flags & RADEON_IS_IGP) {
@@ -878,7 +753,7 @@ void radeon_legacy_set_clock_gating(struct radeon_device *rdev, int enable)
 				tmp &= ~(RADEON_FORCEON_MCLKA |
 					 RADEON_FORCEON_YCLKA);
 				WREG32_PLL(RADEON_MCLK_CNTL, tmp);
-				mdelay(16);
+				udelay(16000);
 			}
 
 			if ((rdev->family == CHIP_RV200) ||
@@ -887,7 +762,7 @@ void radeon_legacy_set_clock_gating(struct radeon_device *rdev, int enable)
 				tmp = RREG32_PLL(RADEON_SCLK_MORE_CNTL);
 				tmp |= RADEON_SCLK_MORE_FORCEON;
 				WREG32_PLL(RADEON_SCLK_MORE_CNTL, tmp);
-				mdelay(16);
+				udelay(16000);
 			}
 
 			tmp = RREG32_PLL(RADEON_PIXCLKS_CNTL);
@@ -900,7 +775,7 @@ void radeon_legacy_set_clock_gating(struct radeon_device *rdev, int enable)
 				 RADEON_PIXCLK_TMDS_ALWAYS_ONb);
 
 			WREG32_PLL(RADEON_PIXCLKS_CNTL, tmp);
-			mdelay(16);
+			udelay(16000);
 
 			tmp = RREG32_PLL(RADEON_VCLK_ECP_CNTL);
 			tmp &= ~(RADEON_PIXCLK_ALWAYS_ONb |
@@ -910,3 +785,51 @@ void radeon_legacy_set_clock_gating(struct radeon_device *rdev, int enable)
 	}
 }
 
+static void radeon_apply_clock_quirks(struct radeon_device *rdev)
+{
+	uint32_t tmp;
+
+	/* XXX make sure engine is idle */
+
+	if (rdev->family < CHIP_RS600) {
+		tmp = RREG32_PLL(RADEON_SCLK_CNTL);
+		if (ASIC_IS_R300(rdev) || ASIC_IS_RV100(rdev))
+			tmp |= RADEON_SCLK_FORCE_CP | RADEON_SCLK_FORCE_VIP;
+		if ((rdev->family == CHIP_RV250)
+		    || (rdev->family == CHIP_RV280))
+			tmp |=
+			    RADEON_SCLK_FORCE_DISP1 | RADEON_SCLK_FORCE_DISP2;
+		if ((rdev->family == CHIP_RV350)
+		    || (rdev->family == CHIP_RV380))
+			tmp |= R300_SCLK_FORCE_VAP;
+		if (rdev->family == CHIP_R420)
+			tmp |= R300_SCLK_FORCE_PX | R300_SCLK_FORCE_TX;
+		WREG32_PLL(RADEON_SCLK_CNTL, tmp);
+	} else if (rdev->family < CHIP_R600) {
+		tmp = RREG32_PLL(AVIVO_CP_DYN_CNTL);
+		tmp |= AVIVO_CP_FORCEON;
+		WREG32_PLL(AVIVO_CP_DYN_CNTL, tmp);
+
+		tmp = RREG32_PLL(AVIVO_E2_DYN_CNTL);
+		tmp |= AVIVO_E2_FORCEON;
+		WREG32_PLL(AVIVO_E2_DYN_CNTL, tmp);
+
+		tmp = RREG32_PLL(AVIVO_IDCT_DYN_CNTL);
+		tmp |= AVIVO_IDCT_FORCEON;
+		WREG32_PLL(AVIVO_IDCT_DYN_CNTL, tmp);
+	}
+}
+
+int radeon_static_clocks_init(struct drm_device *dev)
+{
+	struct radeon_device *rdev = dev->dev_private;
+
+	/* XXX make sure engine is idle */
+
+	if (radeon_dynclks != -1) {
+		if (radeon_dynclks)
+			radeon_set_clock_gating(rdev, 1);
+	}
+	radeon_apply_clock_quirks(rdev);
+	return 0;
+}

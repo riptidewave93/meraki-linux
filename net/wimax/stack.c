@@ -51,24 +51,14 @@
  *   wimax_rfkill_rm()
  */
 #include <linux/device.h>
-#include <linux/gfp.h>
 #include <net/genetlink.h>
 #include <linux/netdevice.h>
 #include <linux/wimax.h>
-#include <linux/module.h>
 #include "wimax-internal.h"
 
 
 #define D_SUBMODULE stack
 #include "debug-levels.h"
-
-static char wimax_debug_params[128];
-module_param_string(debug, wimax_debug_params, sizeof(wimax_debug_params),
-		    0644);
-MODULE_PARM_DESC(debug,
-		 "String of space-separated NAME:VALUE pairs, where NAMEs "
-		 "are the different debug submodules and VALUE are the "
-		 "initial debug value to set.");
 
 /*
  * Authoritative source for the RE_STATE_CHANGE attribute policy
@@ -77,7 +67,8 @@ MODULE_PARM_DESC(debug,
  * close to where the data is generated.
  */
 /*
-static const struct nla_policy wimax_gnl_re_status_change[WIMAX_GNL_ATTR_MAX + 1] = {
+static const
+struct nla_policy wimax_gnl_re_status_change[WIMAX_GNL_ATTR_MAX + 1] = {
 	[WIMAX_GNL_STCH_STATE_OLD] = { .type = NLA_U8 },
 	[WIMAX_GNL_STCH_STATE_NEW] = { .type = NLA_U8 },
 };
@@ -316,11 +307,12 @@ void __wimax_state_change(struct wimax_dev *wimax_dev, enum wimax_st new_state)
 		BUG();
 	}
 	__wimax_state_set(wimax_dev, new_state);
-	if (!IS_ERR(stch_skb))
+	if (stch_skb)
 		wimax_gnl_re_state_change_send(wimax_dev, stch_skb, header);
 out:
 	d_fnend(3, dev, "(wimax_dev %p new_state %u [old %u]) = void\n",
 		wimax_dev, new_state, old_state);
+	return;
 }
 
 
@@ -362,6 +354,7 @@ void wimax_state_change(struct wimax_dev *wimax_dev, enum wimax_st new_state)
 	if (wimax_dev->state > __WIMAX_ST_NULL)
 		__wimax_state_change(wimax_dev, new_state);
 	mutex_unlock(&wimax_dev->mutex);
+	return;
 }
 EXPORT_SYMBOL_GPL(wimax_state_change);
 
@@ -569,9 +562,6 @@ int __init wimax_subsys_init(void)
 	int result, cnt;
 
 	d_fnstart(4, NULL, "()\n");
-	d_parse_params(D_LEVEL, D_LEVEL_SIZE, wimax_debug_params,
-		       "wimax.debug");
-
 	snprintf(wimax_gnl_family.name, sizeof(wimax_gnl_family.name),
 		 "WiMAX");
 	result = genl_register_family(&wimax_gnl_family);

@@ -42,7 +42,7 @@ static int devm_irq_match(struct device *dev, void *res, void *data)
  *	automatically freed on driver detach.
  *
  *	If an IRQ allocated with this function needs to be freed
- *	separately, devm_free_irq() must be used.
+ *	separately, dev_free_irq() must be used.
  */
 int devm_request_threaded_irq(struct device *dev, unsigned int irq,
 			      irq_handler_t handler, irq_handler_t thread_fn,
@@ -81,14 +81,14 @@ EXPORT_SYMBOL(devm_request_threaded_irq);
  *	Except for the extra @dev argument, this function takes the
  *	same arguments and performs the same function as free_irq().
  *	This function instead of free_irq() should be used to manually
- *	free IRQs allocated with devm_request_irq().
+ *	free IRQs allocated with dev_request_irq().
  */
 void devm_free_irq(struct device *dev, unsigned int irq, void *dev_id)
 {
 	struct irq_devres match_data = { irq, dev_id };
 
+	free_irq(irq, dev_id);
 	WARN_ON(devres_destroy(dev, devm_irq_release, devm_irq_match,
 			       &match_data));
-	free_irq(irq, dev_id);
 }
 EXPORT_SYMBOL(devm_free_irq);

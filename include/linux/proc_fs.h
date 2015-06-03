@@ -5,7 +5,7 @@
 #include <linux/fs.h>
 #include <linux/spinlock.h>
 #include <linux/magic.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 struct net;
 struct completion;
@@ -50,7 +50,9 @@ typedef	int (write_proc_t)(struct file *file, const char __user *buffer,
 
 struct proc_dir_entry {
 	unsigned int low_ino;
-	umode_t mode;
+	unsigned short namelen;
+	const char *name;
+	mode_t mode;
 	nlink_t nlink;
 	uid_t uid;
 	gid_t gid;
@@ -71,11 +73,9 @@ struct proc_dir_entry {
 	write_proc_t *write_proc;
 	atomic_t count;		/* use count */
 	int pde_users;	/* number of callers into module in progress */
+	spinlock_t pde_unload_lock; /* proc_fops checks and pde_users bumps */
 	struct completion *pde_unload_completion;
 	struct list_head pde_openers;	/* who did ->open, but not ->release */
-	spinlock_t pde_unload_lock; /* proc_fops checks and pde_users bumps */
-	u8 namelen;
-	char name[];
 };
 
 enum kcore_type {
@@ -106,9 +106,9 @@ extern void proc_root_init(void);
 
 void proc_flush_task(struct task_struct *task);
 
-extern struct proc_dir_entry *create_proc_entry(const char *name, umode_t mode,
+extern struct proc_dir_entry *create_proc_entry(const char *name, mode_t mode,
 						struct proc_dir_entry *parent);
-struct proc_dir_entry *proc_create_data(const char *name, umode_t mode,
+struct proc_dir_entry *proc_create_data(const char *name, mode_t mode,
 				struct proc_dir_entry *parent,
 				const struct file_operations *proc_fops,
 				void *data);
@@ -146,17 +146,17 @@ extern void proc_device_tree_update_prop(struct proc_dir_entry *pde,
 extern struct proc_dir_entry *proc_symlink(const char *,
 		struct proc_dir_entry *, const char *);
 extern struct proc_dir_entry *proc_mkdir(const char *,struct proc_dir_entry *);
-extern struct proc_dir_entry *proc_mkdir_mode(const char *name, umode_t mode,
+extern struct proc_dir_entry *proc_mkdir_mode(const char *name, mode_t mode,
 			struct proc_dir_entry *parent);
 
-static inline struct proc_dir_entry *proc_create(const char *name, umode_t mode,
+static inline struct proc_dir_entry *proc_create(const char *name, mode_t mode,
 	struct proc_dir_entry *parent, const struct file_operations *proc_fops)
 {
 	return proc_create_data(name, mode, parent, proc_fops, NULL);
 }
 
 static inline struct proc_dir_entry *create_proc_read_entry(const char *name,
-	umode_t mode, struct proc_dir_entry *base, 
+	mode_t mode, struct proc_dir_entry *base, 
 	read_proc_t *read_proc, void * data)
 {
 	struct proc_dir_entry *res=create_proc_entry(name,mode,base);
@@ -168,12 +168,16 @@ static inline struct proc_dir_entry *create_proc_read_entry(const char *name,
 }
  
 extern struct proc_dir_entry *proc_net_fops_create(struct net *net,
-	const char *name, umode_t mode, const struct file_operations *fops);
+	const char *name, mode_t mode, const struct file_operations *fops);
 extern void proc_net_remove(struct net *net, const char *name);
 extern struct proc_dir_entry *proc_net_mkdir(struct net *net, const char *name,
 	struct proc_dir_entry *parent);
 
-extern struct file *proc_ns_fget(int fd);
+/* While the {get|set|dup}_mm_exe_file functions are for mm_structs, they are
+ * only needed to implement /proc/<pid>|self/exe so we define them here. */
+extern void set_mm_exe_file(struct mm_struct *mm, struct file *new_exe_file);
+extern struct file *get_mm_exe_file(struct mm_struct *mm);
+extern void dup_mm_exe_file(struct mm_struct *oldmm, struct mm_struct *newmm);
 
 #else
 
@@ -185,15 +189,15 @@ static inline void proc_flush_task(struct task_struct *task)
 }
 
 static inline struct proc_dir_entry *create_proc_entry(const char *name,
-	umode_t mode, struct proc_dir_entry *parent) { return NULL; }
+	mode_t mode, struct proc_dir_entry *parent) { return NULL; }
 static inline struct proc_dir_entry *proc_create(const char *name,
-	umode_t mode, struct proc_dir_entry *parent,
+	mode_t mode, struct proc_dir_entry *parent,
 	const struct file_operations *proc_fops)
 {
 	return NULL;
 }
 static inline struct proc_dir_entry *proc_create_data(const char *name,
-	umode_t mode, struct proc_dir_entry *parent,
+	mode_t mode, struct proc_dir_entry *parent,
 	const struct file_operations *proc_fops, void *data)
 {
 	return NULL;
@@ -204,11 +208,9 @@ static inline struct proc_dir_entry *proc_symlink(const char *name,
 		struct proc_dir_entry *parent,const char *dest) {return NULL;}
 static inline struct proc_dir_entry *proc_mkdir(const char *name,
 	struct proc_dir_entry *parent) {return NULL;}
-static inline struct proc_dir_entry *proc_mkdir_mode(const char *name,
-	umode_t mode, struct proc_dir_entry *parent) { return NULL; }
 
 static inline struct proc_dir_entry *create_proc_read_entry(const char *name,
-	umode_t mode, struct proc_dir_entry *base, 
+	mode_t mode, struct proc_dir_entry *base, 
 	read_proc_t *read_proc, void * data) { return NULL; }
 
 struct tty_driver;
@@ -224,10 +226,18 @@ static inline void pid_ns_release_proc(struct pid_namespace *ns)
 {
 }
 
-static inline struct file *proc_ns_fget(int fd)
+static inline void set_mm_exe_file(struct mm_struct *mm,
+				   struct file *new_exe_file)
+{}
+
+static inline struct file *get_mm_exe_file(struct mm_struct *mm)
 {
-	return ERR_PTR(-EINVAL);
+	return NULL;
 }
+
+static inline void dup_mm_exe_file(struct mm_struct *oldmm,
+	       			   struct mm_struct *newmm)
+{}
 
 #endif /* CONFIG_PROC_FS */
 
@@ -240,20 +250,8 @@ kclist_add(struct kcore_list *new, void *addr, size_t size, int type)
 extern void kclist_add(struct kcore_list *, void *, size_t, int type);
 #endif
 
-struct nsproxy;
-struct proc_ns_operations {
-	const char *name;
-	int type;
-	void *(*get)(struct task_struct *task);
-	void (*put)(void *ns);
-	int (*install)(struct nsproxy *nsproxy, void *ns);
-};
-extern const struct proc_ns_operations netns_operations;
-extern const struct proc_ns_operations utsns_operations;
-extern const struct proc_ns_operations ipcns_operations;
-
 union proc_op {
-	int (*proc_get_link)(struct dentry *, struct path *);
+	int (*proc_get_link)(struct inode *, struct path *);
 	int (*proc_read)(struct task_struct *task, char *page);
 	int (*proc_show)(struct seq_file *m,
 		struct pid_namespace *ns, struct pid *pid,
@@ -270,8 +268,6 @@ struct proc_inode {
 	struct proc_dir_entry *pde;
 	struct ctl_table_header *sysctl;
 	struct ctl_table *sysctl_entry;
-	void *ns;
-	const struct proc_ns_operations *ns_ops;
 	struct inode vfs_inode;
 };
 
@@ -287,7 +283,15 @@ static inline struct proc_dir_entry *PDE(const struct inode *inode)
 
 static inline struct net *PDE_NET(struct proc_dir_entry *pde)
 {
-	return pde->parent->data;
+	return (struct net *)pde->parent->data;
 }
+
+struct proc_maps_private {
+	struct pid *pid;
+	struct task_struct *task;
+#ifdef CONFIG_MMU
+	struct vm_area_struct *tail_vma;
+#endif
+};
 
 #endif /* _LINUX_PROC_FS_H */

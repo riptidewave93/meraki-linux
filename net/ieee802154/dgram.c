@@ -1,5 +1,5 @@
 /*
- * IEEE 802.15.4 dgram socket interface
+ * ZigBee socket interface
  *
  * Copyright 2007, 2008 Siemens AG
  *
@@ -25,7 +25,6 @@
 #include <linux/module.h>
 #include <linux/if_arp.h>
 #include <linux/list.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/af_ieee802154.h>
 #include <net/ieee802154.h>
@@ -209,7 +208,6 @@ static int dgram_sendmsg(struct kiocb *iocb, struct sock *sk,
 	unsigned mtu;
 	struct sk_buff *skb;
 	struct dgram_sock *ro = dgram_sk(sk);
-	int hlen, tlen;
 	int err;
 
 	if (msg->msg_flags & MSG_OOB) {
@@ -230,15 +228,13 @@ static int dgram_sendmsg(struct kiocb *iocb, struct sock *sk,
 	mtu = dev->mtu;
 	pr_debug("name = %s, mtu = %u\n", dev->name, mtu);
 
-	hlen = LL_RESERVED_SPACE(dev);
-	tlen = dev->needed_tailroom;
-	skb = sock_alloc_send_skb(sk, hlen + tlen + size,
+	skb = sock_alloc_send_skb(sk, LL_ALLOCATED_SPACE(dev) + size,
 			msg->msg_flags & MSG_DONTWAIT,
 			&err);
 	if (!skb)
 		goto out_dev;
 
-	skb_reserve(skb, hlen);
+	skb_reserve(skb, LL_RESERVED_SPACE(dev));
 
 	skb_reset_network_header(skb);
 
@@ -307,7 +303,7 @@ static int dgram_recvmsg(struct kiocb *iocb, struct sock *sk,
 	if (err)
 		goto done;
 
-	sock_recv_ts_and_drops(msg, sk, skb);
+	sock_recv_timestamp(msg, sk, skb);
 
 	if (flags & MSG_TRUNC)
 		copied = skb->len;
@@ -322,6 +318,7 @@ out:
 static int dgram_rcv_skb(struct sock *sk, struct sk_buff *skb)
 {
 	if (sock_queue_rcv_skb(sk, skb) < 0) {
+		atomic_inc(&sk->sk_drops);
 		kfree_skb(skb);
 		return NET_RX_DROP;
 	}

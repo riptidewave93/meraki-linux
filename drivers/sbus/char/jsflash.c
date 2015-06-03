@@ -13,7 +13,7 @@
  * TODO: Erase/program both banks of a 8MB SIMM.
  *
  * It is anticipated that programming an OS Flash will be a routine
- * procedure. In the same time it is exceedingly dangerous because
+ * procedure. In the same time it is exeedingly dangerous because
  * a user can program its OBP flash with OS image and effectively
  * kill the machine.
  *
@@ -27,10 +27,11 @@
  */
 
 #include <linux/module.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/types.h>
 #include <linux/errno.h>
 #include <linux/miscdevice.h>
+#include <linux/slab.h>
 #include <linux/fcntl.h>
 #include <linux/poll.h>
 #include <linux/init.h>
@@ -67,8 +68,6 @@
 #define JSF_NPART	 3	/* 3 minors per flash device */
 #define JSF_PART_BITS	 2	/* 2 bits of minors to cover JSF_NPART */
 #define JSF_PART_MASK	 0x3	/* 2 bits mask */
-
-static DEFINE_MUTEX(jsf_mutex);
 
 /*
  * Access functions.
@@ -227,7 +226,7 @@ static loff_t jsf_lseek(struct file * file, loff_t offset, int orig)
 {
 	loff_t ret;
 
-	mutex_lock(&jsf_mutex);
+	lock_kernel();
 	switch (orig) {
 		case 0:
 			file->f_pos = offset;
@@ -240,7 +239,7 @@ static loff_t jsf_lseek(struct file * file, loff_t offset, int orig)
 		default:
 			ret = -EINVAL;
 	}
-	mutex_unlock(&jsf_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -386,18 +385,18 @@ static int jsf_ioctl_program(void __user *arg)
 
 static long jsf_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 {
-	mutex_lock(&jsf_mutex);
+	lock_kernel();
 	int error = -ENOTTY;
 	void __user *argp = (void __user *)arg;
 
 	if (!capable(CAP_SYS_ADMIN)) {
-		mutex_unlock(&jsf_mutex);
+		unlock_kernel();
 		return -EPERM;
 	}
 	switch (cmd) {
 	case JSFLASH_IDENT:
 		if (copy_to_user(argp, &jsf0.id, JSFIDSZ)) {
-			mutex_unlock(&jsf_mutex);
+			unlock_kernel();
 			return -EFAULT;
 		}
 		break;
@@ -409,7 +408,7 @@ static long jsf_ioctl(struct file *f, unsigned int cmd, unsigned long arg)
 		break;
 	}
 
-	mutex_unlock(&jsf_mutex);
+	unlock_kernel();
 	return error;
 }
 
@@ -420,17 +419,17 @@ static int jsf_mmap(struct file * file, struct vm_area_struct * vma)
 
 static int jsf_open(struct inode * inode, struct file * filp)
 {
-	mutex_lock(&jsf_mutex);
+	lock_kernel();
 	if (jsf0.base == 0) {
-		mutex_unlock(&jsf_mutex);
+		unlock_kernel();
 		return -ENXIO;
 	}
 	if (test_and_set_bit(0, (void *)&jsf0.busy) != 0) {
-		mutex_unlock(&jsf_mutex);
+		unlock_kernel();
 		return -EBUSY;
 	}
 
-	mutex_unlock(&jsf_mutex);
+	unlock_kernel();
 	return 0;	/* XXX What security? */
 }
 
@@ -461,13 +460,13 @@ static int jsflash_init(void)
 {
 	int rc;
 	struct jsflash *jsf;
-	phandle node;
+	int node;
 	char banner[128];
 	struct linux_prom_registers reg0;
 
 	node = prom_getchild(prom_root_node);
 	node = prom_searchsiblings(node, "flash-memory");
-	if (node != 0 && (s32)node != -1) {
+	if (node != 0 && node != -1) {
 		if (prom_getproperty(node, "reg",
 		    (char *)&reg0, sizeof(reg0)) == -1) {
 			printk("jsflash: no \"reg\" property\n");

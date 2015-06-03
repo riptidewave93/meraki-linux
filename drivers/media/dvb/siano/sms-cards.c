@@ -19,7 +19,6 @@
 
 #include "sms-cards.h"
 #include "smsir.h"
-#include <linux/module.h>
 
 static int sms_dbg;
 module_param_named(cards_dbg, sms_dbg, int, 0644);
@@ -63,13 +62,10 @@ static struct sms_board sms_boards[] = {
 	[SMS1XXX_BOARD_HAUPPAUGE_WINDHAM] = {
 		.name	= "Hauppauge WinTV MiniStick",
 		.type	= SMS_NOVA_B0,
-		.fw[DEVICE_MODE_ISDBT_BDA] = "sms1xxx-hcw-55xxx-isdbt-02.fw",
 		.fw[DEVICE_MODE_DVBT_BDA] = "sms1xxx-hcw-55xxx-dvbt-02.fw",
-		.rc_codes = RC_MAP_HAUPPAUGE,
 		.board_cfg.leds_power = 26,
 		.board_cfg.led0 = 27,
 		.board_cfg.led1 = 28,
-		.board_cfg.ir = 9,
 		.led_power = 26,
 		.led_lo    = 27,
 		.led_hi    = 28,
@@ -101,7 +97,7 @@ static struct sms_board sms_boards[] = {
 	},
 };
 
-struct sms_board *sms_get_board(unsigned id)
+struct sms_board *sms_get_board(int id)
 {
 	BUG_ON(id >= ARRAY_SIZE(sms_boards));
 
@@ -298,8 +294,6 @@ int sms_board_load_modules(int id)
 	case SMS1XXX_BOARD_HAUPPAUGE_OKEMO_A:
 	case SMS1XXX_BOARD_HAUPPAUGE_OKEMO_B:
 	case SMS1XXX_BOARD_HAUPPAUGE_WINDHAM:
-	case SMS1XXX_BOARD_HAUPPAUGE_TIGER_MINICARD:
-	case SMS1XXX_BOARD_HAUPPAUGE_TIGER_MINICARD_R2:
 		request_module("smsdvb");
 		break;
 	default:

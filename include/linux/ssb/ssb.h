@@ -16,12 +16,6 @@ struct pcmcia_device;
 struct ssb_bus;
 struct ssb_driver;
 
-struct ssb_sprom_core_pwr_info {
-	u8 itssi_2g, itssi_5g;
-	u8 maxpwr_2g, maxpwr_5gl, maxpwr_5g, maxpwr_5gh;
-	u16 pa_2g[4], pa_5gl[4], pa_5g[4], pa_5gh[4];
-};
-
 struct ssb_sprom {
 	u8 revision;
 	u8 il0mac[6];		/* MAC address for 802.11b/g */
@@ -31,13 +25,8 @@ struct ssb_sprom {
 	u8 et1phyaddr;		/* MII address for enet1 */
 	u8 et0mdcport;		/* MDIO for enet0 */
 	u8 et1mdcport;		/* MDIO for enet1 */
-	u16 board_rev;		/* Board revision number from SPROM. */
-	u16 board_num;		/* Board number from SPROM. */
-	u16 board_type;		/* Board type from SPROM. */
+	u8 board_rev;		/* Board revision number from SPROM. */
 	u8 country_code;	/* Country Code */
-	char alpha2[2];		/* Country Code as two chars like EU or US */
-	u8 leddc_on_time;	/* LED Powersave Duty Cycle On Count */
-	u8 leddc_off_time;	/* LED Powersave Duty Cycle Off Count */
 	u8 ant_available_a;	/* 2GHz antenna available bits (up to 4) */
 	u8 ant_available_bg;	/* 5GHz antenna available bits (up to 4) */
 	u16 pa0b0;
@@ -56,22 +45,18 @@ struct ssb_sprom {
 	u8 gpio1;		/* GPIO pin 1 */
 	u8 gpio2;		/* GPIO pin 2 */
 	u8 gpio3;		/* GPIO pin 3 */
-	u8 maxpwr_bg;		/* 2.4GHz Amplifier Max Power (in dBm Q5.2) */
-	u8 maxpwr_al;		/* 5.2GHz Amplifier Max Power (in dBm Q5.2) */
-	u8 maxpwr_a;		/* 5.3GHz Amplifier Max Power (in dBm Q5.2) */
-	u8 maxpwr_ah;		/* 5.8GHz Amplifier Max Power (in dBm Q5.2) */
+	u16 maxpwr_bg;		/* 2.4GHz Amplifier Max Power (in dBm Q5.2) */
+	u16 maxpwr_al;		/* 5.2GHz Amplifier Max Power (in dBm Q5.2) */
+	u16 maxpwr_a;		/* 5.3GHz Amplifier Max Power (in dBm Q5.2) */
+	u16 maxpwr_ah;		/* 5.8GHz Amplifier Max Power (in dBm Q5.2) */
 	u8 itssi_a;		/* Idle TSSI Target for A-PHY */
 	u8 itssi_bg;		/* Idle TSSI Target for B/G-PHY */
 	u8 tri2g;		/* 2.4GHz TX isolation */
 	u8 tri5gl;		/* 5.2GHz TX isolation */
 	u8 tri5g;		/* 5.3GHz TX isolation */
 	u8 tri5gh;		/* 5.8GHz TX isolation */
-	u8 txpid2g[4];		/* 2GHz TX power index */
-	u8 txpid5gl[4];		/* 4.9 - 5.1GHz TX power index */
-	u8 txpid5g[4];		/* 5.1 - 5.5GHz TX power index */
-	u8 txpid5gh[4];		/* 5.5 - ...GHz TX power index */
-	s8 rxpo2g;		/* 2GHz RX power offset */
-	s8 rxpo5g;		/* 5GHz RX power offset */
+	u8 rxpo2g;		/* 2GHz RX power offset */
+	u8 rxpo5g;		/* 5GHz RX power offset */
 	u8 rssisav2g;		/* 2GHz RSSI params */
 	u8 rssismc2g;
 	u8 rssismf2g;
@@ -91,104 +76,26 @@ struct ssb_sprom {
 	u16 boardflags2_hi;	/* Board flags (bits 48-63) */
 	/* TODO store board flags in a single u64 */
 
-	struct ssb_sprom_core_pwr_info core_pwr_info[4];
-
 	/* Antenna gain values for up to 4 antennas
 	 * on each band. Values in dBm/4 (Q5.2). Negative gain means the
 	 * loss in the connectors is bigger than the gain. */
 	struct {
-		s8 a0, a1, a2, a3;
+		struct {
+			s8 a0, a1, a2, a3;
+		} ghz24;	/* 2.4GHz band */
+		struct {
+			s8 a0, a1, a2, a3;
+		} ghz5;		/* 5GHz band */
 	} antenna_gain;
 
-	struct {
-		struct {
-			u8 tssipos, extpa_gain, pdet_range, tr_iso, antswlut;
-		} ghz2;
-		struct {
-			u8 tssipos, extpa_gain, pdet_range, tr_iso, antswlut;
-		} ghz5;
-	} fem;
-
-	u16 mcs2gpo[8];
-	u16 mcs5gpo[8];
-	u16 mcs5glpo[8];
-	u16 mcs5ghpo[8];
-	u8 opo;
-
-	u8 rxgainerr2ga[3];
-	u8 rxgainerr5gla[3];
-	u8 rxgainerr5gma[3];
-	u8 rxgainerr5gha[3];
-	u8 rxgainerr5gua[3];
-
-	u8 noiselvl2ga[3];
-	u8 noiselvl5gla[3];
-	u8 noiselvl5gma[3];
-	u8 noiselvl5gha[3];
-	u8 noiselvl5gua[3];
-
-	u8 regrev;
-	u8 txchain;
-	u8 rxchain;
-	u8 antswitch;
-	u16 cddpo;
-	u16 stbcpo;
-	u16 bw40po;
-	u16 bwduppo;
-
-	u8 tempthresh;
-	u8 tempoffset;
-	u16 rawtempsense;
-	u8 measpower;
-	u8 tempsense_slope;
-	u8 tempcorrx;
-	u8 tempsense_option;
-	u8 freqoffset_corr;
-	u8 iqcal_swp_dis;
-	u8 hw_iqcal_en;
-	u8 elna2g;
-	u8 elna5g;
-	u8 phycal_tempdelta;
-	u8 temps_period;
-	u8 temps_hysteresis;
-	u8 measpower1;
-	u8 measpower2;
-	u8 pcieingress_war;
-
-	/* power per rate from sromrev 9 */
-	u16 cckbw202gpo;
-	u16 cckbw20ul2gpo;
-	u32 legofdmbw202gpo;
-	u32 legofdmbw20ul2gpo;
-	u32 legofdmbw205glpo;
-	u32 legofdmbw20ul5glpo;
-	u32 legofdmbw205gmpo;
-	u32 legofdmbw20ul5gmpo;
-	u32 legofdmbw205ghpo;
-	u32 legofdmbw20ul5ghpo;
-	u32 mcsbw202gpo;
-	u32 mcsbw20ul2gpo;
-	u32 mcsbw402gpo;
-	u32 mcsbw205glpo;
-	u32 mcsbw20ul5glpo;
-	u32 mcsbw405glpo;
-	u32 mcsbw205gmpo;
-	u32 mcsbw20ul5gmpo;
-	u32 mcsbw405gmpo;
-	u32 mcsbw205ghpo;
-	u32 mcsbw20ul5ghpo;
-	u32 mcsbw405ghpo;
-	u16 mcs32po;
-	u16 legofdm40duppo;
-	u8 sar2g;
-	u8 sar5g;
+	/* TODO - add any parameters needed from rev 2, 3, 4, 5 or 8 SPROMs */
 };
 
 /* Information about the PCB the circuitry is soldered on. */
 struct ssb_boardinfo {
 	u16 vendor;
 	u16 type;
-	u8  rev;
+	u16 rev;
 };
 
 
@@ -260,7 +167,7 @@ struct ssb_device {
 	 * is an optimization. */
 	const struct ssb_bus_ops *ops;
 
-	struct device *dev, *dma_dev;
+	struct device *dev;
 
 	struct ssb_bus *bus;
 	struct ssb_device_id id;
@@ -318,9 +225,10 @@ struct ssb_driver {
 #define drv_to_ssb_drv(_drv) container_of(_drv, struct ssb_driver, drv)
 
 extern int __ssb_driver_register(struct ssb_driver *drv, struct module *owner);
-#define ssb_driver_register(drv) \
-	__ssb_driver_register(drv, THIS_MODULE)
-
+static inline int ssb_driver_register(struct ssb_driver *drv)
+{
+	return __ssb_driver_register(drv, THIS_MODULE);
+}
 extern void ssb_driver_unregister(struct ssb_driver *drv);
 
 
@@ -361,8 +269,7 @@ struct ssb_bus {
 
 	const struct ssb_bus_ops *ops;
 
-	/* The core currently mapped into the MMIO window.
-	 * Not valid on all host-buses. So don't use outside of SSB. */
+	/* The core in the basic address register window. (PCI bus only) */
 	struct ssb_device *mapped_device;
 	union {
 		/* Currently mapped PCMCIA segment. (bustype == SSB_BUSTYPE_PCMCIA only) */
@@ -374,17 +281,14 @@ struct ssb_bus {
 	 * On PCMCIA-host busses this is used to protect the whole MMIO access. */
 	spinlock_t bar_lock;
 
-	/* The host-bus this backplane is running on. */
+	/* The bus this backplane is running on. */
 	enum ssb_bustype bustype;
-	/* Pointers to the host-bus. Check bustype before using any of these pointers. */
-	union {
-		/* Pointer to the PCI bus (only valid if bustype == SSB_BUSTYPE_PCI). */
-		struct pci_dev *host_pci;
-		/* Pointer to the PCMCIA device (only if bustype == SSB_BUSTYPE_PCMCIA). */
-		struct pcmcia_device *host_pcmcia;
-		/* Pointer to the SDIO device (only if bustype == SSB_BUSTYPE_SDIO). */
-		struct sdio_func *host_sdio;
-	};
+	/* Pointer to the PCI bus (only valid if bustype == SSB_BUSTYPE_PCI). */
+	struct pci_dev *host_pci;
+	/* Pointer to the PCMCIA device (only if bustype == SSB_BUSTYPE_PCMCIA). */
+	struct pcmcia_device *host_pcmcia;
+	/* Pointer to the SDIO device (only if bustype == SSB_BUSTYPE_SDIO). */
+	struct sdio_func *host_sdio;
 
 	/* See enum ssb_quirks */
 	unsigned int quirks;
@@ -396,7 +300,7 @@ struct ssb_bus {
 
 	/* ID information about the Chip. */
 	u16 chip_id;
-	u8 chip_rev;
+	u16 chip_rev;
 	u16 sprom_offset;
 	u16 sprom_size;		/* number of words in sprom */
 	u8 chip_package;
@@ -492,9 +396,7 @@ extern bool ssb_is_sprom_available(struct ssb_bus *bus);
 
 /* Set a fallback SPROM.
  * See kdoc at the function definition for complete documentation. */
-extern int ssb_arch_register_fallback_sprom(
-		int (*sprom_callback)(struct ssb_bus *bus,
-		struct ssb_sprom *out));
+extern int ssb_arch_set_fallback_sprom(const struct ssb_sprom *sprom);
 
 /* Suspend a SSB bus.
  * Call this from the parent bus suspend routine. */
@@ -564,6 +466,14 @@ extern u32 ssb_dma_translation(struct ssb_device *dev);
 #define SSB_DMA_TRANSLATION_MASK	0xC0000000
 #define SSB_DMA_TRANSLATION_SHIFT	30
 
+extern int ssb_dma_set_mask(struct ssb_device *dev, u64 mask);
+
+extern void * ssb_dma_alloc_consistent(struct ssb_device *dev, size_t size,
+				       dma_addr_t *dma_handle, gfp_t gfp_flags);
+extern void ssb_dma_free_consistent(struct ssb_device *dev, size_t size,
+				    void *vaddr, dma_addr_t dma_handle,
+				    gfp_t gfp_flags);
+
 static inline void __cold __ssb_dma_not_implemented(struct ssb_device *dev)
 {
 #ifdef CONFIG_SSB_DEBUG
@@ -571,6 +481,155 @@ static inline void __cold __ssb_dma_not_implemented(struct ssb_device *dev)
 	       "unsupported bustype %d\n", dev->bus->bustype);
 #endif /* DEBUG */
 }
+
+static inline int ssb_dma_mapping_error(struct ssb_device *dev, dma_addr_t addr)
+{
+	switch (dev->bus->bustype) {
+	case SSB_BUSTYPE_PCI:
+#ifdef CONFIG_SSB_PCIHOST
+		return pci_dma_mapping_error(dev->bus->host_pci, addr);
+#endif
+		break;
+	case SSB_BUSTYPE_SSB:
+		return dma_mapping_error(dev->dev, addr);
+	default:
+		break;
+	}
+	__ssb_dma_not_implemented(dev);
+	return -ENOSYS;
+}
+
+static inline dma_addr_t ssb_dma_map_single(struct ssb_device *dev, void *p,
+					    size_t size, enum dma_data_direction dir)
+{
+	switch (dev->bus->bustype) {
+	case SSB_BUSTYPE_PCI:
+#ifdef CONFIG_SSB_PCIHOST
+		return pci_map_single(dev->bus->host_pci, p, size, dir);
+#endif
+		break;
+	case SSB_BUSTYPE_SSB:
+		return dma_map_single(dev->dev, p, size, dir);
+	default:
+		break;
+	}
+	__ssb_dma_not_implemented(dev);
+	return 0;
+}
+
+static inline void ssb_dma_unmap_single(struct ssb_device *dev, dma_addr_t dma_addr,
+					size_t size, enum dma_data_direction dir)
+{
+	switch (dev->bus->bustype) {
+	case SSB_BUSTYPE_PCI:
+#ifdef CONFIG_SSB_PCIHOST
+		pci_unmap_single(dev->bus->host_pci, dma_addr, size, dir);
+		return;
+#endif
+		break;
+	case SSB_BUSTYPE_SSB:
+		dma_unmap_single(dev->dev, dma_addr, size, dir);
+		return;
+	default:
+		break;
+	}
+	__ssb_dma_not_implemented(dev);
+}
+
+static inline void ssb_dma_sync_single_for_cpu(struct ssb_device *dev,
+					       dma_addr_t dma_addr,
+					       size_t size,
+					       enum dma_data_direction dir)
+{
+	switch (dev->bus->bustype) {
+	case SSB_BUSTYPE_PCI:
+#ifdef CONFIG_SSB_PCIHOST
+		pci_dma_sync_single_for_cpu(dev->bus->host_pci, dma_addr,
+					    size, dir);
+		return;
+#endif
+		break;
+	case SSB_BUSTYPE_SSB:
+		dma_sync_single_for_cpu(dev->dev, dma_addr, size, dir);
+		return;
+	default:
+		break;
+	}
+	__ssb_dma_not_implemented(dev);
+}
+
+static inline void ssb_dma_sync_single_for_device(struct ssb_device *dev,
+						  dma_addr_t dma_addr,
+						  size_t size,
+						  enum dma_data_direction dir)
+{
+	switch (dev->bus->bustype) {
+	case SSB_BUSTYPE_PCI:
+#ifdef CONFIG_SSB_PCIHOST
+		pci_dma_sync_single_for_device(dev->bus->host_pci, dma_addr,
+					       size, dir);
+		return;
+#endif
+		break;
+	case SSB_BUSTYPE_SSB:
+		dma_sync_single_for_device(dev->dev, dma_addr, size, dir);
+		return;
+	default:
+		break;
+	}
+	__ssb_dma_not_implemented(dev);
+}
+
+static inline void ssb_dma_sync_single_range_for_cpu(struct ssb_device *dev,
+						     dma_addr_t dma_addr,
+						     unsigned long offset,
+						     size_t size,
+						     enum dma_data_direction dir)
+{
+	switch (dev->bus->bustype) {
+	case SSB_BUSTYPE_PCI:
+#ifdef CONFIG_SSB_PCIHOST
+		/* Just sync everything. That's all the PCI API can do. */
+		pci_dma_sync_single_for_cpu(dev->bus->host_pci, dma_addr,
+					    offset + size, dir);
+		return;
+#endif
+		break;
+	case SSB_BUSTYPE_SSB:
+		dma_sync_single_range_for_cpu(dev->dev, dma_addr, offset,
+					      size, dir);
+		return;
+	default:
+		break;
+	}
+	__ssb_dma_not_implemented(dev);
+}
+
+static inline void ssb_dma_sync_single_range_for_device(struct ssb_device *dev,
+							dma_addr_t dma_addr,
+							unsigned long offset,
+							size_t size,
+							enum dma_data_direction dir)
+{
+	switch (dev->bus->bustype) {
+	case SSB_BUSTYPE_PCI:
+#ifdef CONFIG_SSB_PCIHOST
+		/* Just sync everything. That's all the PCI API can do. */
+		pci_dma_sync_single_for_device(dev->bus->host_pci, dma_addr,
+					       offset + size, dir);
+		return;
+#endif
+		break;
+	case SSB_BUSTYPE_SSB:
+		dma_sync_single_range_for_device(dev->dev, dma_addr, offset,
+						 size, dir);
+		return;
+	default:
+		break;
+	}
+	__ssb_dma_not_implemented(dev);
+}
+
 
 #ifdef CONFIG_SSB_PCIHOST
 /* PCI-host wrapper driver */
@@ -608,7 +667,6 @@ extern int ssb_bus_may_powerdown(struct ssb_bus *bus);
  * Otherwise static always-on powercontrol will be used. */
 extern int ssb_bus_powerup(struct ssb_bus *bus, bool dynamic_pctl);
 
-extern void ssb_commit_settings(struct ssb_bus *bus);
 
 /* Various helper functions */
 extern u32 ssb_admatch_base(u32 adm);

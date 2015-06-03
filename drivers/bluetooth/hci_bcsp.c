@@ -49,8 +49,8 @@
 
 #define VERSION "0.3"
 
-static bool txcrc = 1;
-static bool hciextn = 1;
+static int txcrc = 1;
+static int hciextn = 1;
 
 #define BCSP_TXWINSIZE	4
 
@@ -244,7 +244,7 @@ static struct sk_buff *bcsp_prepare_pkt(struct bcsp_struct *bcsp, u8 *data,
 	if (rel) {
 		hdr[0] |= 0x80 + bcsp->msgq_txseq;
 		BT_DBG("Sending packet with seqno %u", bcsp->msgq_txseq);
-		bcsp->msgq_txseq = (bcsp->msgq_txseq + 1) & 0x07;
+		bcsp->msgq_txseq = ++(bcsp->msgq_txseq) & 0x07;
 	}
 
 	if (bcsp->use_crc)
@@ -552,7 +552,7 @@ static u16 bscp_get_crc(struct bcsp_struct *bcsp)
 static int bcsp_recv(struct hci_uart *hu, void *data, int count)
 {
 	struct bcsp_struct *bcsp = hu->priv;
-	unsigned char *ptr;
+	register unsigned char *ptr;
 
 	BT_DBG("hu %p count %d rx_state %d rx_count %ld", 
 		hu, count, bcsp->rx_state, bcsp->rx_count);
@@ -692,7 +692,7 @@ static int bcsp_open(struct hci_uart *hu)
 
 	BT_DBG("hu %p", hu);
 
-	bcsp = kzalloc(sizeof(*bcsp), GFP_KERNEL);
+	bcsp = kzalloc(sizeof(*bcsp), GFP_ATOMIC);
 	if (!bcsp)
 		return -ENOMEM;
 
@@ -739,7 +739,7 @@ static struct hci_uart_proto bcsp = {
 	.flush		= bcsp_flush
 };
 
-int __init bcsp_init(void)
+int bcsp_init(void)
 {
 	int err = hci_uart_register_proto(&bcsp);
 
@@ -751,7 +751,7 @@ int __init bcsp_init(void)
 	return err;
 }
 
-int __exit bcsp_deinit(void)
+int bcsp_deinit(void)
 {
 	return hci_uart_unregister_proto(&bcsp);
 }

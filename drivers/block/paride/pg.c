@@ -130,14 +130,13 @@
 #define PI_PG	4
 #endif
 
-#include <linux/types.h>
 /* Here are things one can override from the insmod command.
    Most are autoprobed by paride unless set here.  Verbose is 0
    by default.
 
 */
 
-static bool verbose = 0;
+static int verbose = 0;
 static int major = PG_MAJOR;
 static char *name = PG_NAME;
 static int disable = 0;
@@ -163,7 +162,7 @@ enum {D_PRT, D_PRO, D_UNI, D_MOD, D_SLV, D_DLY};
 #include <linux/pg.h>
 #include <linux/device.h>
 #include <linux/sched.h>	/* current, TASK_* */
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/jiffies.h>
 
 #include <asm/uaccess.h>
@@ -194,7 +193,6 @@ module_param_array(drive3, int, NULL, 0);
 
 #define ATAPI_IDENTIFY		0x12
 
-static DEFINE_MUTEX(pg_mutex);
 static int pg_open(struct inode *inode, struct file *file);
 static int pg_release(struct inode *inode, struct file *file);
 static ssize_t pg_read(struct file *filp, char __user *buf,
@@ -236,7 +234,6 @@ static const struct file_operations pg_fops = {
 	.write = pg_write,
 	.open = pg_open,
 	.release = pg_release,
-	.llseek = noop_llseek,
 };
 
 static void pg_init_units(void)
@@ -521,7 +518,7 @@ static int pg_open(struct inode *inode, struct file *file)
 	struct pg *dev = &devices[unit];
 	int ret = 0;
 
-	mutex_lock(&pg_mutex);
+	lock_kernel();
 	if ((unit >= PG_UNITS) || (!dev->present)) {
 		ret = -ENODEV;
 		goto out;
@@ -550,7 +547,7 @@ static int pg_open(struct inode *inode, struct file *file)
 	file->private_data = dev;
 
 out:
-	mutex_unlock(&pg_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -631,7 +628,6 @@ static ssize_t pg_read(struct file *filp, char __user *buf, size_t count, loff_t
 		if (dev->status & 0x10)
 			return -ETIME;
 
-	memset(&hdr, 0, sizeof(hdr));
 	hdr.magic = PG_MAGIC;
 	hdr.dlen = dev->dlen;
 	copy = 0;

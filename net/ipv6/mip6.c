@@ -56,7 +56,7 @@ static inline void *mip6_padn(__u8 *data, __u8 padlen)
 
 static inline void mip6_param_prob(struct sk_buff *skb, u8 code, int pos)
 {
-	icmpv6_send(skb, ICMPV6_PARAMPROB, code, pos);
+	icmpv6_send(skb, ICMPV6_PARAMPROB, code, pos, skb->dev);
 }
 
 static int mip6_mh_len(int type)
@@ -84,30 +84,28 @@ static int mip6_mh_len(int type)
 
 static int mip6_mh_filter(struct sock *sk, struct sk_buff *skb)
 {
-	struct ip6_mh _hdr;
-	const struct ip6_mh *mh;
+	struct ip6_mh *mh;
 
-	mh = skb_header_pointer(skb, skb_transport_offset(skb),
-				sizeof(_hdr), &_hdr);
-	if (!mh)
+	if (!pskb_may_pull(skb, (skb_transport_offset(skb)) + 8) ||
+	    !pskb_may_pull(skb, (skb_transport_offset(skb) +
+				 ((skb_transport_header(skb)[1] + 1) << 3))))
 		return -1;
 
-	if (((mh->ip6mh_hdrlen + 1) << 3) > skb->len)
-		return -1;
+	mh = (struct ip6_mh *)skb_transport_header(skb);
 
 	if (mh->ip6mh_hdrlen < mip6_mh_len(mh->ip6mh_type)) {
 		LIMIT_NETDEBUG(KERN_DEBUG "mip6: MH message too short: %d vs >=%d\n",
 			       mh->ip6mh_hdrlen, mip6_mh_len(mh->ip6mh_type));
-		mip6_param_prob(skb, 0, offsetof(struct ip6_mh, ip6mh_hdrlen) +
-				skb_network_header_len(skb));
+		mip6_param_prob(skb, 0, ((&mh->ip6mh_hdrlen) -
+					 skb_network_header(skb)));
 		return -1;
 	}
 
 	if (mh->ip6mh_proto != IPPROTO_NONE) {
 		LIMIT_NETDEBUG(KERN_DEBUG "mip6: MH invalid payload proto = %d\n",
 			       mh->ip6mh_proto);
-		mip6_param_prob(skb, 0, offsetof(struct ip6_mh, ip6mh_proto) +
-				skb_network_header_len(skb));
+		mip6_param_prob(skb, 0, ((&mh->ip6mh_proto) -
+					 skb_network_header(skb)));
 		return -1;
 	}
 
@@ -128,7 +126,7 @@ static struct mip6_report_rate_limiter mip6_report_rl = {
 
 static int mip6_destopt_input(struct xfrm_state *x, struct sk_buff *skb)
 {
-	const struct ipv6hdr *iph = ipv6_hdr(skb);
+	struct ipv6hdr *iph = ipv6_hdr(skb);
 	struct ipv6_destopt_hdr *destopt = (struct ipv6_destopt_hdr *)skb->data;
 	int err = destopt->nexthdr;
 
@@ -183,8 +181,8 @@ static int mip6_destopt_output(struct xfrm_state *x, struct sk_buff *skb)
 }
 
 static inline int mip6_report_rl_allow(struct timeval *stamp,
-				       const struct in6_addr *dst,
-				       const struct in6_addr *src, int iif)
+				       struct in6_addr *dst,
+				       struct in6_addr *src, int iif)
 {
 	int allow = 0;
 
@@ -197,28 +195,26 @@ static inline int mip6_report_rl_allow(struct timeval *stamp,
 		mip6_report_rl.stamp.tv_sec = stamp->tv_sec;
 		mip6_report_rl.stamp.tv_usec = stamp->tv_usec;
 		mip6_report_rl.iif = iif;
-		mip6_report_rl.src = *src;
-		mip6_report_rl.dst = *dst;
+		ipv6_addr_copy(&mip6_report_rl.src, src);
+		ipv6_addr_copy(&mip6_report_rl.dst, dst);
 		allow = 1;
 	}
 	spin_unlock_bh(&mip6_report_rl.lock);
 	return allow;
 }
 
-static int mip6_destopt_reject(struct xfrm_state *x, struct sk_buff *skb,
-			       const struct flowi *fl)
+static int mip6_destopt_reject(struct xfrm_state *x, struct sk_buff *skb, struct flowi *fl)
 {
 	struct net *net = xs_net(x);
 	struct inet6_skb_parm *opt = (struct inet6_skb_parm *)skb->cb;
-	const struct flowi6 *fl6 = &fl->u.ip6;
 	struct ipv6_destopt_hao *hao = NULL;
 	struct xfrm_selector sel;
 	int offset;
 	struct timeval stamp;
 	int err = 0;
 
-	if (unlikely(fl6->flowi6_proto == IPPROTO_MH &&
-		     fl6->fl6_mh_type <= IP6_MH_TYPE_MAX))
+	if (unlikely(fl->proto == IPPROTO_MH &&
+		     fl->fl_mh_type <= IP6_MH_TYPE_MAX))
 		goto out;
 
 	if (likely(opt->dsthao)) {
@@ -243,14 +239,14 @@ static int mip6_destopt_reject(struct xfrm_state *x, struct sk_buff *skb,
 	       sizeof(sel.saddr));
 	sel.prefixlen_s = 128;
 	sel.family = AF_INET6;
-	sel.proto = fl6->flowi6_proto;
-	sel.dport = xfrm_flowi_dport(fl, &fl6->uli);
+	sel.proto = fl->proto;
+	sel.dport = xfrm_flowi_dport(fl);
 	if (sel.dport)
 		sel.dport_mask = htons(~0);
-	sel.sport = xfrm_flowi_sport(fl, &fl6->uli);
+	sel.sport = xfrm_flowi_sport(fl);
 	if (sel.sport)
 		sel.sport_mask = htons(~0);
-	sel.ifindex = fl6->flowi6_oif;
+	sel.ifindex = fl->oif;
 
 	err = km_report(net, IPPROTO_DSTOPTS, &sel,
 			(hao ? (xfrm_address_t *)&hao->addr : NULL));
@@ -351,12 +347,11 @@ static const struct xfrm_type mip6_destopt_type =
 
 static int mip6_rthdr_input(struct xfrm_state *x, struct sk_buff *skb)
 {
-	const struct ipv6hdr *iph = ipv6_hdr(skb);
 	struct rt2_hdr *rt2 = (struct rt2_hdr *)skb->data;
 	int err = rt2->rt_hdr.nexthdr;
 
 	spin_lock(&x->lock);
-	if (!ipv6_addr_equal(&iph->daddr, (struct in6_addr *)x->coaddr) &&
+	if (!ipv6_addr_equal(&rt2->addr, (struct in6_addr *)x->coaddr) &&
 	    !ipv6_addr_any((struct in6_addr *)x->coaddr))
 		err = -ENOENT;
 	spin_unlock(&x->lock);

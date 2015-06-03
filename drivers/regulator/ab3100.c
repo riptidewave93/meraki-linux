@@ -16,7 +16,7 @@
 #include <linux/delay.h>
 #include <linux/platform_device.h>
 #include <linux/regulator/driver.h>
-#include <linux/mfd/abx500.h>
+#include <linux/mfd/ab3100.h>
 
 /* LDO registers and some handy masking definitions for AB3100 */
 #define AB3100_LDO_A		0x40
@@ -41,7 +41,7 @@
  * struct ab3100_regulator
  * A struct passed around the individual regulator functions
  * @platform_device: platform device holding this regulator
- * @dev: handle to the device
+ * @ab3100: handle to the AB3100 parent chip
  * @plfdata: AB3100 platform data passed in at probe time
  * @regreg: regulator register number in the AB3100
  * @fixed_voltage: a fixed voltage for this regulator, if this
@@ -52,7 +52,7 @@
  */
 struct ab3100_regulator {
 	struct regulator_dev *rdev;
-	struct device *dev;
+	struct ab3100 *ab3100;
 	struct ab3100_platform_data *plfdata;
 	u8 regreg;
 	int fixed_voltage;
@@ -81,7 +81,7 @@ static const u8 ab3100_reg_init_order[AB3100_NUM_REGULATORS+2] = {
 #define LDO_C_VOLTAGE 2650000
 #define LDO_D_VOLTAGE 2650000
 
-static const int ldo_e_buck_typ_voltages[] = {
+static const int const ldo_e_buck_typ_voltages[] = {
 	1800000,
 	1400000,
 	1300000,
@@ -91,7 +91,7 @@ static const int ldo_e_buck_typ_voltages[] = {
 	900000,
 };
 
-static const int ldo_f_typ_voltages[] = {
+static const int const ldo_f_typ_voltages[] = {
 	1800000,
 	1400000,
 	1300000,
@@ -102,21 +102,21 @@ static const int ldo_f_typ_voltages[] = {
 	2650000,
 };
 
-static const int ldo_g_typ_voltages[] = {
+static const int const ldo_g_typ_voltages[] = {
 	2850000,
 	2750000,
 	1800000,
 	1500000,
 };
 
-static const int ldo_h_typ_voltages[] = {
+static const int const ldo_h_typ_voltages[] = {
 	2750000,
 	1800000,
 	1500000,
 	1200000,
 };
 
-static const int ldo_k_typ_voltages[] = {
+static const int const ldo_k_typ_voltages[] = {
 	2750000,
 	1800000,
 };
@@ -183,7 +183,7 @@ static int ab3100_enable_regulator(struct regulator_dev *reg)
 	int err;
 	u8 regval;
 
-	err = abx500_get_register_interruptible(abreg->dev, 0, abreg->regreg,
+	err = ab3100_get_register_interruptible(abreg->ab3100, abreg->regreg,
 						&regval);
 	if (err) {
 		dev_warn(&reg->dev, "failed to get regid %d value\n",
@@ -197,12 +197,35 @@ static int ab3100_enable_regulator(struct regulator_dev *reg)
 
 	regval |= AB3100_REG_ON_MASK;
 
-	err = abx500_set_register_interruptible(abreg->dev, 0, abreg->regreg,
+	err = ab3100_set_register_interruptible(abreg->ab3100, abreg->regreg,
 						regval);
 	if (err) {
 		dev_warn(&reg->dev, "failed to set regid %d value\n",
 			 abreg->regreg);
 		return err;
+	}
+
+	/* Per-regulator power on delay from spec */
+	switch (abreg->regreg) {
+	case AB3100_LDO_A: /* Fallthrough */
+	case AB3100_LDO_C: /* Fallthrough */
+	case AB3100_LDO_D: /* Fallthrough */
+	case AB3100_LDO_E: /* Fallthrough */
+	case AB3100_LDO_H: /* Fallthrough */
+	case AB3100_LDO_K:
+		udelay(200);
+		break;
+	case AB3100_LDO_F:
+		udelay(600);
+		break;
+	case AB3100_LDO_G:
+		udelay(400);
+		break;
+	case AB3100_BUCK:
+		mdelay(1);
+		break;
+	default:
+		break;
 	}
 
 	return 0;
@@ -218,18 +241,30 @@ static int ab3100_disable_regulator(struct regulator_dev *reg)
 	 * LDO D is a special regulator. When it is disabled, the entire
 	 * system is shut down. So this is handled specially.
 	 */
-	pr_info("Called ab3100_disable_regulator\n");
 	if (abreg->regreg == AB3100_LDO_D) {
+		int i;
+
 		dev_info(&reg->dev, "disabling LDO D - shut down system\n");
+		/*
+		 * Set regulators to default values, ignore any errors,
+		 * we're going DOWN
+		 */
+		for (i = 0; i < ARRAY_SIZE(ab3100_reg_init_order); i++) {
+			(void) ab3100_set_register_interruptible(abreg->ab3100,
+					ab3100_reg_init_order[i],
+					abreg->plfdata->reg_initvals[i]);
+		}
+
 		/* Setting LDO D to 0x00 cuts the power to the SoC */
-		return abx500_set_register_interruptible(abreg->dev, 0,
+		return ab3100_set_register_interruptible(abreg->ab3100,
 							 AB3100_LDO_D, 0x00U);
+
 	}
 
 	/*
 	 * All other regulators are handled here
 	 */
-	err = abx500_get_register_interruptible(abreg->dev, 0, abreg->regreg,
+	err = ab3100_get_register_interruptible(abreg->ab3100, abreg->regreg,
 						&regval);
 	if (err) {
 		dev_err(&reg->dev, "unable to get register 0x%x\n",
@@ -237,7 +272,7 @@ static int ab3100_disable_regulator(struct regulator_dev *reg)
 		return err;
 	}
 	regval &= ~AB3100_REG_ON_MASK;
-	return abx500_set_register_interruptible(abreg->dev, 0, abreg->regreg,
+	return ab3100_set_register_interruptible(abreg->ab3100, abreg->regreg,
 						 regval);
 }
 
@@ -247,7 +282,7 @@ static int ab3100_is_enabled_regulator(struct regulator_dev *reg)
 	u8 regval;
 	int err;
 
-	err = abx500_get_register_interruptible(abreg->dev, 0, abreg->regreg,
+	err = ab3100_get_register_interruptible(abreg->ab3100, abreg->regreg,
 						&regval);
 	if (err) {
 		dev_err(&reg->dev, "unable to get register 0x%x\n",
@@ -263,7 +298,7 @@ static int ab3100_list_voltage_regulator(struct regulator_dev *reg,
 {
 	struct ab3100_regulator *abreg = reg->reg_data;
 
-	if (selector >= abreg->voltages_len)
+	if (selector > abreg->voltages_len)
 		return -EINVAL;
 	return abreg->typ_voltages[selector];
 }
@@ -282,7 +317,7 @@ static int ab3100_get_voltage_regulator(struct regulator_dev *reg)
 	 * For variable types, read out setting and index into
 	 * supplied voltage list.
 	 */
-	err = abx500_get_register_interruptible(abreg->dev, 0,
+	err = ab3100_get_register_interruptible(abreg->ab3100,
 						abreg->regreg, &regval);
 	if (err) {
 		dev_warn(&reg->dev,
@@ -295,7 +330,7 @@ static int ab3100_get_voltage_regulator(struct regulator_dev *reg)
 	regval &= 0xE0;
 	regval >>= 5;
 
-	if (regval >= abreg->voltages_len) {
+	if (regval > abreg->voltages_len) {
 		dev_err(&reg->dev,
 			"regulator register %02x contains an illegal voltage setting\n",
 			abreg->regreg);
@@ -339,8 +374,7 @@ static int ab3100_get_best_voltage_index(struct regulator_dev *reg,
 }
 
 static int ab3100_set_voltage_regulator(struct regulator_dev *reg,
-					int min_uV, int max_uV,
-					unsigned *selector)
+					int min_uV, int max_uV)
 {
 	struct ab3100_regulator *abreg = reg->reg_data;
 	u8 regval;
@@ -351,9 +385,7 @@ static int ab3100_set_voltage_regulator(struct regulator_dev *reg,
 	if (bestindex < 0)
 		return bestindex;
 
-	*selector = bestindex;
-
-	err = abx500_get_register_interruptible(abreg->dev, 0,
+	err = ab3100_get_register_interruptible(abreg->ab3100,
 						abreg->regreg, &regval);
 	if (err) {
 		dev_warn(&reg->dev,
@@ -366,7 +398,7 @@ static int ab3100_set_voltage_regulator(struct regulator_dev *reg,
 	regval &= ~0xE0;
 	regval |= (bestindex << 5);
 
-	err = abx500_set_register_interruptible(abreg->dev, 0,
+	err = ab3100_set_register_interruptible(abreg->ab3100,
 						abreg->regreg, regval);
 	if (err)
 		dev_warn(&reg->dev, "failed to set regulator register %02x\n",
@@ -394,7 +426,7 @@ static int ab3100_set_suspend_voltage_regulator(struct regulator_dev *reg,
 	/* LDO E and BUCK have special suspend voltages you can set */
 	bestindex = ab3100_get_best_voltage_index(reg, uV, uV);
 
-	err = abx500_get_register_interruptible(abreg->dev, 0,
+	err = ab3100_get_register_interruptible(abreg->ab3100,
 						targetreg, &regval);
 	if (err) {
 		dev_warn(&reg->dev,
@@ -407,7 +439,7 @@ static int ab3100_set_suspend_voltage_regulator(struct regulator_dev *reg,
 	regval &= ~0xE0;
 	regval |= (bestindex << 5);
 
-	err = abx500_set_register_interruptible(abreg->dev, 0,
+	err = ab3100_set_register_interruptible(abreg->ab3100,
 						targetreg, regval);
 	if (err)
 		dev_warn(&reg->dev, "failed to set regulator register %02x\n",
@@ -426,37 +458,11 @@ static int ab3100_get_voltage_regulator_external(struct regulator_dev *reg)
 	return abreg->plfdata->external_voltage;
 }
 
-static int ab3100_enable_time_regulator(struct regulator_dev *reg)
-{
-	struct ab3100_regulator *abreg = reg->reg_data;
-
-	/* Per-regulator power on delay from spec */
-	switch (abreg->regreg) {
-	case AB3100_LDO_A: /* Fallthrough */
-	case AB3100_LDO_C: /* Fallthrough */
-	case AB3100_LDO_D: /* Fallthrough */
-	case AB3100_LDO_E: /* Fallthrough */
-	case AB3100_LDO_H: /* Fallthrough */
-	case AB3100_LDO_K:
-		return 200;
-	case AB3100_LDO_F:
-		return 600;
-	case AB3100_LDO_G:
-		return 400;
-	case AB3100_BUCK:
-		return 1000;
-	default:
-		break;
-	}
-	return 0;
-}
-
 static struct regulator_ops regulator_ops_fixed = {
 	.enable      = ab3100_enable_regulator,
 	.disable     = ab3100_disable_regulator,
 	.is_enabled  = ab3100_is_enabled_regulator,
 	.get_voltage = ab3100_get_voltage_regulator,
-	.enable_time = ab3100_enable_time_regulator,
 };
 
 static struct regulator_ops regulator_ops_variable = {
@@ -466,7 +472,6 @@ static struct regulator_ops regulator_ops_variable = {
 	.get_voltage = ab3100_get_voltage_regulator,
 	.set_voltage = ab3100_set_voltage_regulator,
 	.list_voltage = ab3100_list_voltage_regulator,
-	.enable_time = ab3100_enable_time_regulator,
 };
 
 static struct regulator_ops regulator_ops_variable_sleepable = {
@@ -477,7 +482,6 @@ static struct regulator_ops regulator_ops_variable_sleepable = {
 	.set_voltage = ab3100_set_voltage_regulator,
 	.set_suspend_voltage = ab3100_set_suspend_voltage_regulator,
 	.list_voltage = ab3100_list_voltage_regulator,
-	.enable_time = ab3100_enable_time_regulator,
 };
 
 /*
@@ -500,21 +504,18 @@ ab3100_regulator_desc[AB3100_NUM_REGULATORS] = {
 		.id   = AB3100_LDO_A,
 		.ops  = &regulator_ops_fixed,
 		.type = REGULATOR_VOLTAGE,
-		.owner = THIS_MODULE,
 	},
 	{
 		.name = "LDO_C",
 		.id   = AB3100_LDO_C,
 		.ops  = &regulator_ops_fixed,
 		.type = REGULATOR_VOLTAGE,
-		.owner = THIS_MODULE,
 	},
 	{
 		.name = "LDO_D",
 		.id   = AB3100_LDO_D,
 		.ops  = &regulator_ops_fixed,
 		.type = REGULATOR_VOLTAGE,
-		.owner = THIS_MODULE,
 	},
 	{
 		.name = "LDO_E",
@@ -522,7 +523,6 @@ ab3100_regulator_desc[AB3100_NUM_REGULATORS] = {
 		.ops  = &regulator_ops_variable_sleepable,
 		.n_voltages = ARRAY_SIZE(ldo_e_buck_typ_voltages),
 		.type = REGULATOR_VOLTAGE,
-		.owner = THIS_MODULE,
 	},
 	{
 		.name = "LDO_F",
@@ -530,7 +530,6 @@ ab3100_regulator_desc[AB3100_NUM_REGULATORS] = {
 		.ops  = &regulator_ops_variable,
 		.n_voltages = ARRAY_SIZE(ldo_f_typ_voltages),
 		.type = REGULATOR_VOLTAGE,
-		.owner = THIS_MODULE,
 	},
 	{
 		.name = "LDO_G",
@@ -538,7 +537,6 @@ ab3100_regulator_desc[AB3100_NUM_REGULATORS] = {
 		.ops  = &regulator_ops_variable,
 		.n_voltages = ARRAY_SIZE(ldo_g_typ_voltages),
 		.type = REGULATOR_VOLTAGE,
-		.owner = THIS_MODULE,
 	},
 	{
 		.name = "LDO_H",
@@ -546,7 +544,6 @@ ab3100_regulator_desc[AB3100_NUM_REGULATORS] = {
 		.ops  = &regulator_ops_variable,
 		.n_voltages = ARRAY_SIZE(ldo_h_typ_voltages),
 		.type = REGULATOR_VOLTAGE,
-		.owner = THIS_MODULE,
 	},
 	{
 		.name = "LDO_K",
@@ -554,14 +551,12 @@ ab3100_regulator_desc[AB3100_NUM_REGULATORS] = {
 		.ops  = &regulator_ops_variable,
 		.n_voltages = ARRAY_SIZE(ldo_k_typ_voltages),
 		.type = REGULATOR_VOLTAGE,
-		.owner = THIS_MODULE,
 	},
 	{
 		.name = "LDO_EXT",
 		.id   = AB3100_LDO_EXT,
 		.ops  = &regulator_ops_external,
 		.type = REGULATOR_VOLTAGE,
-		.owner = THIS_MODULE,
 	},
 	{
 		.name = "BUCK",
@@ -569,7 +564,6 @@ ab3100_regulator_desc[AB3100_NUM_REGULATORS] = {
 		.ops  = &regulator_ops_variable_sleepable,
 		.n_voltages = ARRAY_SIZE(ldo_e_buck_typ_voltages),
 		.type = REGULATOR_VOLTAGE,
-		.owner = THIS_MODULE,
 	},
 };
 
@@ -579,15 +573,16 @@ ab3100_regulator_desc[AB3100_NUM_REGULATORS] = {
  * for all the different regulators.
  */
 
-static int __devinit ab3100_regulators_probe(struct platform_device *pdev)
+static int __init ab3100_regulators_probe(struct platform_device *pdev)
 {
 	struct ab3100_platform_data *plfdata = pdev->dev.platform_data;
+	struct ab3100 *ab3100 = platform_get_drvdata(pdev);
 	int err = 0;
 	u8 data;
 	int i;
 
 	/* Check chip state */
-	err = abx500_get_register_interruptible(&pdev->dev, 0,
+	err = ab3100_get_register_interruptible(ab3100,
 						AB3100_LDO_D, &data);
 	if (err) {
 		dev_err(&pdev->dev, "could not read initial status of LDO_D\n");
@@ -602,7 +597,7 @@ static int __devinit ab3100_regulators_probe(struct platform_device *pdev)
 
 	/* Set up regulators */
 	for (i = 0; i < ARRAY_SIZE(ab3100_reg_init_order); i++) {
-		err = abx500_set_register_interruptible(&pdev->dev, 0,
+		err = ab3100_set_register_interruptible(ab3100,
 					ab3100_reg_init_order[i],
 					plfdata->reg_initvals[i]);
 		if (err) {
@@ -610,6 +605,13 @@ static int __devinit ab3100_regulators_probe(struct platform_device *pdev)
 				err);
 			return err;
 		}
+	}
+
+	if (err) {
+		dev_err(&pdev->dev,
+			"LDO D regulator initialization failed with error %d\n",
+			err);
+		return err;
 	}
 
 	/* Register the regulators */
@@ -624,7 +626,7 @@ static int __devinit ab3100_regulators_probe(struct platform_device *pdev)
 		 * see what it looks like for a certain machine, go
 		 * into the machine I2C setup.
 		 */
-		reg->dev = &pdev->dev;
+		reg->ab3100 = ab3100;
 		reg->plfdata = plfdata;
 
 		/*
@@ -634,7 +636,7 @@ static int __devinit ab3100_regulators_probe(struct platform_device *pdev)
 		rdev = regulator_register(&ab3100_regulator_desc[i],
 					  &pdev->dev,
 					  &plfdata->reg_constraints[i],
-					  reg, NULL);
+					  reg);
 
 		if (IS_ERR(rdev)) {
 			err = PTR_ERR(rdev);
@@ -642,9 +644,12 @@ static int __devinit ab3100_regulators_probe(struct platform_device *pdev)
 				"%s: failed to register regulator %s err %d\n",
 				__func__, ab3100_regulator_desc[i].name,
 				err);
+			i--;
 			/* remove the already registered regulators */
-			while (--i >= 0)
+			while (i > 0) {
 				regulator_unregister(ab3100_regulators[i].rdev);
+				i--;
+			}
 			return err;
 		}
 
@@ -655,7 +660,7 @@ static int __devinit ab3100_regulators_probe(struct platform_device *pdev)
 	return 0;
 }
 
-static int __devexit ab3100_regulators_remove(struct platform_device *pdev)
+static int __exit ab3100_regulators_remove(struct platform_device *pdev)
 {
 	int i;
 
@@ -673,7 +678,7 @@ static struct platform_driver ab3100_regulators_driver = {
 		.owner = THIS_MODULE,
 	},
 	.probe = ab3100_regulators_probe,
-	.remove = __devexit_p(ab3100_regulators_remove),
+	.remove = __exit_p(ab3100_regulators_remove),
 };
 
 static __init int ab3100_regulators_init(void)
@@ -683,7 +688,7 @@ static __init int ab3100_regulators_init(void)
 
 static __exit void ab3100_regulators_exit(void)
 {
-	platform_driver_unregister(&ab3100_regulators_driver);
+	platform_driver_register(&ab3100_regulators_driver);
 }
 
 subsys_initcall(ab3100_regulators_init);

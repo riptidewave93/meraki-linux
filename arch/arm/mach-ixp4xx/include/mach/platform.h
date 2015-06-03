@@ -121,12 +121,10 @@ extern unsigned long ixp4xx_timer_freq;
  * Functions used by platform-level setup code
  */
 extern void ixp4xx_map_io(void);
-extern void ixp4xx_init_early(void);
 extern void ixp4xx_init_irq(void);
 extern void ixp4xx_sys_init(void);
 extern void ixp4xx_timer_init(void);
 extern struct sys_timer ixp4xx_timer;
-extern void ixp4xx_restart(char, const char *);
 extern void ixp4xx_pci_preinit(void);
 struct pci_sys_data;
 extern int ixp4xx_setup(int nr, struct pci_sys_data *sys);
@@ -150,6 +148,9 @@ extern struct pci_bus *ixp4xx_scan_bus(int nr, struct pci_sys_data *sys);
 #define IXP4XX_GPIO_CLK_0		14
 #define IXP4XX_GPIO_CLK_1		15
 
+/* Number of hardware GPIOs */
+#define IXP4XX_N_GPIOS			32
+
 static inline void gpio_line_config(u8 line, u32 direction)
 {
 	if (direction == IXP4XX_GPIO_IN)
@@ -165,9 +166,9 @@ static inline void gpio_line_get(u8 line, int *value)
 
 static inline void gpio_line_set(u8 line, int value)
 {
-	if (value == IXP4XX_GPIO_HIGH)
+	if (value)
 	    *IXP4XX_GPIO_GPOUTR |= (1 << line);
-	else if (value == IXP4XX_GPIO_LOW)
+	else
 	    *IXP4XX_GPIO_GPOUTR &= ~(1 << line);
 }
 

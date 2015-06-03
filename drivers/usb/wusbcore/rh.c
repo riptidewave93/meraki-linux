@@ -69,8 +69,6 @@
  *
  * wusbhc_rh_start_port_reset() ??? unimplemented
  */
-#include <linux/slab.h>
-#include <linux/export.h>
 #include "wusbhc.h"
 
 /*
@@ -134,7 +132,7 @@ static int wusbhc_rh_port_reset(struct wusbhc *wusbhc, u8 port_idx)
  *           big of a problem [and we can't make it an spinlock
  *           because other parts need to take it and sleep] .
  *
- *           @usb_hcd is refcounted, so it won't disappear under us
+ *           @usb_hcd is refcounted, so it won't dissapear under us
  *           and before killing a host, the polling of the root hub
  *           would be stopped anyway.
  */
@@ -157,7 +155,7 @@ int wusbhc_rh_status_data(struct usb_hcd *usb_hcd, char *_buf)
 EXPORT_SYMBOL_GPL(wusbhc_rh_status_data);
 
 /*
- * Return the hub's descriptor
+ * Return the hub's desciptor
  *
  * NOTE: almost cut and paste from ehci-hub.c
  *
@@ -185,8 +183,8 @@ static int wusbhc_rh_get_hub_descr(struct wusbhc *wusbhc, u16 wValue,
 	descr->bPwrOn2PwrGood = 0;
 	descr->bHubContrCurrent = 0;
 	/* two bitmaps:  ports removable, and usb 1.0 legacy PortPwrCtrlMask */
-	memset(&descr->u.hs.DeviceRemovable[0], 0, temp);
-	memset(&descr->u.hs.DeviceRemovable[temp], 0xff, temp);
+	memset(&descr->bitmap[0], 0, temp);
+	memset(&descr->bitmap[temp], 0xff, temp);
 	return 0;
 }
 

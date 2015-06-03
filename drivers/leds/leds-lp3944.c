@@ -28,7 +28,6 @@
 
 #include <linux/module.h>
 #include <linux/i2c.h>
-#include <linux/slab.h>
 #include <linux/leds.h>
 #include <linux/mutex.h>
 #include <linux/workqueue.h>
@@ -379,7 +378,6 @@ static int __devinit lp3944_probe(struct i2c_client *client,
 {
 	struct lp3944_platform_data *lp3944_pdata = client->dev.platform_data;
 	struct lp3944_data *data;
-	int err;
 
 	if (lp3944_pdata == NULL) {
 		dev_err(&client->dev, "no platform data\n");
@@ -402,13 +400,9 @@ static int __devinit lp3944_probe(struct i2c_client *client,
 
 	mutex_init(&data->lock);
 
-	err = lp3944_configure(client, data, lp3944_pdata);
-	if (err < 0) {
-		kfree(data);
-		return err;
-	}
-
 	dev_info(&client->dev, "lp3944 enabled\n");
+
+	lp3944_configure(client, data, lp3944_pdata);
 	return 0;
 }
 
@@ -432,6 +426,7 @@ static int __devexit lp3944_remove(struct i2c_client *client)
 		}
 
 	kfree(data);
+	i2c_set_clientdata(client, NULL);
 
 	return 0;
 }
@@ -453,7 +448,18 @@ static struct i2c_driver lp3944_driver = {
 	.id_table = lp3944_id,
 };
 
-module_i2c_driver(lp3944_driver);
+static int __init lp3944_module_init(void)
+{
+	return i2c_add_driver(&lp3944_driver);
+}
+
+static void __exit lp3944_module_exit(void)
+{
+	i2c_del_driver(&lp3944_driver);
+}
+
+module_init(lp3944_module_init);
+module_exit(lp3944_module_exit);
 
 MODULE_AUTHOR("Antonio Ospite <ospite@studenti.unina.it>");
 MODULE_DESCRIPTION("LP3944 Fun Light Chip");

@@ -27,7 +27,6 @@
  */
 #include <asm/uaccess.h>
 #include <linux/slab.h>
-#include <linux/export.h>
 #include <sound/core.h>
 #include <sound/soundfont.h>
 #include <sound/seq_oss_legacy.h>
@@ -375,7 +374,7 @@ sf_zone_new(struct snd_sf_list *sflist, struct snd_soundfont *sf)
 
 
 /*
- * increment sample counter
+ * increment sample couter
  */
 static void
 set_sample_counter(struct snd_sf_list *sflist, struct snd_soundfont *sf,

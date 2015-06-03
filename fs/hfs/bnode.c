@@ -9,7 +9,6 @@
  */
 
 #include <linux/pagemap.h>
-#include <linux/slab.h>
 #include <linux/swap.h>
 
 #include "btree.h"

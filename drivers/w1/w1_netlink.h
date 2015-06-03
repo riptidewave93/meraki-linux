@@ -1,7 +1,7 @@
 /*
  * w1_netlink.h
  *
- * Copyright (c) 2003 Evgeniy Polyakov <zbr@ioremap.net>
+ * Copyright (c) 2003 Evgeniy Polyakov <johnpol@2ka.mipt.ru>
  *
  *
  * This program is free software; you can redistribute it and/or modify

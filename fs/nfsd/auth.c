@@ -1,7 +1,15 @@
-/* Copyright (C) 1995, 1996 Olaf Kirch <okir@monad.swb.de> */
+/*
+ * linux/fs/nfsd/auth.c
+ *
+ * Copyright (C) 1995, 1996 Olaf Kirch <okir@monad.swb.de>
+ */
 
+#include <linux/types.h>
 #include <linux/sched.h>
-#include "nfsd.h"
+#include <linux/sunrpc/svc.h>
+#include <linux/sunrpc/svcauth.h>
+#include <linux/nfsd/nfsd.h>
+#include <linux/nfsd/export.h>
 #include "auth.h"
 
 int nfsexp_flags(struct svc_rqst *rqstp, struct svc_export *exp)

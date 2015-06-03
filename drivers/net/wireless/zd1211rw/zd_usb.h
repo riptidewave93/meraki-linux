@@ -32,10 +32,6 @@
 #define ZD_USB_TX_HIGH  5
 #define ZD_USB_TX_LOW   2
 
-#define ZD_TX_TIMEOUT		(HZ * 5)
-#define ZD_TX_WATCHDOG_INTERVAL	round_jiffies_relative(HZ)
-#define ZD_RX_IDLE_INTERVAL	round_jiffies_relative(30 * HZ)
-
 enum devicetype {
 	DEVICE_ZD1211  = 0,
 	DEVICE_ZD1211B = 1,
@@ -83,17 +79,17 @@ enum control_requests {
 struct usb_req_read_regs {
 	__le16 id;
 	__le16 addr[0];
-} __packed;
+} __attribute__((packed));
 
 struct reg_data {
 	__le16 addr;
 	__le16 value;
-} __packed;
+} __attribute__((packed));
 
 struct usb_req_write_regs {
 	__le16 id;
 	struct reg_data reg_writes[0];
-} __packed;
+} __attribute__((packed));
 
 enum {
 	RF_IF_LE = 0x02,
@@ -109,8 +105,8 @@ struct usb_req_rfwrite {
 	__le16 bits;
 	/* RF2595: 24 */
 	__le16 bit_values[0];
-	/* (ZD_CR203 & ~(RF_IF_LE | RF_CLK | RF_DATA)) | (bit ? RF_DATA : 0) */
-} __packed;
+	/* (CR203 & ~(RF_IF_LE | RF_CLK | RF_DATA)) | (bit ? RF_DATA : 0) */
+} __attribute__((packed));
 
 /* USB interrupt */
 
@@ -127,12 +123,12 @@ enum usb_int_flags {
 struct usb_int_header {
 	u8 type;	/* must always be 1 */
 	u8 id;
-} __packed;
+} __attribute__((packed));
 
 struct usb_int_regs {
 	struct usb_int_header hdr;
 	struct reg_data regs[0];
-} __packed;
+} __attribute__((packed));
 
 struct usb_int_retry_fail {
 	struct usb_int_header hdr;
@@ -140,12 +136,10 @@ struct usb_int_retry_fail {
 	u8 _dummy;
 	u8 addr[ETH_ALEN];
 	u8 ibss_wakeup_dest;
-} __packed;
+} __attribute__((packed));
 
 struct read_regs_int {
 	struct completion completion;
-	struct usb_req_read_regs *req;
-	unsigned int req_count;
 	/* Stores the USB int structure and contains the USB address of the
 	 * first requested register before request.
 	 */
@@ -168,11 +162,8 @@ struct zd_usb_interrupt {
 	struct read_regs_int read_regs;
 	spinlock_t lock;
 	struct urb *urb;
-	void *buffer;
-	dma_addr_t buffer_dma;
 	int interval;
-	atomic_t read_regs_enabled;
-	u8 read_regs_int_overridden:1;
+	u8 read_regs_enabled:1;
 };
 
 static inline struct usb_int_regs *get_read_regs(struct zd_usb_interrupt *intr)
@@ -184,10 +175,7 @@ static inline struct usb_int_regs *get_read_regs(struct zd_usb_interrupt *intr)
 
 struct zd_usb_rx {
 	spinlock_t lock;
-	struct mutex setup_mutex;
-	struct delayed_work idle_work;
-	struct tasklet_struct reset_timer_tasklet;
-	u8 fragment[2 * USB_MAX_RX_SIZE];
+	u8 fragment[2*USB_MAX_RX_SIZE];
 	unsigned int fragment_length;
 	unsigned int usb_packet_size;
 	struct urb **urbs;
@@ -196,21 +184,19 @@ struct zd_usb_rx {
 
 /**
  * struct zd_usb_tx - structure used for transmitting frames
- * @enabled: atomic enabled flag, indicates whether tx is enabled
  * @lock: lock for transmission
- * @submitted: anchor for URBs sent to device
+ * @free_urb_list: list of free URBs, contains all the URBs, which can be used
  * @submitted_urbs: atomic integer that counts the URBs having sent to the
  *	device, which haven't been completed
+ * @enabled: enabled flag, indicates whether tx is enabled
  * @stopped: indicates whether higher level tx queues are stopped
  */
 struct zd_usb_tx {
-	atomic_t enabled;
 	spinlock_t lock;
-	struct delayed_work watchdog_work;
-	struct sk_buff_head submitted_skbs;
-	struct usb_anchor submitted;
+	struct list_head free_urb_list;
 	int submitted_urbs;
-	u8 stopped:1, watchdog_enabled:1;
+	int enabled;
+	int stopped;
 };
 
 /* Contains the usb parts. The structure doesn't require a lock because intf
@@ -221,11 +207,7 @@ struct zd_usb {
 	struct zd_usb_rx rx;
 	struct zd_usb_tx tx;
 	struct usb_interface *intf;
-	struct usb_anchor submitted_cmds;
-	struct urb *urb_async_waiting;
-	int cmd_error;
-	u8 req_buf[64]; /* zd_usb_iowrite16v needs 62 bytes */
-	u8 is_zd1211b:1, initialized:1, was_running:1, in_async:1;
+	u8 is_zd1211b:1, initialized:1;
 };
 
 #define zd_usb_dev(usb) (&usb->intf->dev)
@@ -252,16 +234,11 @@ void zd_usb_clear(struct zd_usb *usb);
 
 int zd_usb_scnprint_id(struct zd_usb *usb, char *buffer, size_t size);
 
-void zd_tx_watchdog_enable(struct zd_usb *usb);
-void zd_tx_watchdog_disable(struct zd_usb *usb);
-
 int zd_usb_enable_int(struct zd_usb *usb);
 void zd_usb_disable_int(struct zd_usb *usb);
 
 int zd_usb_enable_rx(struct zd_usb *usb);
 void zd_usb_disable_rx(struct zd_usb *usb);
-
-void zd_usb_reset_rx_idle_timer(struct zd_usb *usb);
 
 void zd_usb_enable_tx(struct zd_usb *usb);
 void zd_usb_disable_tx(struct zd_usb *usb);
@@ -277,10 +254,6 @@ static inline int zd_usb_ioread16(struct zd_usb *usb, u16 *value,
 	return zd_usb_ioread16v(usb, value, (const zd_addr_t *)&addr, 1);
 }
 
-void zd_usb_iowrite16v_async_start(struct zd_usb *usb);
-int zd_usb_iowrite16v_async_end(struct zd_usb *usb, unsigned int timeout);
-int zd_usb_iowrite16v_async(struct zd_usb *usb, const struct zd_ioreq16 *ioreqs,
-			    unsigned int count);
 int zd_usb_iowrite16v(struct zd_usb *usb, const struct zd_ioreq16 *ioreqs,
 	              unsigned int count);
 

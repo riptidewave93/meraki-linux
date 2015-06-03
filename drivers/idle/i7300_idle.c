@@ -18,7 +18,6 @@
 
 #include <linux/module.h>
 #include <linux/pci.h>
-#include <linux/gfp.h>
 #include <linux/sched.h>
 #include <linux/notifier.h>
 #include <linux/cpumask.h>
@@ -82,7 +81,7 @@ static u8 i7300_idle_thrtctl_saved;
 static u8 i7300_idle_thrtlow_saved;
 static u32 i7300_idle_mc_saved;
 
-static cpumask_var_t idle_cpumask;
+static cpumask_t idle_cpumask;
 static ktime_t start_ktime;
 static unsigned long avg_idle_us;
 
@@ -460,9 +459,9 @@ static int i7300_idle_notifier(struct notifier_block *nb, unsigned long val,
 	spin_lock_irqsave(&i7300_idle_lock, flags);
 	if (val == IDLE_START) {
 
-		cpumask_set_cpu(smp_processor_id(), idle_cpumask);
+		cpu_set(smp_processor_id(), idle_cpumask);
 
-		if (cpumask_weight(idle_cpumask) != num_online_cpus())
+		if (cpus_weight(idle_cpumask) != num_online_cpus())
 			goto end;
 
 		now_ktime = ktime_get();
@@ -479,8 +478,8 @@ static int i7300_idle_notifier(struct notifier_block *nb, unsigned long val,
 		i7300_idle_ioat_start();
 
 	} else if (val == IDLE_END) {
-		cpumask_clear_cpu(smp_processor_id(), idle_cpumask);
-		if (cpumask_weight(idle_cpumask) == (num_online_cpus() - 1)) {
+		cpu_clear(smp_processor_id(), idle_cpumask);
+		if (cpus_weight(idle_cpumask) == (num_online_cpus() - 1)) {
 			/* First CPU coming out of idle */
 			u64 idle_duration_us;
 
@@ -516,6 +515,12 @@ static struct notifier_block i7300_idle_nb = {
 
 MODULE_DEVICE_TABLE(pci, pci_tbl);
 
+int stats_open_generic(struct inode *inode, struct file *fp)
+{
+	fp->private_data = inode->i_private;
+	return 0;
+}
+
 static ssize_t stats_read_ul(struct file *fp, char __user *ubuf, size_t count,
 				loff_t *off)
 {
@@ -528,9 +533,8 @@ static ssize_t stats_read_ul(struct file *fp, char __user *ubuf, size_t count,
 }
 
 static const struct file_operations idle_fops = {
-	.open	= simple_open,
+	.open	= stats_open_generic,
 	.read	= stats_read_ul,
-	.llseek = default_llseek,
 };
 
 struct debugfs_file_info {
@@ -549,6 +553,7 @@ struct debugfs_file_info {
 static int __init i7300_idle_init(void)
 {
 	spin_lock_init(&i7300_idle_lock);
+	cpus_clear(idle_cpumask);
 	total_us = 0;
 
 	if (i7300_idle_platform_probe(&fbd_dev, &ioat_dev, forceload))
@@ -559,9 +564,6 @@ static int __init i7300_idle_init(void)
 
 	if (i7300_idle_ioat_init())
 		return -ENODEV;
-
-	if (!zalloc_cpumask_var(&idle_cpumask, GFP_KERNEL))
-		return -ENOMEM;
 
 	debugfs_dir = debugfs_create_dir("i7300_idle", NULL);
 	if (debugfs_dir) {
@@ -587,7 +589,6 @@ static int __init i7300_idle_init(void)
 static void __exit i7300_idle_exit(void)
 {
 	idle_notifier_unregister(&i7300_idle_nb);
-	free_cpumask_var(idle_cpumask);
 
 	if (debugfs_dir) {
 		int i = 0;

@@ -13,7 +13,6 @@
 #include <linux/ctype.h>
 #include <linux/err.h>
 #include <linux/fb.h>
-#include <linux/slab.h>
 
 #if defined(CONFIG_FB) || (defined(CONFIG_FB_MODULE) && \
 			   defined(CONFIG_LCD_CLASS_DEVICE_MODULE))
@@ -97,16 +96,19 @@ static ssize_t lcd_store_power(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
 	int rc = -ENXIO;
+	char *endp;
 	struct lcd_device *ld = to_lcd_device(dev);
-	unsigned long power;
+	int power = simple_strtoul(buf, &endp, 0);
+	size_t size = endp - buf;
 
-	rc = kstrtoul(buf, 0, &power);
-	if (rc)
-		return rc;
+	if (*endp && isspace(*endp))
+		size++;
+	if (size != count)
+		return -EINVAL;
 
 	mutex_lock(&ld->ops_lock);
 	if (ld->ops && ld->ops->set_power) {
-		pr_debug("lcd: set power to %lu\n", power);
+		pr_debug("lcd: set power to %d\n", power);
 		ld->ops->set_power(ld, power);
 		rc = count;
 	}
@@ -133,16 +135,19 @@ static ssize_t lcd_store_contrast(struct device *dev,
 		struct device_attribute *attr, const char *buf, size_t count)
 {
 	int rc = -ENXIO;
+	char *endp;
 	struct lcd_device *ld = to_lcd_device(dev);
-	unsigned long contrast;
+	int contrast = simple_strtoul(buf, &endp, 0);
+	size_t size = endp - buf;
 
-	rc = kstrtoul(buf, 0, &contrast);
-	if (rc)
-		return rc;
+	if (*endp && isspace(*endp))
+		size++;
+	if (size != count)
+		return -EINVAL;
 
 	mutex_lock(&ld->ops_lock);
 	if (ld->ops && ld->ops->set_contrast) {
-		pr_debug("lcd: set contrast to %lu\n", contrast);
+		pr_debug("lcd: set contrast to %d\n", contrast);
 		ld->ops->set_contrast(ld, contrast);
 		rc = count;
 	}

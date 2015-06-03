@@ -39,19 +39,10 @@ static int hfs_write_begin(struct file *file, struct address_space *mapping,
 			loff_t pos, unsigned len, unsigned flags,
 			struct page **pagep, void **fsdata)
 {
-	int ret;
-
 	*pagep = NULL;
-	ret = cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
+	return cont_write_begin(file, mapping, pos, len, flags, pagep, fsdata,
 				hfs_get_block,
 				&HFS_I(mapping->host)->phys_size);
-	if (unlikely(ret)) {
-		loff_t isize = mapping->host->i_size;
-		if (pos + len > isize)
-			vmtruncate(mapping->host, isize);
-	}
-
-	return ret;
 }
 
 static sector_t hfs_bmap(struct address_space *mapping, sector_t block)
@@ -121,24 +112,9 @@ static ssize_t hfs_direct_IO(int rw, struct kiocb *iocb,
 {
 	struct file *file = iocb->ki_filp;
 	struct inode *inode = file->f_path.dentry->d_inode->i_mapping->host;
-	ssize_t ret;
 
-	ret = blockdev_direct_IO(rw, iocb, inode, iov, offset, nr_segs,
-				 hfs_get_block);
-
-	/*
-	 * In case of error extending write may have instantiated a few
-	 * blocks outside i_size. Trim these off again.
-	 */
-	if (unlikely((rw & WRITE) && ret < 0)) {
-		loff_t isize = i_size_read(inode);
-		loff_t end = offset + iov_length(iov, nr_segs);
-
-		if (end > isize)
-			vmtruncate(inode, isize);
-	}
-
-	return ret;
+	return blockdev_direct_IO(rw, iocb, inode, inode->i_sb->s_bdev, iov,
+				  offset, nr_segs, hfs_get_block, NULL);
 }
 
 static int hfs_writepages(struct address_space *mapping,
@@ -150,6 +126,7 @@ static int hfs_writepages(struct address_space *mapping,
 const struct address_space_operations hfs_btree_aops = {
 	.readpage	= hfs_readpage,
 	.writepage	= hfs_writepage,
+	.sync_page	= block_sync_page,
 	.write_begin	= hfs_write_begin,
 	.write_end	= generic_write_end,
 	.bmap		= hfs_bmap,
@@ -159,6 +136,7 @@ const struct address_space_operations hfs_btree_aops = {
 const struct address_space_operations hfs_aops = {
 	.readpage	= hfs_readpage,
 	.writepage	= hfs_writepage,
+	.sync_page	= block_sync_page,
 	.write_begin	= hfs_write_begin,
 	.write_end	= generic_write_end,
 	.bmap		= hfs_bmap,
@@ -169,7 +147,7 @@ const struct address_space_operations hfs_aops = {
 /*
  * hfs_new_inode
  */
-struct inode *hfs_new_inode(struct inode *dir, struct qstr *name, umode_t mode)
+struct inode *hfs_new_inode(struct inode *dir, struct qstr *name, int mode)
 {
 	struct super_block *sb = dir->i_sb;
 	struct inode *inode = new_inode(sb);
@@ -183,7 +161,7 @@ struct inode *hfs_new_inode(struct inode *dir, struct qstr *name, umode_t mode)
 	inode->i_mode = mode;
 	inode->i_uid = current_fsuid();
 	inode->i_gid = current_fsgid();
-	set_nlink(inode, 1);
+	inode->i_nlink = 1;
 	inode->i_mtime = inode->i_atime = inode->i_ctime = CURRENT_TIME_SEC;
 	HFS_I(inode)->flags = 0;
 	HFS_I(inode)->rsrc_inode = NULL;
@@ -313,7 +291,7 @@ static int hfs_read_inode(struct inode *inode, void *data)
 	/* Initialize the inode */
 	inode->i_uid = hsb->s_uid;
 	inode->i_gid = hsb->s_gid;
-	set_nlink(inode, 1);
+	inode->i_nlink = 1;
 
 	if (idata->key)
 		HFS_I(inode)->cat_key = *idata->key;
@@ -403,7 +381,7 @@ void hfs_inode_write_fork(struct inode *inode, struct hfs_extent *ext,
 					 HFS_SB(inode->i_sb)->alloc_blksz);
 }
 
-int hfs_write_inode(struct inode *inode, struct writeback_control *wbc)
+int hfs_write_inode(struct inode *inode, int unused)
 {
 	struct inode *main_inode = inode;
 	struct hfs_find_data fd;
@@ -522,17 +500,15 @@ static struct dentry *hfs_file_lookup(struct inode *dir, struct dentry *dentry,
 	HFS_I(inode)->rsrc_inode = dir;
 	HFS_I(dir)->rsrc_inode = inode;
 	igrab(dir);
-	hlist_add_fake(&inode->i_hash);
+	hlist_add_head(&inode->i_hash, &HFS_SB(dir->i_sb)->rsrc_inodes);
 	mark_inode_dirty(inode);
 out:
 	d_add(dentry, inode);
 	return NULL;
 }
 
-void hfs_evict_inode(struct inode *inode)
+void hfs_clear_inode(struct inode *inode)
 {
-	truncate_inode_pages(&inode->i_data, 0);
-	end_writeback(inode);
 	if (HFS_IS_RSRC(inode) && HFS_I(inode)->rsrc_inode) {
 		HFS_I(HFS_I(inode)->rsrc_inode)->rsrc_inode = NULL;
 		iput(HFS_I(inode)->rsrc_inode);
@@ -612,52 +588,13 @@ int hfs_inode_setattr(struct dentry *dentry, struct iattr * attr)
 			attr->ia_mode = inode->i_mode & ~S_IWUGO;
 		attr->ia_mode &= S_ISDIR(inode->i_mode) ? ~hsb->s_dir_umask: ~hsb->s_file_umask;
 	}
+	error = inode_setattr(inode, attr);
+	if (error)
+		return error;
 
-	if ((attr->ia_valid & ATTR_SIZE) &&
-	    attr->ia_size != i_size_read(inode)) {
-		inode_dio_wait(inode);
-
-		error = vmtruncate(inode, attr->ia_size);
-		if (error)
-			return error;
-	}
-
-	setattr_copy(inode, attr);
-	mark_inode_dirty(inode);
 	return 0;
 }
 
-static int hfs_file_fsync(struct file *filp, loff_t start, loff_t end,
-			  int datasync)
-{
-	struct inode *inode = filp->f_mapping->host;
-	struct super_block * sb;
-	int ret, err;
-
-	ret = filemap_write_and_wait_range(inode->i_mapping, start, end);
-	if (ret)
-		return ret;
-	mutex_lock(&inode->i_mutex);
-
-	/* sync the inode to buffers */
-	ret = write_inode_now(inode, 0);
-
-	/* sync the superblock to buffers */
-	sb = inode->i_sb;
-	if (sb->s_dirt) {
-		lock_super(sb);
-		sb->s_dirt = 0;
-		if (!(sb->s_flags & MS_RDONLY))
-			hfs_mdb_commit(sb);
-		unlock_super(sb);
-	}
-	/* .. finally sync the buffers to disk */
-	err = sync_blockdev(sb->s_bdev);
-	if (!ret)
-		ret = err;
-	mutex_unlock(&inode->i_mutex);
-	return ret;
-}
 
 static const struct file_operations hfs_file_operations = {
 	.llseek		= generic_file_llseek,
@@ -667,7 +604,7 @@ static const struct file_operations hfs_file_operations = {
 	.aio_write	= generic_file_aio_write,
 	.mmap		= generic_file_mmap,
 	.splice_read	= generic_file_splice_read,
-	.fsync		= hfs_file_fsync,
+	.fsync		= file_fsync,
 	.open		= hfs_file_open,
 	.release	= hfs_file_release,
 };

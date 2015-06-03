@@ -21,7 +21,6 @@
  */
 
 #include <linux/cpufreq.h>
-#include <linux/module.h>
 #include <linux/of_platform.h>
 
 #include <asm/machdep.h>
@@ -119,7 +118,7 @@ static int cbe_cpufreq_cpu_init(struct cpufreq_policy *policy)
 	policy->cur = cbe_freqs[cur_pmode].frequency;
 
 #ifdef CONFIG_SMP
-	cpumask_copy(policy->cpus, cpu_sibling_mask(policy->cpu));
+	cpumask_copy(policy->cpus, &per_cpu(cpu_sibling_map, policy->cpu));
 #endif
 
 	cpufreq_frequency_table_get_attr(cbe_freqs, policy->cpu);

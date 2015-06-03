@@ -11,11 +11,13 @@
 #include <linux/errno.h>
 #include <linux/ptrace.h>
 #include <linux/user.h>
+#include <linux/slab.h>
 #include <linux/security.h>
 #include <linux/signal.h>
 
 #include <asm/uaccess.h>
 #include <asm/pgtable.h>
+#include <asm/system.h>
 #include <asm/fpu.h>
 
 #include "proto.h"
@@ -247,17 +249,6 @@ ptrace_cancel_bpt(struct task_struct * child)
 	return (nsaved != 0);
 }
 
-void user_enable_single_step(struct task_struct *child)
-{
-	/* Mark single stepping.  */
-	task_thread_info(child)->bpt_nsaved = -1;
-}
-
-void user_disable_single_step(struct task_struct *child)
-{
-	ptrace_cancel_bpt(child);
-}
-
 /*
  * Called by kernel/ptrace.c when detaching..
  *
@@ -265,11 +256,10 @@ void user_disable_single_step(struct task_struct *child)
  */
 void ptrace_disable(struct task_struct *child)
 { 
-	user_disable_single_step(child);
+	ptrace_cancel_bpt(child);
 }
 
-long arch_ptrace(struct task_struct *child, long request,
-		 unsigned long addr, unsigned long data)
+long arch_ptrace(struct task_struct *child, long request, long addr, long data)
 {
 	unsigned long tmp;
 	size_t copied;
@@ -292,7 +282,7 @@ long arch_ptrace(struct task_struct *child, long request,
 	case PTRACE_PEEKUSR:
 		force_successful_syscall_return();
 		ret = get_reg(child, addr);
-		DBG(DBG_MEM, ("peek $%lu->%#lx\n", addr, ret));
+		DBG(DBG_MEM, ("peek $%ld->%#lx\n", addr, ret));
 		break;
 
 	/* When I and D space are separate, this will have to be fixed.  */
@@ -302,9 +292,55 @@ long arch_ptrace(struct task_struct *child, long request,
 		break;
 
 	case PTRACE_POKEUSR: /* write the specified register */
-		DBG(DBG_MEM, ("poke $%lu<-%#lx\n", addr, data));
+		DBG(DBG_MEM, ("poke $%ld<-%#lx\n", addr, data));
 		ret = put_reg(child, addr, data);
 		break;
+
+	case PTRACE_SYSCALL:
+		/* continue and stop at next (return from) syscall */
+	case PTRACE_CONT:    /* restart after signal. */
+		ret = -EIO;
+		if (!valid_signal(data))
+			break;
+		if (request == PTRACE_SYSCALL)
+			set_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
+		else
+			clear_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
+		child->exit_code = data;
+		/* make sure single-step breakpoint is gone. */
+		ptrace_cancel_bpt(child);
+		wake_up_process(child);
+		ret = 0;
+		break;
+
+	/*
+	 * Make the child exit.  Best I can do is send it a sigkill.
+	 * perhaps it should be put in the status that it wants to
+	 * exit.
+	 */
+	case PTRACE_KILL:
+		ret = 0;
+		if (child->exit_state == EXIT_ZOMBIE)
+			break;
+		child->exit_code = SIGKILL;
+		/* make sure single-step breakpoint is gone. */
+		ptrace_cancel_bpt(child);
+		wake_up_process(child);
+		break;
+
+	case PTRACE_SINGLESTEP:  /* execute single instruction. */
+		ret = -EIO;
+		if (!valid_signal(data))
+			break;
+		/* Mark single stepping.  */
+		task_thread_info(child)->bpt_nsaved = -1;
+		clear_tsk_thread_flag(child, TIF_SYSCALL_TRACE);
+		child->exit_code = data;
+		wake_up_process(child);
+		/* give it a chance to run. */
+		ret = 0;
+		break;
+
 	default:
 		ret = ptrace_request(child, request, addr, data);
 		break;

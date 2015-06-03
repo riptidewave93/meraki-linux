@@ -168,11 +168,6 @@ static inline void * isa_bus_to_virt(unsigned long address)
 extern void __iomem * __ioremap(phys_t offset, phys_t size, unsigned long flags);
 extern void __iounmap(const volatile void __iomem *addr);
 
-#ifndef CONFIG_PCI
-struct pci_dev;
-static inline void pci_iounmap(struct pci_dev *dev, void __iomem *addr) {}
-#endif
-
 static inline void __iomem * __ioremap_mode(phys_t offset, unsigned long size,
 	unsigned long flags)
 {
@@ -247,7 +242,7 @@ static inline void __iomem * __ioremap_mode(phys_t offset, unsigned long size,
  * This version of ioremap ensures that the memory is marked uncachable
  * on the CPU as well as honouring existing caching rules from things like
  * the PCI bus. Note that there are other caches and buffers on many
- * busses. In particular driver authors should read up on PCI writes
+ * busses. In paticular driver authors should read up on PCI writes
  *
  * It's useful if some control registers are in such an area and
  * write combining or read caching is not desirable:
@@ -451,24 +446,6 @@ __BUILDIO(q, u64)
 #define readw_relaxed			readw
 #define readl_relaxed			readl
 #define readq_relaxed			readq
-
-#define readb_be(addr)							\
-	__raw_readb((__force unsigned *)(addr))
-#define readw_be(addr)							\
-	be16_to_cpu(__raw_readw((__force unsigned *)(addr)))
-#define readl_be(addr)							\
-	be32_to_cpu(__raw_readl((__force unsigned *)(addr)))
-#define readq_be(addr)							\
-	be64_to_cpu(__raw_readq((__force unsigned *)(addr)))
-
-#define writeb_be(val, addr)						\
-	__raw_writeb((val), (__force unsigned *)(addr))
-#define writew_be(val, addr)						\
-	__raw_writew(cpu_to_be16((val)), (__force unsigned *)(addr))
-#define writel_be(val, addr)						\
-	__raw_writel(cpu_to_be32((val)), (__force unsigned *)(addr))
-#define writeq_be(val, addr)						\
-	__raw_writeq(cpu_to_be64((val)), (__force unsigned *)(addr))
 
 /*
  * Some code tests for these symbols

@@ -32,7 +32,8 @@ static int write_control_reg(struct echoaudio *chip, u32 value, char force);
 static int set_input_clock(struct echoaudio *chip, u16 clock);
 static int set_professional_spdif(struct echoaudio *chip, char prof);
 static int set_digital_mode(struct echoaudio *chip, u8 mode);
-static int load_asic_generic(struct echoaudio *chip, u32 cmd, short asic);
+static int load_asic_generic(struct echoaudio *chip, u32 cmd,
+			     const struct firmware *asic);
 static int check_asic_status(struct echoaudio *chip);
 
 
@@ -53,7 +54,7 @@ static int init_hw(struct echoaudio *chip, u16 device_id, u16 subdevice_id)
 	chip->subdevice_id = subdevice_id;
 	chip->bad_board = TRUE;
 	chip->has_midi = TRUE;
-	chip->dsp_code_to_load = FW_LAYLA24_DSP;
+	chip->dsp_code_to_load = &card_fw[FW_LAYLA24_DSP];
 	chip->input_clock_types =
 		ECHO_CLOCK_BIT_INTERNAL | ECHO_CLOCK_BIT_SPDIF |
 		ECHO_CLOCK_BIT_WORD | ECHO_CLOCK_BIT_ADAT;
@@ -61,6 +62,9 @@ static int init_hw(struct echoaudio *chip, u16 device_id, u16 subdevice_id)
 		ECHOCAPS_HAS_DIGITAL_MODE_SPDIF_RCA |
 		ECHOCAPS_HAS_DIGITAL_MODE_SPDIF_OPTICAL |
 		ECHOCAPS_HAS_DIGITAL_MODE_ADAT;
+	chip->digital_mode =		DIGITAL_MODE_SPDIF_RCA;
+	chip->professional_spdif = FALSE;
+	chip->digital_in_automute = TRUE;
 
 	if ((err = load_firmware(chip)) < 0)
 		return err;
@@ -69,18 +73,13 @@ static int init_hw(struct echoaudio *chip, u16 device_id, u16 subdevice_id)
 	if ((err = init_line_levels(chip)) < 0)
 		return err;
 
+	err = set_digital_mode(chip, DIGITAL_MODE_SPDIF_RCA);
+	if (err < 0)
+		return err;
+	err = set_professional_spdif(chip, TRUE);
+
 	DE_INIT(("init_hw done\n"));
 	return err;
-}
-
-
-
-static int set_mixer_defaults(struct echoaudio *chip)
-{
-	chip->digital_mode = DIGITAL_MODE_SPDIF_RCA;
-	chip->professional_spdif = FALSE;
-	chip->digital_in_automute = TRUE;
-	return init_line_levels(chip);
 }
 
 
@@ -124,18 +123,18 @@ static int load_asic(struct echoaudio *chip)
 
 	/* Load the ASIC for the PCI card */
 	err = load_asic_generic(chip, DSP_FNC_LOAD_LAYLA24_PCI_CARD_ASIC,
-				FW_LAYLA24_1_ASIC);
+				&card_fw[FW_LAYLA24_1_ASIC]);
 	if (err < 0)
 		return err;
 
-	chip->asic_code = FW_LAYLA24_2S_ASIC;
+	chip->asic_code = &card_fw[FW_LAYLA24_2S_ASIC];
 
 	/* Now give the new ASIC a little time to set up */
 	mdelay(10);
 
 	/* Do the external one */
 	err = load_asic_generic(chip, DSP_FNC_LOAD_LAYLA24_EXTERNAL_ASIC,
-				FW_LAYLA24_2S_ASIC);
+				&card_fw[FW_LAYLA24_2S_ASIC]);
 	if (err < 0)
 		return FALSE;
 
@@ -300,7 +299,7 @@ static int set_input_clock(struct echoaudio *chip, u16 clock)
 /* Depending on what digital mode you want, Layla24 needs different ASICs
 loaded.  This function checks the ASIC needed for the new mode and sees
 if it matches the one already loaded. */
-static int switch_asic(struct echoaudio *chip, short asic)
+static int switch_asic(struct echoaudio *chip, const struct firmware *asic)
 {
 	s8 *monitors;
 
@@ -336,7 +335,7 @@ static int dsp_set_digital_mode(struct echoaudio *chip, u8 mode)
 {
 	u32 control_reg;
 	int err, incompatible_clock;
-	short asic;
+	const struct firmware *asic;
 
 	/* Set clock to "internal" if it's not compatible with the new mode */
 	incompatible_clock = FALSE;
@@ -345,12 +344,12 @@ static int dsp_set_digital_mode(struct echoaudio *chip, u8 mode)
 	case DIGITAL_MODE_SPDIF_RCA:
 		if (chip->input_clock == ECHO_CLOCK_ADAT)
 			incompatible_clock = TRUE;
-		asic = FW_LAYLA24_2S_ASIC;
+		asic = &card_fw[FW_LAYLA24_2S_ASIC];
 		break;
 	case DIGITAL_MODE_ADAT:
 		if (chip->input_clock == ECHO_CLOCK_SPDIF)
 			incompatible_clock = TRUE;
-		asic = FW_LAYLA24_2A_ASIC;
+		asic = &card_fw[FW_LAYLA24_2A_ASIC];
 		break;
 	default:
 		DE_ACT(("Digital mode not supported: %d\n", mode));

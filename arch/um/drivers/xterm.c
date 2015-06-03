@@ -11,8 +11,10 @@
 #include <string.h>
 #include <termios.h>
 #include "chan_user.h"
+#include "kern_constants.h"
 #include "os.h"
 #include "um_malloc.h"
+#include "user.h"
 #include "xterm.h"
 
 struct xterm_chan {
@@ -88,7 +90,7 @@ static int xterm_open(int input, int output, int primary, void *d,
 	int pid, fd, new, err;
 	char title[256], file[] = "/tmp/xterm-pipeXXXXXX";
 	char *argv[] = { terminal_emulator, title_switch, title, exec_switch,
-			 OS_LIB_PATH "/uml/port-helper", "-uml-socket",
+			 "/usr/lib/uml/port-helper", "-uml-socket",
 			 file, NULL };
 
 	if (access(argv[4], X_OK) < 0)
@@ -121,7 +123,6 @@ static int xterm_open(int input, int output, int primary, void *d,
 		err = -errno;
 		printk(UM_KERN_ERR "xterm_open : unlink failed, errno = %d\n",
 		       errno);
-		close(fd);
 		return err;
 	}
 	close(fd);

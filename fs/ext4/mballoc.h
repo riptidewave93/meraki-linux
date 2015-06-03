@@ -17,6 +17,7 @@
 #include <linux/proc_fs.h>
 #include <linux/pagemap.h>
 #include <linux/seq_file.h>
+#include <linux/version.h>
 #include <linux/blkdev.h>
 #include <linux/mutex.h>
 #include "ext4_jbd2.h"
@@ -96,23 +97,21 @@ extern u8 mb_enable_debug;
 
 
 struct ext4_free_data {
-	/* MUST be the first member */
-	struct ext4_journal_cb_entry	efd_jce;
-
-	/* ext4_free_data private data starts from here */
-
 	/* this links the free block information from group_info */
-	struct rb_node			efd_node;
+	struct rb_node node;
+
+	/* this links the free block information from ext4_sb_info */
+	struct list_head list;
 
 	/* group which free block extent belongs */
-	ext4_group_t			efd_group;
+	ext4_group_t group;
 
 	/* free block extent */
-	ext4_grpblk_t			efd_start_cluster;
-	ext4_grpblk_t			efd_count;
+	ext4_grpblk_t start_blk;
+	ext4_grpblk_t count;
 
 	/* transaction which freed this extent */
-	tid_t				efd_tid;
+	tid_t	t_tid;
 };
 
 struct ext4_prealloc_space {
@@ -141,9 +140,9 @@ enum {
 
 struct ext4_free_extent {
 	ext4_lblk_t fe_logical;
-	ext4_grpblk_t fe_start;	/* In cluster units */
+	ext4_grpblk_t fe_start;
 	ext4_group_t fe_group;
-	ext4_grpblk_t fe_len;	/* In cluster units */
+	ext4_grpblk_t fe_len;
 };
 
 /*
@@ -171,13 +170,13 @@ struct ext4_allocation_context {
 	/* original request */
 	struct ext4_free_extent ac_o_ex;
 
-	/* goal request (normalized ac_o_ex) */
+	/* goal request (after normalization) */
 	struct ext4_free_extent ac_g_ex;
 
 	/* the best found extent */
 	struct ext4_free_extent ac_b_ex;
 
-	/* copy of the best found extent taken before preallocation efforts */
+	/* copy of the bext found extent taken before preallocation efforts */
 	struct ext4_free_extent ac_f_ex;
 
 	/* number of iterations done. we have to track to limit searching */
@@ -189,11 +188,17 @@ struct ext4_allocation_context {
 	__u16 ac_flags;		/* allocation hints */
 	__u8 ac_status;
 	__u8 ac_criteria;
+	__u8 ac_repeats;
 	__u8 ac_2order;		/* if request is to allocate 2^N blocks and
 				 * N > 0, the field stores N, otherwise 0 */
 	__u8 ac_op;		/* operation, for history only */
 	struct page *ac_bitmap_page;
 	struct page *ac_buddy_page;
+	/*
+	 * pointer to the held semaphore upon successful
+	 * block allocation
+	 */
+	struct rw_semaphore *alloc_semp;
 	struct ext4_prealloc_space *ac_pa;
 	struct ext4_locality_group *ac_lg;
 };
@@ -211,12 +216,19 @@ struct ext4_buddy {
 	struct super_block *bd_sb;
 	__u16 bd_blkbits;
 	ext4_group_t bd_group;
+	struct rw_semaphore *alloc_semp;
 };
+#define EXT4_MB_BITMAP(e4b)	((e4b)->bd_bitmap)
+#define EXT4_MB_BUDDY(e4b)	((e4b)->bd_buddy)
 
 static inline ext4_fsblk_t ext4_grp_offs_to_block(struct super_block *sb,
 					struct ext4_free_extent *fex)
 {
-	return ext4_group_first_block_no(sb, fex->fe_group) +
-		(fex->fe_start << EXT4_SB(sb)->s_cluster_bits);
+	ext4_fsblk_t block;
+
+	block = (ext4_fsblk_t) fex->fe_group * EXT4_BLOCKS_PER_GROUP(sb)
+			+ fex->fe_start
+			+ le32_to_cpu(EXT4_SB(sb)->s_es->s_first_data_block);
+	return block;
 }
 #endif

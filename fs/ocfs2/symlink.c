@@ -40,6 +40,7 @@
 #include <linux/pagemap.h>
 #include <linux/namei.h>
 
+#define MLOG_MASK_PREFIX ML_NAMEI
 #include <cluster/masklog.h>
 
 #include "ocfs2.h"
@@ -61,6 +62,8 @@ static char *ocfs2_fast_symlink_getlink(struct inode *inode,
 	char *link = NULL;
 	struct ocfs2_dinode *fe;
 
+	mlog_entry_void();
+
 	status = ocfs2_read_inode_block(inode, bh);
 	if (status < 0) {
 		mlog_errno(status);
@@ -71,6 +74,7 @@ static char *ocfs2_fast_symlink_getlink(struct inode *inode,
 	fe = (struct ocfs2_dinode *) (*bh)->b_data;
 	link = (char *) fe->id2.i_symlink;
 bail:
+	mlog_exit(status);
 
 	return link;
 }
@@ -83,6 +87,8 @@ static int ocfs2_readlink(struct dentry *dentry,
 	char *link;
 	struct buffer_head *bh = NULL;
 	struct inode *inode = dentry->d_inode;
+
+	mlog_entry_void();
 
 	link = ocfs2_fast_symlink_getlink(inode, &bh);
 	if (IS_ERR(link)) {
@@ -98,8 +104,7 @@ static int ocfs2_readlink(struct dentry *dentry,
 
 	brelse(bh);
 out:
-	if (ret < 0)
-		mlog_errno(ret);
+	mlog_exit(ret);
 	return ret;
 }
 
@@ -111,6 +116,8 @@ static void *ocfs2_fast_follow_link(struct dentry *dentry,
 	char *target, *link = ERR_PTR(-ENOMEM);
 	struct inode *inode = dentry->d_inode;
 	struct buffer_head *bh = NULL;
+
+	mlog_entry_void();
 
 	BUG_ON(!ocfs2_inode_is_fast_symlink(inode));
 	target = ocfs2_fast_symlink_getlink(inode, &bh);
@@ -130,21 +137,20 @@ static void *ocfs2_fast_follow_link(struct dentry *dentry,
 	}
 
 	memcpy(link, target, len);
+	nd_set_link(nd, link);
 
 bail:
-	nd_set_link(nd, status ? ERR_PTR(status) : link);
 	brelse(bh);
 
-	if (status)
-		mlog_errno(status);
-	return NULL;
+	mlog_exit(status);
+	return status ? ERR_PTR(status) : link;
 }
 
 static void ocfs2_fast_put_link(struct dentry *dentry, struct nameidata *nd, void *cookie)
 {
-	char *link = nd_get_link(nd);
-	if (!IS_ERR(link))
-		kfree(link);
+	char *link = cookie;
+
+	kfree(link);
 }
 
 const struct inode_operations ocfs2_symlink_inode_operations = {
@@ -157,7 +163,6 @@ const struct inode_operations ocfs2_symlink_inode_operations = {
 	.getxattr	= generic_getxattr,
 	.listxattr	= ocfs2_listxattr,
 	.removexattr	= generic_removexattr,
-	.fiemap		= ocfs2_fiemap,
 };
 const struct inode_operations ocfs2_fast_symlink_inode_operations = {
 	.readlink	= ocfs2_readlink,
@@ -169,5 +174,4 @@ const struct inode_operations ocfs2_fast_symlink_inode_operations = {
 	.getxattr	= generic_getxattr,
 	.listxattr	= ocfs2_listxattr,
 	.removexattr	= generic_removexattr,
-	.fiemap		= ocfs2_fiemap,
 };

@@ -47,7 +47,6 @@
 #ifdef DEBUG
 void kvmppc_dump_tlbs(struct kvm_vcpu *vcpu)
 {
-	struct kvmppc_vcpu_44x *vcpu_44x = to_44x(vcpu);
 	struct kvmppc_44x_tlbe *tlbe;
 	int i;
 
@@ -132,8 +131,10 @@ static u32 kvmppc_44x_tlb_shadow_attrib(u32 attrib, int usermode)
 	/* Make sure host can always access this memory. */
 	attrib |= PPC44x_TLB_SX|PPC44x_TLB_SR|PPC44x_TLB_SW;
 
+#if !defined(CONFIG_NOT_COHERENT_CACHE) && defined(CONFIG_SMP) && defined(CONFIG_APM86xxx)
 	/* WIMGE = 0b00100 */
-	attrib |= PPC44x_TLB_M;
+	attrib |= PPC44x_TLB_WL1 | PPC44x_TLB_M;
+#endif
 
 	return attrib;
 }
@@ -222,14 +223,14 @@ gpa_t kvmppc_mmu_xlate(struct kvm_vcpu *vcpu, unsigned int gtlb_index,
 
 int kvmppc_mmu_itlb_index(struct kvm_vcpu *vcpu, gva_t eaddr)
 {
-	unsigned int as = !!(vcpu->arch.shared->msr & MSR_IS);
+	unsigned int as = !!(vcpu->arch.msr & MSR_IS);
 
 	return kvmppc_44x_tlb_index(vcpu, eaddr, vcpu->arch.pid, as);
 }
 
 int kvmppc_mmu_dtlb_index(struct kvm_vcpu *vcpu, gva_t eaddr)
 {
-	unsigned int as = !!(vcpu->arch.shared->msr & MSR_DS);
+	unsigned int as = !!(vcpu->arch.msr & MSR_DS);
 
 	return kvmppc_44x_tlb_index(vcpu, eaddr, vcpu->arch.pid, as);
 }
@@ -317,8 +318,7 @@ void kvmppc_mmu_map(struct kvm_vcpu *vcpu, u64 gvaddr, gpa_t gpaddr,
 	gfn = gpaddr >> PAGE_SHIFT;
 	new_page = gfn_to_page(vcpu->kvm, gfn);
 	if (is_error_page(new_page)) {
-		printk(KERN_ERR "Couldn't get guest page for gfn %llx!\n",
-			(unsigned long long)gfn);
+		printk(KERN_ERR "Couldn't get guest page for gfn %lx!\n", gfn);
 		kvm_release_page_clean(new_page);
 		return;
 	}
@@ -355,7 +355,7 @@ void kvmppc_mmu_map(struct kvm_vcpu *vcpu, u64 gvaddr, gpa_t gpaddr,
 
 	stlbe.word1 = (hpaddr & 0xfffffc00) | ((hpaddr >> 32) & 0xf);
 	stlbe.word2 = kvmppc_44x_tlb_shadow_attrib(flags,
-	                                            vcpu->arch.shared->msr & MSR_PR);
+	                                            vcpu->arch.msr & MSR_PR);
 	stlbe.tid = !(asid & 0xff);
 
 	/* Keep track of the reference so we can properly release it later. */
@@ -387,10 +387,8 @@ static void kvmppc_44x_invalidate(struct kvm_vcpu *vcpu,
 	}
 }
 
-void kvmppc_mmu_msr_notify(struct kvm_vcpu *vcpu, u32 old_msr)
+void kvmppc_mmu_priv_switch(struct kvm_vcpu *vcpu, int usermode)
 {
-	int usermode = vcpu->arch.shared->msr & MSR_PR;
-
 	vcpu->arch.shadow_pid = !usermode;
 }
 
@@ -426,7 +424,7 @@ static int tlbe_is_host_safe(const struct kvm_vcpu *vcpu,
 
 	/* Does it match current guest AS? */
 	/* XXX what about IS != DS? */
-	if (get_tlb_ts(tlbe) != !!(vcpu->arch.shared->msr & MSR_IS))
+	if (get_tlb_ts(tlbe) != !!(vcpu->arch.msr & MSR_IS))
 		return 0;
 
 	gpa = get_tlb_raddr(tlbe);
@@ -443,8 +441,8 @@ int kvmppc_44x_emul_tlbwe(struct kvm_vcpu *vcpu, u8 ra, u8 rs, u8 ws)
 	struct kvmppc_44x_tlbe *tlbe;
 	unsigned int gtlb_index;
 
-	gtlb_index = kvmppc_get_gpr(vcpu, ra);
-	if (gtlb_index >= KVM44x_GUEST_TLB_SIZE) {
+	gtlb_index = vcpu->arch.gpr[ra];
+	if (gtlb_index > KVM44x_GUEST_TLB_SIZE) {
 		printk("%s: index %d\n", __func__, gtlb_index);
 		kvmppc_dump_vcpu(vcpu);
 		return EMULATE_FAIL;
@@ -459,15 +457,15 @@ int kvmppc_44x_emul_tlbwe(struct kvm_vcpu *vcpu, u8 ra, u8 rs, u8 ws)
 	switch (ws) {
 	case PPC44x_TLB_PAGEID:
 		tlbe->tid = get_mmucr_stid(vcpu);
-		tlbe->word0 = kvmppc_get_gpr(vcpu, rs);
+		tlbe->word0 = vcpu->arch.gpr[rs];
 		break;
 
 	case PPC44x_TLB_XLAT:
-		tlbe->word1 = kvmppc_get_gpr(vcpu, rs);
+		tlbe->word1 = vcpu->arch.gpr[rs];
 		break;
 
 	case PPC44x_TLB_ATTRIB:
-		tlbe->word2 = kvmppc_get_gpr(vcpu, rs);
+		tlbe->word2 = vcpu->arch.gpr[rs];
 		break;
 
 	default:
@@ -504,20 +502,18 @@ int kvmppc_44x_emul_tlbsx(struct kvm_vcpu *vcpu, u8 rt, u8 ra, u8 rb, u8 rc)
 	unsigned int as = get_mmucr_sts(vcpu);
 	unsigned int pid = get_mmucr_stid(vcpu);
 
-	ea = kvmppc_get_gpr(vcpu, rb);
+	ea = vcpu->arch.gpr[rb];
 	if (ra)
-		ea += kvmppc_get_gpr(vcpu, ra);
+		ea += vcpu->arch.gpr[ra];
 
 	gtlb_index = kvmppc_44x_tlb_index(vcpu, ea, pid, as);
 	if (rc) {
-		u32 cr = kvmppc_get_cr(vcpu);
-
 		if (gtlb_index < 0)
-			kvmppc_set_cr(vcpu, cr & ~0x20000000);
+			vcpu->arch.cr &= ~0x20000000;
 		else
-			kvmppc_set_cr(vcpu, cr | 0x20000000);
+			vcpu->arch.cr |= 0x20000000;
 	}
-	kvmppc_set_gpr(vcpu, rt, gtlb_index);
+	vcpu->arch.gpr[rt] = gtlb_index;
 
 	kvmppc_set_exit_type(vcpu, EMULATED_TLBSX_EXITS);
 	return EMULATE_DONE;

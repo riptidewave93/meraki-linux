@@ -28,7 +28,6 @@ pvr2_device_desc structures.
 
 #include "pvrusb2-devattr.h"
 #include <linux/usb.h>
-#include <linux/module.h>
 /* This is needed in order to pull in tuner type ids... */
 #include <linux/i2c.h>
 #include <media/tuner.h>
@@ -59,7 +58,7 @@ static const char *pvr2_fw1_names_29xxx[] = {
 };
 
 static const struct pvr2_device_desc pvr2_device_29xxx = {
-		.description = "WinTV PVR USB2 Model 29xxx",
+		.description = "WinTV PVR USB2 Model Category 29xxx",
 		.shortname = "29xxx",
 		.client_table.lst = pvr2_cli_29xxx,
 		.client_table.cnt = ARRAY_SIZE(pvr2_cli_29xxx),
@@ -92,7 +91,7 @@ static const char *pvr2_fw1_names_24xxx[] = {
 };
 
 static const struct pvr2_device_desc pvr2_device_24xxx = {
-		.description = "WinTV PVR USB2 Model 24xxx",
+		.description = "WinTV PVR USB2 Model Category 24xxx",
 		.shortname = "24xxx",
 		.client_table.lst = pvr2_cli_24xxx,
 		.client_table.cnt = ARRAY_SIZE(pvr2_cli_24xxx),
@@ -118,7 +117,6 @@ static const struct pvr2_device_desc pvr2_device_24xxx = {
 static const struct pvr2_device_client_desc pvr2_cli_gotview_2[] = {
 	{ .module_id = PVR2_CLIENT_ID_CX25840 },
 	{ .module_id = PVR2_CLIENT_ID_TUNER },
-	{ .module_id = PVR2_CLIENT_ID_DEMOD },
 };
 
 static const struct pvr2_device_desc pvr2_device_gotview_2 = {
@@ -153,28 +151,6 @@ static const struct pvr2_device_desc pvr2_device_gotview_2d = {
 		.flag_has_composite = !0,
 		.flag_has_svideo = !0,
 		.signal_routing_scheme = PVR2_ROUTING_SCHEME_GOTVIEW,
-};
-
-
-
-/*------------------------------------------------------------------------*/
-/* Terratec Grabster AV400 */
-
-static const struct pvr2_device_client_desc pvr2_cli_av400[] = {
-	{ .module_id = PVR2_CLIENT_ID_CX25840 },
-};
-
-static const struct pvr2_device_desc pvr2_device_av400 = {
-		.description = "Terratec Grabster AV400",
-		.shortname = "av400",
-		.flag_is_experimental = 1,
-		.client_table.lst = pvr2_cli_av400,
-		.client_table.cnt = ARRAY_SIZE(pvr2_cli_av400),
-		.flag_has_cx25840 = !0,
-		.flag_has_analogtuner = 0,
-		.flag_has_composite = !0,
-		.flag_has_svideo = !0,
-		.signal_routing_scheme = PVR2_ROUTING_SCHEME_AV400,
 };
 
 
@@ -320,17 +296,7 @@ static struct tda829x_config tda829x_no_probe = {
 	.probe_tuner = TDA829X_DONT_PROBE,
 };
 
-static struct tda18271_std_map hauppauge_tda18271_dvbt_std_map = {
-        .dvbt_6   = { .if_freq = 3300, .agc_mode = 3, .std = 4,
-                      .if_lvl = 1, .rfagc_top = 0x37, },
-        .dvbt_7   = { .if_freq = 3800, .agc_mode = 3, .std = 5,
-                      .if_lvl = 1, .rfagc_top = 0x37, },
-        .dvbt_8   = { .if_freq = 4300, .agc_mode = 3, .std = 6,
-                      .if_lvl = 1, .rfagc_top = 0x37, },
-};
-
 static struct tda18271_config hauppauge_tda18271_dvb_config = {
-	.std_map = &hauppauge_tda18271_dvbt_std_map,
 	.gate    = TDA18271_GATE_ANALOG,
 	.output_opt = TDA18271_OUTPUT_LT_OFF,
 };
@@ -374,7 +340,7 @@ static const char *pvr2_fw1_names_73xxx[] = {
 };
 
 static const struct pvr2_device_desc pvr2_device_73xxx = {
-		.description = "WinTV HVR-1900 Model 73xxx",
+		.description = "WinTV HVR-1900 Model Category 73xxx",
 		.shortname = "73xxx",
 		.client_table.lst = pvr2_cli_73xxx,
 		.client_table.cnt = ARRAY_SIZE(pvr2_cli_73xxx),
@@ -385,7 +351,6 @@ static const struct pvr2_device_desc pvr2_device_73xxx = {
 		.flag_has_analogtuner = !0,
 		.flag_has_composite = !0,
 		.flag_has_svideo = !0,
-		.flag_fx2_16kb = !0,
 		.signal_routing_scheme = PVR2_ROUTING_SCHEME_HAUPPAUGE,
 		.digital_control_scheme = PVR2_DIGITAL_SCHEME_HAUPPAUGE,
 		.led_scheme = PVR2_LED_SCHEME_HAUPPAUGE,
@@ -480,7 +445,7 @@ static const char *pvr2_fw1_names_75xxx[] = {
 };
 
 static const struct pvr2_device_desc pvr2_device_750xx = {
-		.description = "WinTV HVR-1950 Model 750xx",
+		.description = "WinTV HVR-1950 Model Category 750xx",
 		.shortname = "750xx",
 		.client_table.lst = pvr2_cli_73xxx,
 		.client_table.cnt = ARRAY_SIZE(pvr2_cli_73xxx),
@@ -491,7 +456,6 @@ static const struct pvr2_device_desc pvr2_device_750xx = {
 		.flag_has_analogtuner = !0,
 		.flag_has_composite = !0,
 		.flag_has_svideo = !0,
-		.flag_fx2_16kb = !0,
 		.signal_routing_scheme = PVR2_ROUTING_SCHEME_HAUPPAUGE,
 		.digital_control_scheme = PVR2_DIGITAL_SCHEME_HAUPPAUGE,
 		.default_std_mask = V4L2_STD_NTSC_M,
@@ -503,7 +467,7 @@ static const struct pvr2_device_desc pvr2_device_750xx = {
 };
 
 static const struct pvr2_device_desc pvr2_device_751xx = {
-		.description = "WinTV HVR-1950 Model 751xx",
+		.description = "WinTV HVR-1950 Model Category 751xx",
 		.shortname = "751xx",
 		.client_table.lst = pvr2_cli_73xxx,
 		.client_table.cnt = ARRAY_SIZE(pvr2_cli_73xxx),
@@ -514,7 +478,6 @@ static const struct pvr2_device_desc pvr2_device_751xx = {
 		.flag_has_analogtuner = !0,
 		.flag_has_composite = !0,
 		.flag_has_svideo = !0,
-		.flag_fx2_16kb = !0,
 		.signal_routing_scheme = PVR2_ROUTING_SCHEME_HAUPPAUGE,
 		.digital_control_scheme = PVR2_DIGITAL_SCHEME_HAUPPAUGE,
 		.default_std_mask = V4L2_STD_NTSC_M,
@@ -550,8 +513,6 @@ struct usb_device_id pvr2_device_table[] = {
 	  .driver_info = (kernel_ulong_t)&pvr2_device_750xx},
 	{ USB_DEVICE(0x2040, 0x7501),
 	  .driver_info = (kernel_ulong_t)&pvr2_device_751xx},
-	{ USB_DEVICE(0x0ccd, 0x0039),
-	  .driver_info = (kernel_ulong_t)&pvr2_device_av400},
 	{ }
 };
 

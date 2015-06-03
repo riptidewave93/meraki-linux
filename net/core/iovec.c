@@ -20,6 +20,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/net.h>
 #include <linux/in6.h>
 #include <asm/uaccess.h>
@@ -35,27 +36,25 @@
  *	in any case.
  */
 
-int verify_iovec(struct msghdr *m, struct iovec *iov, struct sockaddr_storage *address, int mode)
+int verify_iovec(struct msghdr *m, struct iovec *iov, struct sockaddr *address, int mode)
 {
 	int size, ct, err;
 
-	if (m->msg_name && m->msg_namelen) {
+	if (m->msg_namelen) {
 		if (mode == VERIFY_READ) {
-			void __user *namep;
-			namep = (void __user __force *) m->msg_name;
-			err = move_addr_to_kernel(namep, m->msg_namelen,
+			err = move_addr_to_kernel(m->msg_name, m->msg_namelen,
 						  address);
 			if (err < 0)
 				return err;
 		}
-		m->msg_name = address;
+		if (m->msg_name)
+			m->msg_name = address;
 	} else {
 		m->msg_name = NULL;
-		m->msg_namelen = 0;
 	}
 
 	size = m->msg_iovlen * sizeof(struct iovec);
-	if (copy_from_user(iov, (void __user __force *) m->msg_iov, size))
+	if (copy_from_user(iov, m->msg_iov, size))
 		return -EFAULT;
 
 	m->msg_iov = iov;
@@ -97,7 +96,6 @@ int memcpy_toiovec(struct iovec *iov, unsigned char *kdata, int len)
 
 	return 0;
 }
-EXPORT_SYMBOL(memcpy_toiovec);
 
 /*
  *	Copy kernel to iovec. Returns -EFAULT on error.
@@ -123,7 +121,6 @@ int memcpy_toiovecend(const struct iovec *iov, unsigned char *kdata,
 
 	return 0;
 }
-EXPORT_SYMBOL(memcpy_toiovecend);
 
 /*
  *	Copy iovec to kernel. Returns -EFAULT on error.
@@ -148,7 +145,6 @@ int memcpy_fromiovec(unsigned char *kdata, struct iovec *iov, int len)
 
 	return 0;
 }
-EXPORT_SYMBOL(memcpy_fromiovec);
 
 /*
  *	Copy iovec from kernel. Returns -EFAULT on error.
@@ -157,10 +153,6 @@ EXPORT_SYMBOL(memcpy_fromiovec);
 int memcpy_fromiovecend(unsigned char *kdata, const struct iovec *iov,
 			int offset, int len)
 {
-	/* No data? Done! */
-	if (len == 0)
-		return 0;
-
 	/* Skip over the finished iovecs */
 	while (offset >= iov->iov_len) {
 		offset -= iov->iov_len;
@@ -181,7 +173,6 @@ int memcpy_fromiovecend(unsigned char *kdata, const struct iovec *iov,
 
 	return 0;
 }
-EXPORT_SYMBOL(memcpy_fromiovecend);
 
 /*
  *	And now for the all-in-one: copy and checksum from a user iovec
@@ -266,4 +257,9 @@ out_fault:
 	err = -EFAULT;
 	goto out;
 }
+
 EXPORT_SYMBOL(csum_partial_copy_fromiovecend);
+EXPORT_SYMBOL(memcpy_fromiovec);
+EXPORT_SYMBOL(memcpy_fromiovecend);
+EXPORT_SYMBOL(memcpy_toiovec);
+EXPORT_SYMBOL(memcpy_toiovecend);

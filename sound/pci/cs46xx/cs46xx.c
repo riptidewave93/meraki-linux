@@ -28,7 +28,7 @@
 #include <linux/pci.h>
 #include <linux/time.h>
 #include <linux/init.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <sound/core.h>
 #include <sound/cs46xx.h>
 #include <sound/initval.h>
@@ -46,10 +46,10 @@ MODULE_SUPPORTED_DEVICE("{{Cirrus Logic,Sound Fusion (CS4280)},"
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;	/* Enable this card */
-static bool external_amp[SNDRV_CARDS];
-static bool thinkpad[SNDRV_CARDS];
-static bool mmap_valid[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS - 1)] = 1};
+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_PNP;	/* Enable this card */
+static int external_amp[SNDRV_CARDS];
+static int thinkpad[SNDRV_CARDS];
+static int mmap_valid[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS - 1)] = 1};
 
 module_param_array(index, int, NULL, 0444);
 MODULE_PARM_DESC(index, "Index value for the CS46xx soundcard.");
@@ -64,7 +64,7 @@ MODULE_PARM_DESC(thinkpad, "Force to enable Thinkpad's CLKRUN control.");
 module_param_array(mmap_valid, bool, NULL, 0444);
 MODULE_PARM_DESC(mmap_valid, "Support OSS mmap.");
 
-static DEFINE_PCI_DEVICE_TABLE(snd_cs46xx_ids) = {
+static struct pci_device_id snd_cs46xx_ids[] = {
 	{ PCI_VDEVICE(CIRRUS, 0x6001), 0, },   /* CS4280 */
 	{ PCI_VDEVICE(CIRRUS, 0x6003), 0, },   /* CS4612 */
 	{ PCI_VDEVICE(CIRRUS, 0x6004), 0, },   /* CS4615 */
@@ -162,7 +162,7 @@ static void __devexit snd_card_cs46xx_remove(struct pci_dev *pci)
 }
 
 static struct pci_driver driver = {
-	.name = KBUILD_MODNAME,
+	.name = "Sound Fusion CS46xx",
 	.id_table = snd_cs46xx_ids,
 	.probe = snd_card_cs46xx_probe,
 	.remove = __devexit_p(snd_card_cs46xx_remove),

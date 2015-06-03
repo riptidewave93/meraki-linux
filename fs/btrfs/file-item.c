@@ -17,7 +17,6 @@
  */
 
 #include <linux/bio.h>
-#include <linux/slab.h>
 #include <linux/pagemap.h>
 #include <linux/highmem.h>
 #include "ctree.h"
@@ -25,11 +24,9 @@
 #include "transaction.h"
 #include "print-tree.h"
 
-#define __MAX_CSUM_ITEMS(r, size) ((((BTRFS_LEAF_DATA_SIZE(r) - \
+#define MAX_CSUM_ITEMS(r, size) ((((BTRFS_LEAF_DATA_SIZE(r) - \
 				   sizeof(struct btrfs_item) * 2) / \
 				  size) - 1))
-
-#define MAX_CSUM_ITEMS(r, size) (min(__MAX_CSUM_ITEMS(r, size), PAGE_CACHE_SIZE))
 
 #define MAX_ORDERED_SUM_BYTES(r) ((PAGE_SIZE - \
 				   sizeof(struct btrfs_ordered_sum)) / \
@@ -50,8 +47,7 @@ int btrfs_insert_file_extent(struct btrfs_trans_handle *trans,
 	struct extent_buffer *leaf;
 
 	path = btrfs_alloc_path();
-	if (!path)
-		return -ENOMEM;
+	BUG_ON(!path);
 	file_key.objectid = objectid;
 	file_key.offset = pos;
 	btrfs_set_key_type(&file_key, BTRFS_EXTENT_DATA_KEY);
@@ -61,7 +57,7 @@ int btrfs_insert_file_extent(struct btrfs_trans_handle *trans,
 				      sizeof(*item));
 	if (ret < 0)
 		goto out;
-	BUG_ON(ret); /* Can't happen */
+	BUG_ON(ret);
 	leaf = path->nodes[0];
 	item = btrfs_item_ptr(leaf, path->slots[0],
 			      struct btrfs_file_extent_item);
@@ -93,7 +89,8 @@ struct btrfs_csum_item *btrfs_lookup_csum(struct btrfs_trans_handle *trans,
 	struct btrfs_csum_item *item;
 	struct extent_buffer *leaf;
 	u64 csum_offset = 0;
-	u16 csum_size = btrfs_super_csum_size(root->fs_info->super_copy);
+	u16 csum_size =
+		btrfs_super_csum_size(&root->fs_info->super_copy);
 	int csums_in_item;
 
 	file_key.objectid = BTRFS_EXTENT_CSUM_OBJECTID;
@@ -151,49 +148,33 @@ int btrfs_lookup_file_extent(struct btrfs_trans_handle *trans,
 }
 
 
-static int __btrfs_lookup_bio_sums(struct btrfs_root *root,
-				   struct inode *inode, struct bio *bio,
-				   u64 logical_offset, u32 *dst, int dio)
+int btrfs_lookup_bio_sums(struct btrfs_root *root, struct inode *inode,
+			  struct bio *bio, u32 *dst)
 {
 	u32 sum;
 	struct bio_vec *bvec = bio->bi_io_vec;
 	int bio_index = 0;
-	u64 offset = 0;
+	u64 offset;
 	u64 item_start_offset = 0;
 	u64 item_last_offset = 0;
 	u64 disk_bytenr;
 	u32 diff;
-	u16 csum_size = btrfs_super_csum_size(root->fs_info->super_copy);
+	u16 csum_size =
+		btrfs_super_csum_size(&root->fs_info->super_copy);
 	int ret;
 	struct btrfs_path *path;
 	struct btrfs_csum_item *item = NULL;
 	struct extent_io_tree *io_tree = &BTRFS_I(inode)->io_tree;
 
 	path = btrfs_alloc_path();
-	if (!path)
-		return -ENOMEM;
 	if (bio->bi_size > PAGE_CACHE_SIZE * 8)
 		path->reada = 2;
 
 	WARN_ON(bio->bi_vcnt <= 0);
 
-	/*
-	 * the free space stuff is only read when it hasn't been
-	 * updated in the current transaction.  So, we can safely
-	 * read from the commit root and sidestep a nasty deadlock
-	 * between reading the free space cache and updating the csum tree.
-	 */
-	if (btrfs_is_free_space_inode(root, inode)) {
-		path->search_commit_root = 1;
-		path->skip_locking = 1;
-	}
-
 	disk_bytenr = (u64)bio->bi_sector << 9;
-	if (dio)
-		offset = logical_offset;
 	while (bio_index < bio->bi_vcnt) {
-		if (!dio)
-			offset = page_offset(bvec->bv_page) + bvec->bv_offset;
+		offset = page_offset(bvec->bv_page) + bvec->bv_offset;
 		ret = btrfs_find_ordered_sum(inode, offset, disk_bytenr, &sum);
 		if (ret == 0)
 			goto found;
@@ -204,7 +185,7 @@ static int __btrfs_lookup_bio_sums(struct btrfs_root *root,
 			u32 item_size;
 
 			if (item)
-				btrfs_release_path(path);
+				btrfs_release_path(root, path);
 			item = btrfs_lookup_csum(NULL, root->fs_info->csum_root,
 						 path, disk_bytenr, 0);
 			if (IS_ERR(item)) {
@@ -219,13 +200,12 @@ static int __btrfs_lookup_bio_sums(struct btrfs_root *root,
 						EXTENT_NODATASUM, GFP_NOFS);
 				} else {
 					printk(KERN_INFO "btrfs no csum found "
-					       "for inode %llu start %llu\n",
-					       (unsigned long long)
-					       btrfs_ino(inode),
+					       "for inode %lu start %llu\n",
+					       inode->i_ino,
 					       (unsigned long long)offset);
 				}
 				item = NULL;
-				btrfs_release_path(path);
+				btrfs_release_path(root, path);
 				goto found;
 			}
 			btrfs_item_key_to_cpu(path->nodes[0], &found_key,
@@ -257,7 +237,6 @@ found:
 		else
 			set_state_private(io_tree, offset, sum);
 		disk_bytenr += bvec->bv_len;
-		offset += bvec->bv_len;
 		bio_index++;
 		bvec++;
 	}
@@ -265,20 +244,8 @@ found:
 	return 0;
 }
 
-int btrfs_lookup_bio_sums(struct btrfs_root *root, struct inode *inode,
-			  struct bio *bio, u32 *dst)
-{
-	return __btrfs_lookup_bio_sums(root, inode, bio, 0, dst, 0);
-}
-
-int btrfs_lookup_bio_sums_dio(struct btrfs_root *root, struct inode *inode,
-			      struct bio *bio, u64 offset, u32 *dst)
-{
-	return __btrfs_lookup_bio_sums(root, inode, bio, offset, dst, 1);
-}
-
 int btrfs_lookup_csums_range(struct btrfs_root *root, u64 start, u64 end,
-			     struct list_head *list, int search_commit)
+			     struct list_head *list)
 {
 	struct btrfs_key key;
 	struct btrfs_path *path;
@@ -286,22 +253,14 @@ int btrfs_lookup_csums_range(struct btrfs_root *root, u64 start, u64 end,
 	struct btrfs_ordered_sum *sums;
 	struct btrfs_sector_sum *sector_sum;
 	struct btrfs_csum_item *item;
-	LIST_HEAD(tmplist);
 	unsigned long offset;
 	int ret;
 	size_t size;
 	u64 csum_end;
-	u16 csum_size = btrfs_super_csum_size(root->fs_info->super_copy);
+	u16 csum_size = btrfs_super_csum_size(&root->fs_info->super_copy);
 
 	path = btrfs_alloc_path();
-	if (!path)
-		return -ENOMEM;
-
-	if (search_commit) {
-		path->skip_locking = 1;
-		path->reada = 2;
-		path->search_commit_root = 1;
-	}
+	BUG_ON(!path);
 
 	key.objectid = BTRFS_EXTENT_CSUM_OBJECTID;
 	key.offset = start;
@@ -361,10 +320,7 @@ int btrfs_lookup_csums_range(struct btrfs_root *root, u64 start, u64 end,
 					MAX_ORDERED_SUM_BYTES(root));
 			sums = kzalloc(btrfs_ordered_sum_size(root, size),
 					GFP_NOFS);
-			if (!sums) {
-				ret = -ENOMEM;
-				goto fail;
-			}
+			BUG_ON(!sums);
 
 			sector_sum = sums->sums;
 			sums->bytenr = start;
@@ -386,19 +342,12 @@ int btrfs_lookup_csums_range(struct btrfs_root *root, u64 start, u64 end,
 				offset += csum_size;
 				sector_sum++;
 			}
-			list_add_tail(&sums->list, &tmplist);
+			list_add_tail(&sums->list, list);
 		}
 		path->slots[0]++;
 	}
 	ret = 0;
 fail:
-	while (ret < 0 && !list_empty(&tmplist)) {
-		sums = list_entry(&tmplist, struct btrfs_ordered_sum, list);
-		list_del(&sums->list);
-		kfree(sums);
-	}
-	list_splice_tail(&tmplist, list);
-
 	btrfs_free_path(path);
 	return ret;
 }
@@ -433,7 +382,7 @@ int btrfs_csum_one_bio(struct btrfs_root *root, struct inode *inode,
 		offset = page_offset(bvec->bv_page) + bvec->bv_offset;
 
 	ordered = btrfs_lookup_ordered_extent(inode, offset);
-	BUG_ON(!ordered); /* Logic error */
+	BUG_ON(!ordered);
 	sums->bytenr = ordered->start;
 
 	while (bio_index < bio->bi_vcnt) {
@@ -452,21 +401,21 @@ int btrfs_csum_one_bio(struct btrfs_root *root, struct inode *inode,
 
 			sums = kzalloc(btrfs_ordered_sum_size(root, bytes_left),
 				       GFP_NOFS);
-			BUG_ON(!sums); /* -ENOMEM */
+			BUG_ON(!sums);
 			sector_sum = sums->sums;
 			sums->len = bytes_left;
 			ordered = btrfs_lookup_ordered_extent(inode, offset);
-			BUG_ON(!ordered); /* Logic error */
+			BUG_ON(!ordered);
 			sums->bytenr = ordered->start;
 		}
 
-		data = kmap_atomic(bvec->bv_page);
+		data = kmap_atomic(bvec->bv_page, KM_USER0);
 		sector_sum->sum = ~(u32)0;
 		sector_sum->sum = btrfs_csum_data(root,
 						  data + bvec->bv_offset,
 						  sector_sum->sum,
 						  bvec->bv_len);
-		kunmap_atomic(data);
+		kunmap_atomic(data, KM_USER0);
 		btrfs_csum_final(sector_sum->sum,
 				 (char *)&sector_sum->sum);
 		sector_sum->bytenr = disk_bytenr;
@@ -496,17 +445,19 @@ int btrfs_csum_one_bio(struct btrfs_root *root, struct inode *inode,
  * This calls btrfs_truncate_item with the correct args based on the
  * overlap, and fixes up the key as required.
  */
-static noinline void truncate_one_csum(struct btrfs_trans_handle *trans,
-				       struct btrfs_root *root,
-				       struct btrfs_path *path,
-				       struct btrfs_key *key,
-				       u64 bytenr, u64 len)
+static noinline int truncate_one_csum(struct btrfs_trans_handle *trans,
+				      struct btrfs_root *root,
+				      struct btrfs_path *path,
+				      struct btrfs_key *key,
+				      u64 bytenr, u64 len)
 {
 	struct extent_buffer *leaf;
-	u16 csum_size = btrfs_super_csum_size(root->fs_info->super_copy);
+	u16 csum_size =
+		btrfs_super_csum_size(&root->fs_info->super_copy);
 	u64 csum_end;
 	u64 end_byte = bytenr + len;
 	u32 blocksize_bits = root->fs_info->sb->s_blocksize_bits;
+	int ret;
 
 	leaf = path->nodes[0];
 	csum_end = btrfs_item_size_nr(leaf, path->slots[0]) / csum_size;
@@ -522,7 +473,8 @@ static noinline void truncate_one_csum(struct btrfs_trans_handle *trans,
 		 */
 		u32 new_size = (bytenr - key->offset) >> blocksize_bits;
 		new_size *= csum_size;
-		btrfs_truncate_item(trans, root, path, new_size, 1);
+		ret = btrfs_truncate_item(trans, root, path, new_size, 1);
+		BUG_ON(ret);
 	} else if (key->offset >= bytenr && csum_end > end_byte &&
 		   end_byte > key->offset) {
 		/*
@@ -534,13 +486,16 @@ static noinline void truncate_one_csum(struct btrfs_trans_handle *trans,
 		u32 new_size = (csum_end - end_byte) >> blocksize_bits;
 		new_size *= csum_size;
 
-		btrfs_truncate_item(trans, root, path, new_size, 0);
+		ret = btrfs_truncate_item(trans, root, path, new_size, 0);
+		BUG_ON(ret);
 
 		key->offset = end_byte;
-		btrfs_set_item_key_safe(trans, root, path, key);
+		ret = btrfs_set_item_key_safe(trans, root, path, key);
+		BUG_ON(ret);
 	} else {
 		BUG();
 	}
+	return 0;
 }
 
 /*
@@ -556,14 +511,13 @@ int btrfs_del_csums(struct btrfs_trans_handle *trans,
 	u64 csum_end;
 	struct extent_buffer *leaf;
 	int ret;
-	u16 csum_size = btrfs_super_csum_size(root->fs_info->super_copy);
+	u16 csum_size =
+		btrfs_super_csum_size(&root->fs_info->super_copy);
 	int blocksize_bits = root->fs_info->sb->s_blocksize_bits;
 
 	root = root->fs_info->csum_root;
 
 	path = btrfs_alloc_path();
-	if (!path)
-		return -ENOMEM;
 
 	while (1) {
 		key.objectid = BTRFS_EXTENT_CSUM_OBJECTID;
@@ -574,12 +528,9 @@ int btrfs_del_csums(struct btrfs_trans_handle *trans,
 		ret = btrfs_search_slot(trans, root, &key, path, -1, 1);
 		if (ret > 0) {
 			if (path->slots[0] == 0)
-				break;
+				goto out;
 			path->slots[0]--;
-		} else if (ret < 0) {
-			break;
 		}
-
 		leaf = path->nodes[0];
 		btrfs_item_key_to_cpu(leaf, &key, path->slots[0]);
 
@@ -602,8 +553,7 @@ int btrfs_del_csums(struct btrfs_trans_handle *trans,
 		/* delete the entire item, it is inside our range */
 		if (key.offset >= bytenr && csum_end <= end_byte) {
 			ret = btrfs_del_item(trans, root, path);
-			if (ret)
-				goto out;
+			BUG_ON(ret);
 			if (key.offset == bytenr)
 				break;
 		} else if (key.offset < bytenr && csum_end > end_byte) {
@@ -645,23 +595,21 @@ int btrfs_del_csums(struct btrfs_trans_handle *trans,
 			 * item changed size or key
 			 */
 			ret = btrfs_split_item(trans, root, path, &key, offset);
-			if (ret && ret != -EAGAIN) {
-				btrfs_abort_transaction(trans, root, ret);
-				goto out;
-			}
+			BUG_ON(ret && ret != -EAGAIN);
 
 			key.offset = end_byte - 1;
 		} else {
-			truncate_one_csum(trans, root, path, &key, bytenr, len);
+			ret = truncate_one_csum(trans, root, path,
+						&key, bytenr, len);
+			BUG_ON(ret);
 			if (key.offset < bytenr)
 				break;
 		}
-		btrfs_release_path(path);
+		btrfs_release_path(root, path);
 	}
-	ret = 0;
 out:
 	btrfs_free_path(path);
-	return ret;
+	return 0;
 }
 
 int btrfs_csum_file_blocks(struct btrfs_trans_handle *trans,
@@ -683,12 +631,15 @@ int btrfs_csum_file_blocks(struct btrfs_trans_handle *trans,
 	struct btrfs_sector_sum *sector_sum;
 	u32 nritems;
 	u32 ins_size;
-	u16 csum_size = btrfs_super_csum_size(root->fs_info->super_copy);
+	char *eb_map;
+	char *eb_token;
+	unsigned long map_len;
+	unsigned long map_start;
+	u16 csum_size =
+		btrfs_super_csum_size(&root->fs_info->super_copy);
 
 	path = btrfs_alloc_path();
-	if (!path)
-		return -ENOMEM;
-
+	BUG_ON(!path);
 	sector_sum = sums->sums;
 again:
 	next_offset = (u64)-1;
@@ -705,9 +656,6 @@ again:
 		goto found;
 	}
 	ret = PTR_ERR(item);
-	if (ret != -EFBIG && ret != -ENOENT)
-		goto fail_unlock;
-
 	if (ret == -EFBIG) {
 		u32 item_size;
 		/* we found one, but it isn't big enough yet */
@@ -745,7 +693,7 @@ again:
 	 * at this point, we know the tree has an item, but it isn't big
 	 * enough yet to put our csum in.  Grow it
 	 */
-	btrfs_release_path(path);
+	btrfs_release_path(root, path);
 	ret = btrfs_search_slot(trans, root, &file_key, path,
 				csum_size, 1);
 	if (ret < 0)
@@ -783,12 +731,13 @@ again:
 		if (diff != csum_size)
 			goto insert;
 
-		btrfs_extend_item(trans, root, path, diff);
+		ret = btrfs_extend_item(trans, root, path, diff);
+		BUG_ON(ret);
 		goto csum;
 	}
 
 insert:
-	btrfs_release_path(path);
+	btrfs_release_path(root, path);
 	csum_offset = 0;
 	if (found_next) {
 		u64 tmp = total_bytes + root->sectorsize;
@@ -830,9 +779,30 @@ found:
 	item_end = btrfs_item_ptr(leaf, path->slots[0], struct btrfs_csum_item);
 	item_end = (struct btrfs_csum_item *)((unsigned char *)item_end +
 				      btrfs_item_size_nr(leaf, path->slots[0]));
+	eb_token = NULL;
 next_sector:
 
-	write_extent_buffer(leaf, &sector_sum->sum, (unsigned long)item, csum_size);
+	if (!eb_token ||
+	   (unsigned long)item + csum_size >= map_start + map_len) {
+		int err;
+
+		if (eb_token)
+			unmap_extent_buffer(leaf, eb_token, KM_USER1);
+		eb_token = NULL;
+		err = map_private_extent_buffer(leaf, (unsigned long)item,
+						csum_size,
+						&eb_token, &eb_map,
+						&map_start, &map_len, KM_USER1);
+		if (err)
+			eb_token = NULL;
+	}
+	if (eb_token) {
+		memcpy(eb_token + ((unsigned long)item & (PAGE_CACHE_SIZE - 1)),
+		       &sector_sum->sum, csum_size);
+	} else {
+		write_extent_buffer(leaf, &sector_sum->sum,
+				    (unsigned long)item, csum_size);
+	}
 
 	total_bytes += root->sectorsize;
 	sector_sum++;
@@ -845,10 +815,13 @@ next_sector:
 			goto next_sector;
 		}
 	}
-
+	if (eb_token) {
+		unmap_extent_buffer(leaf, eb_token, KM_USER1);
+		eb_token = NULL;
+	}
 	btrfs_mark_buffer_dirty(path->nodes[0]);
 	if (total_bytes < sums->len) {
-		btrfs_release_path(path);
+		btrfs_release_path(root, path);
 		cond_resched();
 		goto again;
 	}

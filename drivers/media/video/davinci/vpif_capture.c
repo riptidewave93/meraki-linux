@@ -33,17 +33,15 @@
 #include <linux/i2c.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
-#include <linux/slab.h>
+#include <linux/version.h>
 #include <media/v4l2-device.h>
 #include <media/v4l2-ioctl.h>
-#include <media/v4l2-chip-ident.h>
 
 #include "vpif_capture.h"
 #include "vpif.h"
 
 MODULE_DESCRIPTION("TI DaVinci VPIF Capture driver");
 MODULE_LICENSE("GPL");
-MODULE_VERSION(VPIF_CAPTURE_VERSION);
 
 #define vpif_err(fmt, arg...)	v4l2_err(&vpif_obj.v4l2_dev, fmt, ## arg)
 #define vpif_dbg(level, debug, fmt, arg...)	\
@@ -80,6 +78,20 @@ static struct vpif_config_params config_params = {
 /* global variables */
 static struct vpif_device vpif_obj = { {NULL} };
 static struct device *vpif_dev;
+
+/**
+ * ch_params: video standard configuration parameters for vpif
+ */
+static const struct vpif_channel_config_params ch_params[] = {
+	{
+		"NTSC_M", 720, 480, 30, 0, 1, 268, 1440, 1, 23, 263, 266,
+		286, 525, 525, 0, 1, 0, V4L2_STD_525_60,
+	},
+	{
+		"PAL_BDGHIK", 720, 576, 25, 0, 1, 280, 1440, 1, 23, 311, 313,
+		336, 624, 625, 0, 1, 0, V4L2_STD_625_50,
+	},
+};
 
 /**
  * vpif_uservirt_to_phys : translate user/virtual address to phy address
@@ -329,7 +341,7 @@ static void vpif_schedule_next_buffer(struct common_obj *common)
  * @dev_id: dev_id ptr
  *
  * It changes status of the captured buffer, takes next buffer from the queue
- * and sets its address in VPIF registers
+ * and sets its address in VPIF  registers
  */
 static irqreturn_t vpif_channel_isr(int irq, void *dev_id)
 {
@@ -422,31 +434,24 @@ static int vpif_update_std_info(struct channel_obj *ch)
 	struct common_obj *common = &ch->common[VPIF_VIDEO_INDEX];
 	struct vpif_params *vpifparams = &ch->vpifparams;
 	const struct vpif_channel_config_params *config;
-	struct vpif_channel_config_params *std_info = &vpifparams->std_info;
+	struct vpif_channel_config_params *std_info;
 	struct video_obj *vid_ch = &ch->video;
 	int index;
 
 	vpif_dbg(2, debug, "vpif_update_std_info\n");
 
-	for (index = 0; index < vpif_ch_params_count; index++) {
+	std_info = &vpifparams->std_info;
+
+	for (index = 0; index < ARRAY_SIZE(ch_params); index++) {
 		config = &ch_params[index];
-		if (config->hd_sd == 0) {
-			vpif_dbg(2, debug, "SD format\n");
-			if (config->stdid & vid_ch->stdid) {
-				memcpy(std_info, config, sizeof(*config));
-				break;
-			}
-		} else {
-			vpif_dbg(2, debug, "HD format\n");
-			if (config->dv_preset == vid_ch->dv_preset) {
-				memcpy(std_info, config, sizeof(*config));
-				break;
-			}
+		if (config->stdid & vid_ch->stdid) {
+			memcpy(std_info, config, sizeof(*config));
+			break;
 		}
 	}
 
 	/* standard not found */
-	if (index == vpif_ch_params_count)
+	if (index == ARRAY_SIZE(ch_params))
 		return -EINVAL;
 
 	common->fmt.fmt.pix.width = std_info->width;
@@ -456,7 +461,6 @@ static int vpif_update_std_info(struct channel_obj *ch)
 	common->fmt.fmt.pix.bytesperline = std_info->width;
 	vpifparams->video_params.hpitch = std_info->width;
 	vpifparams->video_params.storage_mode = std_info->frm_fmt;
-
 	return 0;
 }
 
@@ -726,6 +730,7 @@ static int vpif_mmap(struct file *filep, struct vm_area_struct *vma)
  */
 static unsigned int vpif_poll(struct file *filep, poll_table * wait)
 {
+	int err = 0;
 	struct vpif_fh *fh = filep->private_data;
 	struct channel_obj *channel = fh->channel;
 	struct common_obj *common = &(channel->common[VPIF_VIDEO_INDEX]);
@@ -733,7 +738,8 @@ static unsigned int vpif_poll(struct file *filep, poll_table * wait)
 	vpif_dbg(2, debug, "vpif_poll\n");
 
 	if (common->started)
-		return videobuf_poll_stream(filep, &common->buffer_queue, wait);
+		err = videobuf_poll_stream(filep, &common->buffer_queue, wait);
+
 	return 0;
 }
 
@@ -752,7 +758,7 @@ static int vpif_open(struct file *filep)
 	struct video_obj *vid_ch;
 	struct channel_obj *ch;
 	struct vpif_fh *fh;
-	int i;
+	int i, ret = 0;
 
 	vpif_dbg(2, debug, "vpif_open\n");
 
@@ -760,6 +766,9 @@ static int vpif_open(struct file *filep)
 
 	vid_ch = &ch->video;
 	common = &ch->common[VPIF_VIDEO_INDEX];
+
+	if (mutex_lock_interruptible(&common->lock))
+		return -ERESTARTSYS;
 
 	if (NULL == ch->curr_subdev_info) {
 		/**
@@ -777,15 +786,17 @@ static int vpif_open(struct file *filep)
 		}
 		if (i == config->subdev_count) {
 			vpif_err("No sub device registered\n");
-			return -ENOENT;
+			ret = -ENOENT;
+			goto exit;
 		}
 	}
 
 	/* Allocate memory for the file handle object */
-	fh = kzalloc(sizeof(struct vpif_fh), GFP_KERNEL);
+	fh = kmalloc(sizeof(struct vpif_fh), GFP_KERNEL);
 	if (NULL == fh) {
 		vpif_err("unable to allocate memory for file handle object\n");
-		return -ENOMEM;
+		ret = -ENOMEM;
+		goto exit;
 	}
 
 	/* store pointer to fh in private_data member of filep */
@@ -805,7 +816,9 @@ static int vpif_open(struct file *filep)
 	/* Initialize priority of this instance to default priority */
 	fh->prio = V4L2_PRIORITY_UNSET;
 	v4l2_prio_open(&ch->prio, &fh->prio);
-	return 0;
+exit:
+	mutex_unlock(&common->lock);
+	return ret;
 }
 
 /**
@@ -824,6 +837,9 @@ static int vpif_release(struct file *filep)
 	vpif_dbg(2, debug, "vpif_release\n");
 
 	common = &ch->common[VPIF_VIDEO_INDEX];
+
+	if (mutex_lock_interruptible(&common->lock))
+		return -ERESTARTSYS;
 
 	/* if this instance is doing IO */
 	if (fh->io_allowed[VPIF_VIDEO_INDEX]) {
@@ -848,8 +864,11 @@ static int vpif_release(struct file *filep)
 	/* Decrement channel usrs counter */
 	ch->usrs--;
 
+	/* unlock mutex on channel object */
+	mutex_unlock(&common->lock);
+
 	/* Close the priority */
-	v4l2_prio_close(&ch->prio, fh->prio);
+	v4l2_prio_close(&ch->prio, &fh->prio);
 
 	if (fh->initialized)
 		ch->initialized = 0;
@@ -872,6 +891,7 @@ static int vpif_reqbufs(struct file *file, void *priv,
 	struct channel_obj *ch = fh->channel;
 	struct common_obj *common;
 	u8 index = 0;
+	int ret = 0;
 
 	vpif_dbg(2, debug, "vpif_reqbufs\n");
 
@@ -894,8 +914,13 @@ static int vpif_reqbufs(struct file *file, void *priv,
 
 	common = &ch->common[index];
 
-	if (0 != common->io_usrs)
-		return -EBUSY;
+	if (mutex_lock_interruptible(&common->lock))
+		return -ERESTARTSYS;
+
+	if (0 != common->io_usrs) {
+		ret = -EBUSY;
+		goto reqbuf_exit;
+	}
 
 	/* Initialize videobuf queue as per the buffer type */
 	videobuf_queue_dma_contig_init(&common->buffer_queue,
@@ -903,8 +928,7 @@ static int vpif_reqbufs(struct file *file, void *priv,
 					    &common->irqlock,
 					    reqbuf->type,
 					    common->fmt.fmt.pix.field,
-					    sizeof(struct videobuf_buffer), fh,
-					    &common->lock);
+					    sizeof(struct videobuf_buffer), fh);
 
 	/* Set io allowed member of file handle to TRUE */
 	fh->io_allowed[index] = 1;
@@ -915,7 +939,11 @@ static int vpif_reqbufs(struct file *file, void *priv,
 	INIT_LIST_HEAD(&common->dma_queue);
 
 	/* Allocate buffers */
-	return videobuf_reqbufs(&common->buffer_queue, reqbuf);
+	ret = videobuf_reqbufs(&common->buffer_queue, reqbuf);
+
+reqbuf_exit:
+	mutex_unlock(&common->lock);
+	return ret;
 }
 
 /**
@@ -1001,10 +1029,9 @@ static int vpif_qbuf(struct file *file, void *priv, struct v4l2_buffer *buf)
 			goto qbuf_exit;
 
 		if ((VIDEOBUF_NEEDS_INIT != buf1->state)
-			    && (buf1->baddr != tbuf.m.userptr)) {
+			    && (buf1->baddr != tbuf.m.userptr))
 			vpif_buffer_release(&common->buffer_queue, buf1);
 			buf1->baddr = tbuf.m.userptr;
-		}
 		break;
 
 	default:
@@ -1129,6 +1156,11 @@ static int vpif_streamon(struct file *file, void *priv,
 		return ret;
 	}
 
+	if (mutex_lock_interruptible(&common->lock)) {
+		ret = -ERESTARTSYS;
+		goto streamoff_exit;
+	}
+
 	/* If buffer queue is empty, return error */
 	if (list_empty(&common->dma_queue)) {
 		vpif_dbg(1, debug, "buffer queue is empty\n");
@@ -1207,10 +1239,13 @@ static int vpif_streamon(struct file *file, void *priv,
 		enable_channel1(1);
 	}
 	channel_first_int[VPIF_VIDEO_INDEX][ch->channel_id] = 1;
+	mutex_unlock(&common->lock);
 	return ret;
 
 exit:
-	videobuf_streamoff(&common->buffer_queue);
+	mutex_unlock(&common->lock);
+streamoff_exit:
+	ret = videobuf_streamoff(&common->buffer_queue);
 	return ret;
 }
 
@@ -1248,6 +1283,9 @@ static int vpif_streamoff(struct file *file, void *priv,
 		return -EINVAL;
 	}
 
+	if (mutex_lock_interruptible(&common->lock))
+		return -ERESTARTSYS;
+
 	/* disable channel */
 	if (VPIF_CHANNEL0_VIDEO == ch->channel_id) {
 		enable_channel0(0);
@@ -1264,6 +1302,8 @@ static int vpif_streamoff(struct file *file, void *priv,
 
 	if (ret && (ret != -ENOIOCTLCMD))
 		vpif_dbg(1, debug, "stream off failed in subdev\n");
+
+	mutex_unlock(&common->lock);
 
 	return videobuf_streamoff(&common->buffer_queue);
 }
@@ -1340,9 +1380,13 @@ static int vpif_querystd(struct file *file, void *priv, v4l2_std_id *std_id)
 {
 	struct vpif_fh *fh = priv;
 	struct channel_obj *ch = fh->channel;
+	struct common_obj *common = &ch->common[VPIF_VIDEO_INDEX];
 	int ret = 0;
 
 	vpif_dbg(2, debug, "vpif_querystd\n");
+
+	if (mutex_lock_interruptible(&common->lock))
+		return -ERESTARTSYS;
 
 	/* Call querystd function of decoder device */
 	ret = v4l2_subdev_call(vpif_obj.sd[ch->curr_sd_index], video,
@@ -1350,6 +1394,7 @@ static int vpif_querystd(struct file *file, void *priv, v4l2_std_id *std_id)
 	if (ret < 0)
 		vpif_dbg(1, debug, "Failed to set standard for sub devices\n");
 
+	mutex_unlock(&common->lock);
 	return ret;
 }
 
@@ -1398,21 +1443,23 @@ static int vpif_s_std(struct file *file, void *priv, v4l2_std_id *std_id)
 		}
 	}
 
-	ret = v4l2_prio_check(&ch->prio, fh->prio);
+	ret = v4l2_prio_check(&ch->prio, &fh->prio);
 	if (0 != ret)
 		return ret;
 
 	fh->initialized = 1;
 
 	/* Call encoder subdevice function to set the standard */
+	if (mutex_lock_interruptible(&common->lock))
+		return -ERESTARTSYS;
+
 	ch->video.stdid = *std_id;
-	ch->video.dv_preset = V4L2_DV_INVALID;
-	memset(&ch->video.bt_timings, 0, sizeof(ch->video.bt_timings));
 
 	/* Get the information about the standard */
 	if (vpif_update_std_info(ch)) {
+		ret = -EINVAL;
 		vpif_err("Error getting the standard info\n");
-		return -EINVAL;
+		goto s_std_exit;
 	}
 
 	/* Configure the default format information */
@@ -1423,6 +1470,9 @@ static int vpif_s_std(struct file *file, void *priv, v4l2_std_id *std_id)
 				s_std, *std_id);
 	if (ret < 0)
 		vpif_dbg(1, debug, "Failed to set standard for sub devices\n");
+
+s_std_exit:
+	mutex_unlock(&common->lock);
 	return ret;
 }
 
@@ -1503,7 +1553,7 @@ static int vpif_s_input(struct file *file, void *priv, unsigned int index)
 		}
 	}
 
-	ret = v4l2_prio_check(&ch->prio, fh->prio);
+	ret = v4l2_prio_check(&ch->prio, &fh->prio);
 	if (0 != ret)
 		return ret;
 
@@ -1516,6 +1566,9 @@ static int vpif_s_input(struct file *file, void *priv, unsigned int index)
 		return -EINVAL;
 	}
 
+	if (mutex_lock_interruptible(&common->lock))
+		return -ERESTARTSYS;
+
 	/* first setup input path from sub device to vpif */
 	if (config->setup_input_path) {
 		ret = config->setup_input_path(ch->channel_id,
@@ -1524,7 +1577,7 @@ static int vpif_s_input(struct file *file, void *priv, unsigned int index)
 			vpif_dbg(1, debug, "couldn't setup input path for the"
 				" sub device %s, for input index %d\n",
 				subdev_info->name, index);
-			return ret;
+			goto exit;
 		}
 	}
 
@@ -1535,7 +1588,7 @@ static int vpif_s_input(struct file *file, void *priv, unsigned int index)
 					input, output, 0);
 		if (ret < 0) {
 			vpif_dbg(1, debug, "Failed to set input\n");
-			return ret;
+			goto exit;
 		}
 	}
 	vid_ch->input_idx = index;
@@ -1546,6 +1599,9 @@ static int vpif_s_input(struct file *file, void *priv, unsigned int index)
 
 	/* update tvnorms from the sub device input info */
 	ch->video_dev->tvnorms = chan_cfg->inputs[index].input.std;
+
+exit:
+	mutex_unlock(&common->lock);
 	return ret;
 }
 
@@ -1614,7 +1670,11 @@ static int vpif_g_fmt_vid_cap(struct file *file, void *priv,
 		return -EINVAL;
 
 	/* Fill in the information about format */
+	if (mutex_lock_interruptible(&common->lock))
+		return -ERESTARTSYS;
+
 	*fmt = common->fmt;
+	mutex_unlock(&common->lock);
 	return 0;
 }
 
@@ -1633,7 +1693,7 @@ static int vpif_s_fmt_vid_cap(struct file *file, void *priv,
 	struct v4l2_pix_format *pixfmt;
 	int ret = 0;
 
-	vpif_dbg(2, debug, "%s\n", __func__);
+	vpif_dbg(2, debug, "VIDIOC_S_FMT\n");
 
 	/* If streaming is started, return error */
 	if (common->started) {
@@ -1649,7 +1709,7 @@ static int vpif_s_fmt_vid_cap(struct file *file, void *priv,
 		}
 	}
 
-	ret = v4l2_prio_check(&ch->prio, fh->prio);
+	ret = v4l2_prio_check(&ch->prio, &fh->prio);
 	if (0 != ret)
 		return ret;
 
@@ -1662,7 +1722,12 @@ static int vpif_s_fmt_vid_cap(struct file *file, void *priv,
 	if (ret)
 		return ret;
 	/* store the format in the channel object */
+	if (mutex_lock_interruptible(&common->lock))
+		return -ERESTARTSYS;
+
 	common->fmt = *fmt;
+	mutex_unlock(&common->lock);
+
 	return 0;
 }
 
@@ -1677,6 +1742,7 @@ static int vpif_querycap(struct file *file, void  *priv,
 {
 	struct vpif_capture_config *config = vpif_dev->platform_data;
 
+	cap->version = VPIF_CAPTURE_VERSION_CODE;
 	cap->capabilities = V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_STREAMING;
 	strlcpy(cap->driver, "vpif capture", sizeof(cap->driver));
 	strlcpy(cap->bus_info, "DM646x Platform", sizeof(cap->bus_info));
@@ -1740,306 +1806,6 @@ static int vpif_cropcap(struct file *file, void *priv,
 	return 0;
 }
 
-/**
- * vpif_enum_dv_presets() - ENUM_DV_PRESETS handler
- * @file: file ptr
- * @priv: file handle
- * @preset: input preset
- */
-static int vpif_enum_dv_presets(struct file *file, void *priv,
-		struct v4l2_dv_enum_preset *preset)
-{
-	struct vpif_fh *fh = priv;
-	struct channel_obj *ch = fh->channel;
-
-	return v4l2_subdev_call(vpif_obj.sd[ch->curr_sd_index],
-			video, enum_dv_presets, preset);
-}
-
-/**
- * vpif_query_dv_presets() - QUERY_DV_PRESET handler
- * @file: file ptr
- * @priv: file handle
- * @preset: input preset
- */
-static int vpif_query_dv_preset(struct file *file, void *priv,
-		struct v4l2_dv_preset *preset)
-{
-	struct vpif_fh *fh = priv;
-	struct channel_obj *ch = fh->channel;
-
-	return v4l2_subdev_call(vpif_obj.sd[ch->curr_sd_index],
-		       video, query_dv_preset, preset);
-}
-/**
- * vpif_s_dv_presets() - S_DV_PRESETS handler
- * @file: file ptr
- * @priv: file handle
- * @preset: input preset
- */
-static int vpif_s_dv_preset(struct file *file, void *priv,
-		struct v4l2_dv_preset *preset)
-{
-	struct vpif_fh *fh = priv;
-	struct channel_obj *ch = fh->channel;
-	struct common_obj *common = &ch->common[VPIF_VIDEO_INDEX];
-	int ret = 0;
-
-	if (common->started) {
-		vpif_dbg(1, debug, "streaming in progress\n");
-		return -EBUSY;
-	}
-
-	if ((VPIF_CHANNEL0_VIDEO == ch->channel_id) ||
-	    (VPIF_CHANNEL1_VIDEO == ch->channel_id)) {
-		if (!fh->initialized) {
-			vpif_dbg(1, debug, "Channel Busy\n");
-			return -EBUSY;
-		}
-	}
-
-	ret = v4l2_prio_check(&ch->prio, fh->prio);
-	if (ret)
-		return ret;
-
-	fh->initialized = 1;
-
-	/* Call encoder subdevice function to set the standard */
-	if (mutex_lock_interruptible(&common->lock))
-		return -ERESTARTSYS;
-
-	ch->video.dv_preset = preset->preset;
-	ch->video.stdid = V4L2_STD_UNKNOWN;
-	memset(&ch->video.bt_timings, 0, sizeof(ch->video.bt_timings));
-
-	/* Get the information about the standard */
-	if (vpif_update_std_info(ch)) {
-		vpif_dbg(1, debug, "Error getting the standard info\n");
-		ret = -EINVAL;
-	} else {
-		/* Configure the default format information */
-		vpif_config_format(ch);
-
-		ret = v4l2_subdev_call(vpif_obj.sd[ch->curr_sd_index],
-				video, s_dv_preset, preset);
-	}
-
-	mutex_unlock(&common->lock);
-
-	return ret;
-}
-/**
- * vpif_g_dv_presets() - G_DV_PRESETS handler
- * @file: file ptr
- * @priv: file handle
- * @preset: input preset
- */
-static int vpif_g_dv_preset(struct file *file, void *priv,
-		struct v4l2_dv_preset *preset)
-{
-	struct vpif_fh *fh = priv;
-	struct channel_obj *ch = fh->channel;
-
-	preset->preset = ch->video.dv_preset;
-
-	return 0;
-}
-
-/**
- * vpif_s_dv_timings() - S_DV_TIMINGS handler
- * @file: file ptr
- * @priv: file handle
- * @timings: digital video timings
- */
-static int vpif_s_dv_timings(struct file *file, void *priv,
-		struct v4l2_dv_timings *timings)
-{
-	struct vpif_fh *fh = priv;
-	struct channel_obj *ch = fh->channel;
-	struct vpif_params *vpifparams = &ch->vpifparams;
-	struct vpif_channel_config_params *std_info = &vpifparams->std_info;
-	struct video_obj *vid_ch = &ch->video;
-	struct v4l2_bt_timings *bt = &vid_ch->bt_timings;
-	int ret;
-
-	if (timings->type != V4L2_DV_BT_656_1120) {
-		vpif_dbg(2, debug, "Timing type not defined\n");
-		return -EINVAL;
-	}
-
-	/* Configure subdevice timings, if any */
-	ret = v4l2_subdev_call(vpif_obj.sd[ch->curr_sd_index],
-			video, s_dv_timings, timings);
-	if (ret == -ENOIOCTLCMD) {
-		vpif_dbg(2, debug, "Custom DV timings not supported by "
-				"subdevice\n");
-		return -EINVAL;
-	}
-	if (ret < 0) {
-		vpif_dbg(2, debug, "Error setting custom DV timings\n");
-		return ret;
-	}
-
-	if (!(timings->bt.width && timings->bt.height &&
-				(timings->bt.hbackporch ||
-				 timings->bt.hfrontporch ||
-				 timings->bt.hsync) &&
-				timings->bt.vfrontporch &&
-				(timings->bt.vbackporch ||
-				 timings->bt.vsync))) {
-		vpif_dbg(2, debug, "Timings for width, height, "
-				"horizontal back porch, horizontal sync, "
-				"horizontal front porch, vertical back porch, "
-				"vertical sync and vertical back porch "
-				"must be defined\n");
-		return -EINVAL;
-	}
-
-	*bt = timings->bt;
-
-	/* Configure video port timings */
-
-	std_info->eav2sav = bt->hbackporch + bt->hfrontporch +
-		bt->hsync - 8;
-	std_info->sav2eav = bt->width;
-
-	std_info->l1 = 1;
-	std_info->l3 = bt->vsync + bt->vbackporch + 1;
-
-	if (bt->interlaced) {
-		if (bt->il_vbackporch || bt->il_vfrontporch || bt->il_vsync) {
-			std_info->vsize = bt->height * 2 +
-				bt->vfrontporch + bt->vsync + bt->vbackporch +
-				bt->il_vfrontporch + bt->il_vsync +
-				bt->il_vbackporch;
-			std_info->l5 = std_info->vsize/2 -
-				(bt->vfrontporch - 1);
-			std_info->l7 = std_info->vsize/2 + 1;
-			std_info->l9 = std_info->l7 + bt->il_vsync +
-				bt->il_vbackporch + 1;
-			std_info->l11 = std_info->vsize -
-				(bt->il_vfrontporch - 1);
-		} else {
-			vpif_dbg(2, debug, "Required timing values for "
-					"interlaced BT format missing\n");
-			return -EINVAL;
-		}
-	} else {
-		std_info->vsize = bt->height + bt->vfrontporch +
-			bt->vsync + bt->vbackporch;
-		std_info->l5 = std_info->vsize - (bt->vfrontporch - 1);
-	}
-	strncpy(std_info->name, "Custom timings BT656/1120", VPIF_MAX_NAME);
-	std_info->width = bt->width;
-	std_info->height = bt->height;
-	std_info->frm_fmt = bt->interlaced ? 0 : 1;
-	std_info->ycmux_mode = 0;
-	std_info->capture_format = 0;
-	std_info->vbi_supported = 0;
-	std_info->hd_sd = 1;
-	std_info->stdid = 0;
-	std_info->dv_preset = V4L2_DV_INVALID;
-
-	vid_ch->stdid = 0;
-	vid_ch->dv_preset = V4L2_DV_INVALID;
-	return 0;
-}
-
-/**
- * vpif_g_dv_timings() - G_DV_TIMINGS handler
- * @file: file ptr
- * @priv: file handle
- * @timings: digital video timings
- */
-static int vpif_g_dv_timings(struct file *file, void *priv,
-		struct v4l2_dv_timings *timings)
-{
-	struct vpif_fh *fh = priv;
-	struct channel_obj *ch = fh->channel;
-	struct video_obj *vid_ch = &ch->video;
-	struct v4l2_bt_timings *bt = &vid_ch->bt_timings;
-
-	timings->bt = *bt;
-
-	return 0;
-}
-
-/*
- * vpif_g_chip_ident() - Identify the chip
- * @file: file ptr
- * @priv: file handle
- * @chip: chip identity
- *
- * Returns zero or -EINVAL if read operations fails.
- */
-static int vpif_g_chip_ident(struct file *file, void *priv,
-		struct v4l2_dbg_chip_ident *chip)
-{
-	chip->ident = V4L2_IDENT_NONE;
-	chip->revision = 0;
-	if (chip->match.type != V4L2_CHIP_MATCH_I2C_DRIVER &&
-			chip->match.type != V4L2_CHIP_MATCH_I2C_ADDR) {
-		vpif_dbg(2, debug, "match_type is invalid.\n");
-		return -EINVAL;
-	}
-
-	return v4l2_device_call_until_err(&vpif_obj.v4l2_dev, 0, core,
-			g_chip_ident, chip);
-}
-
-#ifdef CONFIG_VIDEO_ADV_DEBUG
-/*
- * vpif_dbg_g_register() - Read register
- * @file: file ptr
- * @priv: file handle
- * @reg: register to be read
- *
- * Debugging only
- * Returns zero or -EINVAL if read operations fails.
- */
-static int vpif_dbg_g_register(struct file *file, void *priv,
-		struct v4l2_dbg_register *reg){
-	struct vpif_fh *fh = priv;
-	struct channel_obj *ch = fh->channel;
-
-	return v4l2_subdev_call(vpif_obj.sd[ch->curr_sd_index], core,
-			g_register, reg);
-}
-
-/*
- * vpif_dbg_s_register() - Write to register
- * @file: file ptr
- * @priv: file handle
- * @reg: register to be modified
- *
- * Debugging only
- * Returns zero or -EINVAL if write operations fails.
- */
-static int vpif_dbg_s_register(struct file *file, void *priv,
-		struct v4l2_dbg_register *reg){
-	struct vpif_fh *fh = priv;
-	struct channel_obj *ch = fh->channel;
-
-	return v4l2_subdev_call(vpif_obj.sd[ch->curr_sd_index], core,
-			s_register, reg);
-}
-#endif
-
-/*
- * vpif_log_status() - Status information
- * @file: file ptr
- * @priv: file handle
- *
- * Returns zero.
- */
-static int vpif_log_status(struct file *filep, void *priv)
-{
-	/* status for sub devices */
-	v4l2_device_call_all(&vpif_obj.v4l2_dev, 0, core, log_status);
-
-	return 0;
-}
-
 /* vpif capture ioctl operations */
 static const struct v4l2_ioctl_ops vpif_ioctl_ops = {
 	.vidioc_querycap        	= vpif_querycap,
@@ -2062,18 +1828,6 @@ static const struct v4l2_ioctl_ops vpif_ioctl_ops = {
 	.vidioc_streamon        	= vpif_streamon,
 	.vidioc_streamoff       	= vpif_streamoff,
 	.vidioc_cropcap         	= vpif_cropcap,
-	.vidioc_enum_dv_presets         = vpif_enum_dv_presets,
-	.vidioc_s_dv_preset             = vpif_s_dv_preset,
-	.vidioc_g_dv_preset             = vpif_g_dv_preset,
-	.vidioc_query_dv_preset         = vpif_query_dv_preset,
-	.vidioc_s_dv_timings            = vpif_s_dv_timings,
-	.vidioc_g_dv_timings            = vpif_g_dv_timings,
-	.vidioc_g_chip_ident		= vpif_g_chip_ident,
-#ifdef CONFIG_VIDEO_ADV_DEBUG
-	.vidioc_g_register		= vpif_dbg_g_register,
-	.vidioc_s_register		= vpif_dbg_s_register,
-#endif
-	.vidioc_log_status		= vpif_log_status,
 };
 
 /* vpif file operations */
@@ -2081,7 +1835,7 @@ static struct v4l2_file_operations vpif_fops = {
 	.owner = THIS_MODULE,
 	.open = vpif_open,
 	.release = vpif_release,
-	.unlocked_ioctl = video_ioctl2,
+	.ioctl = video_ioctl2,
 	.mmap = vpif_mmap,
 	.poll = vpif_poll
 };
@@ -2177,12 +1931,6 @@ static __init int vpif_probe(struct platform_device *pdev)
 		return err;
 	}
 
-	err = v4l2_device_register(vpif_dev, &vpif_obj.v4l2_dev);
-	if (err) {
-		v4l2_err(vpif_dev->driver, "Error registering v4l2 device\n");
-		return err;
-	}
-
 	k = 0;
 	while ((res = platform_get_resource(pdev, IORESOURCE_IRQ, k))) {
 		for (i = res->start; i <= res->end; i++) {
@@ -2216,8 +1964,10 @@ static __init int vpif_probe(struct platform_device *pdev)
 		vfd->v4l2_dev = &vpif_obj.v4l2_dev;
 		vfd->release = video_device_release;
 		snprintf(vfd->name, sizeof(vfd->name),
-			 "DM646x_VPIFCapture_DRIVER_V%s",
-			 VPIF_CAPTURE_VERSION);
+			 "DM646x_VPIFCapture_DRIVER_V%d.%d.%d",
+			 (VPIF_CAPTURE_VERSION_CODE >> 16) & 0xff,
+			 (VPIF_CAPTURE_VERSION_CODE >> 8) & 0xff,
+			 (VPIF_CAPTURE_VERSION_CODE) & 0xff);
 		/* Set video_dev to the video device */
 		ch->video_dev = vfd;
 	}
@@ -2228,7 +1978,6 @@ static __init int vpif_probe(struct platform_device *pdev)
 		common = &(ch->common[VPIF_VIDEO_INDEX]);
 		spin_lock_init(&common->irqlock);
 		mutex_init(&common->lock);
-		ch->video_dev->lock = &common->lock;
 		/* Initialize prio member of channel object */
 		v4l2_prio_init(&ch->prio);
 		err = video_register_device(ch->video_dev,
@@ -2244,7 +1993,7 @@ static __init int vpif_probe(struct platform_device *pdev)
 	config = pdev->dev.platform_data;
 
 	subdev_count = config->subdev_count;
-	vpif_obj.sd = kzalloc(sizeof(struct v4l2_subdev *) * subdev_count,
+	vpif_obj.sd = kmalloc(sizeof(struct v4l2_subdev *) * subdev_count,
 				GFP_KERNEL);
 	if (vpif_obj.sd == NULL) {
 		vpif_err("unable to allocate memory for subdevice pointers\n");
@@ -2252,11 +2001,18 @@ static __init int vpif_probe(struct platform_device *pdev)
 		goto probe_out;
 	}
 
+	err = v4l2_device_register(vpif_dev, &vpif_obj.v4l2_dev);
+	if (err) {
+		v4l2_err(vpif_dev->driver, "Error registering v4l2 device\n");
+		goto probe_subdev_out;
+	}
+
 	for (i = 0; i < subdev_count; i++) {
 		subdevdata = &config->subdev_info[i];
 		vpif_obj.sd[i] =
 			v4l2_i2c_new_subdev_board(&vpif_obj.v4l2_dev,
 						  i2c_adap,
+						  subdevdata->name,
 						  &subdevdata->board_info,
 						  NULL);
 
@@ -2270,9 +2026,9 @@ static __init int vpif_probe(struct platform_device *pdev)
 		if (vpif_obj.sd[i])
 			vpif_obj.sd[i]->grp_id = 1 << i;
 	}
+	v4l2_info(&vpif_obj.v4l2_dev, "DM646x VPIF Capture driver"
+		  " initialized\n");
 
-	v4l2_info(&vpif_obj.v4l2_dev,
-			"DM646x VPIF capture driver initialized\n");
 	return 0;
 
 probe_subdev_out:
@@ -2281,6 +2037,7 @@ probe_subdev_out:
 
 	j = VPIF_CAPTURE_MAX_DEVICES;
 probe_out:
+	v4l2_device_unregister(&vpif_obj.v4l2_dev);
 	for (k = 0; k < j; k++) {
 		/* Get the pointer to the channel object */
 		ch = vpif_obj.dev[k];
@@ -2302,7 +2059,6 @@ vpif_int_err:
 		if (res)
 			i = res->end;
 	}
-	v4l2_device_unregister(&vpif_obj.v4l2_dev);
 	return err;
 }
 
@@ -2351,12 +2107,12 @@ vpif_resume(struct device *dev)
 	return -1;
 }
 
-static const struct dev_pm_ops vpif_dev_pm_ops = {
+static struct dev_pm_ops vpif_dev_pm_ops = {
 	.suspend = vpif_suspend,
 	.resume = vpif_resume,
 };
 
-static __refdata struct platform_driver vpif_driver = {
+static struct platform_driver vpif_driver = {
 	.driver	= {
 		.name	= "vpif_capture",
 		.owner	= THIS_MODULE,

@@ -16,7 +16,6 @@
 #include <linux/in.h>
 #include <linux/in6.h>
 #include <linux/icmp.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/af_rxrpc.h>
 #include <net/ip.h>
@@ -36,21 +35,36 @@ static void rxrpc_destroy_peer(struct work_struct *work);
 static void rxrpc_assess_MTU_size(struct rxrpc_peer *peer)
 {
 	struct rtable *rt;
-	struct flowi4 fl4;
+	struct flowi fl;
+	int ret;
 
 	peer->if_mtu = 1500;
 
-	rt = ip_route_output_ports(&init_net, &fl4, NULL,
-				   peer->srx.transport.sin.sin_addr.s_addr, 0,
-				   htons(7000), htons(7001),
-				   IPPROTO_UDP, 0, 0);
-	if (IS_ERR(rt)) {
-		_leave(" [route err %ld]", PTR_ERR(rt));
+	memset(&fl, 0, sizeof(fl));
+
+	switch (peer->srx.transport.family) {
+	case AF_INET:
+		fl.oif = 0;
+		fl.proto = IPPROTO_UDP,
+		fl.nl_u.ip4_u.saddr = 0;
+		fl.nl_u.ip4_u.daddr = peer->srx.transport.sin.sin_addr.s_addr;
+		fl.nl_u.ip4_u.tos = 0;
+		/* assume AFS.CM talking to AFS.FS */
+		fl.uli_u.ports.sport = htons(7001);
+		fl.uli_u.ports.dport = htons(7000);
+		break;
+	default:
+		BUG();
+	}
+
+	ret = ip_route_output_key(&init_net, &rt, &fl);
+	if (ret < 0) {
+		_leave(" [route err %d]", ret);
 		return;
 	}
 
-	peer->if_mtu = dst_mtu(&rt->dst);
-	dst_release(&rt->dst);
+	peer->if_mtu = dst_mtu(&rt->u.dst);
+	dst_release(&rt->u.dst);
 
 	_leave(" [if_mtu %u]", peer->if_mtu);
 }
@@ -157,7 +171,6 @@ struct rxrpc_peer *rxrpc_get_peer(struct sockaddr_rxrpc *srx, gfp_t gfp)
 	/* we can now add the new candidate to the list */
 	peer = candidate;
 	candidate = NULL;
-	usage = atomic_read(&peer->usage);
 
 	list_add_tail(&peer->link, &rxrpc_peers);
 	write_unlock_bh(&rxrpc_peer_lock);
@@ -172,7 +185,7 @@ success:
 	     &peer->srx.transport.sin.sin_addr,
 	     ntohs(peer->srx.transport.sin.sin_port));
 
-	_leave(" = %p {u=%d}", peer, usage);
+	_leave(" = %p {u=%d}", peer, atomic_read(&peer->usage));
 	return peer;
 
 	/* we found the peer in the list immediately */

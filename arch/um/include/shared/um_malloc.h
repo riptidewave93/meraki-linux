@@ -6,7 +6,7 @@
 #ifndef __UM_MALLOC_H__
 #define __UM_MALLOC_H__
 
-#include <generated/asm-offsets.h>
+#include "kern_constants.h"
 
 extern void *uml_kmalloc(int size, int flags);
 extern void kfree(const void *ptr);

@@ -70,41 +70,47 @@ extern struct sk_buff *dn_alloc_send_skb(struct sock *sk, size_t *size, int nobl
 
 /* Data Messages    (data segment/interrupt/link service)               */
 
-struct nsp_data_seg_msg {
+struct nsp_data_seg_msg
+{
 	__u8   msgflg;
 	__le16 dstaddr;
 	__le16 srcaddr;
-} __packed;
+} __attribute__((packed));
 
-struct nsp_data_opt_msg {
+struct nsp_data_opt_msg
+{
 	__le16 acknum;
 	__le16 segnum;
 	__le16 lsflgs;
-} __packed;
+} __attribute__((packed));
 
-struct nsp_data_opt_msg1 {
+struct nsp_data_opt_msg1
+{
 	__le16 acknum;
 	__le16 segnum;
-} __packed;
+} __attribute__((packed));
 
 
 /* Acknowledgment Message (data/other data)                             */
-struct nsp_data_ack_msg {
+struct nsp_data_ack_msg
+{
 	__u8   msgflg;
 	__le16 dstaddr;
 	__le16 srcaddr;
 	__le16 acknum;
-} __packed;
+} __attribute__((packed));
 
 /* Connect Acknowledgment Message */
-struct  nsp_conn_ack_msg {
+struct  nsp_conn_ack_msg
+{
 	__u8 msgflg;
 	__le16 dstaddr;
-} __packed;
+} __attribute__((packed));
 
 
 /* Connect Initiate/Retransmit Initiate/Connect Confirm */
-struct  nsp_conn_init_msg {
+struct  nsp_conn_init_msg
+{
 	__u8   msgflg;
 #define NSP_CI      0x18            /* Connect Initiate     */
 #define NSP_RCI     0x68            /* Retrans. Conn Init   */
@@ -117,25 +123,27 @@ struct  nsp_conn_init_msg {
 #define NSP_FC_MASK   0x0c            /* FC type mask         */
 	__u8   info;
 	__le16 segsize;
-} __packed;
+} __attribute__((packed));
 
 /* Disconnect Initiate/Disconnect Confirm */
-struct  nsp_disconn_init_msg {
+struct  nsp_disconn_init_msg
+{
 	__u8   msgflg;
 	__le16 dstaddr;
 	__le16 srcaddr;
 	__le16 reason;
-} __packed;
+} __attribute__((packed));
 
 
 
-struct  srcobj_fmt {
+struct  srcobj_fmt
+{
 	__u8   format;
 	__u8   task;
 	__le16 grpcode;
 	__le16 usrcode;
 	__u8   dlen;
-} __packed;
+} __attribute__((packed));
 
 /*
  * A collection of functions for manipulating the sequence

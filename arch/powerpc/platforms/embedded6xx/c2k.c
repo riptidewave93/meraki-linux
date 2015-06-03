@@ -23,6 +23,7 @@
 
 #include <asm/machdep.h>
 #include <asm/prom.h>
+#include <asm/system.h>
 #include <asm/time.h>
 
 #include <mm/mmu_decl.h>

@@ -30,8 +30,6 @@
 #include <linux/interrupt.h>
 #include <linux/delay.h>
 #include <linux/io.h>
-#include <linux/slab.h>
-#include <linux/irq.h>
 
 #include <linux/vlynq.h>
 
@@ -135,40 +133,40 @@ static void vlynq_reset(struct vlynq_device *dev)
 	msleep(5);
 }
 
-static void vlynq_irq_unmask(struct irq_data *d)
+static void vlynq_irq_unmask(unsigned int irq)
 {
-	struct vlynq_device *dev = irq_data_get_irq_chip_data(d);
-	int virq;
 	u32 val;
+	struct vlynq_device *dev = get_irq_chip_data(irq);
+	int virq;
 
 	BUG_ON(!dev);
-	virq = d->irq - dev->irq_start;
+	virq = irq - dev->irq_start;
 	val = readl(&dev->remote->int_device[virq >> 2]);
 	val |= (VINT_ENABLE | virq) << VINT_OFFSET(virq);
 	writel(val, &dev->remote->int_device[virq >> 2]);
 }
 
-static void vlynq_irq_mask(struct irq_data *d)
+static void vlynq_irq_mask(unsigned int irq)
 {
-	struct vlynq_device *dev = irq_data_get_irq_chip_data(d);
-	int virq;
 	u32 val;
+	struct vlynq_device *dev = get_irq_chip_data(irq);
+	int virq;
 
 	BUG_ON(!dev);
-	virq = d->irq - dev->irq_start;
+	virq = irq - dev->irq_start;
 	val = readl(&dev->remote->int_device[virq >> 2]);
 	val &= ~(VINT_ENABLE << VINT_OFFSET(virq));
 	writel(val, &dev->remote->int_device[virq >> 2]);
 }
 
-static int vlynq_irq_type(struct irq_data *d, unsigned int flow_type)
+static int vlynq_irq_type(unsigned int irq, unsigned int flow_type)
 {
-	struct vlynq_device *dev = irq_data_get_irq_chip_data(d);
-	int virq;
 	u32 val;
+	struct vlynq_device *dev = get_irq_chip_data(irq);
+	int virq;
 
 	BUG_ON(!dev);
-	virq = d->irq - dev->irq_start;
+	virq = irq - dev->irq_start;
 	val = readl(&dev->remote->int_device[virq >> 2]);
 	switch (flow_type & IRQ_TYPE_SENSE_MASK) {
 	case IRQ_TYPE_EDGE_RISING:
@@ -192,9 +190,10 @@ static int vlynq_irq_type(struct irq_data *d, unsigned int flow_type)
 	return 0;
 }
 
-static void vlynq_local_ack(struct irq_data *d)
+static void vlynq_local_ack(unsigned int irq)
 {
-	struct vlynq_device *dev = irq_data_get_irq_chip_data(d);
+	struct vlynq_device *dev = get_irq_chip_data(irq);
+
 	u32 status = readl(&dev->local->status);
 
 	pr_debug("%s: local status: 0x%08x\n",
@@ -202,9 +201,10 @@ static void vlynq_local_ack(struct irq_data *d)
 	writel(status, &dev->local->status);
 }
 
-static void vlynq_remote_ack(struct irq_data *d)
+static void vlynq_remote_ack(unsigned int irq)
 {
-	struct vlynq_device *dev = irq_data_get_irq_chip_data(d);
+	struct vlynq_device *dev = get_irq_chip_data(irq);
+
 	u32 status = readl(&dev->remote->status);
 
 	pr_debug("%s: remote status: 0x%08x\n",
@@ -236,23 +236,23 @@ static irqreturn_t vlynq_irq(int irq, void *dev_id)
 
 static struct irq_chip vlynq_irq_chip = {
 	.name = "vlynq",
-	.irq_unmask = vlynq_irq_unmask,
-	.irq_mask = vlynq_irq_mask,
-	.irq_set_type = vlynq_irq_type,
+	.unmask = vlynq_irq_unmask,
+	.mask = vlynq_irq_mask,
+	.set_type = vlynq_irq_type,
 };
 
 static struct irq_chip vlynq_local_chip = {
 	.name = "vlynq local error",
-	.irq_unmask = vlynq_irq_unmask,
-	.irq_mask = vlynq_irq_mask,
-	.irq_ack = vlynq_local_ack,
+	.unmask = vlynq_irq_unmask,
+	.mask = vlynq_irq_mask,
+	.ack = vlynq_local_ack,
 };
 
 static struct irq_chip vlynq_remote_chip = {
 	.name = "vlynq local error",
-	.irq_unmask = vlynq_irq_unmask,
-	.irq_mask = vlynq_irq_mask,
-	.irq_ack = vlynq_remote_ack,
+	.unmask = vlynq_irq_unmask,
+	.mask = vlynq_irq_mask,
+	.ack = vlynq_remote_ack,
 };
 
 static int vlynq_setup_irq(struct vlynq_device *dev)
@@ -289,17 +289,17 @@ static int vlynq_setup_irq(struct vlynq_device *dev)
 	for (i = dev->irq_start; i <= dev->irq_end; i++) {
 		virq = i - dev->irq_start;
 		if (virq == dev->local_irq) {
-			irq_set_chip_and_handler(i, &vlynq_local_chip,
+			set_irq_chip_and_handler(i, &vlynq_local_chip,
 						 handle_level_irq);
-			irq_set_chip_data(i, dev);
+			set_irq_chip_data(i, dev);
 		} else if (virq == dev->remote_irq) {
-			irq_set_chip_and_handler(i, &vlynq_remote_chip,
+			set_irq_chip_and_handler(i, &vlynq_remote_chip,
 						 handle_level_irq);
-			irq_set_chip_data(i, dev);
+			set_irq_chip_data(i, dev);
 		} else {
-			irq_set_chip_and_handler(i, &vlynq_irq_chip,
+			set_irq_chip_and_handler(i, &vlynq_irq_chip,
 						 handle_simple_irq);
-			irq_set_chip_data(i, dev);
+			set_irq_chip_data(i, dev);
 			writel(0, &dev->remote->int_device[virq >> 2]);
 		}
 	}

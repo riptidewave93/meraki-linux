@@ -3,13 +3,17 @@
  * Handler for storing security labels as extended attributes.
  */
 
+#include <linux/module.h>
+#include <linux/string.h>
+#include <linux/fs.h>
+#include <linux/ext3_jbd.h>
+#include <linux/ext3_fs.h>
 #include <linux/security.h>
-#include "ext3.h"
 #include "xattr.h"
 
 static size_t
-ext3_xattr_security_list(struct dentry *dentry, char *list, size_t list_size,
-			 const char *name, size_t name_len, int type)
+ext3_xattr_security_list(struct inode *inode, char *list, size_t list_size,
+			 const char *name, size_t name_len)
 {
 	const size_t prefix_len = XATTR_SECURITY_PREFIX_LEN;
 	const size_t total_len = prefix_len + name_len + 1;
@@ -24,52 +28,47 @@ ext3_xattr_security_list(struct dentry *dentry, char *list, size_t list_size,
 }
 
 static int
-ext3_xattr_security_get(struct dentry *dentry, const char *name,
-		void *buffer, size_t size, int type)
+ext3_xattr_security_get(struct inode *inode, const char *name,
+		       void *buffer, size_t size)
 {
 	if (strcmp(name, "") == 0)
 		return -EINVAL;
-	return ext3_xattr_get(dentry->d_inode, EXT3_XATTR_INDEX_SECURITY,
-			      name, buffer, size);
+	return ext3_xattr_get(inode, EXT3_XATTR_INDEX_SECURITY, name,
+			      buffer, size);
 }
 
 static int
-ext3_xattr_security_set(struct dentry *dentry, const char *name,
-		const void *value, size_t size, int flags, int type)
+ext3_xattr_security_set(struct inode *inode, const char *name,
+		       const void *value, size_t size, int flags)
 {
 	if (strcmp(name, "") == 0)
 		return -EINVAL;
-	return ext3_xattr_set(dentry->d_inode, EXT3_XATTR_INDEX_SECURITY,
-			      name, value, size, flags);
-}
-
-int ext3_initxattrs(struct inode *inode, const struct xattr *xattr_array,
-		    void *fs_info)
-{
-	const struct xattr *xattr;
-	handle_t *handle = fs_info;
-	int err = 0;
-
-	for (xattr = xattr_array; xattr->name != NULL; xattr++) {
-		err = ext3_xattr_set_handle(handle, inode,
-					    EXT3_XATTR_INDEX_SECURITY,
-					    xattr->name, xattr->value,
-					    xattr->value_len, 0);
-		if (err < 0)
-			break;
-	}
-	return err;
+	return ext3_xattr_set(inode, EXT3_XATTR_INDEX_SECURITY, name,
+			      value, size, flags);
 }
 
 int
-ext3_init_security(handle_t *handle, struct inode *inode, struct inode *dir,
-		   const struct qstr *qstr)
+ext3_init_security(handle_t *handle, struct inode *inode, struct inode *dir)
 {
-	return security_inode_init_security(inode, dir, qstr,
-					    &ext3_initxattrs, handle);
+	int err;
+	size_t len;
+	void *value;
+	char *name;
+
+	err = security_inode_init_security(inode, dir, &name, &value, &len);
+	if (err) {
+		if (err == -EOPNOTSUPP)
+			return 0;
+		return err;
+	}
+	err = ext3_xattr_set_handle(handle, inode, EXT3_XATTR_INDEX_SECURITY,
+				    name, value, len, 0);
+	kfree(name);
+	kfree(value);
+	return err;
 }
 
-const struct xattr_handler ext3_xattr_security_handler = {
+struct xattr_handler ext3_xattr_security_handler = {
 	.prefix	= XATTR_SECURITY_PREFIX,
 	.list	= ext3_xattr_security_list,
 	.get	= ext3_xattr_security_get,

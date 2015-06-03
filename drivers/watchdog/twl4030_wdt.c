@@ -20,14 +20,13 @@
 
 #include <linux/module.h>
 #include <linux/types.h>
-#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/watchdog.h>
 #include <linux/platform_device.h>
 #include <linux/miscdevice.h>
 #include <linux/uaccess.h>
-#include <linux/i2c/twl.h>
+#include <linux/i2c/twl4030.h>
 
 #define TWL4030_WATCHDOG_CFG_REG_OFFS	0x3
 
@@ -42,14 +41,14 @@ struct twl4030_wdt {
 	unsigned long		state;
 };
 
-static bool nowayout = WATCHDOG_NOWAYOUT;
-module_param(nowayout, bool, 0);
+static int nowayout = WATCHDOG_NOWAYOUT;
+module_param(nowayout, int, 0);
 MODULE_PARM_DESC(nowayout, "Watchdog cannot be stopped once started "
 	"(default=" __MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
 
 static int twl4030_wdt_write(unsigned char val)
 {
-	return twl_i2c_write_u8(TWL4030_MODULE_PM_RECEIVER, val,
+	return twl4030_i2c_write_u8(TWL4030_MODULE_PM_RECEIVER, val,
 					TWL4030_WATCHDOG_CFG_REG_OFFS);
 }
 
@@ -190,8 +189,6 @@ static int __devinit twl4030_wdt_probe(struct platform_device *pdev)
 
 	twl4030_wdt_dev = pdev;
 
-	twl4030_wdt_disable(wdt);
-
 	ret = misc_register(&wdt->miscdev);
 	if (ret) {
 		dev_err(wdt->miscdev.parent,
@@ -256,7 +253,17 @@ static struct platform_driver twl4030_wdt_driver = {
 	},
 };
 
-module_platform_driver(twl4030_wdt_driver);
+static int __devinit twl4030_wdt_init(void)
+{
+	return platform_driver_register(&twl4030_wdt_driver);
+}
+module_init(twl4030_wdt_init);
+
+static void __devexit twl4030_wdt_exit(void)
+{
+	platform_driver_unregister(&twl4030_wdt_driver);
+}
+module_exit(twl4030_wdt_exit);
 
 MODULE_AUTHOR("Nokia Corporation");
 MODULE_LICENSE("GPL");

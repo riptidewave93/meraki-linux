@@ -17,6 +17,7 @@
 #include <linux/compiler.h>
 #include <asm/page.h>
 #include <asm/types.h>
+#include <asm/ptrace.h>
 #include <cpu/registers.h>
 
 /*
@@ -86,31 +87,26 @@ struct sh_fpu_hard_struct {
 	/* long status; * software status information */
 };
 
+#if 0
 /* Dummy fpu emulator  */
 struct sh_fpu_soft_struct {
-	unsigned long fp_regs[64];
+	unsigned long long fp_regs[32];
 	unsigned int fpscr;
 	unsigned char lookahead;
 	unsigned long entry_pc;
 };
+#endif
 
-union thread_xstate {
-	struct sh_fpu_hard_struct hardfpu;
-	struct sh_fpu_soft_struct softfpu;
-	/*
-	 * The structure definitions only produce 32 bit alignment, yet we need
-	 * to access them using 64 bit load/store as well.
-	 */
+union sh_fpu_union {
+	struct sh_fpu_hard_struct hard;
+	/* 'hard' itself only produces 32 bit alignment, yet we need
+	   to access it using 64 bit load/store as well. */
 	unsigned long long alignment_dummy;
 };
 
 struct thread_struct {
 	unsigned long sp;
 	unsigned long pc;
-
-	/* Various thread flags, see SH_THREAD_xxx */
-	unsigned long flags;
-
 	/* This stores the address of the pt_regs built during a context
 	   switch, or of the register save area built for a kernel mode
 	   exception.  It is used for backtracing the stack of a sleeping task
@@ -126,7 +122,7 @@ struct thread_struct {
 	/* Hardware debugging registers may come here */
 
 	/* floating point info */
-	union thread_xstate *xstate;
+	union sh_fpu_union fpu;
 };
 
 #define INIT_MMAP \
@@ -141,7 +137,7 @@ struct thread_struct {
 	.trap_no	= 0,			\
 	.error_code	= 0,			\
 	.address	= 0,			\
-	.flags		= 0,			\
+	.fpu		= { { { 0, } }, }	\
 }
 
 /*
@@ -150,6 +146,7 @@ struct thread_struct {
 #define SR_USER (SR_MMU | SR_FD)
 
 #define start_thread(_regs, new_pc, new_sp)			\
+	set_fs(USER_DS);					\
 	_regs->sr = SR_USER;	/* User mode. */		\
 	_regs->pc = new_pc - 4;	/* Compensate syscall exit */	\
 	_regs->pc |= 1;		/* Set SHmedia ! */		\
@@ -228,6 +225,8 @@ extern unsigned long get_wchan(struct task_struct *p);
 
 #define KSTK_EIP(tsk)  ((tsk)->thread.pc)
 #define KSTK_ESP(tsk)  ((tsk)->thread.sp)
+
+#define user_stack_pointer(_regs)	((_regs)->regs[15])
 
 #endif	/* __ASSEMBLY__ */
 #endif /* __ASM_SH_PROCESSOR_64_H */

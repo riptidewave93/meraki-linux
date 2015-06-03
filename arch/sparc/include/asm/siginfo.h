@@ -16,6 +16,8 @@
 
 #ifdef __KERNEL__
 
+#include <linux/compat.h>
+
 #ifdef CONFIG_COMPAT
 
 struct compat_siginfo;

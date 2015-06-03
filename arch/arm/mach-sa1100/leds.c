@@ -2,7 +2,7 @@
  * linux/arch/arm/mach-sa1100/leds.c
  *
  * SA1100 LEDs dispatcher
- *
+ * 
  * Copyright (C) 2001 Nicolas Pitre
  */
 #include <linux/compiler.h>
@@ -18,10 +18,10 @@ sa1100_leds_init(void)
 {
 	if (machine_is_assabet())
 		leds_event = assabet_leds_event;
-	if (machine_is_consus())
-		leds_event = consus_leds_event;
+ 	if (machine_is_consus())
+ 	        leds_event = consus_leds_event;
 	if (machine_is_badge4())
-		leds_event = badge4_leds_event;
+	  	leds_event = badge4_leds_event;
 	if (machine_is_brutus())
 		leds_event = brutus_leds_event;
 	if (machine_is_cerf())
@@ -42,6 +42,8 @@ sa1100_leds_init(void)
 		leds_event = adsbitsy_leds_event;
 	if (machine_is_pt_system3())
 		leds_event = system3_leds_event;
+	if (machine_is_simpad())
+		leds_event = simpad_leds_event; /* what about machine registry? including led, apm... -zecke */
 
 	leds_event(led_start);
 	return 0;

@@ -22,10 +22,10 @@
  */
 
 #include <linux/dmi.h>
-#include <linux/module.h>
+#include <linux/jiffies.h>
 #include <asm/div64.h>
+#include <asm/vmware.h>
 #include <asm/x86_init.h>
-#include <asm/hypervisor.h>
 
 #define CPUID_VMWARE_INFO_LEAF	0x40000000
 #define VMWARE_HYPERVISOR_MAGIC	0x564D5868
@@ -72,7 +72,7 @@ static unsigned long vmware_get_tsc_khz(void)
 	return tsc_hz;
 }
 
-static void __init vmware_platform_setup(void)
+void __init vmware_platform_setup(void)
 {
 	uint32_t eax, ebx, ecx, edx;
 
@@ -86,25 +86,28 @@ static void __init vmware_platform_setup(void)
 }
 
 /*
- * While checking the dmi string information, just checking the product
+ * While checking the dmi string infomation, just checking the product
  * serial key should be enough, as this will always have a VMware
  * specific string when running under VMware hypervisor.
  */
-static bool __init vmware_platform(void)
+int vmware_platform(void)
 {
 	if (cpu_has_hypervisor) {
-		unsigned int eax;
-		unsigned int hyper_vendor_id[3];
+		unsigned int eax, ebx, ecx, edx;
+		char hyper_vendor_id[13];
 
-		cpuid(CPUID_VMWARE_INFO_LEAF, &eax, &hyper_vendor_id[0],
-		      &hyper_vendor_id[1], &hyper_vendor_id[2]);
-		if (!memcmp(hyper_vendor_id, "VMwareVMware", 12))
-			return true;
+		cpuid(CPUID_VMWARE_INFO_LEAF, &eax, &ebx, &ecx, &edx);
+		memcpy(hyper_vendor_id + 0, &ebx, 4);
+		memcpy(hyper_vendor_id + 4, &ecx, 4);
+		memcpy(hyper_vendor_id + 8, &edx, 4);
+		hyper_vendor_id[12] = '\0';
+		if (!strcmp(hyper_vendor_id, "VMwareVMware"))
+			return 1;
 	} else if (dmi_available && dmi_name_in_serial("VMware") &&
 		   __vmware_platform())
-		return true;
+		return 1;
 
-	return false;
+	return 0;
 }
 
 /*
@@ -119,16 +122,8 @@ static bool __init vmware_platform(void)
  * so that the kernel could just trust the hypervisor with providing a
  * reliable virtual TSC that is suitable for timekeeping.
  */
-static void __cpuinit vmware_set_cpu_features(struct cpuinfo_x86 *c)
+void __cpuinit vmware_set_feature_bits(struct cpuinfo_x86 *c)
 {
 	set_cpu_cap(c, X86_FEATURE_CONSTANT_TSC);
 	set_cpu_cap(c, X86_FEATURE_TSC_RELIABLE);
 }
-
-const __refconst struct hypervisor_x86 x86_hyper_vmware = {
-	.name			= "VMware",
-	.detect			= vmware_platform,
-	.set_cpu_features	= vmware_set_cpu_features,
-	.init_platform		= vmware_platform_setup,
-};
-EXPORT_SYMBOL(x86_hyper_vmware);

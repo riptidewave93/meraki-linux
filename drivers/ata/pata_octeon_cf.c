@@ -13,7 +13,6 @@
 #include <linux/module.h>
 #include <linux/libata.h>
 #include <linux/irq.h>
-#include <linux/slab.h>
 #include <linux/platform_device.h>
 #include <linux/workqueue.h>
 #include <scsi/scsi_host.h>
@@ -60,7 +59,7 @@ static unsigned int ns_to_tim_reg(unsigned int tim_mult, unsigned int nsecs)
 	 * Compute # of eclock periods to get desired duration in
 	 * nanoseconds.
 	 */
-	val = DIV_ROUND_UP(nsecs * (octeon_get_io_clock_rate() / 1000000),
+	val = DIV_ROUND_UP(nsecs * (octeon_get_clock_rate() / 1000000),
 			  1000 * tim_mult);
 
 	return val;
@@ -405,7 +404,7 @@ static int octeon_cf_softreset16(struct ata_link *link, unsigned int *classes,
 
 	rc = ata_sff_wait_after_reset(link, 1, deadline);
 	if (rc) {
-		ata_link_err(link, "SRST failed (errno=%d)\n", rc);
+		ata_link_printk(link, KERN_ERR, "SRST failed (errno=%d)\n", rc);
 		return rc;
 	}
 
@@ -489,8 +488,9 @@ static void octeon_cf_exec_command16(struct ata_port *ap,
 	ata_wait_idle(ap);
 }
 
-static void octeon_cf_irq_on(struct ata_port *ap)
+static u8 octeon_cf_irq_on(struct ata_port *ap)
 {
+	return 0;
 }
 
 static void octeon_cf_irq_clear(struct ata_port *ap)
@@ -653,6 +653,11 @@ static irqreturn_t octeon_cf_interrupt(int irq, void *dev_instance)
 
 		ap = host->ports[i];
 		ocd = ap->dev->platform_data;
+
+		if (ap->flags & ATA_FLAG_DISABLED)
+			continue;
+
+		ocd = ap->dev->platform_data;
 		cf_port = ap->private_data;
 		dma_int.u64 =
 			cvmx_read_csr(CVMX_MIO_BOOT_DMA_INTX(ocd->dma_engine));
@@ -661,7 +666,8 @@ static irqreturn_t octeon_cf_interrupt(int irq, void *dev_instance)
 
 		qc = ata_qc_from_tag(ap, ap->link.active_tag);
 
-		if (qc && !(qc->tf.flags & ATA_TFLAG_POLLING)) {
+		if (qc && (!(qc->tf.flags & ATA_TFLAG_POLLING)) &&
+		    (qc->flags & ATA_QCFLAG_ACTIVE)) {
 			if (dma_int.s.done && !dma_cfg.s.en) {
 				if (!sg_is_last(qc->cursg)) {
 					qc->cursg = sg_next(qc->cursg);
@@ -731,7 +737,8 @@ static void octeon_cf_delayed_finish(struct work_struct *work)
 		goto out;
 	}
 	qc = ata_qc_from_tag(ap, ap->link.active_tag);
-	if (qc && !(qc->tf.flags & ATA_TFLAG_POLLING))
+	if (qc && (!(qc->tf.flags & ATA_TFLAG_POLLING)) &&
+	    (qc->flags & ATA_QCFLAG_ACTIVE))
 		octeon_cf_dma_finished(ap, qc);
 out:
 	spin_unlock_irqrestore(&host->lock, flags);
@@ -745,6 +752,20 @@ static void octeon_cf_dev_config(struct ata_device *dev)
 	 * (2^12 - 1 == 4095) to assure that this can never happen.
 	 */
 	dev->max_sectors = min(dev->max_sectors, 4095U);
+}
+
+/*
+ * Trap if driver tries to do standard bmdma commands.  They are not
+ * supported.
+ */
+static void unreachable_qc(struct ata_queued_cmd *qc)
+{
+	BUG();
+}
+
+static u8 unreachable_port(struct ata_port *ap)
+{
+	BUG();
 }
 
 /*
@@ -788,6 +809,10 @@ static struct ata_port_operations octeon_cf_ops = {
 	.sff_dev_select		= octeon_cf_dev_select,
 	.sff_irq_on		= octeon_cf_irq_on,
 	.sff_irq_clear		= octeon_cf_irq_clear,
+	.bmdma_setup		= unreachable_qc,
+	.bmdma_start		= unreachable_qc,
+	.bmdma_stop		= unreachable_qc,
+	.bmdma_status		= unreachable_port,
 	.cable_detect		= ata_cable_40wire,
 	.set_piomode		= octeon_cf_set_piomode,
 	.set_dmamode		= octeon_cf_set_dmamode,
@@ -807,7 +832,6 @@ static int __devinit octeon_cf_probe(struct platform_device *pdev)
 	irq_handler_t irq_handler = NULL;
 	void __iomem *base;
 	struct octeon_cf_port *cf_port;
-	char version[32];
 
 	res_cs0 = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 
@@ -829,7 +853,7 @@ static int __devinit octeon_cf_probe(struct platform_device *pdev)
 			return -EINVAL;
 
 		cs1 = devm_ioremap_nocache(&pdev->dev, res_cs1->start,
-					   resource_size(res_cs1));
+					   res_cs0->end - res_cs1->start + 1);
 
 		if (!cs1)
 			return -ENOMEM;
@@ -849,7 +873,8 @@ static int __devinit octeon_cf_probe(struct platform_device *pdev)
 	cf_port->ap = ap;
 	ap->ops = &octeon_cf_ops;
 	ap->pio_mask = ATA_PIO6;
-	ap->flags |= ATA_FLAG_NO_ATAPI | ATA_FLAG_PIO_POLLING;
+	ap->flags |= ATA_FLAG_MMIO | ATA_FLAG_NO_LEGACY
+		  | ATA_FLAG_NO_ATAPI | ATA_FLAG_PIO_POLLING;
 
 	base = cs0 + ocd->base_region_bias;
 	if (!ocd->is16bit) {
@@ -906,11 +931,10 @@ static int __devinit octeon_cf_probe(struct platform_device *pdev)
 	ata_port_desc(ap, "cmd %p ctl %p", base, ap->ioaddr.ctl_addr);
 
 
-	snprintf(version, sizeof(version), "%s %d bit%s",
-		 DRV_VERSION,
+	dev_info(&pdev->dev, "version " DRV_VERSION" %d bit%s.\n",
 		 (ocd->is16bit) ? 16 : 8,
 		 (cs1) ? ", True IDE" : "");
-	ata_print_version_once(&pdev->dev, version);
+
 
 	return ata_host_activate(host, irq, irq_handler, 0, &octeon_cf_sht);
 

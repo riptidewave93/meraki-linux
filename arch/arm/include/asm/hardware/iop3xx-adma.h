@@ -366,7 +366,8 @@ static inline int iop_chan_xor_slot_count(size_t len, int src_cnt,
 		slot_cnt += *slots_per_op;
 	}
 
-	slot_cnt += *slots_per_op;
+	if (len)
+		slot_cnt += *slots_per_op;
 
 	return slot_cnt;
 }
@@ -388,7 +389,8 @@ static inline int iop_chan_zero_sum_slot_count(size_t len, int src_cnt,
 		slot_cnt += *slots_per_op;
 	}
 
-	slot_cnt += *slots_per_op;
+	if (len)
+		slot_cnt += *slots_per_op;
 
 	return slot_cnt;
 }
@@ -735,8 +737,10 @@ iop_desc_set_zero_sum_byte_count(struct iop_adma_desc_slot *desc, u32 len)
 			i += slots_per_op;
 		} while (len > IOP_ADMA_ZERO_SUM_MAX_BYTE_COUNT);
 
-		iter = iop_hw_desc_slot_idx(hw_desc, i);
-		iter->byte_count = len;
+		if (len) {
+			iter = iop_hw_desc_slot_idx(hw_desc, i);
+			iter->byte_count = len;
+		}
 	}
 }
 

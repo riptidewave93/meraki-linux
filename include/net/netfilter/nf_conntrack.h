@@ -14,9 +14,10 @@
 
 #include <linux/netfilter/nf_conntrack_common.h>
 
+#ifdef __KERNEL__
 #include <linux/bitops.h>
 #include <linux/compiler.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include <linux/netfilter/nf_conntrack_tcp.h>
 #include <linux/netfilter/nf_conntrack_dccp.h>
@@ -49,24 +50,11 @@ union nf_conntrack_expect_proto {
 /* per conntrack: application helper private data */
 union nf_conntrack_help {
 	/* insert conntrack helper private data (master) here */
-#if defined(CONFIG_NF_CONNTRACK_FTP) || defined(CONFIG_NF_CONNTRACK_FTP_MODULE)
 	struct nf_ct_ftp_master ct_ftp_info;
-#endif
-#if defined(CONFIG_NF_CONNTRACK_PPTP) || \
-    defined(CONFIG_NF_CONNTRACK_PPTP_MODULE)
 	struct nf_ct_pptp_master ct_pptp_info;
-#endif
-#if defined(CONFIG_NF_CONNTRACK_H323) || \
-    defined(CONFIG_NF_CONNTRACK_H323_MODULE)
 	struct nf_ct_h323_master ct_h323_info;
-#endif
-#if defined(CONFIG_NF_CONNTRACK_SANE) || \
-    defined(CONFIG_NF_CONNTRACK_SANE_MODULE)
 	struct nf_ct_sane_master ct_sane_info;
-#endif
-#if defined(CONFIG_NF_CONNTRACK_SIP) || defined(CONFIG_NF_CONNTRACK_SIP_MODULE)
 	struct nf_ct_sip_master ct_sip_info;
-#endif
 };
 
 #include <linux/types.h>
@@ -82,12 +70,12 @@ union nf_conntrack_help {
 struct nf_conntrack_helper;
 
 /* Must be kept in sync with the classes defined by helpers */
-#define NF_CT_MAX_EXPECT_CLASSES	4
+#define NF_CT_MAX_EXPECT_CLASSES	3
 
 /* nf_conn feature for connections that have a helper */
 struct nf_conn_help {
 	/* Helper. if any */
-	struct nf_conntrack_helper __rcu *helper;
+	struct nf_conntrack_helper *helper;
 
 	union nf_conntrack_help help;
 
@@ -128,14 +116,14 @@ struct nf_conn {
 	u_int32_t secmark;
 #endif
 
+	/* Storage reserved for other modules: */
+	union nf_conntrack_proto proto;
+
 	/* Extensions */
 	struct nf_ct_ext *ext;
 #ifdef CONFIG_NET_NS
 	struct net *ct_net;
 #endif
-
-	/* Storage reserved for other modules, must be the last member */
-	union nf_conntrack_proto proto;
 };
 
 static inline struct nf_conn *
@@ -164,7 +152,11 @@ extern struct net init_net;
 
 static inline struct net *nf_ct_net(const struct nf_conn *ct)
 {
-	return read_pnet(&ct->ct_net);
+#ifdef CONFIG_NET_NS
+	return ct->ct_net;
+#else
+	return &init_net;
+#endif
 }
 
 /* Alter reply tuple (maybe alter helper). */
@@ -201,15 +193,14 @@ extern void nf_ct_l3proto_module_put(unsigned short l3proto);
  * Allocate a hashtable of hlist_head (if nulls == 0),
  * or hlist_nulls_head (if nulls == 1)
  */
-extern void *nf_ct_alloc_hashtable(unsigned int *sizep, int nulls);
+extern void *nf_ct_alloc_hashtable(unsigned int *sizep, int *vmalloced, int nulls);
 
-extern void nf_ct_free_hashtable(void *hash, unsigned int size);
+extern void nf_ct_free_hashtable(void *hash, int vmalloced, unsigned int size);
 
 extern struct nf_conntrack_tuple_hash *
-__nf_conntrack_find(struct net *net, u16 zone,
-		    const struct nf_conntrack_tuple *tuple);
+__nf_conntrack_find(struct net *net, const struct nf_conntrack_tuple *tuple);
 
-extern int nf_conntrack_hash_check_insert(struct nf_conn *ct);
+extern void nf_conntrack_hash_insert(struct nf_conn *ct);
 extern void nf_ct_delete_from_lists(struct nf_conn *ct);
 extern void nf_ct_insert_dying_list(struct nf_conn *ct);
 
@@ -269,27 +260,17 @@ extern s16 (*nf_ct_nat_offset)(const struct nf_conn *ct,
 			       u32 seq);
 
 /* Fake conntrack entry for untracked connections */
-DECLARE_PER_CPU(struct nf_conn, nf_conntrack_untracked);
-static inline struct nf_conn *nf_ct_untracked_get(void)
-{
-	return &__raw_get_cpu_var(nf_conntrack_untracked);
-}
-extern void nf_ct_untracked_status_or(unsigned long bits);
+extern struct nf_conn nf_conntrack_untracked;
 
 /* Iterate over all conntracks: if iter returns true, it's deleted. */
 extern void
 nf_ct_iterate_cleanup(struct net *net, int (*iter)(struct nf_conn *i, void *data), void *data);
 extern void nf_conntrack_free(struct nf_conn *ct);
 extern struct nf_conn *
-nf_conntrack_alloc(struct net *net, u16 zone,
+nf_conntrack_alloc(struct net *net,
 		   const struct nf_conntrack_tuple *orig,
 		   const struct nf_conntrack_tuple *repl,
 		   gfp_t gfp);
-
-static inline int nf_ct_is_template(const struct nf_conn *ct)
-{
-	return test_bit(IPS_TEMPLATE_BIT, &ct->status);
-}
 
 /* It's confirmed if it is, or has been in the hash table. */
 static inline int nf_ct_is_confirmed(struct nf_conn *ct)
@@ -302,35 +283,26 @@ static inline int nf_ct_is_dying(struct nf_conn *ct)
 	return test_bit(IPS_DYING_BIT, &ct->status);
 }
 
-static inline int nf_ct_is_untracked(const struct nf_conn *ct)
+static inline int nf_ct_is_untracked(const struct sk_buff *skb)
 {
-	return test_bit(IPS_UNTRACKED_BIT, &ct->status);
+	return (skb->nfct == &nf_conntrack_untracked.ct_general);
 }
-
-/* Packet is received from loopback */
-static inline bool nf_is_loopback_packet(const struct sk_buff *skb)
-{
-	return skb->dev && skb->skb_iif && skb->dev->flags & IFF_LOOPBACK;
-}
-
-struct kernel_param;
 
 extern int nf_conntrack_set_hashsize(const char *val, struct kernel_param *kp);
 extern unsigned int nf_conntrack_htable_size;
 extern unsigned int nf_conntrack_max;
-extern unsigned int nf_conntrack_hash_rnd;
-void init_nf_conntrack_hash_rnd(void);
 
 #define NF_CT_STAT_INC(net, count)	\
-	__this_cpu_inc((net)->ct.stat->count)
+	(per_cpu_ptr((net)->ct.stat, raw_smp_processor_id())->count++)
 #define NF_CT_STAT_INC_ATOMIC(net, count)		\
 do {							\
 	local_bh_disable();				\
-	__this_cpu_inc((net)->ct.stat->count);		\
+	per_cpu_ptr((net)->ct.stat, raw_smp_processor_id())->count++;	\
 	local_bh_enable();				\
 } while (0)
 
 #define MODULE_ALIAS_NFCT_HELPER(helper) \
         MODULE_ALIAS("nfct-helper-" helper)
 
+#endif /* __KERNEL__ */
 #endif /* _NF_CONNTRACK_H */

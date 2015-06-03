@@ -80,7 +80,7 @@ static inline void __hlist_nulls_del(struct hlist_nulls_node *n)
 static inline void hlist_nulls_del(struct hlist_nulls_node *n)
 {
 	__hlist_nulls_del(n);
-	n->pprev = LIST_POISON2;
+	n->pprev = (struct hlist_nulls_node **)LIST_POISON2;
 }
 
 /**

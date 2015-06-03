@@ -45,7 +45,6 @@
 #include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/stddef.h>
-#include <linux/slab.h>
 #include <linux/isapnp.h>
 #include <linux/pnp.h>
 #include <linux/spinlock.h>
@@ -119,9 +118,9 @@ ad1848_port_info;
 static struct address_info cfg;
 static int nr_ad1848_devs;
 
-static bool deskpro_xl;
-static bool deskpro_m;
-static bool soundpro;
+static int deskpro_xl;
+static int deskpro_m;
+static int soundpro;
 
 static volatile signed char irq2dev[17] = {
 	-1, -1, -1, -1, -1, -1, -1, -1,
@@ -177,7 +176,7 @@ static struct {
 #ifdef CONFIG_PNP
 static int isapnp	= 1;
 static int isapnpjump;
-static bool reverse;
+static int reverse;
 
 static int audio_activated;
 #else
@@ -458,7 +457,7 @@ static int ad1848_set_recmask(ad1848_info * devc, int mask)
 	return mask;
 }
 
-static void oss_change_bits(ad1848_info *devc, unsigned char *regval,
+static void change_bits(ad1848_info * devc, unsigned char *regval,
 			unsigned char *muteval, int dev, int chn, int newval)
 {
 	unsigned char mask;
@@ -516,10 +515,10 @@ static void ad1848_mixer_set_channel(ad1848_info *devc, int dev, int value, int 
 
 	if (muteregoffs != regoffs) {
 		muteval = ad_read(devc, muteregoffs);
-		oss_change_bits(devc, &val, &muteval, dev, channel, value);
+		change_bits(devc, &val, &muteval, dev, channel, value);
 	}
 	else
-		oss_change_bits(devc, &val, &val, dev, channel, value);
+		change_bits(devc, &val, &val, dev, channel, value);
 
 	spin_lock_irqsave(&devc->lock,flags);
 	ad_write(devc, regoffs, val);
@@ -716,7 +715,7 @@ static int ad1848_mixer_ioctl(int dev, unsigned int cmd, void __user *arg)
 				
 				default:
 					if (get_user(val, (int __user *)arg))
-						return -EFAULT;
+					return -EFAULT;
 					val = ad1848_mixer_set(devc, cmd & 0xff, val);
 					break;
 			} 

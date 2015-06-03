@@ -185,7 +185,7 @@ static struct crypto_instance *crypto_ctr_alloc(struct rtattr **tb)
 	alg = crypto_attr_alg(tb[1], CRYPTO_ALG_TYPE_CIPHER,
 				  CRYPTO_ALG_TYPE_MASK);
 	if (IS_ERR(alg))
-		return ERR_CAST(alg);
+		return ERR_PTR(PTR_ERR(alg));
 
 	/* Block size must be >= 4 bytes. */
 	err = -EINVAL;
@@ -288,7 +288,7 @@ static int crypto_rfc3686_crypt(struct blkcipher_desc *desc,
 
 	/* initialize counter portion of counter block */
 	*(__be32 *)(iv + CTR_RFC3686_NONCE_SIZE + CTR_RFC3686_IV_SIZE) =
-		cpu_to_be32(!(desc->flags & CRYPTO_TFM_REQ_MERAKI_MODE));
+		cpu_to_be32(1);
 
 	desc->tfm = child;
 	desc->info = iv;

@@ -23,6 +23,7 @@
 #include <asm/types.h>
 #include <asm/mach-types.h>
 #include <asm/page.h>
+#include <asm/pgtable.h>
 #include <asm/mach/arch.h>
 #include <mach/irqs.h>
 #include <mach/hardware.h>
@@ -71,11 +72,11 @@ static void __init init_eval_h7202(void)
 
 MACHINE_START(H7202, "Hynix HMS30C7202")
 	/* Maintainer: Robert Schwebel, Pengutronix */
-	.atag_offset	= 0x100,
+	.phys_io	= 0x80000000,
+	.io_pg_offst	= ((0xf0000000) >> 18) & 0xfffc,
+	.boot_params	= 0x40000100,
 	.map_io		= h720x_map_io,
 	.init_irq	= h7202_init_irq,
 	.timer		= &h7202_timer,
 	.init_machine	= init_eval_h7202,
-	.dma_zone_size	= SZ_256M,
-	.restart	= h720x_restart,
 MACHINE_END

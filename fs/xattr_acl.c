@@ -5,10 +5,10 @@
  * Copyright (C) 2001 by Andreas Gruenbacher, <a.gruenbacher@computer.org>
  */
 
-#include <linux/export.h>
+#include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/fs.h>
 #include <linux/posix_acl_xattr.h>
-#include <linux/gfp.h>
 
 
 /*
@@ -36,7 +36,7 @@ posix_acl_from_xattr(const void *value, size_t size)
 	if (count == 0)
 		return NULL;
 	
-	acl = posix_acl_alloc(count, GFP_NOFS);
+	acl = posix_acl_alloc(count, GFP_KERNEL);
 	if (!acl)
 		return ERR_PTR(-ENOMEM);
 	acl_e = acl->a_entries;

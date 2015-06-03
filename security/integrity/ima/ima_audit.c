@@ -11,7 +11,6 @@
  */
 
 #include <linux/fs.h>
-#include <linux/gfp.h>
 #include <linux/audit.h>
 #include "ima.h"
 
@@ -41,7 +40,7 @@ void integrity_audit_msg(int audit_msgno, struct inode *inode,
 		return;
 
 	ab = audit_log_start(current->audit_context, GFP_KERNEL, audit_msgno);
-	audit_log_format(ab, "pid=%d uid=%u auid=%u ses=%u",
+	audit_log_format(ab, "integrity: pid=%d uid=%u auid=%u ses=%u",
 			 current->pid, current_cred()->uid,
 			 audit_get_loginuid(current),
 			 audit_get_sessionid(current));
@@ -56,11 +55,9 @@ void integrity_audit_msg(int audit_msgno, struct inode *inode,
 		audit_log_format(ab, " name=");
 		audit_log_untrustedstring(ab, fname);
 	}
-	if (inode) {
-		audit_log_format(ab, " dev=");
-		audit_log_untrustedstring(ab, inode->i_sb->s_id);
-		audit_log_format(ab, " ino=%lu", inode->i_ino);
-	}
-	audit_log_format(ab, " res=%d", !result);
+	if (inode)
+		audit_log_format(ab, " dev=%s ino=%lu",
+				 inode->i_sb->s_id, inode->i_ino);
+	audit_log_format(ab, " res=%d", !result ? 0 : 1);
 	audit_log_end(ab);
 }

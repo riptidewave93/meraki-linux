@@ -11,7 +11,7 @@
 
 #include <linux/types.h>
 
-#if defined(CONFIG_64BIT_PHYS_ADDR) && defined(CONFIG_PCI)
+#ifdef CONFIG_64BIT_PHYS_ADDR
 extern phys_t __fixup_bigphys_addr(phys_t, phys_t);
 #else
 static inline phys_t __fixup_bigphys_addr(phys_t phys_addr, phys_t size)

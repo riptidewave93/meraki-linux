@@ -35,10 +35,8 @@
 #include <linux/mm.h>
 #include <linux/dma-mapping.h>
 #include <linux/sched.h>
-#include <linux/export.h>
 #include <linux/hugetlb.h>
 #include <linux/dma-attrs.h>
-#include <linux/slab.h>
 
 #include "uverbs.h"
 
@@ -137,8 +135,8 @@ struct ib_umem *ib_umem_get(struct ib_ucontext *context, unsigned long addr,
 
 	down_write(&current->mm->mmap_sem);
 
-	locked     = npages + current->mm->pinned_vm;
-	lock_limit = rlimit(RLIMIT_MEMLOCK) >> PAGE_SHIFT;
+	locked     = npages + current->mm->locked_vm;
+	lock_limit = current->signal->rlim[RLIMIT_MEMLOCK].rlim_cur >> PAGE_SHIFT;
 
 	if ((locked > lock_limit) && !capable(CAP_IPC_LOCK)) {
 		ret = -ENOMEM;
@@ -207,7 +205,7 @@ out:
 		__ib_umem_release(context->device, umem, 0);
 		kfree(umem);
 	} else
-		current->mm->pinned_vm = locked;
+		current->mm->locked_vm = locked;
 
 	up_write(&current->mm->mmap_sem);
 	if (vma_list)
@@ -223,7 +221,7 @@ static void ib_umem_account(struct work_struct *work)
 	struct ib_umem *umem = container_of(work, struct ib_umem, work);
 
 	down_write(&umem->mm->mmap_sem);
-	umem->mm->pinned_vm -= umem->diff;
+	umem->mm->locked_vm -= umem->diff;
 	up_write(&umem->mm->mmap_sem);
 	mmput(umem->mm);
 	kfree(umem);
@@ -263,13 +261,13 @@ void ib_umem_release(struct ib_umem *umem)
 			umem->mm   = mm;
 			umem->diff = diff;
 
-			queue_work(ib_wq, &umem->work);
+			schedule_work(&umem->work);
 			return;
 		}
 	} else
 		down_write(&mm->mmap_sem);
 
-	current->mm->pinned_vm -= diff;
+	current->mm->locked_vm -= diff;
 	up_write(&mm->mmap_sem);
 	mmput(mm);
 	kfree(umem);

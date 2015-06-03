@@ -17,6 +17,7 @@
 #include <linux/ioport.h>
 #include <linux/list.h>
 #include <linux/errno.h>
+#include <linux/device.h>
 #include <linux/string.h>
 #include <linux/rio.h>
 
@@ -149,8 +150,16 @@ static inline int rio_local_write_config_8(struct rio_mport *port, u32 offset,
 static inline int rio_read_config_32(struct rio_dev *rdev, u32 offset,
 				     u32 * data)
 {
-	return rio_mport_read_config_32(rdev->net->hport, rdev->destid,
-					rdev->hopcount, offset, data);
+	u8 hopcount = 0xff;
+	u16 destid = rdev->destid;
+
+	if (rdev->rswitch) {
+		destid = rdev->rswitch->destid;
+		hopcount = rdev->rswitch->hopcount;
+	}
+
+	return rio_mport_read_config_32(rdev->net->hport, destid, hopcount,
+					offset, data);
 };
 
 /**
@@ -165,8 +174,16 @@ static inline int rio_read_config_32(struct rio_dev *rdev, u32 offset,
 static inline int rio_write_config_32(struct rio_dev *rdev, u32 offset,
 				      u32 data)
 {
-	return rio_mport_write_config_32(rdev->net->hport, rdev->destid,
-					 rdev->hopcount, offset, data);
+	u8 hopcount = 0xff;
+	u16 destid = rdev->destid;
+
+	if (rdev->rswitch) {
+		destid = rdev->rswitch->destid;
+		hopcount = rdev->rswitch->hopcount;
+	}
+
+	return rio_mport_write_config_32(rdev->net->hport, destid, hopcount,
+					 offset, data);
 };
 
 /**
@@ -181,8 +198,16 @@ static inline int rio_write_config_32(struct rio_dev *rdev, u32 offset,
 static inline int rio_read_config_16(struct rio_dev *rdev, u32 offset,
 				     u16 * data)
 {
-	return rio_mport_read_config_16(rdev->net->hport, rdev->destid,
-					rdev->hopcount, offset, data);
+	u8 hopcount = 0xff;
+	u16 destid = rdev->destid;
+
+	if (rdev->rswitch) {
+		destid = rdev->rswitch->destid;
+		hopcount = rdev->rswitch->hopcount;
+	}
+
+	return rio_mport_read_config_16(rdev->net->hport, destid, hopcount,
+					offset, data);
 };
 
 /**
@@ -197,8 +222,16 @@ static inline int rio_read_config_16(struct rio_dev *rdev, u32 offset,
 static inline int rio_write_config_16(struct rio_dev *rdev, u32 offset,
 				      u16 data)
 {
-	return rio_mport_write_config_16(rdev->net->hport, rdev->destid,
-					 rdev->hopcount, offset, data);
+	u8 hopcount = 0xff;
+	u16 destid = rdev->destid;
+
+	if (rdev->rswitch) {
+		destid = rdev->rswitch->destid;
+		hopcount = rdev->rswitch->hopcount;
+	}
+
+	return rio_mport_write_config_16(rdev->net->hport, destid, hopcount,
+					 offset, data);
 };
 
 /**
@@ -212,8 +245,16 @@ static inline int rio_write_config_16(struct rio_dev *rdev, u32 offset,
  */
 static inline int rio_read_config_8(struct rio_dev *rdev, u32 offset, u8 * data)
 {
-	return rio_mport_read_config_8(rdev->net->hport, rdev->destid,
-				       rdev->hopcount, offset, data);
+	u8 hopcount = 0xff;
+	u16 destid = rdev->destid;
+
+	if (rdev->rswitch) {
+		destid = rdev->rswitch->destid;
+		hopcount = rdev->rswitch->hopcount;
+	}
+
+	return rio_mport_read_config_8(rdev->net->hport, destid, hopcount,
+				       offset, data);
 };
 
 /**
@@ -227,8 +268,16 @@ static inline int rio_read_config_8(struct rio_dev *rdev, u32 offset, u8 * data)
  */
 static inline int rio_write_config_8(struct rio_dev *rdev, u32 offset, u8 data)
 {
-	return rio_mport_write_config_8(rdev->net->hport, rdev->destid,
-					rdev->hopcount, offset, data);
+	u8 hopcount = 0xff;
+	u16 destid = rdev->destid;
+
+	if (rdev->rswitch) {
+		destid = rdev->rswitch->destid;
+		hopcount = rdev->rswitch->hopcount;
+	}
+
+	return rio_mport_write_config_8(rdev->net->hport, destid, hopcount,
+					offset, data);
 };
 
 extern int rio_mport_send_doorbell(struct rio_mport *mport, u16 destid,
@@ -316,8 +365,7 @@ static inline int rio_add_outb_message(struct rio_mport *mport,
 				       struct rio_dev *rdev, int mbox,
 				       void *buffer, size_t len)
 {
-	return mport->ops->add_outb_message(mport, rdev, mbox,
-						   buffer, len);
+	return rio_hw_add_outb_message(mport, rdev, mbox, buffer, len);
 }
 
 extern int rio_request_inb_mbox(struct rio_mport *, void *, int, int,
@@ -336,7 +384,7 @@ extern int rio_release_inb_mbox(struct rio_mport *, int);
 static inline int rio_add_inb_buffer(struct rio_mport *mport, int mbox,
 				     void *buffer)
 {
-	return mport->ops->add_inb_buffer(mport, mbox, buffer);
+	return rio_hw_add_inb_buffer(mport, mbox, buffer);
 }
 
 /**
@@ -348,7 +396,7 @@ static inline int rio_add_inb_buffer(struct rio_mport *mport, int mbox,
  */
 static inline void *rio_get_inb_message(struct rio_mport *mport, int mbox)
 {
-	return mport->ops->get_inb_message(mport, mbox);
+	return rio_hw_get_inb_message(mport, mbox);
 }
 
 /* Doorbell management */
@@ -364,12 +412,6 @@ int rio_request_regions(struct rio_dev *, char *);
 void rio_release_regions(struct rio_dev *);
 int rio_request_region(struct rio_dev *, int, char *);
 void rio_release_region(struct rio_dev *, int);
-
-/* Port-Write management */
-extern int rio_request_inb_pwrite(struct rio_dev *,
-			int (*)(struct rio_dev *, union rio_pw_msg*, int));
-extern int rio_release_inb_pwrite(struct rio_dev *);
-extern int rio_inb_pwrite_handler(union rio_pw_msg *pw_msg);
 
 /* LDM support */
 int rio_register_driver(struct rio_driver *);

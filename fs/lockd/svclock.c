@@ -21,10 +21,10 @@
  */
 
 #include <linux/types.h>
-#include <linux/slab.h>
 #include <linux/errno.h>
 #include <linux/kernel.h>
 #include <linux/sched.h>
+#include <linux/smp_lock.h>
 #include <linux/sunrpc/clnt.h>
 #include <linux/sunrpc/svc.h>
 #include <linux/lockd/nlm.h>
@@ -51,42 +51,12 @@ static const struct rpc_call_ops nlmsvc_grant_ops;
  * The list of blocked locks to retry
  */
 static LIST_HEAD(nlm_blocked);
-static DEFINE_SPINLOCK(nlm_blocked_lock);
-
-#ifdef LOCKD_DEBUG
-static const char *nlmdbg_cookie2a(const struct nlm_cookie *cookie)
-{
-	/*
-	 * We can get away with a static buffer because we're only
-	 * called with BKL held.
-	 */
-	static char buf[2*NLM_MAXCOOKIELEN+1];
-	unsigned int i, len = sizeof(buf);
-	char *p = buf;
-
-	len--;	/* allow for trailing \0 */
-	if (len < 3)
-		return "???";
-	for (i = 0 ; i < cookie->len ; i++) {
-		if (len < 2) {
-			strcpy(p-3, "...");
-			break;
-		}
-		sprintf(p, "%02x", cookie->data[i]);
-		p += 2;
-		len -= 2;
-	}
-	*p = '\0';
-
-	return buf;
-}
-#endif
 
 /*
  * Insert a blocked lock into the global list
  */
 static void
-nlmsvc_insert_block_locked(struct nlm_block *block, unsigned long when)
+nlmsvc_insert_block(struct nlm_block *block, unsigned long when)
 {
 	struct nlm_block *b;
 	struct list_head *pos;
@@ -116,13 +86,6 @@ nlmsvc_insert_block_locked(struct nlm_block *block, unsigned long when)
 	block->b_when = when;
 }
 
-static void nlmsvc_insert_block(struct nlm_block *block, unsigned long when)
-{
-	spin_lock(&nlm_blocked_lock);
-	nlmsvc_insert_block_locked(block, when);
-	spin_unlock(&nlm_blocked_lock);
-}
-
 /*
  * Remove a block from the global list
  */
@@ -130,9 +93,7 @@ static inline void
 nlmsvc_remove_block(struct nlm_block *block)
 {
 	if (!list_empty(&block->b_list)) {
-		spin_lock(&nlm_blocked_lock);
 		list_del_init(&block->b_list);
-		spin_unlock(&nlm_blocked_lock);
 		nlmsvc_release_block(block);
 	}
 }
@@ -262,7 +223,7 @@ nlmsvc_create_block(struct svc_rqst *rqstp, struct nlm_host *host,
 failed_free:
 	kfree(block);
 failed:
-	nlmsvc_release_call(call);
+	nlm_release_call(call);
 	return NULL;
 }
 
@@ -295,7 +256,7 @@ static void nlmsvc_free_block(struct kref *kref)
 	mutex_unlock(&file->f_mutex);
 
 	nlmsvc_freegrantargs(block->b_call);
-	nlmsvc_release_call(block->b_call);
+	nlm_release_call(block->b_call);
 	nlm_release_file(block->b_file);
 	kfree(block->b_fl);
 	kfree(block);
@@ -660,7 +621,7 @@ nlmsvc_cancel_blocked(struct nlm_file *file, struct nlm_lock *lock)
 
 /*
  * This is a callback from the filesystem for VFS file lock requests.
- * It will be used if lm_grant is defined and the filesystem can not
+ * It will be used if fl_grant is defined and the filesystem can not
  * respond to the request immediately.
  * For GETLK request it will copy the reply to the nlm_block.
  * For SETLK or SETLKW request it will get the local posix lock.
@@ -689,7 +650,7 @@ static int nlmsvc_grant_deferred(struct file_lock *fl, struct file_lock *conf,
 	struct nlm_block *block;
 	int rc = -ENOENT;
 
-	spin_lock(&nlm_blocked_lock);
+	lock_kernel();
 	list_for_each_entry(block, &nlm_blocked, b_list) {
 		if (nlm_compare_locks(&block->b_call->a_args.lock.fl, fl)) {
 			dprintk("lockd: nlmsvc_notify_blocked block %p flags %d\n",
@@ -703,13 +664,13 @@ static int nlmsvc_grant_deferred(struct file_lock *fl, struct file_lock *conf,
 			} else if (result == 0)
 				block->b_granted = 1;
 
-			nlmsvc_insert_block_locked(block, 0);
+			nlmsvc_insert_block(block, 0);
 			svc_wake_up(block->b_daemon);
 			rc = 0;
 			break;
 		}
 	}
-	spin_unlock(&nlm_blocked_lock);
+	unlock_kernel();
 	if (rc == -ENOENT)
 		printk(KERN_WARNING "lockd: grant for unknown block\n");
 	return rc;
@@ -728,16 +689,14 @@ nlmsvc_notify_blocked(struct file_lock *fl)
 	struct nlm_block	*block;
 
 	dprintk("lockd: VFS unblock notification for block %p\n", fl);
-	spin_lock(&nlm_blocked_lock);
 	list_for_each_entry(block, &nlm_blocked, b_list) {
 		if (nlm_compare_locks(&block->b_call->a_args.lock.fl, fl)) {
-			nlmsvc_insert_block_locked(block, 0);
-			spin_unlock(&nlm_blocked_lock);
+			nlmsvc_insert_block(block, 0);
 			svc_wake_up(block->b_daemon);
 			return;
 		}
 	}
-	spin_unlock(&nlm_blocked_lock);
+
 	printk(KERN_WARNING "lockd: notification for unknown block!\n");
 }
 
@@ -747,9 +706,9 @@ static int nlmsvc_same_owner(struct file_lock *fl1, struct file_lock *fl2)
 }
 
 const struct lock_manager_operations nlmsvc_lock_operations = {
-	.lm_compare_owner = nlmsvc_same_owner,
-	.lm_notify = nlmsvc_notify_blocked,
-	.lm_grant = nlmsvc_grant_deferred,
+	.fl_compare_owner = nlmsvc_same_owner,
+	.fl_notify = nlmsvc_notify_blocked,
+	.fl_grant = nlmsvc_grant_deferred,
 };
 
 /*
@@ -769,7 +728,6 @@ nlmsvc_grant_blocked(struct nlm_block *block)
 	struct nlm_file		*file = block->b_file;
 	struct nlm_lock		*lock = &block->b_call->a_args.lock;
 	int			error;
-	loff_t			fl_start, fl_end;
 
 	dprintk("lockd: grant blocked lock %p\n", block);
 
@@ -787,16 +745,9 @@ nlmsvc_grant_blocked(struct nlm_block *block)
 	}
 
 	/* Try the lock operation again */
-	/* vfs_lock_file() can mangle fl_start and fl_end, but we need
-	 * them unchanged for the GRANT_MSG
-	 */
 	lock->fl.fl_flags |= FL_SLEEP;
-	fl_start = lock->fl.fl_start;
-	fl_end = lock->fl.fl_end;
 	error = vfs_lock_file(file->f_file, F_SETLK, &lock->fl, NULL);
 	lock->fl.fl_flags &= ~FL_SLEEP;
-	lock->fl.fl_start = fl_start;
-	lock->fl.fl_end = fl_end;
 
 	switch (error) {
 	case 0:
@@ -851,7 +802,7 @@ static void nlmsvc_grant_callback(struct rpc_task *task, void *data)
 
 	dprintk("lockd: GRANT_MSG RPC callback\n");
 
-	spin_lock(&nlm_blocked_lock);
+	lock_kernel();
 	/* if the block is not on a list at this point then it has
 	 * been invalidated. Don't try to requeue it.
 	 *
@@ -873,20 +824,19 @@ static void nlmsvc_grant_callback(struct rpc_task *task, void *data)
 		/* Call was successful, now wait for client callback */
 		timeout = 60 * HZ;
 	}
-	nlmsvc_insert_block_locked(block, timeout);
+	nlmsvc_insert_block(block, timeout);
 	svc_wake_up(block->b_daemon);
 out:
-	spin_unlock(&nlm_blocked_lock);
+	unlock_kernel();
 }
 
-/*
- * FIXME: nlmsvc_release_block() grabs a mutex.  This is not allowed for an
- * .rpc_release rpc_call_op
- */
 static void nlmsvc_grant_release(void *data)
 {
 	struct nlm_rqst		*call = data;
+
+	lock_kernel();
 	nlmsvc_release_block(call->a_block);
+	unlock_kernel();
 }
 
 static const struct rpc_call_ops nlmsvc_grant_ops = {
@@ -949,7 +899,6 @@ nlmsvc_retry_blocked(void)
 	unsigned long	timeout = MAX_SCHEDULE_TIMEOUT;
 	struct nlm_block *block;
 
-	spin_lock(&nlm_blocked_lock);
 	while (!list_empty(&nlm_blocked) && !kthread_should_stop()) {
 		block = list_entry(nlm_blocked.next, struct nlm_block, b_list);
 
@@ -959,7 +908,6 @@ nlmsvc_retry_blocked(void)
 			timeout = block->b_when - jiffies;
 			break;
 		}
-		spin_unlock(&nlm_blocked_lock);
 
 		dprintk("nlmsvc_retry_blocked(%p, when=%ld)\n",
 			block, block->b_when);
@@ -969,9 +917,7 @@ nlmsvc_retry_blocked(void)
 			retry_deferred_block(block);
 		} else
 			nlmsvc_grant_blocked(block);
-		spin_lock(&nlm_blocked_lock);
 	}
-	spin_unlock(&nlm_blocked_lock);
 
 	return timeout;
 }

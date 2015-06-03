@@ -26,7 +26,6 @@
 #define SAMPLE_ROUNDUP 0
 
 #include <linux/mm.h>
-#include <linux/gfp.h>
 #include "sound_config.h"
 
 #define DMAP_FREE_ON_CLOSE      0

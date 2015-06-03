@@ -25,12 +25,12 @@
 #include <linux/init.h>
 #include <linux/delay.h>
 #include <linux/spinlock.h>
+#include <linux/gfp.h>
+#include <linux/vmalloc.h>
 #include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
 #include <linux/platform_device.h>
 #include <linux/io.h>
-#include <linux/slab.h>
-#include <linux/module.h>
 
 #include <asm/ip32/ip32_ints.h>
 #include <asm/ip32/mace.h>
@@ -603,14 +603,25 @@ static int snd_sgio2audio_pcm_close(struct snd_pcm_substream *substream)
 static int snd_sgio2audio_pcm_hw_params(struct snd_pcm_substream *substream,
 					struct snd_pcm_hw_params *hw_params)
 {
-	return snd_pcm_lib_alloc_vmalloc_buffer(substream,
-						params_buffer_bytes(hw_params));
+	struct snd_pcm_runtime *runtime = substream->runtime;
+	int size = params_buffer_bytes(hw_params);
+
+	/* alloc virtual 'dma' area */
+	if (runtime->dma_area)
+		vfree(runtime->dma_area);
+	runtime->dma_area = vmalloc_user(size);
+	if (runtime->dma_area == NULL)
+		return -ENOMEM;
+	runtime->dma_bytes = size;
+	return 0;
 }
 
 /* hw_free callback */
 static int snd_sgio2audio_pcm_hw_free(struct snd_pcm_substream *substream)
 {
-	return snd_pcm_lib_free_vmalloc_buffer(substream);
+	vfree(substream->runtime->dma_area);
+	substream->runtime->dma_area = NULL;
+	return 0;
 }
 
 /* prepare callback */
@@ -681,6 +692,13 @@ snd_sgio2audio_pcm_pointer(struct snd_pcm_substream *substream)
 			       chip->channel[chan->idx].pos);
 }
 
+/* get the physical page pointer on the given offset */
+static struct page *snd_sgio2audio_page(struct snd_pcm_substream *substream,
+					unsigned long offset)
+{
+	return vmalloc_to_page(substream->runtime->dma_area + offset);
+}
+
 /* operators */
 static struct snd_pcm_ops snd_sgio2audio_playback1_ops = {
 	.open =        snd_sgio2audio_playback1_open,
@@ -691,8 +709,7 @@ static struct snd_pcm_ops snd_sgio2audio_playback1_ops = {
 	.prepare =     snd_sgio2audio_pcm_prepare,
 	.trigger =     snd_sgio2audio_pcm_trigger,
 	.pointer =     snd_sgio2audio_pcm_pointer,
-	.page =        snd_pcm_lib_get_vmalloc_page,
-	.mmap =        snd_pcm_lib_mmap_vmalloc,
+	.page =        snd_sgio2audio_page,
 };
 
 static struct snd_pcm_ops snd_sgio2audio_playback2_ops = {
@@ -704,8 +721,7 @@ static struct snd_pcm_ops snd_sgio2audio_playback2_ops = {
 	.prepare =     snd_sgio2audio_pcm_prepare,
 	.trigger =     snd_sgio2audio_pcm_trigger,
 	.pointer =     snd_sgio2audio_pcm_pointer,
-	.page =        snd_pcm_lib_get_vmalloc_page,
-	.mmap =        snd_pcm_lib_mmap_vmalloc,
+	.page =        snd_sgio2audio_page,
 };
 
 static struct snd_pcm_ops snd_sgio2audio_capture_ops = {
@@ -717,8 +733,7 @@ static struct snd_pcm_ops snd_sgio2audio_capture_ops = {
 	.prepare =     snd_sgio2audio_pcm_prepare,
 	.trigger =     snd_sgio2audio_pcm_trigger,
 	.pointer =     snd_sgio2audio_pcm_pointer,
-	.page =        snd_pcm_lib_get_vmalloc_page,
-	.mmap =        snd_pcm_lib_mmap_vmalloc,
+	.page =        snd_sgio2audio_page,
 };
 
 /*
@@ -976,4 +991,15 @@ static struct platform_driver sgio2audio_driver = {
 	}
 };
 
-module_platform_driver(sgio2audio_driver);
+static int __init alsa_card_sgio2audio_init(void)
+{
+	return platform_driver_register(&sgio2audio_driver);
+}
+
+static void __exit alsa_card_sgio2audio_exit(void)
+{
+	platform_driver_unregister(&sgio2audio_driver);
+}
+
+module_init(alsa_card_sgio2audio_init)
+module_exit(alsa_card_sgio2audio_exit)

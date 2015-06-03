@@ -115,3 +115,4 @@ int cvmx_sysinfo_minimal_initialize(void *phy_mem_desc_ptr,
 
 	return 1;
 }
+

@@ -56,7 +56,7 @@ static int genericbl_get_intensity(struct backlight_device *bd)
  * Called when the battery is low to limit the backlight intensity.
  * If limit==0 clear any limit, otherwise limit the intensity
  */
-void genericbl_limit_intensity(int limit)
+void corgibl_limit_intensity(int limit)
 {
 	struct backlight_device *bd = generic_backlight_device;
 
@@ -68,9 +68,9 @@ void genericbl_limit_intensity(int limit)
 	backlight_update_status(generic_backlight_device);
 	mutex_unlock(&bd->ops_lock);
 }
-EXPORT_SYMBOL(genericbl_limit_intensity);
+EXPORT_SYMBOL(corgibl_limit_intensity);
 
-static const struct backlight_ops genericbl_ops = {
+static struct backlight_ops genericbl_ops = {
 	.options = BL_CORE_SUSPENDRESUME,
 	.get_brightness = genericbl_get_intensity,
 	.update_status  = genericbl_send_intensity,
@@ -78,7 +78,6 @@ static const struct backlight_ops genericbl_ops = {
 
 static int genericbl_probe(struct platform_device *pdev)
 {
-	struct backlight_properties props;
 	struct generic_bl_info *machinfo = pdev->dev.platform_data;
 	const char *name = "generic-bl";
 	struct backlight_device *bd;
@@ -90,16 +89,14 @@ static int genericbl_probe(struct platform_device *pdev)
 	if (machinfo->name)
 		name = machinfo->name;
 
-	memset(&props, 0, sizeof(struct backlight_properties));
-	props.type = BACKLIGHT_RAW;
-	props.max_brightness = machinfo->max_intensity;
-	bd = backlight_device_register(name, &pdev->dev, NULL, &genericbl_ops,
-				       &props);
+	bd = backlight_device_register (name,
+		&pdev->dev, NULL, &genericbl_ops);
 	if (IS_ERR (bd))
 		return PTR_ERR (bd);
 
 	platform_set_drvdata(pdev, bd);
 
+	bd->props.max_brightness = machinfo->max_intensity;
 	bd->props.power = FB_BLANK_UNBLANK;
 	bd->props.brightness = machinfo->default_intensity;
 	backlight_update_status(bd);
@@ -132,7 +129,18 @@ static struct platform_driver genericbl_driver = {
 	},
 };
 
-module_platform_driver(genericbl_driver);
+static int __init genericbl_init(void)
+{
+	return platform_driver_register(&genericbl_driver);
+}
+
+static void __exit genericbl_exit(void)
+{
+	platform_driver_unregister(&genericbl_driver);
+}
+
+module_init(genericbl_init);
+module_exit(genericbl_exit);
 
 MODULE_AUTHOR("Richard Purdie <rpurdie@rpsys.net>");
 MODULE_DESCRIPTION("Generic Backlight Driver");

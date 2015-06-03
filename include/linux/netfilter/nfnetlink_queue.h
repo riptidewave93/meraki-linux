@@ -8,7 +8,6 @@ enum nfqnl_msg_types {
 	NFQNL_MSG_PACKET,		/* packet from kernel to userspace */
 	NFQNL_MSG_VERDICT,		/* verdict from userspace to kernel */
 	NFQNL_MSG_CONFIG,		/* connect to a particular queue */
-	NFQNL_MSG_VERDICT_BATCH,	/* batchv from userspace to kernel */
 
 	NFQNL_MSG_MAX
 };
@@ -26,8 +25,8 @@ struct nfqnl_msg_packet_hw {
 };
 
 struct nfqnl_msg_packet_timestamp {
-	__aligned_be64	sec;
-	__aligned_be64	usec;
+	aligned_be64	sec;
+	aligned_be64	usec;
 };
 
 enum nfqnl_attr_type {

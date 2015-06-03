@@ -30,6 +30,7 @@
 #include <linux/fs.h>
 #include <linux/vfs.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/mutex.h>
 #include <linux/pagemap.h>
 #include <linux/init.h>
@@ -95,7 +96,7 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 	}
 	msblk = sb->s_fs_info;
 
-	msblk->devblksize = sb_min_blocksize(sb, SQUASHFS_DEVBLK_SIZE);
+	msblk->devblksize = sb_min_blocksize(sb, BLOCK_SIZE);
 	msblk->devblksize_log2 = ffz(~msblk->devblksize);
 
 	mutex_init(&msblk->read_data_mutex);
@@ -158,13 +159,8 @@ static int squashfs_fill_super(struct super_block *sb, void *data, int silent)
 		goto failed_mount;
 	}
 
-	/* Check block log for sanity */
 	msblk->block_log = le16_to_cpu(sblk->block_log);
 	if (msblk->block_log > SQUASHFS_FILE_MAX_LOG)
-		goto failed_mount;
-
-	/* Check that block_size and block_log match */
-	if (msblk->block_size != (1 << msblk->block_log))
 		goto failed_mount;
 
 	/* Check the root inode for sanity */
@@ -295,7 +291,7 @@ handle_fragments:
 
 check_directory_table:
 	/* Sanity check directory_table */
-	if (msblk->directory_table > next_table) {
+	if (msblk->directory_table >= next_table) {
 		err = -EINVAL;
 		goto failed_mount;
 	}
@@ -321,10 +317,11 @@ check_directory_table:
 	}
 	insert_inode_hash(root);
 
-	sb->s_root = d_make_root(root);
+	sb->s_root = d_alloc_root(root);
 	if (sb->s_root == NULL) {
 		ERROR("Root inode create failed\n");
 		err = -ENOMEM;
+		iput(root);
 		goto failed_mount;
 	}
 
@@ -378,6 +375,8 @@ static int squashfs_remount(struct super_block *sb, int *flags, char *data)
 
 static void squashfs_put_super(struct super_block *sb)
 {
+	lock_kernel();
+
 	if (sb->s_fs_info) {
 		struct squashfs_sb_info *sbi = sb->s_fs_info;
 		squashfs_cache_delete(sbi->block_cache);
@@ -392,13 +391,17 @@ static void squashfs_put_super(struct super_block *sb)
 		kfree(sb->s_fs_info);
 		sb->s_fs_info = NULL;
 	}
+
+	unlock_kernel();
 }
 
 
-static struct dentry *squashfs_mount(struct file_system_type *fs_type,
-				int flags, const char *dev_name, void *data)
+static int squashfs_get_sb(struct file_system_type *fs_type, int flags,
+				const char *dev_name, void *data,
+				struct vfsmount *mnt)
 {
-	return mount_bdev(fs_type, flags, dev_name, data, squashfs_fill_super);
+	return get_sb_bdev(fs_type, flags, dev_name, data, squashfs_fill_super,
+				mnt);
 }
 
 
@@ -465,22 +468,16 @@ static struct inode *squashfs_alloc_inode(struct super_block *sb)
 }
 
 
-static void squashfs_i_callback(struct rcu_head *head)
-{
-	struct inode *inode = container_of(head, struct inode, i_rcu);
-	kmem_cache_free(squashfs_inode_cachep, squashfs_i(inode));
-}
-
 static void squashfs_destroy_inode(struct inode *inode)
 {
-	call_rcu(&inode->i_rcu, squashfs_i_callback);
+	kmem_cache_free(squashfs_inode_cachep, squashfs_i(inode));
 }
 
 
 static struct file_system_type squashfs_fs_type = {
 	.owner = THIS_MODULE,
 	.name = "squashfs",
-	.mount = squashfs_mount,
+	.get_sb = squashfs_get_sb,
 	.kill_sb = kill_block_super,
 	.fs_flags = FS_REQUIRES_DEV
 };

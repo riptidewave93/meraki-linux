@@ -7,13 +7,12 @@
 #include <linux/mm.h>
 #include <linux/vmalloc.h>
 #include <linux/memory.h>
-#include <linux/stop_machine.h>
-#include <linux/slab.h>
 #include <asm/alternative.h>
 #include <asm/sections.h>
 #include <asm/pgtable.h>
 #include <asm/mce.h>
 #include <asm/nmi.h>
+#include <asm/vsyscall.h>
 #include <asm/cacheflush.h>
 #include <asm/tlbflush.h>
 #include <asm/io.h>
@@ -66,30 +65,17 @@ __setup("noreplace-paravirt", setup_noreplace_paravirt);
 #define DPRINTK(fmt, args...) if (debug_alternative) \
 	printk(KERN_DEBUG fmt, args)
 
-/*
- * Each GENERIC_NOPX is of X bytes, and defined as an array of bytes
- * that correspond to that nop. Getting from one nop to the next, we
- * add to the array the offset that is equal to the sum of all sizes of
- * nops preceding the one we are after.
- *
- * Note: The GENERIC_NOP5_ATOMIC is at the end, as it breaks the
- * nice symmetry of sizes of the previous nops.
- */
 #if defined(GENERIC_NOP1) && !defined(CONFIG_X86_64)
-static const unsigned char intelnops[] =
-{
-	GENERIC_NOP1,
-	GENERIC_NOP2,
-	GENERIC_NOP3,
-	GENERIC_NOP4,
-	GENERIC_NOP5,
-	GENERIC_NOP6,
-	GENERIC_NOP7,
-	GENERIC_NOP8,
-	GENERIC_NOP5_ATOMIC
-};
-static const unsigned char * const intel_nops[ASM_NOP_MAX+2] =
-{
+/* Use inline assembly to define this because the nops are defined
+   as inline assembly strings in the include files and we cannot
+   get them easily into strings. */
+asm("\t" __stringify(__INITRODATA_OR_MODULE) "\nintelnops: "
+	GENERIC_NOP1 GENERIC_NOP2 GENERIC_NOP3 GENERIC_NOP4 GENERIC_NOP5 GENERIC_NOP6
+	GENERIC_NOP7 GENERIC_NOP8
+    "\t.previous");
+extern const unsigned char intelnops[];
+static const unsigned char *const __initconst_or_module
+intel_nops[ASM_NOP_MAX+1] = {
 	NULL,
 	intelnops,
 	intelnops + 1,
@@ -99,25 +85,17 @@ static const unsigned char * const intel_nops[ASM_NOP_MAX+2] =
 	intelnops + 1 + 2 + 3 + 4 + 5,
 	intelnops + 1 + 2 + 3 + 4 + 5 + 6,
 	intelnops + 1 + 2 + 3 + 4 + 5 + 6 + 7,
-	intelnops + 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8,
 };
 #endif
 
 #ifdef K8_NOP1
-static const unsigned char k8nops[] =
-{
-	K8_NOP1,
-	K8_NOP2,
-	K8_NOP3,
-	K8_NOP4,
-	K8_NOP5,
-	K8_NOP6,
-	K8_NOP7,
-	K8_NOP8,
-	K8_NOP5_ATOMIC
-};
-static const unsigned char * const k8_nops[ASM_NOP_MAX+2] =
-{
+asm("\t" __stringify(__INITRODATA_OR_MODULE) "\nk8nops: "
+	K8_NOP1 K8_NOP2 K8_NOP3 K8_NOP4 K8_NOP5 K8_NOP6
+	K8_NOP7 K8_NOP8
+    "\t.previous");
+extern const unsigned char k8nops[];
+static const unsigned char *const __initconst_or_module
+k8_nops[ASM_NOP_MAX+1] = {
 	NULL,
 	k8nops,
 	k8nops + 1,
@@ -127,25 +105,17 @@ static const unsigned char * const k8_nops[ASM_NOP_MAX+2] =
 	k8nops + 1 + 2 + 3 + 4 + 5,
 	k8nops + 1 + 2 + 3 + 4 + 5 + 6,
 	k8nops + 1 + 2 + 3 + 4 + 5 + 6 + 7,
-	k8nops + 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8,
 };
 #endif
 
 #if defined(K7_NOP1) && !defined(CONFIG_X86_64)
-static const unsigned char k7nops[] =
-{
-	K7_NOP1,
-	K7_NOP2,
-	K7_NOP3,
-	K7_NOP4,
-	K7_NOP5,
-	K7_NOP6,
-	K7_NOP7,
-	K7_NOP8,
-	K7_NOP5_ATOMIC
-};
-static const unsigned char * const k7_nops[ASM_NOP_MAX+2] =
-{
+asm("\t" __stringify(__INITRODATA_OR_MODULE) "\nk7nops: "
+	K7_NOP1 K7_NOP2 K7_NOP3 K7_NOP4 K7_NOP5 K7_NOP6
+	K7_NOP7 K7_NOP8
+    "\t.previous");
+extern const unsigned char k7nops[];
+static const unsigned char *const __initconst_or_module
+k7_nops[ASM_NOP_MAX+1] = {
 	NULL,
 	k7nops,
 	k7nops + 1,
@@ -155,25 +125,17 @@ static const unsigned char * const k7_nops[ASM_NOP_MAX+2] =
 	k7nops + 1 + 2 + 3 + 4 + 5,
 	k7nops + 1 + 2 + 3 + 4 + 5 + 6,
 	k7nops + 1 + 2 + 3 + 4 + 5 + 6 + 7,
-	k7nops + 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8,
 };
 #endif
 
 #ifdef P6_NOP1
-static const unsigned char p6nops[] =
-{
-	P6_NOP1,
-	P6_NOP2,
-	P6_NOP3,
-	P6_NOP4,
-	P6_NOP5,
-	P6_NOP6,
-	P6_NOP7,
-	P6_NOP8,
-	P6_NOP5_ATOMIC
-};
-static const unsigned char * const p6_nops[ASM_NOP_MAX+2] =
-{
+asm("\t" __stringify(__INITRODATA_OR_MODULE) "\np6nops: "
+	P6_NOP1 P6_NOP2 P6_NOP3 P6_NOP4 P6_NOP5 P6_NOP6
+	P6_NOP7 P6_NOP8
+    "\t.previous");
+extern const unsigned char p6nops[];
+static const unsigned char *const __initconst_or_module
+p6_nops[ASM_NOP_MAX+1] = {
 	NULL,
 	p6nops,
 	p6nops + 1,
@@ -183,77 +145,59 @@ static const unsigned char * const p6_nops[ASM_NOP_MAX+2] =
 	p6nops + 1 + 2 + 3 + 4 + 5,
 	p6nops + 1 + 2 + 3 + 4 + 5 + 6,
 	p6nops + 1 + 2 + 3 + 4 + 5 + 6 + 7,
-	p6nops + 1 + 2 + 3 + 4 + 5 + 6 + 7 + 8,
 };
 #endif
 
-/* Initialize these to a safe default */
 #ifdef CONFIG_X86_64
-const unsigned char * const *ideal_nops = p6_nops;
-#else
-const unsigned char * const *ideal_nops = intel_nops;
-#endif
 
-void __init arch_init_ideal_nops(void)
+extern char __vsyscall_0;
+static const unsigned char *const *__init_or_module find_nop_table(void)
 {
-	switch (boot_cpu_data.x86_vendor) {
-	case X86_VENDOR_INTEL:
-		/*
-		 * Due to a decoder implementation quirk, some
-		 * specific Intel CPUs actually perform better with
-		 * the "k8_nops" than with the SDM-recommended NOPs.
-		 */
-		if (boot_cpu_data.x86 == 6 &&
-		    boot_cpu_data.x86_model >= 0x0f &&
-		    boot_cpu_data.x86_model != 0x1c &&
-		    boot_cpu_data.x86_model != 0x26 &&
-		    boot_cpu_data.x86_model != 0x27 &&
-		    boot_cpu_data.x86_model < 0x30) {
-			ideal_nops = k8_nops;
-		} else if (boot_cpu_has(X86_FEATURE_NOPL)) {
-			   ideal_nops = p6_nops;
-		} else {
-#ifdef CONFIG_X86_64
-			ideal_nops = k8_nops;
-#else
-			ideal_nops = intel_nops;
-#endif
-		}
-		break;
-	default:
-#ifdef CONFIG_X86_64
-		ideal_nops = k8_nops;
-#else
-		if (boot_cpu_has(X86_FEATURE_K8))
-			ideal_nops = k8_nops;
-		else if (boot_cpu_has(X86_FEATURE_K7))
-			ideal_nops = k7_nops;
-		else
-			ideal_nops = intel_nops;
-#endif
-	}
+	if (boot_cpu_data.x86_vendor == X86_VENDOR_INTEL &&
+	    boot_cpu_has(X86_FEATURE_NOPL))
+		return p6_nops;
+	else
+		return k8_nops;
 }
+
+#else /* CONFIG_X86_64 */
+
+static const unsigned char *const *__init_or_module find_nop_table(void)
+{
+	if (boot_cpu_has(X86_FEATURE_K8))
+		return k8_nops;
+	else if (boot_cpu_has(X86_FEATURE_K7))
+		return k7_nops;
+	else if (boot_cpu_has(X86_FEATURE_NOPL))
+		return p6_nops;
+	else
+		return intel_nops;
+}
+
+#endif /* CONFIG_X86_64 */
 
 /* Use this to add nops to a buffer, then text_poke the whole buffer. */
 static void __init_or_module add_nops(void *insns, unsigned int len)
 {
+	const unsigned char *const *noptable = find_nop_table();
+
 	while (len > 0) {
 		unsigned int noplen = len;
 		if (noplen > ASM_NOP_MAX)
 			noplen = ASM_NOP_MAX;
-		memcpy(insns, ideal_nops[noplen], noplen);
+		memcpy(insns, noptable[noplen], noplen);
 		insns += noplen;
 		len -= noplen;
 	}
 }
 
 extern struct alt_instr __alt_instructions[], __alt_instructions_end[];
-extern s32 __smp_locks[], __smp_locks_end[];
-void *text_poke_early(void *addr, const void *opcode, size_t len);
+extern u8 *__smp_locks[], *__smp_locks_end[];
+static void *text_poke_early(void *addr, const void *opcode, size_t len);
 
 /* Replace instructions with better alternatives for this CPU type.
    This runs before SMP is initialized to avoid SMP problems with
-   self modifying code. This implies that asymmetric systems where
+   self modifying code. This implies that assymetric systems where
    APs have less capabilities than the boot processor are not handled.
    Tough. Make sure you disable such features by hand. */
 
@@ -261,78 +205,63 @@ void __init_or_module apply_alternatives(struct alt_instr *start,
 					 struct alt_instr *end)
 {
 	struct alt_instr *a;
-	u8 *instr, *replacement;
-	u8 insnbuf[MAX_PATCH_LEN];
+	char insnbuf[MAX_PATCH_LEN];
 
 	DPRINTK("%s: alt table %p -> %p\n", __func__, start, end);
-	/*
-	 * The scan order should be from start to end. A later scanned
-	 * alternative code can overwrite a previous scanned alternative code.
-	 * Some kernel functions (e.g. memcpy, memset, etc) use this order to
-	 * patch code.
-	 *
-	 * So be careful if you want to change the scan order to any other
-	 * order.
-	 */
 	for (a = start; a < end; a++) {
-		instr = (u8 *)&a->instr_offset + a->instr_offset;
-		replacement = (u8 *)&a->repl_offset + a->repl_offset;
+		u8 *instr = a->instr;
 		BUG_ON(a->replacementlen > a->instrlen);
 		BUG_ON(a->instrlen > sizeof(insnbuf));
-		BUG_ON(a->cpuid >= NCAPINTS*32);
 		if (!boot_cpu_has(a->cpuid))
 			continue;
-
-		memcpy(insnbuf, replacement, a->replacementlen);
-
-		/* 0xe8 is a relative jump; fix the offset. */
-		if (*insnbuf == 0xe8 && a->replacementlen == 5)
-		    *(s32 *)(insnbuf + 1) += replacement - instr;
-
+#ifdef CONFIG_X86_64
+		/* vsyscall code is not mapped yet. resolve it manually. */
+		if (instr >= (u8 *)VSYSCALL_START && instr < (u8*)VSYSCALL_END) {
+			instr = __va(instr - (u8*)VSYSCALL_START + (u8*)__pa_symbol(&__vsyscall_0));
+			DPRINTK("%s: vsyscall fixup: %p => %p\n",
+				__func__, a->instr, instr);
+		}
+#endif
+		memcpy(insnbuf, a->replacement, a->replacementlen);
 		add_nops(insnbuf + a->replacementlen,
 			 a->instrlen - a->replacementlen);
-
 		text_poke_early(instr, insnbuf, a->instrlen);
 	}
 }
 
 #ifdef CONFIG_SMP
 
-static void alternatives_smp_lock(const s32 *start, const s32 *end,
-				  u8 *text, u8 *text_end)
+static void alternatives_smp_lock(u8 **start, u8 **end, u8 *text, u8 *text_end)
 {
-	const s32 *poff;
+	u8 **ptr;
 
 	mutex_lock(&text_mutex);
-	for (poff = start; poff < end; poff++) {
-		u8 *ptr = (u8 *)poff + *poff;
-
-		if (!*poff || ptr < text || ptr >= text_end)
+	for (ptr = start; ptr < end; ptr++) {
+		if (*ptr < text)
+			continue;
+		if (*ptr > text_end)
 			continue;
 		/* turn DS segment override prefix into lock prefix */
-		if (*ptr == 0x3e)
-			text_poke(ptr, ((unsigned char []){0xf0}), 1);
+		text_poke(*ptr, ((unsigned char []){0xf0}), 1);
 	};
 	mutex_unlock(&text_mutex);
 }
 
-static void alternatives_smp_unlock(const s32 *start, const s32 *end,
-				    u8 *text, u8 *text_end)
+static void alternatives_smp_unlock(u8 **start, u8 **end, u8 *text, u8 *text_end)
 {
-	const s32 *poff;
+	u8 **ptr;
 
 	if (noreplace_smp)
 		return;
 
 	mutex_lock(&text_mutex);
-	for (poff = start; poff < end; poff++) {
-		u8 *ptr = (u8 *)poff + *poff;
-
-		if (!*poff || ptr < text || ptr >= text_end)
+	for (ptr = start; ptr < end; ptr++) {
+		if (*ptr < text)
+			continue;
+		if (*ptr > text_end)
 			continue;
 		/* turn lock prefix into DS segment override prefix */
-		if (*ptr == 0xf0)
-			text_poke(ptr, ((unsigned char []){0x3E}), 1);
+		text_poke(*ptr, ((unsigned char []){0x3E}), 1);
 	};
 	mutex_unlock(&text_mutex);
 }
@@ -343,8 +272,8 @@ struct smp_alt_module {
 	char		*name;
 
 	/* ptrs to lock prefixes */
-	const s32	*locks;
-	const s32	*locks_end;
+	u8		**locks;
+	u8		**locks_end;
 
 	/* .text segment, needed to avoid patching init code ;) */
 	u8		*text;
@@ -415,7 +344,6 @@ void __init_or_module alternatives_smp_module_del(struct module *mod)
 	mutex_unlock(&smp_alt);
 }
 
-bool skip_smp_alternatives;
 void alternatives_smp_switch(int smp)
 {
 	struct smp_alt_module *mod;
@@ -431,7 +359,7 @@ void alternatives_smp_switch(int smp)
 	printk("lockdep: fixing up alternatives.\n");
 #endif
 
-	if (noreplace_smp || smp_alt_once || skip_smp_alternatives)
+	if (noreplace_smp || smp_alt_once)
 		return;
 	BUG_ON(!smp && (num_online_cpus() > 1));
 
@@ -462,27 +390,6 @@ void alternatives_smp_switch(int smp)
 	mutex_unlock(&smp_alt);
 }
 
-/* Return 1 if the address range is reserved for smp-alternatives */
-int alternatives_text_reserved(void *start, void *end)
-{
-	struct smp_alt_module *mod;
-	const s32 *poff;
-	u8 *text_start = start;
-	u8 *text_end = end;
-
-	list_for_each_entry(mod, &smp_alt_modules, next) {
-		if (mod->text > text_end || mod->text_end < text_start)
-			continue;
-		for (poff = mod->locks; poff < mod->locks_end; poff++) {
-			const u8 *ptr = (const u8 *)poff + *poff;
-
-			if (text_start <= ptr && text_end > ptr)
-				return 1;
-		}
-	}
-
-	return 0;
-}
 #endif
 
 #ifdef CONFIG_PARAVIRT
@@ -585,7 +492,7 @@ void __init alternative_instructions(void)
  * instructions. And on the local CPU you need to be protected again NMI or MCE
  * handlers seeing an inconsistent instruction while you patch.
  */
-void *__init_or_module text_poke_early(void *addr, const void *opcode,
+static void *__init_or_module text_poke_early(void *addr, const void *opcode,
 					      size_t len)
 {
 	unsigned long flags;
@@ -644,99 +551,4 @@ void *__kprobes text_poke(void *addr, const void *opcode, size_t len)
 		BUG_ON(((char *)addr)[i] != ((char *)opcode)[i]);
 	local_irq_restore(flags);
 	return addr;
-}
-
-/*
- * Cross-modifying kernel text with stop_machine().
- * This code originally comes from immediate value.
- */
-static atomic_t stop_machine_first;
-static int wrote_text;
-
-struct text_poke_params {
-	struct text_poke_param *params;
-	int nparams;
-};
-
-static int __kprobes stop_machine_text_poke(void *data)
-{
-	struct text_poke_params *tpp = data;
-	struct text_poke_param *p;
-	int i;
-
-	if (atomic_dec_and_test(&stop_machine_first)) {
-		for (i = 0; i < tpp->nparams; i++) {
-			p = &tpp->params[i];
-			text_poke(p->addr, p->opcode, p->len);
-		}
-		smp_wmb();	/* Make sure other cpus see that this has run */
-		wrote_text = 1;
-	} else {
-		while (!wrote_text)
-			cpu_relax();
-		smp_mb();	/* Load wrote_text before following execution */
-	}
-
-	for (i = 0; i < tpp->nparams; i++) {
-		p = &tpp->params[i];
-		flush_icache_range((unsigned long)p->addr,
-				   (unsigned long)p->addr + p->len);
-	}
-	/*
-	 * Intel Archiecture Software Developer's Manual section 7.1.3 specifies
-	 * that a core serializing instruction such as "cpuid" should be
-	 * executed on _each_ core before the new instruction is made visible.
-	 */
-	sync_core();
-	return 0;
-}
-
-/**
- * text_poke_smp - Update instructions on a live kernel on SMP
- * @addr: address to modify
- * @opcode: source of the copy
- * @len: length to copy
- *
- * Modify multi-byte instruction by using stop_machine() on SMP. This allows
- * user to poke/set multi-byte text on SMP. Only non-NMI/MCE code modifying
- * should be allowed, since stop_machine() does _not_ protect code against
- * NMI and MCE.
- *
- * Note: Must be called under get_online_cpus() and text_mutex.
- */
-void *__kprobes text_poke_smp(void *addr, const void *opcode, size_t len)
-{
-	struct text_poke_params tpp;
-	struct text_poke_param p;
-
-	p.addr = addr;
-	p.opcode = opcode;
-	p.len = len;
-	tpp.params = &p;
-	tpp.nparams = 1;
-	atomic_set(&stop_machine_first, 1);
-	wrote_text = 0;
-	/* Use __stop_machine() because the caller already got online_cpus. */
-	__stop_machine(stop_machine_text_poke, (void *)&tpp, cpu_online_mask);
-	return addr;
-}
-
-/**
- * text_poke_smp_batch - Update instructions on a live kernel on SMP
- * @params: an array of text_poke parameters
- * @n: the number of elements in params.
- *
- * Modify multi-byte instruction by using stop_machine() on SMP. Since the
- * stop_machine() is heavy task, it is better to aggregate text_poke requests
- * and do it once if possible.
- *
- * Note: Must be called under get_online_cpus() and text_mutex.
- */
-void __kprobes text_poke_smp_batch(struct text_poke_param *params, int n)
-{
-	struct text_poke_params tpp = {.params = params, .nparams = n};
-
-	atomic_set(&stop_machine_first, 1);
-	wrote_text = 0;
-	__stop_machine(stop_machine_text_poke, (void *)&tpp, cpu_online_mask);
 }

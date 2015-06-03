@@ -1,8 +1,6 @@
 /*
  * This structure describes the machine which we are running on.
  */
-#ifndef __MACH_IMXFB_H__
-#define __MACH_IMXFB_H__
 
 #include <linux/fb.h>
 
@@ -81,4 +79,3 @@ struct imx_fb_platform_data {
 };
 
 void set_imx_fb_info(struct imx_fb_platform_data *);
-#endif /* ifndef __MACH_IMXFB_H__ */

@@ -21,7 +21,6 @@
 #include <linux/init.h>
 #include <linux/serio.h>
 #include <linux/tty.h>
-#include <linux/compat.h>
 
 MODULE_AUTHOR("Vojtech Pavlik <vojtech@ucw.cz>");
 MODULE_DESCRIPTION("Input device TTY line discipline");
@@ -117,15 +116,14 @@ static void serport_ldisc_close(struct tty_struct *tty)
 
 /*
  * serport_ldisc_receive() is called by the low level tty driver when characters
- * are ready for us. We forward the characters and flags, one by one to the
- * 'interrupt' routine.
+ * are ready for us. We forward the characters, one by one to the 'interrupt'
+ * routine.
  */
 
 static void serport_ldisc_receive(struct tty_struct *tty, const unsigned char *cp, char *fp, int count)
 {
 	struct serport *serport = (struct serport*) tty->disc_data;
 	unsigned long flags;
-	unsigned int ch_flags;
 	int i;
 
 	spin_lock_irqsave(&serport->lock, flags);
@@ -133,23 +131,8 @@ static void serport_ldisc_receive(struct tty_struct *tty, const unsigned char *c
 	if (!test_bit(SERPORT_ACTIVE, &serport->flags))
 		goto out;
 
-	for (i = 0; i < count; i++) {
-		switch (fp[i]) {
-		case TTY_FRAME:
-			ch_flags = SERIO_FRAME;
-			break;
-
-		case TTY_PARITY:
-			ch_flags = SERIO_PARITY;
-			break;
-
-		default:
-			ch_flags = 0;
-			break;
-		}
-
-		serio_interrupt(serport->serio, cp[i], ch_flags);
-	}
+	for (i = 0; i < count; i++)
+		serio_interrupt(serport->serio, cp[i], 0);
 
 out:
 	spin_unlock_irqrestore(&serport->lock, flags);
@@ -182,7 +165,6 @@ static ssize_t serport_ldisc_read(struct tty_struct * tty, struct file * file, u
 	serio->open = serport_serio_open;
 	serio->close = serport_serio_close;
 	serio->port_data = serport;
-	serio->dev.parent = tty->dev;
 
 	serio_register_port(serport->serio);
 	printk(KERN_INFO "serio: Serial port %s\n", tty_name(tty, name));
@@ -197,55 +179,28 @@ static ssize_t serport_ldisc_read(struct tty_struct * tty, struct file * file, u
 	return 0;
 }
 
-static void serport_set_type(struct tty_struct *tty, unsigned long type)
-{
-	struct serport *serport = tty->disc_data;
-
-	serport->id.proto = type & 0x000000ff;
-	serport->id.id    = (type & 0x0000ff00) >> 8;
-	serport->id.extra = (type & 0x00ff0000) >> 16;
-}
-
 /*
  * serport_ldisc_ioctl() allows to set the port protocol, and device ID
  */
 
-static int serport_ldisc_ioctl(struct tty_struct *tty, struct file *file,
-			       unsigned int cmd, unsigned long arg)
+static int serport_ldisc_ioctl(struct tty_struct * tty, struct file * file, unsigned int cmd, unsigned long arg)
 {
-	if (cmd == SPIOCSTYPE) {
-		unsigned long type;
+	struct serport *serport = (struct serport*) tty->disc_data;
+	unsigned long type;
 
+	if (cmd == SPIOCSTYPE) {
 		if (get_user(type, (unsigned long __user *) arg))
 			return -EFAULT;
 
-		serport_set_type(tty, type);
+		serport->id.proto = type & 0x000000ff;
+		serport->id.id	  = (type & 0x0000ff00) >> 8;
+		serport->id.extra = (type & 0x00ff0000) >> 16;
+
 		return 0;
 	}
 
 	return -EINVAL;
 }
-
-#ifdef CONFIG_COMPAT
-#define COMPAT_SPIOCSTYPE	_IOW('q', 0x01, compat_ulong_t)
-static long serport_ldisc_compat_ioctl(struct tty_struct *tty,
-				       struct file *file,
-				       unsigned int cmd, unsigned long arg)
-{
-	if (cmd == COMPAT_SPIOCSTYPE) {
-		void __user *uarg = compat_ptr(arg);
-		compat_ulong_t compat_type;
-
-		if (get_user(compat_type, (compat_ulong_t __user *)uarg))
-			return -EFAULT;
-
-		serport_set_type(tty, compat_type);
-		return 0;
-	}
-
-	return -EINVAL;
-}
-#endif
 
 static void serport_ldisc_write_wakeup(struct tty_struct * tty)
 {
@@ -269,9 +224,6 @@ static struct tty_ldisc_ops serport_ldisc = {
 	.close =	serport_ldisc_close,
 	.read =		serport_ldisc_read,
 	.ioctl =	serport_ldisc_ioctl,
-#ifdef CONFIG_COMPAT
-	.compat_ioctl =	serport_ldisc_compat_ioctl,
-#endif
 	.receive_buf =	serport_ldisc_receive,
 	.write_wakeup =	serport_ldisc_write_wakeup
 };

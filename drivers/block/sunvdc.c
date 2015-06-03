@@ -461,7 +461,7 @@ static int generic_request(struct vdc_port *port, u8 op, void *buf, int len)
 	int op_len, err;
 	void *req_buf;
 
-	if (!(((u64)1 << (u64)op) & port->operations))
+	if (!(((u64)1 << ((u64)op - 1)) & port->operations))
 		return -EOPNOTSUPP;
 
 	switch (op) {
@@ -691,8 +691,9 @@ static int probe_disk(struct vdc_port *port)
 
 	port->disk = g;
 
-	blk_queue_max_segments(q, port->ring_cookies);
-	blk_queue_max_hw_sectors(q, port->max_xfer_size);
+	blk_queue_max_hw_segments(q, port->ring_cookies);
+	blk_queue_max_phys_segments(q, port->ring_cookies);
+	blk_queue_max_sectors(q, port->max_xfer_size);
 	g->major = vdc_major;
 	g->first_minor = port->vio.vdev->dev_no << PARTITION_SHIFT;
 	strcpy(g->disk_name, port->disk_name);
@@ -839,7 +840,10 @@ static struct vio_driver vdc_port_driver = {
 	.id_table	= vdc_port_match,
 	.probe		= vdc_port_probe,
 	.remove		= vdc_port_remove,
-	.name		= "vdc_port",
+	.driver		= {
+		.name	= "vdc_port",
+		.owner	= THIS_MODULE,
+	}
 };
 
 static int __init vdc_init(void)

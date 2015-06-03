@@ -19,9 +19,7 @@
  * See also Documentation/block/ioprio.txt
  *
  */
-#include <linux/gfp.h>
 #include <linux/kernel.h>
-#include <linux/export.h>
 #include <linux/ioprio.h>
 #include <linux/blkdev.h>
 #include <linux/capability.h>
@@ -48,12 +46,28 @@ int set_task_ioprio(struct task_struct *task, int ioprio)
 	if (err)
 		return err;
 
-	ioc = get_task_io_context(task, GFP_ATOMIC, NUMA_NO_NODE);
-	if (ioc) {
-		ioc_ioprio_changed(ioc, ioprio);
-		put_io_context(ioc);
+	task_lock(task);
+	do {
+		ioc = task->io_context;
+		/* see wmb() in current_io_context() */
+		smp_read_barrier_depends();
+		if (ioc)
+			break;
+
+		ioc = alloc_io_context(GFP_ATOMIC, -1);
+		if (!ioc) {
+			err = -ENOMEM;
+			break;
+		}
+		task->io_context = ioc;
+	} while (1);
+
+	if (!err) {
+		ioc->ioprio = ioprio;
+		ioc->ioprio_changed = 1;
 	}
 
+	task_unlock(task);
 	return err;
 }
 EXPORT_SYMBOL_GPL(set_task_ioprio);
@@ -88,7 +102,12 @@ SYSCALL_DEFINE3(ioprio_set, int, which, int, who, int, ioprio)
 	}
 
 	ret = -ESRCH;
-	rcu_read_lock();
+	/*
+	 * We want IOPRIO_WHO_PGRP/IOPRIO_WHO_USER to be "atomic",
+	 * so we can't use rcu_read_lock(). See re-copy of ->ioprio
+	 * in copy_process().
+	 */
+	read_lock(&tasklist_lock);
 	switch (which) {
 		case IOPRIO_WHO_PROCESS:
 			if (!who)
@@ -133,7 +152,7 @@ free_uid:
 			ret = -EINVAL;
 	}
 
-	rcu_read_unlock();
+	read_unlock(&tasklist_lock);
 	return ret;
 }
 
@@ -177,7 +196,7 @@ SYSCALL_DEFINE2(ioprio_get, int, which, int, who)
 	int ret = -ESRCH;
 	int tmpio;
 
-	rcu_read_lock();
+	read_lock(&tasklist_lock);
 	switch (which) {
 		case IOPRIO_WHO_PROCESS:
 			if (!who)
@@ -230,6 +249,6 @@ SYSCALL_DEFINE2(ioprio_get, int, which, int, who)
 			ret = -EINVAL;
 	}
 
-	rcu_read_unlock();
+	read_unlock(&tasklist_lock);
 	return ret;
 }

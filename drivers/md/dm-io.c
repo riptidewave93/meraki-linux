@@ -5,8 +5,6 @@
  * This file is released under the GPL.
  */
 
-#include "dm.h"
-
 #include <linux/device-mapper.h>
 
 #include <linux/bio.h>
@@ -16,50 +14,50 @@
 #include <linux/slab.h>
 #include <linux/dm-io.h>
 
-#define DM_MSG_PREFIX "io"
-
-#define DM_IO_MAX_REGIONS	BITS_PER_LONG
-#define MIN_IOS		16
-#define MIN_BIOS	16
-
 struct dm_io_client {
 	mempool_t *pool;
 	struct bio_set *bios;
 };
 
-/*
- * Aligning 'struct io' reduces the number of bits required to store
- * its address.  Refer to store_io_and_region_in_bio() below.
- */
+/* FIXME: can we shrink this ? */
 struct io {
 	unsigned long error_bits;
+	unsigned long eopnotsupp_bits;
 	atomic_t count;
 	struct task_struct *sleeper;
 	struct dm_io_client *client;
 	io_notify_fn callback;
 	void *context;
-	void *vma_invalidate_address;
-	unsigned long vma_invalidate_size;
-} __attribute__((aligned(DM_IO_MAX_REGIONS)));
+};
 
-static struct kmem_cache *_dm_io_cache;
+/*
+ * io contexts are only dynamically allocated for asynchronous
+ * io.  Since async io is likely to be the majority of io we'll
+ * have the same number of io contexts as bios! (FIXME: must reduce this).
+ */
+
+static unsigned int pages_to_ios(unsigned int pages)
+{
+	return 4 * pages;	/* too many ? */
+}
 
 /*
  * Create a client with mempool and bioset.
  */
-struct dm_io_client *dm_io_client_create(void)
+struct dm_io_client *dm_io_client_create(unsigned num_pages)
 {
+	unsigned ios = pages_to_ios(num_pages);
 	struct dm_io_client *client;
 
 	client = kmalloc(sizeof(*client), GFP_KERNEL);
 	if (!client)
 		return ERR_PTR(-ENOMEM);
 
-	client->pool = mempool_create_slab_pool(MIN_IOS, _dm_io_cache);
+	client->pool = mempool_create_kmalloc_pool(ios, sizeof(struct io));
 	if (!client->pool)
 		goto bad;
 
-	client->bios = bioset_create(MIN_BIOS, 0);
+	client->bios = bioset_create(16, 0);
 	if (!client->bios)
 		goto bad;
 
@@ -73,6 +71,13 @@ struct dm_io_client *dm_io_client_create(void)
 }
 EXPORT_SYMBOL(dm_io_client_create);
 
+int dm_io_client_resize(unsigned num_pages, struct dm_io_client *client)
+{
+	return mempool_resize(client->pool, pages_to_ios(num_pages),
+			      GFP_KERNEL);
+}
+EXPORT_SYMBOL(dm_io_client_resize);
+
 void dm_io_client_destroy(struct dm_io_client *client)
 {
 	mempool_destroy(client->pool);
@@ -83,29 +88,18 @@ EXPORT_SYMBOL(dm_io_client_destroy);
 
 /*-----------------------------------------------------------------
  * We need to keep track of which region a bio is doing io for.
- * To avoid a memory allocation to store just 5 or 6 bits, we
- * ensure the 'struct io' pointer is aligned so enough low bits are
- * always zero and then combine it with the region number directly in
- * bi_private.
+ * In order to save a memory allocation we store this the last
+ * bvec which we know is unused (blech).
+ * XXX This is ugly and can OOPS with some configs... find another way.
  *---------------------------------------------------------------*/
-static void store_io_and_region_in_bio(struct bio *bio, struct io *io,
-				       unsigned region)
+static inline void bio_set_region(struct bio *bio, unsigned region)
 {
-	if (unlikely(!IS_ALIGNED((unsigned long)io, DM_IO_MAX_REGIONS))) {
-		DMCRIT("Unaligned struct io pointer %p", io);
-		BUG();
-	}
-
-	bio->bi_private = (void *)((unsigned long)io | region);
+	bio->bi_io_vec[bio->bi_max_vecs].bv_len = region;
 }
 
-static void retrieve_io_and_region_from_bio(struct bio *bio, struct io **io,
-				       unsigned *region)
+static inline unsigned bio_get_region(struct bio *bio)
 {
-	unsigned long val = (unsigned long)bio->bi_private;
-
-	*io = (void *)(val & -(unsigned long)DM_IO_MAX_REGIONS);
-	*region = val & (DM_IO_MAX_REGIONS - 1);
+	return bio->bi_io_vec[bio->bi_max_vecs].bv_len;
 }
 
 /*-----------------------------------------------------------------
@@ -114,14 +108,13 @@ static void retrieve_io_and_region_from_bio(struct bio *bio, struct io **io,
  *---------------------------------------------------------------*/
 static void dec_count(struct io *io, unsigned int region, int error)
 {
-	if (error)
+	if (error) {
 		set_bit(region, &io->error_bits);
+		if (error == -EOPNOTSUPP)
+			set_bit(region, &io->eopnotsupp_bits);
+	}
 
 	if (atomic_dec_and_test(&io->count)) {
-		if (io->vma_invalidate_size)
-			invalidate_kernel_vmap_range(io->vma_invalidate_address,
-						     io->vma_invalidate_size);
-
 		if (io->sleeper)
 			wake_up_process(io->sleeper);
 
@@ -147,8 +140,10 @@ static void endio(struct bio *bio, int error)
 	/*
 	 * The bio destructor in bio_put() may use the io object.
 	 */
-	retrieve_io_and_region_from_bio(bio, &io, &region);
+	io = bio->bi_private;
+	region = bio_get_region(bio);
 
+	bio->bi_max_vecs++;
 	bio_put(bio);
 
 	dec_count(io, region, error);
@@ -165,9 +160,6 @@ struct dpages {
 
 	unsigned context_u;
 	void *context_ptr;
-
-	void *vma_invalidate_address;
-	unsigned long vma_invalidate_size;
 };
 
 /*
@@ -251,10 +243,7 @@ static void vm_dp_init(struct dpages *dp, void *data)
 
 static void dm_bio_destructor(struct bio *bio)
 {
-	unsigned region;
-	struct io *io;
-
-	retrieve_io_and_region_from_bio(bio, &io, &region);
+	struct io *io = bio->bi_private;
 
 	bio_free(bio, io->client->bios);
 }
@@ -296,38 +285,32 @@ static void do_region(int rw, unsigned region, struct dm_io_region *where,
 	unsigned offset;
 	unsigned num_bvecs;
 	sector_t remaining = where->count;
-	struct request_queue *q = bdev_get_queue(where->bdev);
-	sector_t discard_sectors;
 
-	/*
-	 * where->count may be zero if rw holds a flush and we need to
-	 * send a zero-sized flush.
-	 */
-	do {
+	while (remaining) {
 		/*
-		 * Allocate a suitably sized-bio.
+		 * Allocate a suitably sized-bio: we add an extra
+		 * bvec for bio_get/set_region() and decrement bi_max_vecs
+		 * to hide it from bio_add_page().
 		 */
-		if (rw & REQ_DISCARD)
-			num_bvecs = 1;
-		else
-			num_bvecs = min_t(int, bio_get_nr_vecs(where->bdev),
-					  dm_sector_div_up(remaining, (PAGE_SIZE >> SECTOR_SHIFT)));
-
+		num_bvecs = dm_sector_div_up(remaining,
+					     (PAGE_SIZE >> SECTOR_SHIFT));
+		num_bvecs = 1 + min_t(int, bio_get_nr_vecs(where->bdev),
+				      num_bvecs);
+		if (unlikely(num_bvecs > BIO_MAX_PAGES))
+			num_bvecs = BIO_MAX_PAGES;
 		bio = bio_alloc_bioset(GFP_NOIO, num_bvecs, io->client->bios);
 		bio->bi_sector = where->sector + (where->count - remaining);
 		bio->bi_bdev = where->bdev;
 		bio->bi_end_io = endio;
+		bio->bi_private = io;
 		bio->bi_destructor = dm_bio_destructor;
-		store_io_and_region_in_bio(bio, io, region);
+		bio->bi_max_vecs--;
+		bio_set_region(bio, region);
 
-		if (rw & REQ_DISCARD) {
-			discard_sectors = min_t(sector_t, q->limits.max_discard_sectors, remaining);
-			bio->bi_size = discard_sectors << SECTOR_SHIFT;
-			remaining -= discard_sectors;
-		} else while (remaining) {
-			/*
-			 * Try and add as many pages as possible.
-			 */
+		/*
+		 * Try and add as many pages as possible.
+		 */
+		while (remaining) {
 			dp->get_page(dp, &page, &len, &offset);
 			len = min(len, to_bytes(remaining));
 			if (!bio_add_page(bio, page, len, offset))
@@ -340,7 +323,7 @@ static void do_region(int rw, unsigned region, struct dm_io_region *where,
 
 		atomic_inc(&io->count);
 		submit_bio(rw, bio);
-	} while (remaining);
+	}
 }
 
 static void dispatch_io(int rw, unsigned int num_regions,
@@ -350,10 +333,8 @@ static void dispatch_io(int rw, unsigned int num_regions,
 	int i;
 	struct dpages old_pages = *dp;
 
-	BUG_ON(num_regions > DM_IO_MAX_REGIONS);
-
 	if (sync)
-		rw |= REQ_SYNC;
+		rw |= (1 << BIO_RW_SYNCIO) | (1 << BIO_RW_UNPLUG);
 
 	/*
 	 * For multiple regions we need to be careful to rewind
@@ -361,7 +342,7 @@ static void dispatch_io(int rw, unsigned int num_regions,
 	 */
 	for (i = 0; i < num_regions; i++) {
 		*dp = old_pages;
-		if (where[i].count || (rw & REQ_FLUSH))
+		if (where[i].count)
 			do_region(rw, i, where + i, dp, io);
 	}
 
@@ -376,44 +357,41 @@ static int sync_io(struct dm_io_client *client, unsigned int num_regions,
 		   struct dm_io_region *where, int rw, struct dpages *dp,
 		   unsigned long *error_bits)
 {
-	/*
-	 * gcc <= 4.3 can't do the alignment for stack variables, so we must
-	 * align it on our own.
-	 * volatile prevents the optimizer from removing or reusing
-	 * "io_" field from the stack frame (allowed in ANSI C).
-	 */
-	volatile char io_[sizeof(struct io) + __alignof__(struct io) - 1];
-	struct io *io = (struct io *)PTR_ALIGN(&io_, __alignof__(struct io));
+	struct io io;
 
 	if (num_regions > 1 && (rw & RW_MASK) != WRITE) {
 		WARN_ON(1);
 		return -EIO;
 	}
 
-	io->error_bits = 0;
-	atomic_set(&io->count, 1); /* see dispatch_io() */
-	io->sleeper = current;
-	io->client = client;
+retry:
+	io.error_bits = 0;
+	io.eopnotsupp_bits = 0;
+	atomic_set(&io.count, 1); /* see dispatch_io() */
+	io.sleeper = current;
+	io.client = client;
 
-	io->vma_invalidate_address = dp->vma_invalidate_address;
-	io->vma_invalidate_size = dp->vma_invalidate_size;
-
-	dispatch_io(rw, num_regions, where, dp, io, 1);
+	dispatch_io(rw, num_regions, where, dp, &io, 1);
 
 	while (1) {
 		set_current_state(TASK_UNINTERRUPTIBLE);
 
-		if (!atomic_read(&io->count))
+		if (!atomic_read(&io.count))
 			break;
 
 		io_schedule();
 	}
 	set_current_state(TASK_RUNNING);
 
-	if (error_bits)
-		*error_bits = io->error_bits;
+	if (io.eopnotsupp_bits && (rw & (1 << BIO_RW_BARRIER))) {
+		rw &= ~(1 << BIO_RW_BARRIER);
+		goto retry;
+	}
 
-	return io->error_bits ? -EIO : 0;
+	if (error_bits)
+		*error_bits = io.error_bits;
+
+	return io.error_bits ? -EIO : 0;
 }
 
 static int async_io(struct dm_io_client *client, unsigned int num_regions,
@@ -430,27 +408,20 @@ static int async_io(struct dm_io_client *client, unsigned int num_regions,
 
 	io = mempool_alloc(client->pool, GFP_NOIO);
 	io->error_bits = 0;
+	io->eopnotsupp_bits = 0;
 	atomic_set(&io->count, 1); /* see dispatch_io() */
 	io->sleeper = NULL;
 	io->client = client;
 	io->callback = fn;
 	io->context = context;
 
-	io->vma_invalidate_address = dp->vma_invalidate_address;
-	io->vma_invalidate_size = dp->vma_invalidate_size;
-
 	dispatch_io(rw, num_regions, where, dp, io, 0);
 	return 0;
 }
 
-static int dp_init(struct dm_io_request *io_req, struct dpages *dp,
-		   unsigned long size)
+static int dp_init(struct dm_io_request *io_req, struct dpages *dp)
 {
 	/* Set up dpages based on memory type */
-
-	dp->vma_invalidate_address = NULL;
-	dp->vma_invalidate_size = 0;
-
 	switch (io_req->mem.type) {
 	case DM_IO_PAGE_LIST:
 		list_dp_init(dp, io_req->mem.ptr.pl, io_req->mem.offset);
@@ -461,11 +432,6 @@ static int dp_init(struct dm_io_request *io_req, struct dpages *dp,
 		break;
 
 	case DM_IO_VMA:
-		flush_kernel_vmap_range(io_req->mem.ptr.vma, size);
-		if ((io_req->bi_rw & RW_MASK) == READ) {
-			dp->vma_invalidate_address = io_req->mem.ptr.vma;
-			dp->vma_invalidate_size = size;
-		}
 		vm_dp_init(dp, io_req->mem.ptr.vma);
 		break;
 
@@ -484,8 +450,8 @@ static int dp_init(struct dm_io_request *io_req, struct dpages *dp,
  * New collapsed (a)synchronous interface.
  *
  * If the IO is asynchronous (i.e. it has notify.fn), you must either unplug
- * the queue with blk_unplug() some time later or set REQ_SYNC in
-io_req->bi_rw. If you fail to do one of these, the IO will be submitted to
+ * the queue with blk_unplug() some time later or set the BIO_RW_SYNC bit in
+ * io_req->bi_rw. If you fail to do one of these, the IO will be submitted to
  * the disk after q->unplug_delay, which defaults to 3ms in blk-settings.c.
  */
 int dm_io(struct dm_io_request *io_req, unsigned num_regions,
@@ -494,7 +460,7 @@ int dm_io(struct dm_io_request *io_req, unsigned num_regions,
 	int r;
 	struct dpages dp;
 
-	r = dp_init(io_req, &dp, (unsigned long)where->count << SECTOR_SHIFT);
+	r = dp_init(io_req, &dp);
 	if (r)
 		return r;
 
@@ -506,18 +472,3 @@ int dm_io(struct dm_io_request *io_req, unsigned num_regions,
 			&dp, io_req->notify.fn, io_req->notify.context);
 }
 EXPORT_SYMBOL(dm_io);
-
-int __init dm_io_init(void)
-{
-	_dm_io_cache = KMEM_CACHE(io, 0);
-	if (!_dm_io_cache)
-		return -ENOMEM;
-
-	return 0;
-}
-
-void dm_io_exit(void)
-{
-	kmem_cache_destroy(_dm_io_cache);
-	_dm_io_cache = NULL;
-}

@@ -35,6 +35,8 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
  * DAMAGE.
  *
+ * Send feedback to <socketcan-users@lists.berlios.de>
+ *
  */
 
 #ifndef AF_CAN_H
@@ -61,8 +63,10 @@ struct receiver {
 
 enum { RX_ERR, RX_ALL, RX_FIL, RX_INV, RX_EFF, RX_MAX };
 
-/* per device receive filters linked at dev->ml_priv */
 struct dev_rcv_lists {
+	struct hlist_node list;
+	struct rcu_head rcu;
+	struct net_device *dev;
 	struct hlist_head rx[RX_MAX];
 	struct hlist_head rx_sff[0x800];
 	int remove_on_zero_entries;

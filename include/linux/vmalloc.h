@@ -31,7 +31,7 @@ struct vm_struct {
 	unsigned long		flags;
 	struct page		**pages;
 	unsigned int		nr_pages;
-	phys_addr_t		phys_addr;
+	unsigned long		phys_addr;
 	void			*caller;
 };
 
@@ -60,9 +60,8 @@ extern void *vmalloc_exec(unsigned long size);
 extern void *vmalloc_32(unsigned long size);
 extern void *vmalloc_32_user(unsigned long size);
 extern void *__vmalloc(unsigned long size, gfp_t gfp_mask, pgprot_t prot);
-extern void *__vmalloc_node_range(unsigned long size, unsigned long align,
-			unsigned long start, unsigned long end, gfp_t gfp_mask,
-			pgprot_t prot, int node, void *caller);
+extern void *__vmalloc_area(struct vm_struct *area, gfp_t gfp_mask,
+				pgprot_t prot);
 extern void vfree(const void *addr);
 
 extern void *vmap(struct page **pages, unsigned int count,
@@ -92,34 +91,20 @@ extern struct vm_struct *__get_vm_area_caller(unsigned long size,
 					unsigned long flags,
 					unsigned long start, unsigned long end,
 					void *caller);
+extern struct vm_struct *get_vm_area_node(unsigned long size,
+					  unsigned long flags, int node,
+					  gfp_t gfp_mask);
 extern struct vm_struct *remove_vm_area(const void *addr);
 
 extern int map_vm_area(struct vm_struct *area, pgprot_t prot,
 			struct page ***pages);
-#ifdef CONFIG_MMU
 extern int map_kernel_range_noflush(unsigned long start, unsigned long size,
 				    pgprot_t prot, struct page **pages);
 extern void unmap_kernel_range_noflush(unsigned long addr, unsigned long size);
 extern void unmap_kernel_range(unsigned long addr, unsigned long size);
-#else
-static inline int
-map_kernel_range_noflush(unsigned long start, unsigned long size,
-			pgprot_t prot, struct page **pages)
-{
-	return size >> PAGE_SHIFT;
-}
-static inline void
-unmap_kernel_range_noflush(unsigned long addr, unsigned long size)
-{
-}
-static inline void
-unmap_kernel_range(unsigned long addr, unsigned long size)
-{
-}
-#endif
 
 /* Allocate/destroy a 'vmalloc' VM area. */
-extern struct vm_struct *alloc_vm_area(size_t size, pte_t **ptes);
+extern struct vm_struct *alloc_vm_area(size_t size);
 extern void free_vm_area(struct vm_struct *area);
 
 /* for /dev/kmem */
@@ -131,30 +116,14 @@ extern long vwrite(char *buf, char *addr, unsigned long count);
  */
 extern rwlock_t vmlist_lock;
 extern struct vm_struct *vmlist;
-extern __init void vm_area_add_early(struct vm_struct *vm);
 extern __init void vm_area_register_early(struct vm_struct *vm, size_t align);
 
-#ifdef CONFIG_SMP
-# ifdef CONFIG_MMU
+#ifndef CONFIG_HAVE_LEGACY_PER_CPU_AREA
 struct vm_struct **pcpu_get_vm_areas(const unsigned long *offsets,
 				     const size_t *sizes, int nr_vms,
-				     size_t align);
+				     size_t align, gfp_t gfp_mask);
+#endif
 
 void pcpu_free_vm_areas(struct vm_struct **vms, int nr_vms);
-# else
-static inline struct vm_struct **
-pcpu_get_vm_areas(const unsigned long *offsets,
-		const size_t *sizes, int nr_vms,
-		size_t align)
-{
-	return NULL;
-}
-
-static inline void
-pcpu_free_vm_areas(struct vm_struct **vms, int nr_vms)
-{
-}
-# endif
-#endif
 
 #endif /* _LINUX_VMALLOC_H */

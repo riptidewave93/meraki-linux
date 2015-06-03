@@ -20,6 +20,7 @@
 #include <linux/smp.h>
 #include <linux/interrupt.h>
 
+#include <asm/system.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
 #include <asm/pgalloc.h>
@@ -40,14 +41,14 @@ void __update_tlb(struct vm_area_struct *vma, unsigned long address, pte_t pte)
 
 	/* Set PTEH register */
 	vpn = (address & MMU_VPN_MASK) | get_asid();
-	__raw_writel(vpn, MMU_PTEH);
+	ctrl_outl(vpn, MMU_PTEH);
 
 	pteval = pte_val(pte);
 
 	/* Set PTEL register */
 	pteval &= _PAGE_FLAGS_HARDWARE_MASK; /* drop software flags */
 	/* conveniently, we want all the software flags to be 0 anyway */
-	__raw_writel(pteval, MMU_PTEL);
+	ctrl_outl(pteval, MMU_PTEL);
 
 	/* Load the TLB */
 	asm volatile("ldtlb": /* no output */ : /* no input */ : "memory");
@@ -74,24 +75,5 @@ void local_flush_tlb_one(unsigned long asid, unsigned long page)
 	}
 
 	for (i = 0; i < ways; i++)
-		__raw_writel(data, addr + (i << 8));
-}
-
-void local_flush_tlb_all(void)
-{
-	unsigned long flags, status;
-
-	/*
-	 * Flush all the TLB.
-	 *
-	 * Write to the MMU control register's bit:
-	 *	TF-bit for SH-3, TI-bit for SH-4.
-	 *      It's same position, bit #2.
-	 */
-	local_irq_save(flags);
-	status = __raw_readl(MMUCR);
-	status |= 0x04;
-	__raw_writel(status, MMUCR);
-	ctrl_barrier();
-	local_irq_restore(flags);
+		ctrl_outl(data, addr + (i << 8));
 }

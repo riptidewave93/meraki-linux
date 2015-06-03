@@ -26,56 +26,42 @@
 
 #include <linux/personality.h>
 #include <linux/mm.h>
-#include <linux/mman.h>
 #include <linux/module.h>
-#include <linux/random.h>
 #include <linux/compat.h>
 #include <asm/pgalloc.h>
-
-static unsigned long stack_maxrandom_size(void)
-{
-	if (!(current->flags & PF_RANDOMIZE))
-		return 0;
-	if (current->personality & ADDR_NO_RANDOMIZE)
-		return 0;
-	return STACK_RND_MASK << PAGE_SHIFT;
-}
 
 /*
  * Top of mmap area (just below the process stack).
  *
- * Leave at least a ~32 MB hole.
+ * Leave an at least ~128 MB hole.
  */
-#define MIN_GAP (32*1024*1024)
+#define MIN_GAP (128*1024*1024)
 #define MAX_GAP (STACK_TOP/6*5)
-
-static inline int mmap_is_legacy(void)
-{
-	if (current->personality & ADDR_COMPAT_LAYOUT)
-		return 1;
-	if (rlimit(RLIMIT_STACK) == RLIM_INFINITY)
-		return 1;
-	return sysctl_legacy_va_layout;
-}
-
-static unsigned long mmap_rnd(void)
-{
-	if (!(current->flags & PF_RANDOMIZE))
-		return 0;
-	/* 8MB randomization for mmap_base */
-	return (get_random_int() & 0x7ffUL) << PAGE_SHIFT;
-}
 
 static inline unsigned long mmap_base(void)
 {
-	unsigned long gap = rlimit(RLIMIT_STACK);
+	unsigned long gap = current->signal->rlim[RLIMIT_STACK].rlim_cur;
 
 	if (gap < MIN_GAP)
 		gap = MIN_GAP;
 	else if (gap > MAX_GAP)
 		gap = MAX_GAP;
-	gap &= PAGE_MASK;
-	return STACK_TOP - stack_maxrandom_size() - mmap_rnd() - gap;
+
+	return STACK_TOP - (gap & PAGE_MASK);
+}
+
+static inline int mmap_is_legacy(void)
+{
+#ifdef CONFIG_64BIT
+	/*
+	 * Force standard allocation for 64 bit programs.
+	 */
+	if (!is_compat_task())
+		return 1;
+#endif
+	return sysctl_legacy_va_layout ||
+	    (current->personality & ADDR_COMPAT_LAYOUT) ||
+	    current->signal->rlim[RLIMIT_STACK].rlim_cur == RLIM_INFINITY;
 }
 
 #ifndef CONFIG_64BIT
@@ -100,20 +86,15 @@ void arch_pick_mmap_layout(struct mm_struct *mm)
 		mm->unmap_area = arch_unmap_area_topdown;
 	}
 }
+EXPORT_SYMBOL_GPL(arch_pick_mmap_layout);
 
 #else
 
 int s390_mmap_check(unsigned long addr, unsigned long len)
 {
-	int rc;
-
 	if (!is_compat_task() &&
-	    len >= TASK_SIZE && TASK_SIZE < (1UL << 53)) {
-		rc = crst_table_upgrade(current->mm, 1UL << 53);
-		if (rc)
-			return rc;
-		update_mm(current->mm, current);
-	}
+	    len >= TASK_SIZE && TASK_SIZE < (1UL << 53))
+		return crst_table_upgrade(current->mm, 1UL << 53);
 	return 0;
 }
 
@@ -133,7 +114,6 @@ s390_get_unmapped_area(struct file *filp, unsigned long addr,
 		rc = crst_table_upgrade(mm, 1UL << 53);
 		if (rc)
 			return (unsigned long) rc;
-		update_mm(mm, current);
 		area = arch_get_unmapped_area(filp, addr, len, pgoff, flags);
 	}
 	return area;
@@ -156,7 +136,6 @@ s390_get_unmapped_area_topdown(struct file *filp, const unsigned long addr,
 		rc = crst_table_upgrade(mm, 1UL << 53);
 		if (rc)
 			return (unsigned long) rc;
-		update_mm(mm, current);
 		area = arch_get_unmapped_area_topdown(filp, addr, len,
 						      pgoff, flags);
 	}
@@ -182,5 +161,6 @@ void arch_pick_mmap_layout(struct mm_struct *mm)
 		mm->unmap_area = arch_unmap_area_topdown;
 	}
 }
+EXPORT_SYMBOL_GPL(arch_pick_mmap_layout);
 
 #endif

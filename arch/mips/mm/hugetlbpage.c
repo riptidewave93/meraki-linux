@@ -16,6 +16,7 @@
 #include <linux/mm.h>
 #include <linux/hugetlb.h>
 #include <linux/pagemap.h>
+#include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/sysctl.h>
 #include <asm/mman.h>
@@ -96,3 +97,4 @@ follow_huge_pmd(struct mm_struct *mm, unsigned long address,
 		page += ((address & ~HPAGE_MASK) >> PAGE_SHIFT);
 	return page;
 }
+

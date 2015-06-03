@@ -7,8 +7,8 @@ Please try and keep the descriptions small enough to fit on one line.
 
 Following translations are available on the WWW:
 
-   - Japanese, maintained by the JF Project (jf@listserv.linux.or.jp), at
-     http://linuxjf.sourceforge.jp/
+   - Japanese, maintained by the JF Project (JF@linux.or.jp), at
+     http://www.linux.or.jp/JF/
 
 00-INDEX
 	- this file.
@@ -32,6 +32,8 @@ DocBook/
 	- directory with DocBook templates etc. for kernel documentation.
 HOWTO
 	- the process and procedures of how to do Linux kernel development.
+IO-mapping.txt
+	- how to access I/O mapped memory from within device drivers.
 IPMI.txt
 	- info on Linux Intelligent Platform Management Interface (IPMI) Driver.
 IRQ-affinity.txt
@@ -82,8 +84,6 @@ blockdev/
 	- info on block devices & drivers
 btmrvl.txt
 	- info on Marvell Bluetooth driver usage.
-bus-virt-phys-mapping.txt
-	- how to access I/O mapped memory from within device drivers.
 cachetlb.txt
 	- describes the cache/TLB flushing interfaces Linux uses.
 cdrom/
@@ -104,8 +104,6 @@ cpuidle/
 	- info on CPU_IDLE, CPU idle state management subsystem.
 cputopology.txt
 	- documentation on how CPU topology info is exported via sysfs.
-crc32.txt
-	- brief tutorial on CRC computation
 cris/
 	- directory with info about Linux on CRIS architecture.
 crypto/
@@ -132,6 +130,8 @@ edac.txt
 	- information on EDAC - Error Detection And Correction
 eisa.txt
 	- info on EISA bus support.
+exception.txt
+	- how Linux v2.2 handles exceptions without verify_area etc.
 fault-injection/
 	- dir with docs about the fault injection capabilities infrastructure.
 fb/
@@ -168,8 +168,6 @@ initrd.txt
 	- how to use the RAM disk as an initial/temporary root filesystem.
 input/
 	- info on Linux input device support.
-io-mapping.txt
-	- description of io_mapping functions in linux/io-mapping.h
 io_ordering.txt
 	- info on ordering I/O writes to memory-mapped addresses.
 ioctl/
@@ -194,6 +192,10 @@ kernel-docs.txt
 	- listing of various WWW + books that document kernel internals.
 kernel-parameters.txt
 	- summary listing of command line / boot prompt args for the kernel.
+keys-request-key.txt
+	- description of the kernel key request service.
+keys.txt
+	- description of the kernel key retention service.
 kobject.txt
 	- info of the kobject infrastructure of the Linux kernel.
 kprobes.txt
@@ -204,8 +206,8 @@ laptops/
 	- directory with laptop related info and laptop driver documentation.
 ldm.txt
 	- a brief description of LDM (Windows Dynamic Disks).
-leds/
-	- directory with info about LED handling under Linux.
+leds-class.txt
+	- documents LED handling under Linux.
 local_ops.txt
 	- semantics and behavior of local atomic operations.
 lockdep-design.txt
@@ -230,8 +232,6 @@ memory.txt
 	- info on typical Linux memory problems.
 mips/
 	- directory with info about Linux on MIPS architecture.
-mmc/
-	- directory with info about the MMC subsystem
 mono.txt
 	- how to execute Mono-based .NET binaries with the help of BINFMT_MISC.
 mutex-design.txt
@@ -250,8 +250,6 @@ numastat.txt
 	- info on how to read Numa policy hit/miss statistics in sysfs.
 oops-tracing.txt
 	- how to decode those nasty internal kernel error dump messages.
-padata.txt
-	- An introduction to the "padata" parallel execution API
 parisc/
 	- directory with info on using Linux on PA-RISC architecture.
 parport.txt
@@ -274,8 +272,6 @@ printk-formats.txt
 	- how to get printk format specifiers right
 prio_tree.txt
 	- info on radix-priority-search-tree use for indexing vmas.
-ramoops.txt
-	- documentation of the ramoops oops/panic logging module.
 rbtree.txt
 	- info on what red-black trees are and what they are for.
 robust-futex-ABI.txt
@@ -294,8 +290,6 @@ scheduler/
 	- directory with info on the scheduler.
 scsi/
 	- directory with info on Linux scsi support.
-security/
-	- directory that contains security-related info
 serial/
 	- directory with info on the low level serial API.
 serial-console.txt
@@ -330,6 +324,10 @@ sysrq.txt
 	- info on the magic SysRq key.
 telephony/
 	- directory with info on telephony (e.g. voice over IP) support.
+time_interpolators.txt
+	- info on time interpolators.
+uml/
+	- directory with information about User Mode Linux.
 unicode.txt
 	- info on the Unicode character/font mapping used in Linux.
 unshare.txt
@@ -344,6 +342,8 @@ vm/
 	- directory with info on the Linux vm code.
 volatile-considered-harmful.txt
 	- Why the "volatile" type class should not be used
+voyager.txt
+	- guide to running Linux on the Voyager architecture.
 w1/
 	- directory with documents regarding the 1-wire (w1) subsystem.
 watchdog/

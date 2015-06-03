@@ -21,7 +21,6 @@
  */
 
 #include <linux/input.h>
-#include <linux/module.h>
 #include <linux/platform_device.h>
 #include <asm/pmi.h>
 #include <asm/prom.h>
@@ -49,7 +48,7 @@ static int __init cbe_powerbutton_init(void)
 	int ret = 0;
 	struct input_dev *dev;
 
-	if (!of_machine_is_compatible("IBM,CBPLUS-1.0")) {
+	if (!machine_is_compatible("IBM,CBPLUS-1.0")) {
 		printk(KERN_ERR "%s: Not a cell blade.\n", __func__);
 		ret = -ENODEV;
 		goto out;

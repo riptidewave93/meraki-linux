@@ -22,13 +22,11 @@
 #include <linux/clk.h>
 #include <linux/gpio.h>
 #include <linux/spi/spi.h>
-#include <linux/spi/pxa2xx_spi.h>
 #include <linux/smc91x.h>
 #include <linux/i2c.h>
 #include <linux/leds.h>
 #include <linux/mfd/da903x.h>
 #include <linux/i2c/max732x.h>
-#include <linux/i2c/pxa-i2c.h>
 
 #include <asm/types.h>
 #include <asm/setup.h>
@@ -43,10 +41,13 @@
 
 #include <mach/pxa300.h>
 #include <mach/pxafb.h>
+#include <mach/ssp.h>
 #include <mach/mmc.h>
-#include <plat/pxa27x_keypad.h>
+#include <mach/pxa2xx_spi.h>
+#include <plat/i2c.h>
+#include <mach/pxa27x_keypad.h>
+#include <mach/pxa3xx_nand.h>
 #include <mach/littleton.h>
-#include <plat/pxa3xx_nand.h>
 
 #include "generic.h"
 
@@ -109,12 +110,6 @@ static mfp_cfg_t littleton_mfp_cfg[] __initdata = {
 	GPIO7_MMC1_CLK,
 	GPIO8_MMC1_CMD,
 	GPIO15_GPIO, /* card detect */
-
-	/* UART3 */
-	GPIO107_UART3_CTS,
-	GPIO108_UART3_RTS,
-	GPIO109_UART3_TXD,
-	GPIO110_UART3_RXD,
 };
 
 static struct resource smc91x_resources[] = {
@@ -124,8 +119,8 @@ static struct resource smc91x_resources[] = {
 		.flags	= IORESOURCE_MEM,
 	},
 	[1] = {
-		.start	= PXA_GPIO_TO_IRQ(mfp_to_gpio(MFP_PIN_GPIO90)),
-		.end	= PXA_GPIO_TO_IRQ(mfp_to_gpio(MFP_PIN_GPIO90)),
+		.start	= IRQ_GPIO(mfp_to_gpio(MFP_PIN_GPIO90)),
+		.end	= IRQ_GPIO(mfp_to_gpio(MFP_PIN_GPIO90)),
 		.flags	= IORESOURCE_IRQ | IORESOURCE_IRQ_LOWEDGE,
 	}
 };
@@ -185,7 +180,7 @@ static struct pxafb_mach_info littleton_lcd_info = {
 
 static void littleton_init_lcd(void)
 {
-	pxa_set_fb_info(NULL, &littleton_lcd_info);
+	set_pxa_fb_info(&littleton_lcd_info);
 }
 #else
 static inline void littleton_init_lcd(void) {};
@@ -271,7 +266,7 @@ static inline void littleton_init_keypad(void) {}
 
 #if defined(CONFIG_MMC_PXA) || defined(CONFIG_MMC_PXA_MODULE)
 static struct pxamci_platform_data littleton_mci_platform_data = {
-	.detect_delay_ms	= 200,
+	.detect_delay		= 20,
 	.ocr_mask		= MMC_VDD_32_33 | MMC_VDD_33_34,
 	.gpio_card_detect	= GPIO_MMC1_CARD_DETECT,
 	.gpio_card_ro		= -1,
@@ -325,9 +320,8 @@ static struct mtd_partition littleton_nand_partitions[] = {
 
 static struct pxa3xx_nand_platform_data littleton_nand_info = {
 	.enable_arbiter	= 1,
-	.num_cs		= 1,
-	.parts[0]	= littleton_nand_partitions,
-	.nr_parts[0]	= ARRAY_SIZE(littleton_nand_partitions),
+	.parts		= littleton_nand_partitions,
+	.nr_parts	= ARRAY_SIZE(littleton_nand_partitions),
 };
 
 static void __init littleton_init_nand(void)
@@ -396,7 +390,7 @@ static struct i2c_board_info littleton_i2c_info[] = {
 		.type		= "da9034",
 		.addr		= 0x34,
 		.platform_data	= &littleton_da9034_info,
-		.irq		= PXA_GPIO_TO_IRQ(mfp_to_gpio(MFP_PIN_GPIO18)),
+		.irq		= gpio_to_irq(mfp_to_gpio(MFP_PIN_GPIO18)),
 	},
 	[1] = {
 		.type		= "max7320",
@@ -419,10 +413,6 @@ static void __init littleton_init(void)
 	/* initialize MFP configurations */
 	pxa3xx_mfp_config(ARRAY_AND_SIZE(littleton_mfp_cfg));
 
-	pxa_set_ffuart_info(NULL);
-	pxa_set_btuart_info(NULL);
-	pxa_set_stuart_info(NULL);
-
 	/*
 	 * Note: we depend bootloader set the correct
 	 * value to MSC register for SMC91x.
@@ -438,12 +428,11 @@ static void __init littleton_init(void)
 }
 
 MACHINE_START(LITTLETON, "Marvell Form Factor Development Platform (aka Littleton)")
-	.atag_offset	= 0x100,
-	.map_io		= pxa3xx_map_io,
-	.nr_irqs	= LITTLETON_NR_IRQS,
+	.phys_io	= 0x40000000,
+	.boot_params	= 0xa0000100,
+	.io_pg_offst	= (io_p2v(0x40000000) >> 18) & 0xfffc,
+	.map_io		= pxa_map_io,
 	.init_irq	= pxa3xx_init_irq,
-	.handle_irq	= pxa3xx_handle_irq,
 	.timer		= &pxa_timer,
 	.init_machine	= littleton_init,
-	.restart	= pxa_restart,
 MACHINE_END

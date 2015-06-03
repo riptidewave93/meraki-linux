@@ -98,6 +98,9 @@
 	mfc0	t0, CP0_STATUS
 	or	t0, ST0_CU0|\set|0x1f|\clr
 	xor	t0, 0x1f|\clr
+#ifdef CONFIG_CPU_HAS_DSP_ASE
+	or      t0, ST0_MX
+#endif
 	mtc0	t0, CP0_STATUS
 	.set	noreorder
 	sll	zero,3				# ehb
@@ -194,6 +197,7 @@ NESTED(kernel_entry, 16, sp)			# kernel entry point
 	back_to_back_c0_hazard
 	set_saved_sp	sp, t0, t1
 	PTR_SUBU	sp, 4 * SZREG		# init stack pointer
+
 
 #ifdef CONFIG_BDI_SWITCH
 	/* Setup the PTE pointers for the Abatron bdiGDB */

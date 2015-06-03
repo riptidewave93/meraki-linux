@@ -13,7 +13,6 @@
 #include <linux/mm.h>
 #include <linux/string.h>
 #include <linux/pci.h>
-#include <linux/gfp.h>
 #include <asm/io.h>
 
 void *dma_alloc_coherent(struct device *dev, size_t size,

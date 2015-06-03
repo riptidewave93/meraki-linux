@@ -30,36 +30,11 @@ struct pg_state {
 	unsigned long start_address;
 	unsigned long current_address;
 	const struct addr_marker *marker;
-	unsigned long lines;
 };
 
 struct addr_marker {
 	unsigned long start_address;
 	const char *name;
-	unsigned long max_lines;
-};
-
-/* indices for address_markers; keep sync'd w/ address_markers below */
-enum address_markers_idx {
-	USER_SPACE_NR = 0,
-#ifdef CONFIG_X86_64
-	KERNEL_SPACE_NR,
-	LOW_KERNEL_NR,
-	VMALLOC_START_NR,
-	VMEMMAP_START_NR,
-	ESPFIX_START_NR,
-	HIGH_KERNEL_NR,
-	MODULES_VADDR_NR,
-	MODULES_END_NR,
-#else
-	KERNEL_SPACE_NR,
-	VMALLOC_START_NR,
-	VMALLOC_END_NR,
-# ifdef CONFIG_HIGHMEM
-	PKMAP_BASE_NR,
-# endif
-	FIXADDR_START_NR,
-#endif
 };
 
 /* Address space markers hints */
@@ -70,7 +45,6 @@ static struct addr_marker address_markers[] = {
 	{ PAGE_OFFSET,		"Low Kernel Mapping" },
 	{ VMALLOC_START,        "vmalloc() Area" },
 	{ VMEMMAP_START,        "Vmemmap" },
-	{ ESPFIX_BASE_ADDR,	"ESPfix Area", 16 },
 	{ __START_KERNEL_map,   "High Kernel Mapping" },
 	{ MODULES_VADDR,        "Modules" },
 	{ MODULES_END,          "End Modules" },
@@ -167,7 +141,7 @@ static void note_page(struct seq_file *m, struct pg_state *st,
 		      pgprot_t new_prot, int level)
 {
 	pgprotval_t prot, cur;
-	static const char units[] = "BKMGTPE";
+	static const char units[] = "KMGTPE";
 
 	/*
 	 * If we have a "break" in the series, we need to flush the state that
@@ -182,7 +156,6 @@ static void note_page(struct seq_file *m, struct pg_state *st,
 		st->current_prot = new_prot;
 		st->level = level;
 		st->marker = address_markers;
-		st->lines = 0;
 		seq_printf(m, "---[ %s ]---\n", st->marker->name);
 	} else if (prot != cur || level != st->level ||
 		   st->current_address >= st->marker[1].start_address) {
@@ -193,21 +166,17 @@ static void note_page(struct seq_file *m, struct pg_state *st,
 		/*
 		 * Now print the actual finished series
 		 */
-		if (!st->marker->max_lines ||
-		    st->lines < st->marker->max_lines) {
-			seq_printf(m, "0x%0*lx-0x%0*lx   ",
-				   width, st->start_address,
-				   width, st->current_address);
+		seq_printf(m, "0x%0*lx-0x%0*lx   ",
+			   width, st->start_address,
+			   width, st->current_address);
 
-			delta = (st->current_address - st->start_address);
-			while (!(delta & 1023) && unit[1]) {
-				delta >>= 10;
-				unit++;
-			}
-			seq_printf(m, "%9lu%c ", delta, *unit);
-			printk_prot(m, st->current_prot, st->level);
+		delta = (st->current_address - st->start_address) >> 10;
+		while (!(delta & 1023) && unit[1]) {
+			delta >>= 10;
+			unit++;
 		}
-		st->lines++;
+		seq_printf(m, "%9lu%c ", delta, *unit);
+		printk_prot(m, st->current_prot, st->level);
 
 		/*
 		 * We print markers for special areas of address space,
@@ -215,15 +184,7 @@ static void note_page(struct seq_file *m, struct pg_state *st,
 		 * This helps in the interpretation.
 		 */
 		if (st->current_address >= st->marker[1].start_address) {
-			if (st->marker->max_lines &&
-			    st->lines > st->marker->max_lines) {
-				unsigned long nskip =
-					st->lines - st->marker->max_lines;
-				seq_printf(m, "... %lu entr%s skipped ... \n",
-					   nskip, nskip == 1 ? "y" : "ies");
-			}
 			st->marker++;
-			st->lines = 0;
 			seq_printf(m, "---[ %s ]---\n", st->marker->name);
 		}
 
@@ -370,12 +331,14 @@ static int pt_dump_init(void)
 
 #ifdef CONFIG_X86_32
 	/* Not a compile-time constant on x86-32 */
-	address_markers[VMALLOC_START_NR].start_address = VMALLOC_START;
-	address_markers[VMALLOC_END_NR].start_address = VMALLOC_END;
+	address_markers[2].start_address = VMALLOC_START;
+	address_markers[3].start_address = VMALLOC_END;
 # ifdef CONFIG_HIGHMEM
-	address_markers[PKMAP_BASE_NR].start_address = PKMAP_BASE;
+	address_markers[4].start_address = PKMAP_BASE;
+	address_markers[5].start_address = FIXADDR_START;
+# else
+	address_markers[4].start_address = FIXADDR_START;
 # endif
-	address_markers[FIXADDR_START_NR].start_address = FIXADDR_START;
 #endif
 
 	pe = debugfs_create_file("kernel_page_tables", 0600, NULL, NULL,

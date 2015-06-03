@@ -33,7 +33,6 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/delay.h>
-#include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/fb.h>
 #include <linux/pci.h>
@@ -891,7 +890,8 @@ static int vmlfb_set_par(struct fb_info *info)
 	int ret;
 
 	mutex_lock(&vml_mutex);
-	list_move(&vinfo->head, (subsys) ? &global_has_mode : &global_no_mode);
+	list_del(&vinfo->head);
+	list_add(&vinfo->head, (subsys) ? &global_has_mode : &global_no_mode);
 	ret = vmlfb_set_par_locked(vinfo);
 
 	mutex_unlock(&vml_mutex);

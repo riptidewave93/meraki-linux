@@ -235,7 +235,6 @@ struct kvm_vm_data {
 #define KVM_REQ_PTC_G		32
 #define KVM_REQ_RESUME		33
 
-#define KVM_HPAGE_GFN_SHIFT(x)	0
 #define KVM_NR_PAGE_SIZES	1
 #define KVM_PAGES_PER_HPAGE(x)	1
 
@@ -459,9 +458,6 @@ struct kvm_sal_data {
 	unsigned long boot_gp;
 };
 
-struct kvm_arch_memory_slot {
-};
-
 struct kvm_arch {
 	spinlock_t dirty_log_lock;
 
@@ -479,6 +475,7 @@ struct kvm_arch {
 	struct list_head assigned_dev_head;
 	struct iommu_domain *iommu_domain;
 	int iommu_flags;
+	struct hlist_head irq_ack_notifier_list;
 
 	unsigned long irq_sources_bitmap;
 	unsigned long irq_states[KVM_IOAPIC_NUM_PINS];
@@ -592,10 +589,6 @@ int kvm_highest_pending_irq(struct kvm_vcpu *vcpu);
 int kvm_emulate_halt(struct kvm_vcpu *vcpu);
 int kvm_pal_emul(struct kvm_vcpu *vcpu, struct kvm_run *kvm_run);
 void kvm_sal_emul(struct kvm_vcpu *vcpu);
-
-#define __KVM_HAVE_ARCH_VM_ALLOC 1
-struct kvm *kvm_arch_alloc_vm(void);
-void kvm_arch_free_vm(struct kvm *kvm);
 
 #endif /* __ASSEMBLY__*/
 

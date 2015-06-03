@@ -14,12 +14,14 @@
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/mm.h>
+#include <linux/slab.h>
 #include <linux/delay.h>
 #include <linux/interrupt.h>
 #include <linux/platform_device.h>
 
 #include <asm/uaccess.h>
 #include <asm/setup.h>
+#include <asm/system.h>
 #include <asm/q40_master.h>
 #include <linux/fb.h>
 #include <linux/module.h>
@@ -27,7 +29,7 @@
 
 #define Q40_PHYS_SCREEN_ADDR 0xFE800000
 
-static struct fb_fix_screeninfo q40fb_fix __devinitdata = {
+static struct fb_fix_screeninfo q40fb_fix __initdata = {
 	.id		= "Q40",
 	.smem_len	= 1024*1024,
 	.type		= FB_TYPE_PACKED_PIXELS,
@@ -36,7 +38,7 @@ static struct fb_fix_screeninfo q40fb_fix __devinitdata = {
 	.accel		= FB_ACCEL_NONE,
 };
 
-static struct fb_var_screeninfo q40fb_var __devinitdata = {
+static struct fb_var_screeninfo q40fb_var __initdata = {
 	.xres		= 1024,
 	.yres		= 512,
 	.xres_virtual	= 1024,
@@ -83,7 +85,7 @@ static struct fb_ops q40fb_ops = {
 	.fb_imageblit	= cfb_imageblit,
 };
 
-static int __devinit q40fb_probe(struct platform_device *dev)
+static int __init q40fb_probe(struct platform_device *dev)
 {
 	struct fb_info *info;
 

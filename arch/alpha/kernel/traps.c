@@ -13,10 +13,10 @@
 #include <linux/sched.h>
 #include <linux/tty.h>
 #include <linux/delay.h>
+#include <linux/smp_lock.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/kallsyms.h>
-#include <linux/ratelimit.h>
 
 #include <asm/gentrap.h>
 #include <asm/uaccess.h>
@@ -24,7 +24,6 @@
 #include <asm/sysinfo.h>
 #include <asm/hwrpb.h>
 #include <asm/mmu_context.h>
-#include <asm/special_insns.h>
 
 #include "proto.h"
 
@@ -623,6 +622,7 @@ do_entUna(void * va, unsigned long opcode, unsigned long reg,
 		return;
 	}
 
+	lock_kernel();
 	printk("Bad unaligned kernel access at %016lx: %p %lx %lu\n",
 		pc, va, opcode, reg);
 	do_exit(SIGSEGV);
@@ -645,6 +645,7 @@ got_exception:
 	 * Yikes!  No one to forward the exception to.
 	 * Since the registers are in a weird format, dump them ourselves.
  	 */
+	lock_kernel();
 
 	printk("%s(%d): unhandled unaligned exception\n",
 	       current->comm, task_pid_nr(current));
@@ -770,7 +771,8 @@ asmlinkage void
 do_entUnaUser(void __user * va, unsigned long opcode,
 	      unsigned long reg, struct pt_regs *regs)
 {
-	static DEFINE_RATELIMIT_STATE(ratelimit, 5 * HZ, 5);
+	static int cnt = 0;
+	static unsigned long last_time;
 
 	unsigned long tmp1, tmp2, tmp3, tmp4;
 	unsigned long fake_reg, *reg_addr = &fake_reg;
@@ -781,11 +783,15 @@ do_entUnaUser(void __user * va, unsigned long opcode,
 	   with the unaliged access.  */
 
 	if (!test_thread_flag (TIF_UAC_NOPRINT)) {
-		if (__ratelimit(&ratelimit)) {
+		if (cnt >= 5 && time_after(jiffies, last_time + 5 * HZ)) {
+			cnt = 0;
+		}
+		if (++cnt < 5) {
 			printk("%s(%d): unaligned trap at %016lx: %p %lx %ld\n",
 			       current->comm, task_pid_nr(current),
 			       regs->pc - 4, va, opcode, reg);
 		}
+		last_time = jiffies;
 	}
 	if (test_thread_flag (TIF_UAC_SIGBUS))
 		goto give_sigbus;

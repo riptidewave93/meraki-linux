@@ -33,9 +33,6 @@
 
 #include <linux/pci.h>
 #include <linux/netdevice.h>
-#include <linux/moduleparam.h>
-#include <linux/slab.h>
-#include <linux/stat.h>
 #include <linux/vmalloc.h>
 
 #include "ipath_kernel.h"
@@ -337,7 +334,7 @@ done:
  * @dd: the infinipath device
  *
  * sanity check at least some of the values after reset, and
- * ensure no receive or transmit (explicitly, in case reset
+ * ensure no receive or transmit (explictly, in case reset
  * failed
  */
 static int init_chip_reset(struct ipath_devdata *dd)
@@ -444,7 +441,7 @@ static void init_shadow_tids(struct ipath_devdata *dd)
 	struct page **pages;
 	dma_addr_t *addrs;
 
-	pages = vzalloc(dd->ipath_cfgports * dd->ipath_rcvtidcnt *
+	pages = vmalloc(dd->ipath_cfgports * dd->ipath_rcvtidcnt *
 			sizeof(struct page *));
 	if (!pages) {
 		ipath_dev_err(dd, "failed to allocate shadow page * "
@@ -462,6 +459,9 @@ static void init_shadow_tids(struct ipath_devdata *dd)
 		dd->ipath_pageshadow = NULL;
 		return;
 	}
+
+	memset(pages, 0, dd->ipath_cfgports * dd->ipath_rcvtidcnt *
+	       sizeof(struct page *));
 
 	dd->ipath_pageshadow = pages;
 	dd->ipath_physshadow = addrs;

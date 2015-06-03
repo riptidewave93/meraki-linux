@@ -15,7 +15,6 @@
 #include <asm/page.h>
 #include <asm/processor.h>	/* For TASK_SIZE */
 #include <asm/machvec.h>
-#include <asm/setup.h>
 
 struct mm_struct;
 struct vm_area_struct;
@@ -319,7 +318,9 @@ extern inline pte_t * pte_offset_kernel(pmd_t * dir, unsigned long address)
 }
 
 #define pte_offset_map(dir,addr)	pte_offset_kernel((dir),(addr))
+#define pte_offset_map_nested(dir,addr)	pte_offset_kernel((dir),(addr))
 #define pte_unmap(pte)			do { } while (0)
+#define pte_unmap_nested(pte)		do { } while (0)
 
 extern pgd_t swapper_pg_dir[1024];
 
@@ -328,7 +329,7 @@ extern pgd_t swapper_pg_dir[1024];
  * tables contain all the necessary information.
  */
 extern inline void update_mmu_cache(struct vm_area_struct * vma,
-	unsigned long address, pte_t *ptep)
+	unsigned long address, pte_t pte)
 {
 }
 

@@ -24,7 +24,6 @@
 #include <linux/sched.h>
 #include <linux/slab.h>
 #include <linux/ioport.h>
-#include <linux/export.h>
 #include <linux/delay.h>
 #include <sound/core.h>
 #include <sound/emu8000.h>
@@ -371,20 +370,19 @@ init_arrays(struct snd_emu8000 *emu)
 
 /*
  * Size the onboard memory.
- * This is written so as not to need arbitrary delays after the write. It
+ * This is written so as not to need arbitary delays after the write. It
  * seems that the only way to do this is to use the one channel and keep
  * reallocating between read and write.
  */
 static void __devinit
 size_dram(struct snd_emu8000 *emu)
 {
-	int i, size, detected_size;
+	int i, size;
 
 	if (emu->dram_checked)
 		return;
 
 	size = 0;
-	detected_size = 0;
 
 	/* write out a magic number */
 	snd_emu8000_dma_chan(emu, 0, EMU8000_RAM_WRITE);
@@ -416,9 +414,7 @@ size_dram(struct snd_emu8000 *emu)
 		/*snd_emu8000_read_wait(emu);*/
 		EMU8000_SMLD_READ(emu); /* discard stale data  */
 		if (EMU8000_SMLD_READ(emu) != UNIQUE_ID2)
-			break; /* no memory at this address */
-
-		detected_size = size;
+			break; /* we must have wrapped around */
 
 		snd_emu8000_read_wait(emu);
 
@@ -446,9 +442,9 @@ size_dram(struct snd_emu8000 *emu)
 	snd_emu8000_dma_chan(emu, 1, EMU8000_RAM_CLOSE);
 
 	snd_printdd("EMU8000 [0x%lx]: %d Kb on-board memory detected\n",
-		    emu->port1, detected_size/1024);
+		    emu->port1, size/1024);
 
-	emu->mem_size = detected_size;
+	emu->mem_size = size;
 	emu->dram_checked = 1;
 }
 

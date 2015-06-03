@@ -210,7 +210,7 @@ struct sir {
 } __attribute__ ((packed));
 
 /* USB Controller */
-struct qe_usb_ctlr {
+struct usb_ctlr {
 	u8	usb_usmod;
 	u8	usb_usadr;
 	u8	usb_uscom;
@@ -229,7 +229,7 @@ struct qe_usb_ctlr {
 } __attribute__ ((packed));
 
 /* MCC */
-struct qe_mcc {
+struct mcc {
 	__be32	mcce;		/* MCC event register */
 	__be32	mccm;		/* MCC mask register */
 	__be32	mccf;		/* MCC configuration register */
@@ -431,9 +431,9 @@ struct qe_immap {
 	struct qe_mux		qmx;		/* QE Multiplexer */
 	struct qe_timers	qet;		/* QE Timers */
 	struct spi		spi[0x2];	/* spi */
-	struct qe_mcc		mcc;		/* mcc */
+	struct mcc		mcc;		/* mcc */
 	struct qe_brg		brg;		/* brg */
-	struct qe_usb_ctlr	usb;		/* USB */
+	struct usb_ctlr		usb;		/* USB */
 	struct si1		si1;		/* SI */
 	u8			res11[0x800];
 	struct sir		sir;		/* SI Routing Tables */
@@ -467,22 +467,13 @@ struct qe_immap {
 extern struct qe_immap __iomem *qe_immr;
 extern phys_addr_t get_qe_base(void);
 
-/*
- * Returns the offset within the QE address space of the given pointer.
- *
- * Note that the QE does not support 36-bit physical addresses, so if
- * get_qe_base() returns a number above 4GB, the caller will probably fail.
- */
-static inline phys_addr_t immrbar_virt_to_phys(void *address)
+static inline unsigned long immrbar_virt_to_phys(void *address)
 {
-	void *q = (void *)qe_immr;
-
-	/* Is it a MURAM address? */
-	if ((address >= q) && (address < (q + QE_IMMAP_SIZE)))
-		return get_qe_base() + (address - q);
-
-	/* It's an address returned by kmalloc */
-	return virt_to_phys(address);
+	if ( ((u32)address >= (u32)qe_immr) &&
+			((u32)address < ((u32)qe_immr + QE_IMMAP_SIZE)) )
+		return (unsigned long)(address - (u32)qe_immr +
+				(u32)get_qe_base());
+	return (unsigned long)virt_to_phys(address);
 }
 
 #endif /* __KERNEL__ */

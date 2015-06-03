@@ -17,7 +17,7 @@
  */
 
 #include <linux/mm.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/swap.h>
 #include <linux/bio.h>
 #include <linux/pagemap.h>
@@ -26,13 +26,7 @@
 #include <linux/init.h>
 #include <linux/hash.h>
 #include <linux/highmem.h>
-#include <linux/kgdb.h>
 #include <asm/tlbflush.h>
-
-
-#if defined(CONFIG_HIGHMEM) || defined(CONFIG_X86_32)
-DEFINE_PER_CPU(int, __kmap_atomic_idx);
-#endif
 
 /*
  * Virtual_count is not a pure "count".
@@ -46,9 +40,6 @@ DEFINE_PER_CPU(int, __kmap_atomic_idx);
 
 unsigned long totalhigh_pages __read_mostly;
 EXPORT_SYMBOL(totalhigh_pages);
-
-
-EXPORT_PER_CPU_SYMBOL(__kmap_atomic_idx);
 
 unsigned int nr_free_highpages (void)
 {
@@ -93,19 +84,6 @@ static DECLARE_WAIT_QUEUE_HEAD(pkmap_map_wait);
 #define unlock_kmap_any(flags)  \
 		do { spin_unlock(&kmap_lock); (void)(flags); } while (0)
 #endif
-
-struct page *kmap_to_page(void *vaddr)
-{
-	unsigned long addr = (unsigned long)vaddr;
-
-	if (addr >= PKMAP_ADDR(0) && addr < PKMAP_ADDR(LAST_PKMAP)) {
-		int i = (addr - PKMAP_ADDR(0)) >> PAGE_SHIFT;
-		return pte_page(pkmap_page_table[i]);
-	}
-
-	return virt_to_page(addr);
-}
-EXPORT_SYMBOL(kmap_to_page);
 
 static void flush_all_zero_pkmaps(void)
 {
@@ -242,7 +220,7 @@ EXPORT_SYMBOL(kmap_high);
  * @page: &struct page to pin
  *
  * Returns the page's current virtual memory address, or NULL if no mapping
- * exists.  If and only if a non null address is returned then a
+ * exists.  When and only when a non null address is returned then a
  * matching call to kunmap_high() is necessary.
  *
  * This can be called from any context.
@@ -263,7 +241,7 @@ void *kmap_high_get(struct page *page)
 #endif
 
 /**
- * kunmap_high - unmap a highmem page into memory
+ * kunmap_high - map a highmem page into memory
  * @page: &struct page to unmap
  *
  * If ARCH_NEEDS_KMAP_HIGH_GET is not defined then this may be called
@@ -339,7 +317,7 @@ static struct page_address_slot {
 	spinlock_t lock;			/* Protect this bucket's list */
 } ____cacheline_aligned_in_smp page_address_htable[1<<PA_HASH_ORDER];
 
-static struct page_address_slot *page_slot(const struct page *page)
+static struct page_address_slot *page_slot(struct page *page)
 {
 	return &page_address_htable[hash_ptr(page, PA_HASH_ORDER)];
 }
@@ -350,7 +328,7 @@ static struct page_address_slot *page_slot(const struct page *page)
  *
  * Returns the page's virtual address.
  */
-void *page_address(const struct page *page)
+void *page_address(struct page *page)
 {
 	unsigned long flags;
 	void *ret;
@@ -443,3 +421,55 @@ void __init page_address_init(void)
 }
 
 #endif	/* defined(CONFIG_HIGHMEM) && !defined(WANT_PAGE_VIRTUAL) */
+
+#if defined(CONFIG_DEBUG_HIGHMEM) && defined(CONFIG_TRACE_IRQFLAGS_SUPPORT)
+
+void debug_kmap_atomic(enum km_type type)
+{
+	static int warn_count = 10;
+
+	if (unlikely(warn_count < 0))
+		return;
+
+	if (unlikely(in_interrupt())) {
+		if (in_nmi()) {
+			if (type != KM_NMI && type != KM_NMI_PTE) {
+				WARN_ON(1);
+				warn_count--;
+			}
+		} else if (in_irq()) {
+			if (type != KM_IRQ0 && type != KM_IRQ1 &&
+			    type != KM_BIO_SRC_IRQ && type != KM_BIO_DST_IRQ &&
+			    type != KM_BOUNCE_READ && type != KM_IRQ_PTE) {
+				WARN_ON(1);
+				warn_count--;
+			}
+		} else if (!irqs_disabled()) {	/* softirq */
+			if (type != KM_IRQ0 && type != KM_IRQ1 &&
+			    type != KM_SOFTIRQ0 && type != KM_SOFTIRQ1 &&
+			    type != KM_SKB_SUNRPC_DATA &&
+			    type != KM_SKB_DATA_SOFTIRQ &&
+			    type != KM_BOUNCE_READ) {
+				WARN_ON(1);
+				warn_count--;
+			}
+		}
+	}
+
+	if (type == KM_IRQ0 || type == KM_IRQ1 || type == KM_BOUNCE_READ ||
+			type == KM_BIO_SRC_IRQ || type == KM_BIO_DST_IRQ ||
+			type == KM_IRQ_PTE || type == KM_NMI ||
+			type == KM_NMI_PTE ) {
+		if (!irqs_disabled()) {
+			WARN_ON(1);
+			warn_count--;
+		}
+	} else if (type == KM_SOFTIRQ0 || type == KM_SOFTIRQ1) {
+		if (irq_count() == 0 && !irqs_disabled()) {
+			WARN_ON(1);
+			warn_count--;
+		}
+	}
+}
+
+#endif

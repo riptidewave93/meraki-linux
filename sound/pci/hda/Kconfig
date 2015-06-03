@@ -2,7 +2,6 @@ menuconfig SND_HDA_INTEL
 	tristate "Intel HD Audio"
 	select SND_PCM
 	select SND_VMASTER
-	select SND_KCTL_JACK
 	help
 	  Say Y here to include support for Intel "High Definition
 	  Audio" (Azalia) and its compatible devices.
@@ -14,19 +13,6 @@ menuconfig SND_HDA_INTEL
 	  will be called snd-hda-intel.
 
 if SND_HDA_INTEL
-
-config SND_HDA_PREALLOC_SIZE
-	int "Pre-allocated buffer size for HD-audio driver"
-	range 0 32768
-	default 64
-	help
-	  Specifies the default pre-allocated buffer-size in kB for the
-	  HD-audio driver.  A larger buffer (e.g. 2048) is preferred
-	  for systems using PulseAudio.  The default 64 is chosen just
-	  for compatibility reasons.
-
-	  Note that the pre-allocation size can be changed dynamically
-	  via a proc file (/proc/asound/card*/pcm*/sub*/prealloc), too.
 
 config SND_HDA_HWDEP
 	bool "Build hwdep interface for HD-audio driver"
@@ -52,20 +38,9 @@ config SND_HDA_INPUT_BEEP
 	  Say Y here to build a digital beep interface for HD-audio
 	  driver. This interface is used to generate digital beeps.
 
-config SND_HDA_INPUT_BEEP_MODE
-	int "Digital beep registration mode (0=off, 1=on, 2=mute sw on/off)"
-	depends on SND_HDA_INPUT_BEEP=y
-	default "1"
-	range 0 2
-	help
-	  Set 0 to disable the digital beep interface for HD-audio by default.
-	  Set 1 to always enable the digital beep interface for HD-audio by
-	  default. Set 2 to control the beep device registration to input
-	  layer using a "Beep Switch" in mixer applications.
-
 config SND_HDA_INPUT_JACK
 	bool "Support jack plugging notification via input layer"
-	depends on INPUT=y || INPUT=SND
+	depends on INPUT=y || INPUT=SND_HDA_INTEL
 	select SND_JACK
 	help
 	  Say Y here to enable the jack plugging notification via
@@ -96,19 +71,6 @@ config SND_HDA_CODEC_REALTEK
 	  support code is also built as another module,
 	  snd-hda-codec-realtek.
 	  This module is automatically loaded at probing.
-
-config SND_HDA_ENABLE_REALTEK_QUIRKS
-	bool "Build static quirks for Realtek codecs"
-	depends on SND_HDA_CODEC_REALTEK
-	default y
-	help
-	  Say Y here to build the static quirks codes for Realtek codecs.
-	  If you need the "model" preset that the default BIOS auto-parser
-	  can't handle, turn this option on.
-
-	  If your device works with model=auto option, basically you don't
-	  need the quirk code.  By turning this off, you can reduce the
-	  module size quite a lot.
 
 config SND_HDA_CODEC_ANALOG
 	bool "Build Analog Device HD-audio codec support"
@@ -146,19 +108,45 @@ config SND_HDA_CODEC_VIA
 	  snd-hda-codec-via.
 	  This module is automatically loaded at probing.
 
-config SND_HDA_CODEC_HDMI
-	bool "Build HDMI/DisplayPort HD-audio codec support"
-	select SND_DYNAMIC_MINORS
+config SND_HDA_CODEC_ATIHDMI
+	bool "Build ATI HDMI HD-audio codec support"
 	default y
 	help
-	  Say Y here to include HDMI and DisplayPort HD-audio codec
-	  support in snd-hda-intel driver.  This includes all AMD/ATI,
-	  Intel and Nvidia HDMI/DisplayPort codecs.
+	  Say Y here to include ATI HDMI HD-audio codec support in
+	  snd-hda-intel driver, such as ATI RS600 HDMI.
 
 	  When the HD-audio driver is built as a module, the codec
 	  support code is also built as another module,
-	  snd-hda-codec-hdmi.
+	  snd-hda-codec-atihdmi.
 	  This module is automatically loaded at probing.
+
+config SND_HDA_CODEC_NVHDMI
+	bool "Build NVIDIA HDMI HD-audio codec support"
+	default y
+	help
+	  Say Y here to include NVIDIA HDMI HD-audio codec support in
+	  snd-hda-intel driver, such as NVIDIA MCP78 HDMI.
+
+	  When the HD-audio driver is built as a module, the codec
+	  support code is also built as another module,
+	  snd-hda-codec-nvhdmi.
+	  This module is automatically loaded at probing.
+
+config SND_HDA_CODEC_INTELHDMI
+	bool "Build INTEL HDMI HD-audio codec support"
+	default y
+	help
+	  Say Y here to include INTEL HDMI HD-audio codec support in
+	  snd-hda-intel driver, such as Eaglelake integrated HDMI.
+
+	  When the HD-audio driver is built as a module, the codec
+	  support code is also built as another module,
+	  snd-hda-codec-intelhdmi.
+	  This module is automatically loaded at probing.
+
+config SND_HDA_ELD
+	def_bool y
+	depends on SND_HDA_CODEC_INTELHDMI
 
 config SND_HDA_CODEC_CIRRUS
 	bool "Build Cirrus Logic codec support"
@@ -198,19 +186,6 @@ config SND_HDA_CODEC_CA0110
 	  snd-hda-codec-ca0110.
 	  This module is automatically loaded at probing.
 
-config SND_HDA_CODEC_CA0132
-	bool "Build Creative CA0132 codec support"
-	depends on SND_HDA_INTEL
-	default y
-	help
-	  Say Y here to include Creative CA0132 codec support in
-	  snd-hda-intel driver.
-
-	  When the HD-audio driver is built as a module, the codec
-	  support code is also built as another module,
-	  snd-hda-codec-ca0132.
-	  This module is automatically loaded at probing.
-
 config SND_HDA_CODEC_CMEDIA
 	bool "Build C-Media HD-audio codec support"
 	default y
@@ -244,7 +219,6 @@ config SND_HDA_GENERIC
 
 config SND_HDA_POWER_SAVE
 	bool "Aggressive power-saving on HD-audio"
-	depends on PM
 	help
 	  Say Y here to enable more aggressive power-saving mode on
 	  HD-audio driver.  The power-saving timeout can be configured

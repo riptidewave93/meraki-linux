@@ -219,7 +219,7 @@ static inline int read_reg(struct stir_cb *stir, __u16 reg,
 
 static inline int isfir(u32 speed)
 {
-	return speed == 4000000;
+	return (speed == 4000000);
 }
 
 /*
@@ -612,16 +612,16 @@ static int fifo_txwait(struct stir_cb *stir, int space)
 		pr_debug("fifo status 0x%lx count %lu\n", status, count);
 
 		/* is fifo receiving already, or empty */
-		if (!(status & FIFOCTL_DIR) ||
-		    (status & FIFOCTL_EMPTY))
+		if (!(status & FIFOCTL_DIR)
+		    || (status & FIFOCTL_EMPTY))
 			return 0;
 
 		if (signal_pending(current))
 			return -EINTR;
 
 		/* shutting down? */
-		if (!netif_running(stir->netdev) ||
-		    !netif_device_present(stir->netdev))
+		if (!netif_running(stir->netdev)
+		    || !netif_device_present(stir->netdev))
 			return -ESHUTDOWN;
 
 		/* only waiting for some space */
@@ -750,7 +750,7 @@ static int stir_transmit_thread(void *arg)
 
 			write_reg(stir, REG_CTRL1, CTRL1_TXPWD|CTRL1_RXPWD);
 
-			try_to_freeze();
+			refrigerator();
 
 			if (change_speed(stir, stir->speed))
 				break;
@@ -776,8 +776,8 @@ static int stir_transmit_thread(void *arg)
 		}
 
 		/* nothing to send? start receiving */
-		if (!stir->receiving &&
-		    irda_device_txqueue_empty(dev)) {
+		if (!stir->receiving 
+		    && irda_device_txqueue_empty(dev)) {
 			/* Wait otherwise chip gets confused. */
 			if (fifo_txwait(stir, -1))
 				break;
@@ -1133,4 +1133,21 @@ static struct usb_driver irda_driver = {
 #endif
 };
 
-module_usb_driver(irda_driver);
+/*
+ * Module insertion
+ */
+static int __init stir_init(void)
+{
+	return usb_register(&irda_driver);
+}
+module_init(stir_init);
+
+/*
+ * Module removal
+ */
+static void __exit stir_cleanup(void)
+{
+	/* Deregister the driver and remove all pending instances */
+	usb_deregister(&irda_driver);
+}
+module_exit(stir_cleanup);

@@ -9,11 +9,11 @@
  */
 #include <linux/kernel.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/pci.h>
 #include <linux/spinlock.h>
 #include <linux/idr.h>
 #include <linux/cb710.h>
-#include <linux/gfp.h>
 
 static DEFINE_IDA(cb710_ida);
 static DEFINE_SPINLOCK(cb710_ida_lock);
@@ -33,7 +33,7 @@ EXPORT_SYMBOL_GPL(cb710_pci_update_config_reg);
 static int __devinit cb710_pci_configure(struct pci_dev *pdev)
 {
 	unsigned int devfn = PCI_DEVFN(PCI_SLOT(pdev->devfn), 0);
-	struct pci_dev *pdev0;
+	struct pci_dev *pdev0 = pci_get_slot(pdev->bus, devfn);
 	u32 val;
 
 	cb710_pci_update_config_reg(pdev, 0x48,
@@ -43,7 +43,6 @@ static int __devinit cb710_pci_configure(struct pci_dev *pdev)
 	if (val & 0x80000000)
 		return 0;
 
-	pdev0 = pci_get_slot(pdev->bus, devfn);
 	if (!pdev0)
 		return -ENODEV;
 

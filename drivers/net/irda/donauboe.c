@@ -56,7 +56,7 @@
 /* do_probe module parameter Enable this code */
 /* Probe code is very useful for understanding how the hardware works */
 /* Use it with various combinations of TT_LEN, RX_LEN */
-/* Strongly recommended, disable if the probe fails on your machine */
+/* Strongly recomended, disable if the probe fails on your machine */
 /* and send me <james@fishsoup.dhs.org> the output of dmesg */
 #define USE_PROBE 1
 #undef  USE_PROBE
@@ -152,10 +152,10 @@
 #include <linux/delay.h>
 #include <linux/slab.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/pci.h>
 #include <linux/rtnetlink.h>
 
+#include <asm/system.h>
 #include <asm/io.h>
 
 #include <net/irda/wrapper.h>
@@ -184,7 +184,7 @@
 #define CONFIG0H_DMA_ON_NORX CONFIG0H_DMA_OFF| OBOE_CONFIG0H_ENDMAC
 #define CONFIG0H_DMA_ON CONFIG0H_DMA_ON_NORX | OBOE_CONFIG0H_ENRX
 
-static DEFINE_PCI_DEVICE_TABLE(toshoboe_pci_tbl) = {
+static struct pci_device_id toshoboe_pci_tbl[] = {
 	{ PCI_VENDOR_ID_TOSHIBA, PCI_DEVICE_ID_FIR701, PCI_ANY_ID, PCI_ANY_ID, },
 	{ PCI_VENDOR_ID_TOSHIBA, PCI_DEVICE_ID_FIRD01, PCI_ANY_ID, PCI_ANY_ID, },
 	{ }			/* Terminating entry */
@@ -196,7 +196,7 @@ static char *driver_name = DRIVER_NAME;
 
 static int max_baud = 4000000;
 #ifdef USE_PROBE
-static bool do_probe = false;
+static int do_probe = 0;
 #endif
 
 
@@ -217,7 +217,7 @@ toshoboe_checkfcs (unsigned char *buf, int len)
   for (i = 0; i < len; ++i)
     fcs.value = irda_fcs (fcs.value, *(buf++));
 
-  return fcs.value == GOOD_FCS;
+  return (fcs.value == GOOD_FCS);
 }
 
 /***********************************************************************/
@@ -759,7 +759,7 @@ toshoboe_maketestpacket (unsigned char *buf, int badcrc, int fir)
   if (fir)
     {
       memset (buf, 0, TT_LEN);
-      return TT_LEN;
+      return (TT_LEN);
     }
 
   fcs.value = INIT_FCS;
@@ -818,9 +818,9 @@ toshoboe_probe (struct toshoboe_cb *self)
 {
   int i, j, n;
 #ifdef USE_MIR
-  static const int bauds[] = { 9600, 115200, 4000000, 1152000 };
+  int bauds[] = { 9600, 115200, 4000000, 1152000 };
 #else
-  static const int bauds[] = { 9600, 115200, 4000000 };
+  int bauds[] = { 9600, 115200, 4000000 };
 #endif
   unsigned long flags;
 
@@ -1001,6 +1001,8 @@ toshoboe_hard_xmit (struct sk_buff *skb, struct net_device *dev)
       return NETDEV_TX_BUSY;
 
   toshoboe_checkstuck (self);
+
+  dev->trans_start = jiffies;
 
  /* Check if we need to change the speed */
   /* But not now. Wait after transmission if mtt not required */
@@ -1607,6 +1609,7 @@ toshoboe_open (struct pci_dev *pci_dev, const struct pci_device_id *pdid)
   self->ringbuf = kmalloc(OBOE_RING_LEN << 1, GFP_KERNEL);
   if (!self->ringbuf)
     {
+      printk (KERN_ERR DRIVER_NAME ": can't allocate DMA buffers\n");
       err = -ENOMEM;
       goto freeregion;
     }
@@ -1645,6 +1648,7 @@ toshoboe_open (struct pci_dev *pci_dev, const struct pci_device_id *pdid)
 
   if (!ok)
     {
+      printk (KERN_ERR DRIVER_NAME ": can't allocate rx/tx buffers\n");
       err = -ENOMEM;
       goto freebufs;
     }

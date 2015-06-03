@@ -19,14 +19,14 @@ CCDIR	:= $(strip $(patsubst %/specs,%,$(CCSPECS)))
 KBUILD_CPPFLAGS += -nostdinc -I$(CCDIR)/include
 
 LDFLAGS		:=
-OBJCOPYFLAGS	:= -O binary -R .note -R .comment -R .GCC-command-line -R .note.gnu.build-id -S
+OBJCOPYFLAGS	:= -O binary -R .note -R .comment -S
 #LDFLAGS_vmlinux := -Map linkmap.txt
 CHECKFLAGS	+=
 
 PROCESSOR	:= unset
 UNIT		:= unset
 
-KBUILD_CFLAGS	+= -mam33 -DCPU=AM33 $(call cc-option,-mmem-funcs,)
+KBUILD_CFLAGS	+= -mam33 -mmem-funcs -DCPU=AM33
 KBUILD_AFLAGS	+= -mam33 -DCPU=AM33
 
 ifeq ($(CONFIG_MN10300_CURRENT_IN_E2),y)
@@ -36,9 +36,6 @@ endif
 ifeq ($(CONFIG_MN10300_PROC_MN103E010),y)
 PROCESSOR	:= mn103e010
 endif
-ifeq ($(CONFIG_MN10300_PROC_MN2WS0050),y)
-PROCESSOR	:= mn2ws0050
-endif
 
 ifeq ($(CONFIG_MN10300_UNIT_ASB2303),y)
 UNIT		:= asb2303
@@ -46,12 +43,9 @@ endif
 ifeq ($(CONFIG_MN10300_UNIT_ASB2305),y)
 UNIT		:= asb2305
 endif
-ifeq ($(CONFIG_MN10300_UNIT_ASB2364),y)
-UNIT		:= asb2364
-endif
 
 
-head-y		:= arch/mn10300/kernel/head.o
+head-y		:= arch/mn10300/kernel/head.o arch/mn10300/kernel/init_task.o
 
 core-y		+= arch/mn10300/kernel/ arch/mn10300/mm/
 

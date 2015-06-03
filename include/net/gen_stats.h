@@ -6,12 +6,13 @@
 #include <linux/rtnetlink.h>
 #include <linux/pkt_sched.h>
 
-struct gnet_dump {
+struct gnet_dump
+{
 	spinlock_t *      lock;
 	struct sk_buff *  skb;
 	struct nlattr *   tail;
 
-	/* Backward compatibility */
+	/* Backward compatability */
 	int               compat_tc_stats;
 	int               compat_xstats;
 	void *            xstats;
@@ -29,7 +30,6 @@ extern int gnet_stats_start_copy_compat(struct sk_buff *skb, int type,
 extern int gnet_stats_copy_basic(struct gnet_dump *d,
 				 struct gnet_stats_basic_packed *b);
 extern int gnet_stats_copy_rate_est(struct gnet_dump *d,
-				    const struct gnet_stats_basic_packed *b,
 				    struct gnet_stats_rate_est *r);
 extern int gnet_stats_copy_queue(struct gnet_dump *d,
 				 struct gnet_stats_queue *q);

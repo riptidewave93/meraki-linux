@@ -16,6 +16,7 @@
 #define _ASM_X86_VIRTEX_H
 
 #include <asm/processor.h>
+#include <asm/system.h>
 
 #include <asm/vmx.h>
 #include <asm/svm.h>

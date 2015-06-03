@@ -56,6 +56,10 @@ struct pcidio_board {
 	const char *name;	/*  name of the board */
 	int dev_id;
 	int n_8255;		/*  number of 8255 chips on board */
+
+	/*  indices of base address regions */
+	int pcicontroler_badrindex;
+	int dioregs_badrindex;
 };
 
 static const struct pcidio_board pcidio_boards[] = {
@@ -63,16 +67,22 @@ static const struct pcidio_board pcidio_boards[] = {
 	 .name = "pci-dio24",
 	 .dev_id = 0x0028,
 	 .n_8255 = 1,
+	 .pcicontroler_badrindex = 1,
+	 .dioregs_badrindex = 2,
 	 },
 	{
 	 .name = "pci-dio24h",
 	 .dev_id = 0x0014,
 	 .n_8255 = 1,
+	 .pcicontroler_badrindex = 1,
+	 .dioregs_badrindex = 2,
 	 },
 	{
 	 .name = "pci-dio48h",
 	 .dev_id = 0x000b,
 	 .n_8255 = 2,
+	 .pcicontroler_badrindex = 0,
+	 .dioregs_badrindex = 1,
 	 },
 };
 
@@ -81,10 +91,11 @@ static const struct pcidio_board pcidio_boards[] = {
 /* Please add your PCI vendor ID to comedidev.h, and it will be forwarded
  * upstream. */
 static DEFINE_PCI_DEVICE_TABLE(pcidio_pci_table) = {
-	{ PCI_DEVICE(PCI_VENDOR_ID_CB, 0x0028) },
-	{ PCI_DEVICE(PCI_VENDOR_ID_CB, 0x0014) },
-	{ PCI_DEVICE(PCI_VENDOR_ID_CB, 0x000b) },
-	{ 0 }
+	{
+	PCI_VENDOR_ID_CB, 0x0028, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, {
+	PCI_VENDOR_ID_CB, 0x0014, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, {
+	PCI_VENDOR_ID_CB, 0x000b, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, {
+	0}
 };
 
 MODULE_DEVICE_TABLE(pci, pcidio_pci_table);
@@ -98,12 +109,12 @@ MODULE_DEVICE_TABLE(pci, pcidio_pci_table);
    several hardware drivers keep similar information in this structure,
    feel free to suggest moving the variable to the struct comedi_device struct.  */
 struct pcidio_private {
-	int data;		/*  currently unused */
+	int data;		/*  curently unused */
 
 	/* would be useful for a PCI device */
 	struct pci_dev *pci_dev;
 
-	/* used for DO readback, currently unused */
+	/* used for DO readback, curently unused */
 	unsigned int do_readback[4];	/* up to 4 unsigned int suffice to hold 96 bits for PCI-DIO96 */
 
 	unsigned long dio_reg_base;	/*  address of port A of the first 8255 chip on board */
@@ -174,6 +185,8 @@ static int pcidio_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 	int index;
 	int i;
 
+	printk("comedi%d: cb_pcidio: \n", dev->minor);
+
 /*
  * Allocate the private structure area.  alloc_private() is a
  * convenient macro defined in comedidev.h.
@@ -189,7 +202,9 @@ static int pcidio_attach(struct comedi_device *dev, struct comedi_devconfig *it)
  * Probe the device to determine what device in the series it is.
  */
 
-	for_each_pci_dev(pcidev) {
+	for (pcidev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, NULL);
+	     pcidev != NULL;
+	     pcidev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, pcidev)) {
 		/*  is it not a computer boards card? */
 		if (pcidev->vendor != PCI_VENDOR_ID_CB)
 			continue;
@@ -211,7 +226,8 @@ static int pcidio_attach(struct comedi_device *dev, struct comedi_devconfig *it)
 		}
 	}
 
-	dev_err(dev->hw_dev, "No supported ComputerBoards/MeasurementComputing card found on requested position\n");
+	printk("No supported ComputerBoards/MeasurementComputing card found on "
+	       "requested position\n");
 	return -EIO;
 
 found:
@@ -223,21 +239,18 @@ found:
 	dev->board_name = thisboard->name;
 
 	devpriv->pci_dev = pcidev;
-	dev_dbg(dev->hw_dev, "Found %s on bus %i, slot %i\n", thisboard->name,
-		devpriv->pci_dev->bus->number,
-		PCI_SLOT(devpriv->pci_dev->devfn));
-	if (comedi_pci_enable(pcidev, thisboard->name))
+	printk("Found %s on bus %i, slot %i\n", thisboard->name,
+	       devpriv->pci_dev->bus->number,
+	       PCI_SLOT(devpriv->pci_dev->devfn));
+	if (comedi_pci_enable(pcidev, thisboard->name)) {
+		printk
+		    ("cb_pcidio: failed to enable PCI device and request regions\n");
 		return -EIO;
-
-	/*
-	 * Use PCI BAR 2 region if non-zero length, else use PCI BAR 1 region.
-	 * PCI BAR 1 is only used for older PCI-DIO48H boards.  At some point
-	 * the PCI-DIO48H was redesigned to use the same PCI interface chip
-	 * (and same PCI BAR region) as the other boards.
-	 */
-	devpriv->dio_reg_base =
+	}
+	devpriv->dio_reg_base
+	    =
 	    pci_resource_start(devpriv->pci_dev,
-			       (pci_resource_len(pcidev, 2) ? 2 : 1));
+			       pcidio_boards[index].dioregs_badrindex);
 
 /*
  * Allocate the subdevice structures.  alloc_subdevice() is a
@@ -249,10 +262,11 @@ found:
 	for (i = 0; i < thisboard->n_8255; i++) {
 		subdev_8255_init(dev, dev->subdevices + i,
 				 NULL, devpriv->dio_reg_base + i * 4);
-		dev_dbg(dev->hw_dev, "subdev %d: base = 0x%lx\n", i,
-			devpriv->dio_reg_base + i * 4);
+		printk(" subdev %d: base = 0x%lx\n", i,
+		       devpriv->dio_reg_base + i * 4);
 	}
 
+	printk("attached\n");
 	return 1;
 }
 
@@ -266,17 +280,20 @@ found:
  */
 static int pcidio_detach(struct comedi_device *dev)
 {
+	printk("comedi%d: cb_pcidio: remove\n", dev->minor);
 	if (devpriv) {
 		if (devpriv->pci_dev) {
-			if (devpriv->dio_reg_base)
+			if (devpriv->dio_reg_base) {
 				comedi_pci_disable(devpriv->pci_dev);
+			}
 			pci_dev_put(devpriv->pci_dev);
 		}
 	}
 	if (dev->subdevices) {
 		int i;
-		for (i = 0; i < thisboard->n_8255; i++)
+		for (i = 0; i < thisboard->n_8255; i++) {
 			subdev_8255_cleanup(dev, dev->subdevices + i);
+		}
 	}
 	return 0;
 }
@@ -285,44 +302,4 @@ static int pcidio_detach(struct comedi_device *dev)
  * A convenient macro that defines init_module() and cleanup_module(),
  * as necessary.
  */
-static int __devinit driver_cb_pcidio_pci_probe(struct pci_dev *dev,
-						const struct pci_device_id *ent)
-{
-	return comedi_pci_auto_config(dev, driver_cb_pcidio.driver_name);
-}
-
-static void __devexit driver_cb_pcidio_pci_remove(struct pci_dev *dev)
-{
-	comedi_pci_auto_unconfig(dev);
-}
-
-static struct pci_driver driver_cb_pcidio_pci_driver = {
-	.id_table = pcidio_pci_table,
-	.probe = &driver_cb_pcidio_pci_probe,
-	.remove = __devexit_p(&driver_cb_pcidio_pci_remove)
-};
-
-static int __init driver_cb_pcidio_init_module(void)
-{
-	int retval;
-
-	retval = comedi_driver_register(&driver_cb_pcidio);
-	if (retval < 0)
-		return retval;
-
-	driver_cb_pcidio_pci_driver.name = (char *)driver_cb_pcidio.driver_name;
-	return pci_register_driver(&driver_cb_pcidio_pci_driver);
-}
-
-static void __exit driver_cb_pcidio_cleanup_module(void)
-{
-	pci_unregister_driver(&driver_cb_pcidio_pci_driver);
-	comedi_driver_unregister(&driver_cb_pcidio);
-}
-
-module_init(driver_cb_pcidio_init_module);
-module_exit(driver_cb_pcidio_cleanup_module);
-
-MODULE_AUTHOR("Comedi http://www.comedi.org");
-MODULE_DESCRIPTION("Comedi low-level driver");
-MODULE_LICENSE("GPL");
+COMEDI_PCI_INITCLEANUP(driver_cb_pcidio, pcidio_pci_table);

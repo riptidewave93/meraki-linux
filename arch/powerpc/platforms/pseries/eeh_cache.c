@@ -1,4 +1,5 @@
 /*
+ * eeh_cache.c
  * PCI address cache; allows the lookup of PCI devices based on I/O address
  *
  * Copyright IBM Corporation 2004
@@ -22,9 +23,8 @@
 #include <linux/list.h>
 #include <linux/pci.h>
 #include <linux/rbtree.h>
-#include <linux/slab.h>
 #include <linux/spinlock.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/pci-bridge.h>
 #include <asm/ppc-pci.h>
 
@@ -46,7 +46,8 @@
  * than any hash algo I could think of for this problem, even
  * with the penalty of slow pointer chases for d-cache misses).
  */
-struct pci_io_addr_range {
+struct pci_io_addr_range
+{
 	struct rb_node rb_node;
 	unsigned long addr_lo;
 	unsigned long addr_hi;
@@ -54,12 +55,13 @@ struct pci_io_addr_range {
 	unsigned int flags;
 };
 
-static struct pci_io_addr_cache {
+static struct pci_io_addr_cache
+{
 	struct rb_root rb_root;
 	spinlock_t piar_lock;
 } pci_io_addr_cache_root;
 
-static inline struct pci_dev *__pci_addr_cache_get_device(unsigned long addr)
+static inline struct pci_dev *__pci_get_device_by_addr(unsigned long addr)
 {
 	struct rb_node *n = pci_io_addr_cache_root.rb_root.rb_node;
 
@@ -83,7 +85,7 @@ static inline struct pci_dev *__pci_addr_cache_get_device(unsigned long addr)
 }
 
 /**
- * pci_addr_cache_get_device - Get device, given only address
+ * pci_get_device_by_addr - Get device, given only address
  * @addr: mmio (PIO) phys address or i/o port number
  *
  * Given an mmio phys address, or a port number, find a pci device
@@ -92,13 +94,13 @@ static inline struct pci_dev *__pci_addr_cache_get_device(unsigned long addr)
  * from zero (that is, they do *not* have pci_io_addr added in).
  * It is safe to call this function within an interrupt.
  */
-struct pci_dev *pci_addr_cache_get_device(unsigned long addr)
+struct pci_dev *pci_get_device_by_addr(unsigned long addr)
 {
 	struct pci_dev *dev;
 	unsigned long flags;
 
 	spin_lock_irqsave(&pci_io_addr_cache_root.piar_lock, flags);
-	dev = __pci_addr_cache_get_device(addr);
+	dev = __pci_get_device_by_addr(addr);
 	spin_unlock_irqrestore(&pci_io_addr_cache_root.piar_lock, flags);
 	return dev;
 }
@@ -163,7 +165,7 @@ pci_addr_cache_insert(struct pci_dev *dev, unsigned long alo,
 
 #ifdef DEBUG
 	printk(KERN_DEBUG "PIAR: insert range=[%lx:%lx] dev=%s\n",
-	                  alo, ahi, pci_name(dev));
+	                  alo, ahi, pci_name (dev));
 #endif
 
 	rb_link_node(&piar->rb_node, parent, p);
@@ -175,7 +177,7 @@ pci_addr_cache_insert(struct pci_dev *dev, unsigned long alo,
 static void __pci_addr_cache_insert_device(struct pci_dev *dev)
 {
 	struct device_node *dn;
-	struct eeh_dev *edev;
+	struct pci_dn *pdn;
 	int i;
 
 	dn = pci_device_to_OF_node(dev);
@@ -184,19 +186,13 @@ static void __pci_addr_cache_insert_device(struct pci_dev *dev)
 		return;
 	}
 
-	edev = of_node_to_eeh_dev(dn);
-	if (!edev) {
-		pr_warning("PCI: no EEH dev found for dn=%s\n",
-			dn->full_name);
-		return;
-	}
-
 	/* Skip any devices for which EEH is not enabled. */
-	if (!(edev->mode & EEH_MODE_SUPPORTED) ||
-	    edev->mode & EEH_MODE_NOCHECK) {
+	pdn = PCI_DN(dn);
+	if (!(pdn->eeh_mode & EEH_MODE_SUPPORTED) ||
+	    pdn->eeh_mode & EEH_MODE_NOCHECK) {
 #ifdef DEBUG
-		pr_info("PCI: skip building address cache for=%s - %s\n",
-			pci_name(dev), dn->full_name);
+		printk(KERN_INFO "PCI: skip building address cache for=%s - %s\n",
+		       pci_name(dev), pdn->node->full_name);
 #endif
 		return;
 	}
@@ -287,25 +283,19 @@ void pci_addr_cache_remove_device(struct pci_dev *dev)
 void __init pci_addr_cache_build(void)
 {
 	struct device_node *dn;
-	struct eeh_dev *edev;
 	struct pci_dev *dev = NULL;
 
 	spin_lock_init(&pci_io_addr_cache_root.piar_lock);
 
-	for_each_pci_dev(dev) {
+	while ((dev = pci_get_device(PCI_ANY_ID, PCI_ANY_ID, dev)) != NULL) {
+
 		pci_addr_cache_insert_device(dev);
 
 		dn = pci_device_to_OF_node(dev);
 		if (!dn)
 			continue;
-
-		edev = of_node_to_eeh_dev(dn);
-		if (!edev)
-			continue;
-
 		pci_dev_get(dev);  /* matching put is in eeh_remove_device() */
-		dev->dev.archdata.edev = edev;
-		edev->pdev = dev;
+		PCI_DN(dn)->pcidev = dev;
 
 		eeh_sysfs_add_device(dev);
 	}

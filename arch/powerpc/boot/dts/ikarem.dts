@@ -11,8 +11,8 @@
 / {
 	#address-cells = <2>;
 	#size-cells = <1>;
-	model = "apm,bluestone";
-	compatible = "apm,bluestone";
+	model = "amcc,bluestone";
+	compatible = "amcc,bluestone";
 	dcr-parent = <&{/cpus/cpu@0}>;
 
 	aliases {
@@ -26,7 +26,7 @@
 
 		cpu@0 {
 			device_type = "cpu";
-			model = "PowerPC,apm821xx";
+			model = "PowerPC,APM82181";
 			reg = <0x00000000>;
 			clock-frequency = <0>; /* Filled in by U-Boot */
 			timebase-frequency = <0>; /* Filled in by U-Boot */
@@ -46,7 +46,7 @@
 	};
 
 	UIC0: interrupt-controller0 {
-		compatible = "ibm,uic";
+		compatible = "ibm,uic-460ex","ibm,uic";
 		interrupt-controller;
 		cell-index = <0>;
 		dcr-reg = <0x0c0 0x009>;
@@ -56,7 +56,7 @@
 	};
 
 	UIC1: interrupt-controller1 {
-		compatible = "ibm,uic";
+		compatible = "ibm,uic-460ex","ibm,uic";
 		interrupt-controller;
 		cell-index = <1>;
 		dcr-reg = <0x0d0 0x009>;
@@ -68,7 +68,7 @@
 	};
 
 	UIC2: interrupt-controller2 {
-		compatible = "ibm,uic";
+		compatible = "ibm,uic-460ex","ibm,uic";
 		interrupt-controller;
 		cell-index = <2>;
 		dcr-reg = <0x0e0 0x009>;
@@ -80,7 +80,7 @@
 	};
 
 	UIC3: interrupt-controller3 {
-		compatible = "ibm,uic";
+		compatible = "ibm,uic-460ex","ibm,uic";
 		interrupt-controller;
 		cell-index = <3>;
 		dcr-reg = <0x0f0 0x009>;
@@ -91,7 +91,6 @@
 		interrupt-parent = <&UIC0>;
 	};
 
-	/* KPH check the following */
 	OCM1: ocm@400040000 {
 		compatible = "ibm,ocm";
 		status = "enabled";
@@ -100,13 +99,15 @@
 		reg = <4 0x00040000 0x8000>; /* 32K */
 	};
 
+	/* TODO: Check this for Maui */
 	SDR0: sdr {
-		compatible = "ibm,sdr-apm821xx";
+		compatible = "ibm,sdr-460ex";
 		dcr-reg = <0x00e 0x002>;
 	};
 
+	/* TODO: Change for Maui */
 	CPR0: cpr {
-		compatible = "ibm,cpr-apm821xx";
+		compatible = "ibm,cpr-460ex";
 		dcr-reg = <0x00c 0x002>;
 	};
 
@@ -120,7 +121,6 @@
 		interrupts = <11 1>;
 	};
 
-	/* kph check the below */
 	CPM0: cpm {
 		compatible = "ibm, cpm-apm821xx", "ibm,cpm";
 		cell-index = <0>;
@@ -133,46 +133,58 @@
 		pm-emac-device = <&EMAC0>;
 	};
 
+	/*
+	rtc: realtime-clock{
+		compatible = "ibm, rtc", "m48t86";
+		dcr-reg = <0x240 0x009>;
+		interrupts = <0x1a 0x4>;
+		interrupt-parent = <&UIC2>;
+	};
+	*/
 	plb {
-		compatible = "ibm,plb4";
+		compatible = "ibm,plb-460ex", "ibm,plb4";
 		#address-cells = <2>;
 		#size-cells = <1>;
 		ranges;
 		clock-frequency = <0>; /* Filled in by U-Boot */
 
 		SDRAM0: sdram {
-			compatible = "ibm,sdram-apm821xx";
+			compatible = "ibm,sdram-460ex", "ibm,sdram-405gp";
 			dcr-reg = <0x010 0x002>;
 		};
 
-		/* kph check the below */
 		CRYPTO: crypto@180000 {
-			compatible = "apm,ppc460ex-crypto", "apm,ppc4xx-crypto";
+			compatible = "amcc,ppc460ex-crypto", "amcc,ppc4xx-crypto";
 			reg = <4 0x00180000 0x80400>;
 			interrupt-parent = <&UIC0>;
 			interrupts = <0x1d 0x4>;
 		};
 
-		/* kph check the below */
 		PKA: pka@114000 {
 			device_type = "pka";
-			compatible = "ppc4xx-pka", "apm, ppc4xx-pka";
+			compatible = "ppc4xx-pka", "amcc, ppc4xx-pka";
 			reg = <4 0x00114000 0x4000>;
 			interrupt-parent = <&UIC0>;
 			interrupts = <0x14 0x2>;
 		};
 
-		/* kph check the below */
 		TRNG: trng@110000 {
 			device_type = "trng";
-			compatible = "ppc4xx-trng", "apm, ppc4xx-trng";
+			compatible = "ppc4xx-trng", "amcc, ppc4xx-trng";
 			reg = <4 0x00110000 0x100>;
 			interrupt-parent = <&UIC1>;
 			interrupts = <0x3 0x2>;
 		};
-
+		/*
+		RTC: rtc {
+			compatible = "ibm,rtc";
+			dcr-reg = <0x240 0x009>;
+			interrupts = <0x1a 0x4>;
+			interrupt-parent = <&UIC2>;
+		};
+		*/
 		MAL0: mcmal {
-			compatible = "ibm,mcmal2";
+			compatible = "ibm,mcmal-460ex", "ibm,mcmal2";
 			descriptor-memory = "ocm";
 			dcr-reg = <0x180 0x062>;
 			num-tx-chans = <1>;
@@ -184,18 +196,110 @@
 					/*RXEOB*/ 0x7 0x4
 					/*SERR*/  0x3 0x4
 					/*TXDE*/  0x4 0x4
-					/*RXDE*/  0x5 0x4>;
+					/*RXDE*/  0x5 0x4
+					/*TX0 COAL*/  0x8 0x2
+                                        /*TX1 COAL  0x9 0x2*/
+                                        /*RX0 COAL*/  0xc 0x2
+                                        /*RX1 COAL  0xd 0x2*/>;
 		};
 
+		/* TODO: Check for Maui */
+		USBOTG0: usbotg@bff80000 {
+			compatible = "amcc,usb-otg-405ex";
+			reg = <4 0xbff80000 0x10000>;
+			interrupt-parent = <&USBOTG0>;
+			interrupts = <0 1 2>;
+			#interrupt-cells = <1>;
+			#address-cells = <0>;
+			#size-cells = <0>;
+			interrupt-map = </* USB-OTG */ 0 &UIC2 0x1c 4
+					 /* HIGH-POWER */ 1 &UIC1 0x1a 8
+					 /* DMA */ 2 &UIC0 0xc 4>;
+		};
+
+		/* SATA DWC devices */
+		SATA0: sata@bffd1000 {
+			compatible = "amcc,sata-460ex";
+			reg = <4 0xbffd1000 0x800	/* SATA0 */
+			       4 0xbffd0800 0x400>;	/* AHBDMA */
+			dma-channel=<0>;
+			interrupt-parent = <&UIC0>;
+			interrupts = <26 4	/* SATA0 */
+				      25 4>;	/* AHBDMA */
+		};
+
+		SATA1: sata@bffd1800 {
+			compatible = "amcc,sata-460ex";
+			reg = <4 0xbffd1800 0x800	/* SATA1 */
+			       4 0xbffd0800 0x400>;	/* AHBDMA */
+			dma-channel=<1>;
+			interrupt-parent = <&UIC0>;
+			interrupts = <27 4	/* SATA1 */
+				      25 4>;	/* AHBDMA */
+		};
+
+		ADMA: adma {
+                        compatible = "amcc,apm82181-adma";
+                        device_type = "dma";
+                        #address-cells = <2>;
+                        #size-cells = <1>;
+
+                        /*dma-4channel@0{
+                                compatible = "amcc,apm82181-dma-4channel";
+                                cell-index = <0>;
+                                label = "plb_dma0";
+                                interrupt-parent = <&UIC0>;
+                                interrupts = <0xc 0x4>;
+                                pool_size = <0x4000>;
+                                dcr-reg = <0x200 0x207>;
+                        };*/
+
+                        dma-4channel@1 {
+                                compatible = "amcc,apm82181-dma-4channel";
+                                cell-index = <1>;
+                                label = "plb_dma1";
+                                interrupt-parent = <&UIC0>;
+                                interrupts = <0xd 0x4>;
+                                pool_size = <0x4000>;
+                                dcr-reg = <0x208 0x20f>;
+                        };
+                        dma-4channel@2 {
+                                compatible = "amcc,apm82181-dma-4channel";
+                                cell-index = <2>;
+                                label = "plb_dma2";
+                                interrupt-parent = <&UIC0>;
+                                interrupts = <0xe 0x4>;
+                                pool_size = <0x4000>;
+                                dcr-reg = <0x210 0x217>;
+                        };
+                        dma-4channel@3 {
+                                compatible = "amcc,apm82181-dma-4channel";
+                                cell-index = <3>;
+                                label = "plb_dma3";
+                                interrupt-parent = <&UIC0>;
+                                interrupts = <0xf 0x4>;
+                                pool_size = <0x4000>;
+                                dcr-reg = <0x218 0x21f>;
+                        };
+                        xor@4{
+                                compatible = "amcc,xor";
+                                cell-index = <4>;
+                                label = "xor";
+                                interrupt-parent = <&UIC1>;
+                                interrupts = <0x16 0x4>;
+                                reg = <0x00000004 0x00200000 0x00000224>;
+                        };
+                };
+
 		POB0: opb {
-			compatible = "ibm,opb";
+			compatible = "ibm,opb-460ex", "ibm,opb";
 			#address-cells = <1>;
 			#size-cells = <1>;
 			ranges = <0xb0000000 0x00000004 0xb0000000 0x50000000>;
 			clock-frequency = <0>; /* Filled in by U-Boot */
 
 			EBC0: ebc {
-				compatible = "ibm,ebc";
+				compatible = "ibm,ebc-460ex", "ibm,ebc";
 				dcr-reg = <0x012 0x002>;
 				#address-cells = <2>;
 				#size-cells = <1>;
@@ -288,22 +392,8 @@
 				};
 			};
 
-         gpio_keys_polled {
-             compatible = "gpio-keys-polled";
-             #address-cells = <1>;
-             #size-cells = <0>;
-             poll-interval = <60>;       /* 3 * 20 = 60ms */
-             autorepeat;
-             button@1 {
-               label = "soft_reset";
-               linux,code = <0x198>;     /* EV_RESTART    */
-               linux,input-type = <1>;   /* EV_KEY        */
-               gpios = <&GPIO0 16 1>;
-             };
-         };
-
 			IIC0: i2c@ef600700 {
-				compatible = "ibm,iic";
+				compatible = "ibm,iic-460ex", "ibm,iic";
 				reg = <0xef600700 0x00000014>;
 				interrupt-parent = <&UIC0>;
 				interrupts = <0x2 0x4>;
@@ -324,26 +414,27 @@
 			};
 
 			IIC1: i2c@ef600800 {
-				compatible = "ibm,iic";
+				compatible = "ibm,iic-460ex", "ibm,iic";
 				reg = <0xef600800 0x00000014>;
 				interrupt-parent = <&UIC0>;
 				interrupts = <0x3 0x4>;
 			};
 
 			RGMII0: emac-rgmii@ef601500 {
-				compatible = "ibm,rgmii";
+				compatible = "ibm,rgmii-405ex", "ibm,rgmii";
 				reg = <0xef601500 0x00000008>;
 				has-mdio;
 			};
 
 			TAH0: emac-tah@ef601350 {
-				compatible = "ibm,tah";
+				compatible = "ibm,tah-460ex", "ibm,tah";
 				reg = <0xef601350 0x00000030>;
 			};
 
+			/* TODO: Change for Maui */
 			EMAC0: ethernet@ef600c00 {
 				device_type = "network";
-				compatible = "ibm,emac-apm821xx", "ibm,emac4sync";
+				compatible = "ibm,emac-405ex", "ibm,emac4sync";
 				interrupt-parent = <&EMAC0>;
 				interrupts = <0x0 0x1>;
 				#interrupt-cells = <1>;
@@ -371,12 +462,55 @@
 			};
 		};
 
+		DMA: plb_dma@400300200 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			compatible = "amcc,dma";
+			cell-index = <0>;
+			reg = <4 00300200 200>;
+			dcr-reg = <0x100 0x13f>;
+			interrupt-parent = <&UIC0>;
+			interrupts = <0 1 2 3>;
+			interrupt-map = < /*chan 0*/ 0 &UIC0 12 4
+					  /* chan1*/ 1 &UIC0 13 4
+					  /* chan2*/ 2 &UIC0 14 4
+					  /* chan3*/ 3 &UIC0 15 4>;
+
+
+			dma-4channel@0{
+				compatible = "amcc,dma-4channel";
+				cell-index = <0>;
+				label = "channel0";
+				reg = <0x100 0x107>;
+			};
+			/*
+			dma-4channel@1 {
+				compatible = "amcc,dma-4channel";
+				cell-index = <1>;
+				label = "channel1";
+				reg = <0x108 0x10f>;
+			};
+			dma-4channel@2 {
+				compatible = "amcc,dma-4channel";
+				cell-index = <2>;
+				label = "channel2";
+				reg = <0x110 0x117>;
+			};
+			dma-4channel@3 {
+				compatible = "amcc,dma-4channel";
+				cell-index = <3>;
+				label = "channel3";
+				reg = <0x118 0x11f>;
+			};
+			*/
+		};
+
 		PCIE0: pciex@d00000000 {
 			device_type = "pci";
 			#interrupt-cells = <1>;
 			#size-cells = <2>;
 			#address-cells = <3>;
-			compatible = "ibm,plb-pciex-apm821xx", "ibm,plb-pciex";
+			compatible = "ibm,plb-pciex-460ex", "ibm,plb-pciex";
 			primary;
 			port = <0x0>; /* port number */
 			reg = <0x0000000d 0x00000000 0x20000000	/* Config space access */

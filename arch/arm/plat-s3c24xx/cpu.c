@@ -32,14 +32,13 @@
 #include <linux/io.h>
 
 #include <mach/hardware.h>
-#include <mach/regs-clock.h>
 #include <asm/irq.h>
 #include <asm/cacheflush.h>
-#include <asm/system_info.h>
-#include <asm/system_misc.h>
 
 #include <asm/mach/arch.h>
 #include <asm/mach/map.h>
+
+#include <mach/system-reset.h>
 
 #include <mach/regs-gpio.h>
 #include <plat/regs-serial.h>
@@ -47,17 +46,19 @@
 #include <plat/cpu.h>
 #include <plat/devs.h>
 #include <plat/clock.h>
+#include <plat/s3c2400.h>
 #include <plat/s3c2410.h>
 #include <plat/s3c2412.h>
-#include <plat/s3c2416.h>
-#include <plat/s3c244x.h>
+#include "s3c244x.h"
+#include <plat/s3c2440.h>
+#include <plat/s3c2442.h>
 #include <plat/s3c2443.h>
 
 /* table of supported CPUs */
 
+static const char name_s3c2400[]  = "S3C2400";
 static const char name_s3c2410[]  = "S3C2410";
 static const char name_s3c2412[]  = "S3C2412";
-static const char name_s3c2416[]  = "S3C2416/S3C2450";
 static const char name_s3c2440[]  = "S3C2440";
 static const char name_s3c2442[]  = "S3C2442";
 static const char name_s3c2442b[]  = "S3C2442B";
@@ -87,7 +88,7 @@ static struct cpu_table cpu_ids[] __initdata = {
 	{
 		.idcode		= 0x32440000,
 		.idmask		= 0xffffffff,
-		.map_io		= s3c2440_map_io,
+		.map_io		= s3c244x_map_io,
 		.init_clocks	= s3c244x_init_clocks,
 		.init_uarts	= s3c244x_init_uarts,
 		.init		= s3c2440_init,
@@ -96,7 +97,7 @@ static struct cpu_table cpu_ids[] __initdata = {
 	{
 		.idcode		= 0x32440001,
 		.idmask		= 0xffffffff,
-		.map_io		= s3c2440_map_io,
+		.map_io		= s3c244x_map_io,
 		.init_clocks	= s3c244x_init_clocks,
 		.init_uarts	= s3c244x_init_uarts,
 		.init		= s3c2440_init,
@@ -105,7 +106,7 @@ static struct cpu_table cpu_ids[] __initdata = {
 	{
 		.idcode		= 0x32440aaa,
 		.idmask		= 0xffffffff,
-		.map_io		= s3c2442_map_io,
+		.map_io		= s3c244x_map_io,
 		.init_clocks	= s3c244x_init_clocks,
 		.init_uarts	= s3c244x_init_uarts,
 		.init		= s3c2442_init,
@@ -114,7 +115,7 @@ static struct cpu_table cpu_ids[] __initdata = {
 	{
 		.idcode		= 0x32440aab,
 		.idmask		= 0xffffffff,
-		.map_io		= s3c2442_map_io,
+		.map_io		= s3c244x_map_io,
 		.init_clocks	= s3c244x_init_clocks,
 		.init_uarts	= s3c244x_init_uarts,
 		.init		= s3c2442_init,
@@ -138,15 +139,6 @@ static struct cpu_table cpu_ids[] __initdata = {
 		.init		= s3c2412_init,
 		.name		= name_s3c2412,
 	},
-	{			/* a strange version of the s3c2416 */
-		.idcode		= 0x32450003,
-		.idmask		= 0xffffffff,
-		.map_io		= s3c2416_map_io,
-		.init_clocks	= s3c2416_init_clocks,
-		.init_uarts	= s3c2416_init_uarts,
-		.init		= s3c2416_init,
-		.name		= name_s3c2416,
-	},
 	{
 		.idcode		= 0x32443001,
 		.idmask		= 0xffffffff,
@@ -155,6 +147,15 @@ static struct cpu_table cpu_ids[] __initdata = {
 		.init_uarts	= s3c2443_init_uarts,
 		.init		= s3c2443_init,
 		.name		= name_s3c2443,
+	},
+	{
+		.idcode		= 0x0,   /* S3C2400 doesn't have an idcode */
+		.idmask		= 0xffffffff,
+		.map_io		= s3c2400_map_io,
+		.init_clocks	= s3c2400_init_clocks,
+		.init_uarts	= s3c2400_init_uarts,
+		.init		= s3c2400_init,
+		.name		= name_s3c2400
 	},
 };
 
@@ -171,16 +172,6 @@ static struct map_desc s3c_iodesc[] __initdata = {
 
 static unsigned long s3c24xx_read_idcode_v5(void)
 {
-#if defined(CONFIG_CPU_S3C2416)
-	/* s3c2416 is v5, with S3C24XX_GSTATUS1 instead of S3C2412_GSTATUS1 */
-
-	u32 gs = __raw_readl(S3C24XX_GSTATUS1);
-
-	/* test for s3c2416 or similar device */
-	if ((gs >> 16) == 0x3245)
-		return gs;
-#endif
-
 #if defined(CONFIG_CPU_S3C2412) || defined(CONFIG_CPU_S3C2413)
 	return __raw_readl(S3C2412_GSTATUS1);
 #else
@@ -190,47 +181,49 @@ static unsigned long s3c24xx_read_idcode_v5(void)
 
 static unsigned long s3c24xx_read_idcode_v4(void)
 {
+#ifndef CONFIG_CPU_S3C2400
 	return __raw_readl(S3C2410_GSTATUS1);
+#else
+	return 0UL;
+#endif
 }
 
-static void s3c24xx_default_idle(void)
+/* Hook for arm_pm_restart to ensure we execute the reset code
+ * with the caches enabled. It seems at least the S3C2440 has a problem
+ * resetting if there is bus activity interrupted by the reset.
+ */
+static void s3c24xx_pm_restart(char mode, const char *cmd)
 {
-	unsigned long tmp;
-	int i;
+	if (mode != 's') {
+		unsigned long flags;
 
-	/* idle the system by using the idle mode which will wait for an
-	 * interrupt to happen before restarting the system.
-	 */
+		local_irq_save(flags);
+		__cpuc_flush_kern_all();
+		__cpuc_flush_user_all();
 
-	/* Warning: going into idle state upsets jtag scanning */
+		arch_reset(mode, cmd);
+		local_irq_restore(flags);
+	}
 
-	__raw_writel(__raw_readl(S3C2410_CLKCON) | S3C2410_CLKCON_IDLE,
-		     S3C2410_CLKCON);
-
-	/* the samsung port seems to do a loop and then unset idle.. */
-	for (i = 0; i < 50; i++)
-		tmp += __raw_readl(S3C2410_CLKCON); /* ensure loop not optimised out */
-
-	/* this bit is not cleared on re-start... */
-
-	__raw_writel(__raw_readl(S3C2410_CLKCON) & ~S3C2410_CLKCON_IDLE,
-		     S3C2410_CLKCON);
+	/* fallback, or unhandled */
+	arm_machine_restart(mode, cmd);
 }
 
 void __init s3c24xx_init_io(struct map_desc *mach_desc, int size)
 {
-	arm_pm_idle = s3c24xx_default_idle;
+	unsigned long idcode = 0x0;
 
 	/* initialise the io descriptors we need for initialisation */
 	iotable_init(mach_desc, size);
 	iotable_init(s3c_iodesc, ARRAY_SIZE(s3c_iodesc));
 
 	if (cpu_architecture() >= CPU_ARCH_ARMv5) {
-		samsung_cpu_id = s3c24xx_read_idcode_v5();
+		idcode = s3c24xx_read_idcode_v5();
 	} else {
-		samsung_cpu_id = s3c24xx_read_idcode_v4();
+		idcode = s3c24xx_read_idcode_v4();
 	}
-	s3c24xx_init_cpu();
 
-	s3c_init_cpu(samsung_cpu_id, cpu_ids, ARRAY_SIZE(cpu_ids));
+	arm_pm_restart = s3c24xx_pm_restart;
+
+	s3c_init_cpu(idcode, cpu_ids, ARRAY_SIZE(cpu_ids));
 }

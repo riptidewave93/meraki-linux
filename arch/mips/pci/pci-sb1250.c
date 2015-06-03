@@ -37,7 +37,6 @@
 #include <linux/mm.h>
 #include <linux/console.h>
 #include <linux/tty.h>
-#include <linux/vt.h>
 
 #include <asm/io.h>
 
@@ -213,7 +212,7 @@ static int __init sb1250_pcibios_init(void)
 	uint64_t reg;
 
 	/* CFE will assign PCI resources */
-	pci_set_flags(PCI_PROBE_ONLY);
+	pci_probe_only = 1;
 
 	/* Avoid ISA compat ranges.  */
 	PCIBIOS_MIN_IO = 0x00008000UL;
@@ -255,7 +254,7 @@ static int __init sb1250_pcibios_init(void)
 	 * XXX ehs: Should this happen in PCI Device mode?
 	 */
 	io_map_base = ioremap(A_PHYS_LDTPCI_IO_MATCH_BYTES, 1024 * 1024);
-	sb1250_controller.io_map_base = (unsigned long)io_map_base;
+	sb1250_controller.io_map_base = io_map_base;
 	set_io_port_base((unsigned long)io_map_base);
 
 #ifdef CONFIG_SIBYTE_HAS_LDT

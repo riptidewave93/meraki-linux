@@ -33,7 +33,6 @@
 #include <linux/percpu.h>
 #include <linux/seq_file.h>
 #include <linux/proc_fs.h>
-#include <linux/export.h>
 
 #include "rds.h"
 
@@ -58,8 +57,8 @@ static const char *const rds_stat_names[] = {
 	"recv_ping",
 	"send_queue_empty",
 	"send_queue_full",
-	"send_lock_contention",
-	"send_lock_queue_raced",
+	"send_sem_contention",
+	"send_sem_queue_raced",
 	"send_immediate_retry",
 	"send_delayed_retry",
 	"send_drop_acked",
@@ -144,7 +143,7 @@ void rds_stats_exit(void)
 	rds_info_deregister_func(RDS_INFO_COUNTERS, rds_stats_info);
 }
 
-int rds_stats_init(void)
+int __init rds_stats_init(void)
 {
 	rds_info_register_func(RDS_INFO_COUNTERS, rds_stats_info);
 	return 0;

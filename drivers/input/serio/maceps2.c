@@ -21,6 +21,7 @@
 
 #include <asm/io.h>
 #include <asm/irq.h>
+#include <asm/system.h>
 #include <asm/ip32/mace.h>
 #include <asm/ip32/ip32_ints.h>
 

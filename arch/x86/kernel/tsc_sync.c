@@ -33,7 +33,7 @@ static __cpuinitdata atomic_t stop_count;
  * we want to have the fastest, inlined, non-debug version
  * of a critical section, to be able to prove TSC time-warps:
  */
-static __cpuinitdata arch_spinlock_t sync_lock = __ARCH_SPIN_LOCK_UNLOCKED;
+static __cpuinitdata raw_spinlock_t sync_lock = __RAW_SPIN_LOCK_UNLOCKED;
 
 static __cpuinitdata cycles_t last_tsc;
 static __cpuinitdata cycles_t max_warp;
@@ -42,7 +42,7 @@ static __cpuinitdata int nr_warps;
 /*
  * TSC-warp measurement loop running on both CPUs:
  */
-static __cpuinit void check_tsc_warp(unsigned int timeout)
+static __cpuinit void check_tsc_warp(void)
 {
 	cycles_t start, now, prev, end;
 	int i;
@@ -51,9 +51,9 @@ static __cpuinit void check_tsc_warp(unsigned int timeout)
 	start = get_cycles();
 	rdtsc_barrier();
 	/*
-	 * The measurement runs for 'timeout' msecs:
+	 * The measurement runs for 20 msecs:
 	 */
-	end = start + (cycles_t) tsc_khz * timeout;
+	end = start + tsc_khz * 20ULL;
 	now = start;
 
 	for (i = 0; ; i++) {
@@ -62,13 +62,13 @@ static __cpuinit void check_tsc_warp(unsigned int timeout)
 		 * previous TSC that was measured (possibly on
 		 * another CPU) and update the previous TSC timestamp.
 		 */
-		arch_spin_lock(&sync_lock);
+		__raw_spin_lock(&sync_lock);
 		prev = last_tsc;
 		rdtsc_barrier();
 		now = get_cycles();
 		rdtsc_barrier();
 		last_tsc = now;
-		arch_spin_unlock(&sync_lock);
+		__raw_spin_unlock(&sync_lock);
 
 		/*
 		 * Be nice every now and then (and also check whether
@@ -87,34 +87,15 @@ static __cpuinit void check_tsc_warp(unsigned int timeout)
 		 * we saw a time-warp of the TSC going backwards:
 		 */
 		if (unlikely(prev > now)) {
-			arch_spin_lock(&sync_lock);
+			__raw_spin_lock(&sync_lock);
 			max_warp = max(max_warp, prev - now);
 			nr_warps++;
-			arch_spin_unlock(&sync_lock);
+			__raw_spin_unlock(&sync_lock);
 		}
 	}
 	WARN(!(now-start),
 		"Warning: zero tsc calibration delta: %Ld [max: %Ld]\n",
 			now-start, end-start);
-}
-
-/*
- * If the target CPU coming online doesn't have any of its core-siblings
- * online, a timeout of 20msec will be used for the TSC-warp measurement
- * loop. Otherwise a smaller timeout of 2msec will be used, as we have some
- * information about this socket already (and this information grows as we
- * have more and more logical-siblings in that socket).
- *
- * Ideally we should be able to skip the TSC sync check on the other
- * core-siblings, if the first logical CPU in a socket passed the sync test.
- * But as the TSC is per-logical CPU and can potentially be modified wrongly
- * by the bios, TSC sync test for smaller duration should be able
- * to catch such errors. Also this will catch the condition where all the
- * cores in the socket doesn't get reset at the same time.
- */
-static inline unsigned int loop_timeout(int cpu)
-{
-	return (cpumask_weight(cpu_core_mask(cpu)) > 1) ? 2 : 20;
 }
 
 /*
@@ -132,12 +113,13 @@ void __cpuinit check_tsc_sync_source(int cpu)
 	if (unsynchronized_tsc())
 		return;
 
-	if (tsc_clocksource_reliable) {
-		if (cpu == (nr_cpu_ids-1) || system_state != SYSTEM_BOOTING)
-			pr_info(
-			"Skipped synchronization checks as TSC is reliable.\n");
+	if (boot_cpu_has(X86_FEATURE_TSC_RELIABLE)) {
+		printk_once(KERN_INFO "Skipping synchronization checks as TSC is reliable.\n");
 		return;
 	}
+
+	pr_info("checking TSC synchronization [CPU#%d -> CPU#%d]:",
+		smp_processor_id(), cpu);
 
 	/*
 	 * Reset it - in case this is a second bootup:
@@ -154,20 +136,18 @@ void __cpuinit check_tsc_sync_source(int cpu)
 	 */
 	atomic_inc(&start_count);
 
-	check_tsc_warp(loop_timeout(cpu));
+	check_tsc_warp();
 
 	while (atomic_read(&stop_count) != cpus-1)
 		cpu_relax();
 
 	if (nr_warps) {
-		pr_warning("TSC synchronization [CPU#%d -> CPU#%d]:\n",
-			smp_processor_id(), cpu);
+		printk("\n");
 		pr_warning("Measured %Ld cycles TSC warp between CPUs, "
 			   "turning off TSC clock.\n", max_warp);
 		mark_tsc_unstable("check_tsc_sync_source failed");
 	} else {
-		pr_debug("TSC synchronization [CPU#%d -> CPU#%d]: passed\n",
-			smp_processor_id(), cpu);
+		printk(" passed.\n");
 	}
 
 	/*
@@ -191,7 +171,7 @@ void __cpuinit check_tsc_sync_target(void)
 {
 	int cpus = 2;
 
-	if (unsynchronized_tsc() || tsc_clocksource_reliable)
+	if (unsynchronized_tsc() || boot_cpu_has(X86_FEATURE_TSC_RELIABLE))
 		return;
 
 	/*
@@ -202,7 +182,7 @@ void __cpuinit check_tsc_sync_target(void)
 	while (atomic_read(&start_count) != cpus)
 		cpu_relax();
 
-	check_tsc_warp(loop_timeout(smp_processor_id()));
+	check_tsc_warp();
 
 	/*
 	 * Ok, we are done:

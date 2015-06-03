@@ -17,6 +17,7 @@
 #include <linux/string.h>
 #include <linux/errno.h>
 #include <linux/unistd.h>
+#include <linux/slab.h>
 #include <linux/interrupt.h>
 #include <linux/init.h>
 #include <linux/delay.h>
@@ -110,10 +111,3 @@ static void __exit et1011c_exit(void)
 
 module_init(et1011c_init);
 module_exit(et1011c_exit);
-
-static struct mdio_device_id __maybe_unused et1011c_tbl[] = {
-	{ 0x0282f014, 0xfffffff0 },
-	{ }
-};
-
-MODULE_DEVICE_TABLE(mdio, et1011c_tbl);

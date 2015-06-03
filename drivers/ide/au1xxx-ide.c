@@ -36,16 +36,12 @@
 #include <linux/ide.h>
 #include <linux/scatterlist.h>
 
-#include <asm/mach-au1x00/au1000.h>
+#include <asm/mach-au1x00/au1xxx.h>
 #include <asm/mach-au1x00/au1xxx_dbdma.h>
 #include <asm/mach-au1x00/au1xxx_ide.h>
 
 #define DRV_NAME	"au1200-ide"
 #define DRV_AUTHOR	"Enrico Walther <enrico.walther@amd.com> / Pete Popov <ppopov@embeddedalley.com>"
-
-#ifndef IDE_REG_SHIFT
-#define IDE_REG_SHIFT 5
-#endif
 
 /* enable the burstmode in the dbdma */
 #define IDE_AU1XXX_BURSTMODE	1
@@ -60,8 +56,8 @@ static inline void auide_insw(unsigned long port, void *addr, u32 count)
 	chan_tab_t *ctp;
 	au1x_ddma_desc_t *dp;
 
-	if (!au1xxx_dbdma_put_dest(ahwif->rx_chan, virt_to_phys(addr),
-				   count << 1, DDMA_FLAGS_NOIE)) {
+	if(!put_dest_flags(ahwif->rx_chan, (void*)addr, count << 1, 
+			   DDMA_FLAGS_NOIE)) {
 		printk(KERN_ERR "%s failed %d\n", __func__, __LINE__);
 		return;
 	}
@@ -78,8 +74,8 @@ static inline void auide_outsw(unsigned long port, void *addr, u32 count)
 	chan_tab_t *ctp;
 	au1x_ddma_desc_t *dp;
 
-	if (!au1xxx_dbdma_put_source(ahwif->tx_chan, virt_to_phys(addr),
-				     count << 1, DDMA_FLAGS_NOIE)) {
+	if(!put_source_flags(ahwif->tx_chan, (void*)addr,
+			     count << 1, DDMA_FLAGS_NOIE)) {
 		printk(KERN_ERR "%s failed %d\n", __func__, __LINE__);
 		return;
 	}
@@ -103,11 +99,12 @@ static void au1xxx_output_data(ide_drive_t *drive, struct ide_cmd *cmd,
 }
 #endif
 
-static void au1xxx_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void au1xxx_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
 	int mem_sttime = 0, mem_stcfg = au_readl(MEM_STCFG2);
 
-	switch (drive->pio_mode - XFER_PIO_0) {
+	/* set pio mode! */
+	switch(pio) {
 	case 0:
 		mem_sttime = SBC_IDE_TIMING(PIO0);
 
@@ -164,11 +161,11 @@ static void au1xxx_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 	au_writel(mem_stcfg,MEM_STCFG2);
 }
 
-static void auide_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void auide_set_dma_mode(ide_drive_t *drive, const u8 speed)
 {
 	int mem_sttime = 0, mem_stcfg = au_readl(MEM_STCFG2);
 
-	switch (drive->dma_mode) {
+	switch(speed) {
 #ifdef CONFIG_BLK_DEV_IDE_AU1XXX_MDMA2_DBDMA
 	case XFER_MW_DMA_2:
 		mem_sttime = SBC_IDE_TIMING(MDMA2);
@@ -249,14 +246,17 @@ static int auide_build_dmatable(ide_drive_t *drive, struct ide_cmd *cmd)
 				flags = DDMA_FLAGS_NOIE;
 
 			if (iswrite) {
-				if (!au1xxx_dbdma_put_source(ahwif->tx_chan,
-					sg_phys(sg), tc, flags)) {
+				if(!put_source_flags(ahwif->tx_chan, 
+						     (void*) sg_virt(sg),
+						     tc, flags)) { 
 					printk(KERN_ERR "%s failed %d\n", 
 					       __func__, __LINE__);
 				}
-			} else  {
-				if (!au1xxx_dbdma_put_dest(ahwif->rx_chan,
-					sg_phys(sg), tc, flags)) {
+			} else 
+			{
+				if(!put_dest_flags(ahwif->rx_chan, 
+						   (void*) sg_virt(sg),
+						   tc, flags)) { 
 					printk(KERN_ERR "%s failed %d\n", 
 					       __func__, __LINE__);
 				}
@@ -300,8 +300,8 @@ static int auide_dma_test_irq(ide_drive_t *drive)
 	 */
 	drive->waiting_for_dma++;
 	if (drive->waiting_for_dma >= DMA_WAIT_TIMEOUT) {
-		printk(KERN_WARNING "%s: timeout waiting for ddma to complete\n",
-		       drive->name);
+		printk(KERN_WARNING "%s: timeout waiting for ddma to \
+                                     complete\n", drive->name);
 		return 1;
 	}
 	udelay(10);
@@ -321,11 +321,10 @@ static void auide_ddma_rx_callback(int irq, void *param)
 }
 #endif /* end CONFIG_BLK_DEV_IDE_AU1XXX_MDMA2_DBDMA */
 
-static void auide_init_dbdma_dev(dbdev_tab_t *dev, u32 dev_id, u32 tsize,
-				 u32 devwidth, u32 flags, u32 regbase)
+static void auide_init_dbdma_dev(dbdev_tab_t *dev, u32 dev_id, u32 tsize, u32 devwidth, u32 flags)
 {
 	dev->dev_id          = dev_id;
-	dev->dev_physaddr    = CPHYSADDR(regbase);
+	dev->dev_physaddr    = (u32)IDE_PHYS_ADDR;
 	dev->dev_intlevel    = 0;
 	dev->dev_intpolarity = 0;
 	dev->dev_tsize       = tsize;
@@ -349,7 +348,7 @@ static int auide_ddma_init(ide_hwif_t *hwif, const struct ide_port_info *d)
 	dbdev_tab_t source_dev_tab, target_dev_tab;
 	u32 dev_id, tsize, devwidth, flags;
 
-	dev_id	 = hwif->ddma_id;
+	dev_id	 = IDE_DDMA_REQ;
 
 	tsize    =  8; /*  1 */
 	devwidth = 32; /* 16 */
@@ -361,17 +360,20 @@ static int auide_ddma_init(ide_hwif_t *hwif, const struct ide_port_info *d)
 #endif
 
 	/* setup dev_tab for tx channel */
-	auide_init_dbdma_dev(&source_dev_tab, dev_id, tsize, devwidth,
-			     DEV_FLAGS_OUT | flags, auide->regbase);
+	auide_init_dbdma_dev( &source_dev_tab,
+			      dev_id,
+			      tsize, devwidth, DEV_FLAGS_OUT | flags);
  	auide->tx_dev_id = au1xxx_ddma_add_device( &source_dev_tab );
 
-	auide_init_dbdma_dev(&source_dev_tab, dev_id, tsize, devwidth,
-			     DEV_FLAGS_IN | flags, auide->regbase);
+	auide_init_dbdma_dev( &source_dev_tab,
+			      dev_id,
+			      tsize, devwidth, DEV_FLAGS_IN | flags);
  	auide->rx_dev_id = au1xxx_ddma_add_device( &source_dev_tab );
 	
 	/* We also need to add a target device for the DMA */
-	auide_init_dbdma_dev(&target_dev_tab, (u32)DSCR_CMD0_ALWAYS, tsize,
-			     devwidth, DEV_FLAGS_ANYUSE, auide->regbase);
+	auide_init_dbdma_dev( &target_dev_tab,
+			      (u32)DSCR_CMD0_ALWAYS,
+			      tsize, devwidth, DEV_FLAGS_ANYUSE);
 	auide->target_dev_id = au1xxx_ddma_add_device(&target_dev_tab);	
  
 	/* Get a channel for TX */
@@ -413,12 +415,14 @@ static int auide_ddma_init(ide_hwif_t *hwif, const struct ide_port_info *d)
 #endif
 
 	/* setup dev_tab for tx channel */
-	auide_init_dbdma_dev(&source_dev_tab, (u32)DSCR_CMD0_ALWAYS, 8, 32,
-			     DEV_FLAGS_OUT | flags, auide->regbase);
+	auide_init_dbdma_dev( &source_dev_tab,
+			      (u32)DSCR_CMD0_ALWAYS,
+			      8, 32, DEV_FLAGS_OUT | flags);
  	auide->tx_dev_id = au1xxx_ddma_add_device( &source_dev_tab );
 
-	auide_init_dbdma_dev(&source_dev_tab, (u32)DSCR_CMD0_ALWAYS, 8, 32,
-			     DEV_FLAGS_IN | flags, auide->regbase);
+	auide_init_dbdma_dev( &source_dev_tab,
+			      (u32)DSCR_CMD0_ALWAYS,
+			      8, 32, DEV_FLAGS_IN | flags);
  	auide->rx_dev_id = au1xxx_ddma_add_device( &source_dev_tab );
 	
 	/* Get a channel for TX */
@@ -528,25 +532,18 @@ static int au_ide_probe(struct platform_device *dev)
 		goto out;
 	}
 
-	if (!request_mem_region(res->start, resource_size(res), dev->name)) {
+	if (!request_mem_region(res->start, res->end - res->start + 1,
+				dev->name)) {
 		pr_debug("%s: request_mem_region failed\n", DRV_NAME);
 		ret =  -EBUSY;
 		goto out;
 	}
 
-	ahwif->regbase = (u32)ioremap(res->start, resource_size(res));
+	ahwif->regbase = (u32)ioremap(res->start, res->end - res->start + 1);
 	if (ahwif->regbase == 0) {
 		ret = -ENOMEM;
 		goto out;
 	}
-
-	res = platform_get_resource(dev, IORESOURCE_DMA, 0);
-	if (!res) {
-		pr_debug("%s: no DDMA ID resource\n", DRV_NAME);
-		ret = -ENODEV;
-		goto out;
-	}
-	ahwif->ddma_id = res->start;
 
 	memset(&hw, 0, sizeof(hw));
 	auide_setup_ports(&hw, ahwif);
@@ -578,7 +575,7 @@ static int au_ide_remove(struct platform_device *dev)
 	iounmap((void *)ahwif->regbase);
 
 	res = platform_get_resource(dev, IORESOURCE_MEM, 0);
-	release_mem_region(res->start, resource_size(res));
+	release_mem_region(res->start, res->end - res->start + 1);
 
 	return 0;
 }

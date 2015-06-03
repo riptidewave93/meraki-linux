@@ -18,9 +18,10 @@
 #include <linux/fs.h>
 #include <linux/mount.h>
 
-extern struct dentry *mount_mtd(struct file_system_type *fs_type, int flags,
+extern int get_sb_mtd(struct file_system_type *fs_type, int flags,
 		      const char *dev_name, void *data,
-		      int (*fill_super)(struct super_block *, void *, int));
+		      int (*fill_super)(struct super_block *, void *, int),
+		      struct vfsmount *mnt);
 extern void kill_mtd_super(struct super_block *sb);
 
 

@@ -4,7 +4,6 @@ menuconfig PPC_86xx
 	depends on 6xx
 	select FSL_SOC
 	select ALTIVEC
-	select ARCH_WANT_OPTIONAL_GPIOLIB
 	help
 	  The Freescale E600 SoCs have 74xx cores.
 
@@ -14,7 +13,7 @@ config MPC8641_HPCN
 	bool "Freescale MPC8641 HPCN"
 	select PPC_I8259
 	select DEFAULT_UIMAGE
-	select FSL_ULI1575 if PCI
+	select FSL_ULI1575
 	select HAS_RAPIDIO
 	select SWIOTLB
 	help
@@ -29,40 +28,34 @@ config SBC8641D
 config MPC8610_HPCD
 	bool "Freescale MPC8610 HPCD"
 	select DEFAULT_UIMAGE
-	select FSL_ULI1575 if PCI
+	select FSL_ULI1575
 	help
 	  This option enables support for the MPC8610 HPCD board.
 
 config GEF_PPC9A
-	bool "GE PPC9A"
+	bool "GE Fanuc PPC9A"
 	select DEFAULT_UIMAGE
-	select MMIO_NVRAM
 	select GENERIC_GPIO
 	select ARCH_REQUIRE_GPIOLIB
-	select GE_FPGA
 	help
-	  This option enables support for the GE PPC9A.
+	  This option enables support for GE Fanuc's PPC9A.
 
 config GEF_SBC310
-	bool "GE SBC310"
+	bool "GE Fanuc SBC310"
 	select DEFAULT_UIMAGE
-	select MMIO_NVRAM
 	select GENERIC_GPIO
 	select ARCH_REQUIRE_GPIOLIB
-	select GE_FPGA
 	help
-	  This option enables support for the GE SBC310.
+	  This option enables support for GE Fanuc's SBC310.
 
 config GEF_SBC610
-	bool "GE SBC610"
+	bool "GE Fanuc SBC610"
 	select DEFAULT_UIMAGE
-	select MMIO_NVRAM
 	select GENERIC_GPIO
 	select ARCH_REQUIRE_GPIOLIB
-	select GE_FPGA
 	select HAS_RAPIDIO
 	help
-	  This option enables support for the GE SBC610.
+	  This option enables support for GE Fanuc's SBC610.
 
 endif
 

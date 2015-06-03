@@ -65,10 +65,10 @@ struct n2rng_unit {
 };
 
 struct n2rng {
-	struct platform_device	*op;
+	struct of_device	*op;
 
 	unsigned long		flags;
-#define N2RNG_FLAG_MULTI	0x00000001 /* Multi-unit capable RNG */
+#define N2RNG_FLAG_VF		0x00000001 /* Victoria Falls RNG, else N2 */
 #define N2RNG_FLAG_CONTROL	0x00000002 /* Operating in control domain */
 #define N2RNG_FLAG_READY	0x00000008 /* Ready for hw-rng layer      */
 #define N2RNG_FLAG_SHUTDOWN	0x00000010 /* Driver unregistering        */

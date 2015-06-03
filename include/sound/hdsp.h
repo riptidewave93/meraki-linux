@@ -28,7 +28,6 @@ enum HDSP_IO_Type {
 	Multiface,
 	H9652,
 	H9632,
-	RPM,
 	Undefined,
 };
 

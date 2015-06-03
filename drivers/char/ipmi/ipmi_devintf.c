@@ -34,6 +34,7 @@
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/errno.h>
+#include <asm/system.h>
 #include <linux/poll.h>
 #include <linux/sched.h>
 #include <linux/spinlock.h>
@@ -43,6 +44,7 @@
 #include <linux/init.h>
 #include <linux/device.h>
 #include <linux/compat.h>
+#include <linux/smp_lock.h>
 
 struct ipmi_file_private
 {
@@ -57,7 +59,6 @@ struct ipmi_file_private
 	unsigned int         default_retry_time_ms;
 };
 
-static DEFINE_MUTEX(ipmi_mutex);
 static void file_receive_handler(struct ipmi_recv_msg *msg,
 				 void                 *handler_data)
 {
@@ -101,9 +102,9 @@ static int ipmi_fasync(int fd, struct file *file, int on)
 	struct ipmi_file_private *priv = file->private_data;
 	int                      result;
 
-	mutex_lock(&ipmi_mutex); /* could race against open() otherwise */
+	lock_kernel(); /* could race against open() otherwise */
 	result = fasync_helper(fd, file, on, &priv->fasync_queue);
-	mutex_unlock(&ipmi_mutex);
+	unlock_kernel();
 
 	return (result);
 }
@@ -124,7 +125,7 @@ static int ipmi_open(struct inode *inode, struct file *file)
 	if (!priv)
 		return -ENOMEM;
 
-	mutex_lock(&ipmi_mutex);
+	lock_kernel();
 	priv->file = file;
 
 	rv = ipmi_create_user(if_num,
@@ -149,7 +150,7 @@ static int ipmi_open(struct inode *inode, struct file *file)
 	priv->default_retry_time_ms = 0;
 
 out:
-	mutex_unlock(&ipmi_mutex);
+	unlock_kernel();
 	return rv;
 }
 
@@ -227,7 +228,8 @@ static int handle_send_req(ipmi_user_t     user,
 	return rv;
 }
 
-static int ipmi_ioctl(struct file   *file,
+static int ipmi_ioctl(struct inode  *inode,
+		      struct file   *file,
 		      unsigned int  cmd,
 		      unsigned long data)
 {
@@ -628,23 +630,6 @@ static int ipmi_ioctl(struct file   *file,
 	return rv;
 }
 
-/*
- * Note: it doesn't make sense to take the BKL here but
- *       not in compat_ipmi_ioctl. -arnd
- */
-static long ipmi_unlocked_ioctl(struct file   *file,
-			        unsigned int  cmd,
-			        unsigned long data)
-{
-	int ret;
-
-	mutex_lock(&ipmi_mutex);
-	ret = ipmi_ioctl(file, cmd, data);
-	mutex_unlock(&ipmi_mutex);
-
-	return ret;
-}
-
 #ifdef CONFIG_COMPAT
 
 /*
@@ -817,7 +802,7 @@ static long compat_ipmi_ioctl(struct file *filep, unsigned int cmd,
 		if (copy_to_user(precv64, &recv64, sizeof(recv64)))
 			return -EFAULT;
 
-		rc = ipmi_ioctl(filep,
+		rc = ipmi_ioctl(filep->f_path.dentry->d_inode, filep,
 				((cmd == COMPAT_IPMICTL_RECEIVE_MSG)
 				 ? IPMICTL_RECEIVE_MSG
 				 : IPMICTL_RECEIVE_MSG_TRUNC),
@@ -834,34 +819,21 @@ static long compat_ipmi_ioctl(struct file *filep, unsigned int cmd,
 		return rc;
 	}
 	default:
-		return ipmi_ioctl(filep, cmd, arg);
+		return ipmi_ioctl(filep->f_path.dentry->d_inode, filep, cmd, arg);
 	}
-}
-
-static long unlocked_compat_ipmi_ioctl(struct file *filep, unsigned int cmd,
-				       unsigned long arg)
-{
-	int ret;
-
-	mutex_lock(&ipmi_mutex);
-	ret = compat_ipmi_ioctl(filep, cmd, arg);
-	mutex_unlock(&ipmi_mutex);
-
-	return ret;
 }
 #endif
 
 static const struct file_operations ipmi_fops = {
 	.owner		= THIS_MODULE,
-	.unlocked_ioctl	= ipmi_unlocked_ioctl,
+	.ioctl		= ipmi_ioctl,
 #ifdef CONFIG_COMPAT
-	.compat_ioctl   = unlocked_compat_ipmi_ioctl,
+	.compat_ioctl   = compat_ipmi_ioctl,
 #endif
 	.open		= ipmi_open,
 	.release	= ipmi_release,
 	.fasync		= ipmi_fasync,
 	.poll		= ipmi_poll,
-	.llseek		= noop_llseek,
 };
 
 #define DEVICE_NAME     "ipmidev"
@@ -927,7 +899,7 @@ static struct ipmi_smi_watcher smi_watcher =
 	.smi_gone = ipmi_smi_gone,
 };
 
-static int __init init_ipmi_devintf(void)
+static __init int init_ipmi_devintf(void)
 {
 	int rv;
 
@@ -965,7 +937,7 @@ static int __init init_ipmi_devintf(void)
 }
 module_init(init_ipmi_devintf);
 
-static void __exit cleanup_ipmi(void)
+static __exit void cleanup_ipmi(void)
 {
 	struct ipmi_reg_list *entry, *entry2;
 	mutex_lock(&reg_list_mutex);

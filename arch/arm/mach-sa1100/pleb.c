@@ -37,9 +37,17 @@
 #define IRQ_GPIO_ETH0_IRQ	IRQ_GPIO21
 
 static struct resource smc91x_resources[] = {
-	[0] = DEFINE_RES_MEM(PLEB_ETH0_P, 0x04000000),
+	[0] = {
+		.start	= PLEB_ETH0_P,
+		.end	= PLEB_ETH0_P | 0x03ffffff,
+		.flags	= IORESOURCE_MEM,
+	},
 #if 0 /* Autoprobe instead, to get rising/falling edge characteristic right */
-	[1] = DEFINE_RES_IRQ(IRQ_GPIO_ETH0_IRQ),
+	[1] = {
+		.start	= IRQ_GPIO_ETH0_IRQ,
+		.end	= IRQ_GPIO_ETH0_IRQ,
+		.flags	= IORESOURCE_IRQ,
+	},
 #endif
 };
 
@@ -62,8 +70,16 @@ static struct platform_device *devices[] __initdata = {
  * the two SA1100 lowest chip select outputs.
  */
 static struct resource pleb_flash_resources[] = {
-	[0] = DEFINE_RES_MEM(SA1100_CS0_PHYS, SZ_8M),
-	[1] = DEFINE_RES_MEM(SA1100_CS1_PHYS, SZ_8M),
+	[0] = {
+		.start = SA1100_CS0_PHYS,
+		.end   = SA1100_CS0_PHYS + SZ_8M - 1,
+		.flags = IORESOURCE_MEM,
+	},
+	[1] = {
+		.start = SA1100_CS1_PHYS,
+		.end   = SA1100_CS1_PHYS + SZ_8M - 1,
+		.flags = IORESOURCE_MEM,
+	}
 };
 
 
@@ -93,7 +109,7 @@ static struct flash_platform_data pleb_flash_data = {
 
 static void __init pleb_init(void)
 {
-	sa11x0_register_mtd(&pleb_flash_data, pleb_flash_resources,
+	sa11x0_set_flash_data(&pleb_flash_data, pleb_flash_resources,
 			      ARRAY_SIZE(pleb_flash_resources));
 
 
@@ -126,14 +142,14 @@ static void __init pleb_map_io(void)
 
 	GPDR &= ~GPIO_ETH0_IRQ;
 
-	irq_set_irq_type(GPIO_ETH0_IRQ, IRQ_TYPE_EDGE_FALLING);
+	set_irq_type(GPIO_ETH0_IRQ, IRQ_TYPE_EDGE_FALLING);
 }
 
 MACHINE_START(PLEB, "PLEB")
+	.phys_io	= 0x80000000,
+	.io_pg_offst	= ((0xf8000000) >> 18) & 0xfffc,
 	.map_io		= pleb_map_io,
-	.nr_irqs	= SA1100_NR_IRQS,
 	.init_irq	= sa1100_init_irq,
 	.timer		= &sa1100_timer,
 	.init_machine   = pleb_init,
-	.restart	= sa11x0_restart,
 MACHINE_END

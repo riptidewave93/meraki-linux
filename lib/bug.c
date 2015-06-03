@@ -72,8 +72,8 @@ static const struct bug_entry *module_find_bug(unsigned long bugaddr)
 	return NULL;
 }
 
-void module_bug_finalize(const Elf_Ehdr *hdr, const Elf_Shdr *sechdrs,
-			 struct module *mod)
+int module_bug_finalize(const Elf_Ehdr *hdr, const Elf_Shdr *sechdrs,
+			struct module *mod)
 {
 	char *secstrings;
 	unsigned int i;
@@ -97,6 +97,8 @@ void module_bug_finalize(const Elf_Ehdr *hdr, const Elf_Shdr *sechdrs,
 	 * could potentially lead to deadlock and thus be counter-productive.
 	 */
 	list_add(&mod->bug_list, &module_bug_list);
+
+	return 0;
 }
 
 void module_bug_cleanup(struct module *mod)
@@ -134,6 +136,8 @@ enum bug_trap_type report_bug(unsigned long bugaddr, struct pt_regs *regs)
 
 	bug = find_bug(bugaddr);
 
+	printk(KERN_EMERG "------------[ cut here ]------------\n");
+
 	file = NULL;
 	line = 0;
 	warning = 0;
@@ -152,24 +156,18 @@ enum bug_trap_type report_bug(unsigned long bugaddr, struct pt_regs *regs)
 
 	if (warning) {
 		/* this is a WARN_ON rather than BUG/BUG_ON */
-		printk(KERN_WARNING "------------[ cut here ]------------\n");
-
 		if (file)
-			printk(KERN_WARNING "WARNING: at %s:%u\n",
+			printk(KERN_ERR "Badness at %s:%u\n",
 			       file, line);
 		else
-			printk(KERN_WARNING "WARNING: at %p "
+			printk(KERN_ERR "Badness at %p "
 			       "[verbose debug info unavailable]\n",
 			       (void *)bugaddr);
 
-		print_modules();
 		show_regs(regs);
-		print_oops_end_marker();
-		add_taint(BUG_GET_TAINT(bug));
+		add_taint(TAINT_WARN);
 		return BUG_TRAP_TYPE_WARN;
 	}
-
-	printk(KERN_DEFAULT "------------[ cut here ]------------\n");
 
 	if (file)
 		printk(KERN_CRIT "kernel BUG at %s:%u!\n",

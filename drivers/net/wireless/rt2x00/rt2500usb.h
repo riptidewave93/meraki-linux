@@ -1,5 +1,5 @@
 /*
-	Copyright (C) 2004 - 2009 Ivo van Doorn <IvDoorn@gmail.com>
+	Copyright (C) 2004 - 2009 rt2x00 SourceForge Project
 	<http://rt2x00.serialmonkey.com>
 
 	This program is free software; you can redistribute it and/or modify
@@ -46,7 +46,7 @@
 
 /*
  * Signal information.
- * Default offset is required for RSSI <-> dBm conversion.
+ * Defaul offset is required for RSSI <-> dBm conversion.
  */
 #define DEFAULT_RSSI_OFFSET		120
 
@@ -189,15 +189,14 @@
  * MAC_CSR19: GPIO control register.
  */
 #define MAC_CSR19			0x0426
-#define MAC_CSR19_BIT0			FIELD16(0x0001)
-#define MAC_CSR19_BIT1			FIELD16(0x0002)
-#define MAC_CSR19_BIT2			FIELD16(0x0004)
-#define MAC_CSR19_BIT3			FIELD16(0x0008)
-#define MAC_CSR19_BIT4			FIELD16(0x0010)
-#define MAC_CSR19_BIT5			FIELD16(0x0020)
-#define MAC_CSR19_BIT6			FIELD16(0x0040)
-#define MAC_CSR19_BIT7			FIELD16(0x0080)
-#define MAC_CSR19_BIT8			FIELD16(0x0100)
+#define MAC_CSR19_BIT0			FIELD32(0x0001)
+#define MAC_CSR19_BIT1			FIELD32(0x0002)
+#define MAC_CSR19_BIT2			FIELD32(0x0004)
+#define MAC_CSR19_BIT3			FIELD32(0x0008)
+#define MAC_CSR19_BIT4			FIELD32(0x0010)
+#define MAC_CSR19_BIT5			FIELD32(0x0020)
+#define MAC_CSR19_BIT6			FIELD32(0x0040)
+#define MAC_CSR19_BIT7			FIELD32(0x0080)
 
 /*
  * MAC_CSR20: LED control register.

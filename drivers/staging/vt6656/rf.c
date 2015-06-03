@@ -757,9 +757,9 @@ BOOL IFRFbWriteEmbeded (PSDevice pDevice, DWORD dwData)
  *
  */
 BOOL RFbSetPower (
-      PSDevice  pDevice,
-      unsigned int      uRATE,
-      unsigned int      uCH
+    IN  PSDevice  pDevice,
+    IN  UINT      uRATE,
+    IN  UINT      uCH
     )
 {
 BOOL    bResult = TRUE;
@@ -814,9 +814,9 @@ BYTE    byPwr = pDevice->byCCKPwr;
  *
  */
 BOOL RFbRawSetPower (
-      PSDevice  pDevice,
-      BYTE      byPwr,
-      unsigned int      uRATE
+    IN  PSDevice  pDevice,
+    IN  BYTE      byPwr,
+    IN  UINT      uRATE
     )
 {
 BOOL        bResult = TRUE;
@@ -957,16 +957,16 @@ BOOL        bResult = TRUE;
  * Return Value: none
  *
 -*/
-void
+VOID
 RFvRSSITodBm (
-      PSDevice pDevice,
-      BYTE     byCurrRSSI,
+    IN  PSDevice pDevice,
+    IN  BYTE     byCurrRSSI,
     long *    pldBm
     )
 {
     BYTE byIdx = (((byCurrRSSI & 0xC0) >> 6) & 0x03);
-    signed long b = (byCurrRSSI & 0x3F);
-    signed long a = 0;
+    LONG b = (byCurrRSSI & 0x3F);
+    LONG a = 0;
     BYTE abyAIROHARF[4] = {0, 18, 0, 40};
 
     switch (pDevice->byRFType) {
@@ -987,9 +987,9 @@ RFvRSSITodBm (
 
 
 
-void
+VOID
 RFbRFTableDownload (
-      PSDevice pDevice
+    IN  PSDevice pDevice
     )
 {
 WORD    wLength1 = 0,wLength2 = 0 ,wLength3 = 0;
@@ -1136,9 +1136,9 @@ BYTE    abyArray[256];
 
 // RobertYu:20060412, TWIF1.11 adjust LO Current for 11b mode
 BOOL s_bVT3226D0_11bLoCurrentAdjust(
-      PSDevice    pDevice,
-      BYTE        byChannel,
-      BOOL        b11bMode)
+    IN  PSDevice    pDevice,
+    IN  BYTE        byChannel,
+    IN  BOOL        b11bMode )
 {
     BOOL    bResult;
 

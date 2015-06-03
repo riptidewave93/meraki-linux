@@ -19,7 +19,6 @@
 #include <linux/mount.h>
 #include <linux/namei.h>
 #include <linux/security.h>
-#include <linux/slab.h>
 #include "internal.h"
 
 #define CACHEFILES_KEYBUF_SIZE 512
@@ -37,9 +36,9 @@ void __cachefiles_printk_object(struct cachefiles_object *object,
 
 	printk(KERN_ERR "%sobject: OBJ%x\n",
 	       prefix, object->fscache.debug_id);
-	printk(KERN_ERR "%sobjstate=%s fl=%lx wbusy=%x ev=%lx[%lx]\n",
+	printk(KERN_ERR "%sobjstate=%s fl=%lx swfl=%lx ev=%lx[%lx]\n",
 	       prefix, fscache_object_states[object->fscache.state],
-	       object->fscache.flags, work_busy(&object->fscache.work),
+	       object->fscache.flags, object->fscache.work.flags,
 	       object->fscache.events,
 	       object->fscache.event_mask & FSCACHE_OBJECT_EVENTS_MASK);
 	printk(KERN_ERR "%sops=%u inp=%u exc=%u\n",
@@ -90,59 +89,6 @@ static noinline void cachefiles_printk_object(struct cachefiles_object *object,
 	if (xobject)
 		__cachefiles_printk_object(xobject, "x", keybuf);
 	kfree(keybuf);
-}
-
-/*
- * mark the owner of a dentry, if there is one, to indicate that that dentry
- * has been preemptively deleted
- * - the caller must hold the i_mutex on the dentry's parent as required to
- *   call vfs_unlink(), vfs_rmdir() or vfs_rename()
- */
-static void cachefiles_mark_object_buried(struct cachefiles_cache *cache,
-					  struct dentry *dentry)
-{
-	struct cachefiles_object *object;
-	struct rb_node *p;
-
-	_enter(",'%*.*s'",
-	       dentry->d_name.len, dentry->d_name.len, dentry->d_name.name);
-
-	write_lock(&cache->active_lock);
-
-	p = cache->active_nodes.rb_node;
-	while (p) {
-		object = rb_entry(p, struct cachefiles_object, active_node);
-		if (object->dentry > dentry)
-			p = p->rb_left;
-		else if (object->dentry < dentry)
-			p = p->rb_right;
-		else
-			goto found_dentry;
-	}
-
-	write_unlock(&cache->active_lock);
-	_leave(" [no owner]");
-	return;
-
-	/* found the dentry for  */
-found_dentry:
-	kdebug("preemptive burial: OBJ%x [%s] %p",
-	       object->fscache.debug_id,
-	       fscache_object_states[object->fscache.state],
-	       dentry);
-
-	if (object->fscache.state < FSCACHE_OBJECT_DYING) {
-		printk(KERN_ERR "\n");
-		printk(KERN_ERR "CacheFiles: Error:"
-		       " Can't preemptively bury live object\n");
-		cachefiles_printk_object(object, NULL);
-	} else if (test_and_set_bit(CACHEFILES_OBJECT_BURIED, &object->flags)) {
-		printk(KERN_ERR "CacheFiles: Error:"
-		       " Object already preemptively buried\n");
-	}
-
-	write_unlock(&cache->active_lock);
-	_leave(" [owner marked]");
 }
 
 /*
@@ -212,7 +158,7 @@ wait_for_old_object:
 
 		/* if the object we're waiting for is queued for processing,
 		 * then just put ourselves on the queue behind it */
-		if (work_pending(&xobject->fscache.work)) {
+		if (slow_work_is_queued(&xobject->fscache.work)) {
 			_debug("queue OBJ%x behind OBJ%x immediately",
 			       object->fscache.debug_id,
 			       xobject->fscache.debug_id);
@@ -220,7 +166,8 @@ wait_for_old_object:
 		}
 
 		/* otherwise we sleep until either the object we're waiting for
-		 * is done, or the fscache_object is congested */
+		 * is done, or the slow-work facility wants the thread back to
+		 * do other work */
 		wq = bit_waitqueue(&xobject->flags, CACHEFILES_OBJECT_ACTIVE);
 		init_wait(&wait);
 		requeue = false;
@@ -228,8 +175,8 @@ wait_for_old_object:
 			prepare_to_wait(wq, &wait, TASK_UNINTERRUPTIBLE);
 			if (!test_bit(CACHEFILES_OBJECT_ACTIVE, &xobject->flags))
 				break;
-
-			requeue = fscache_object_sleep_till_congested(&timeout);
+			requeue = slow_work_sleep_till_thread_needed(
+				&object->fscache.work, &timeout);
 		} while (timeout > 0 && !requeue);
 		finish_wait(wq, &wait);
 
@@ -271,11 +218,9 @@ requeue:
  */
 static int cachefiles_bury_object(struct cachefiles_cache *cache,
 				  struct dentry *dir,
-				  struct dentry *rep,
-				  bool preemptive)
+				  struct dentry *rep)
 {
 	struct dentry *grave, *trap;
-	struct path path, path_to_graveyard;
 	char nbuffer[8 + 8 + 1];
 	int ret;
 
@@ -283,23 +228,10 @@ static int cachefiles_bury_object(struct cachefiles_cache *cache,
 	       dir->d_name.len, dir->d_name.len, dir->d_name.name,
 	       rep->d_name.len, rep->d_name.len, rep->d_name.name);
 
-	_debug("remove %p from %p", rep, dir);
-
 	/* non-directories can just be unlinked */
 	if (!S_ISDIR(rep->d_inode->i_mode)) {
 		_debug("unlink stale object");
-
-		path.mnt = cache->mnt;
-		path.dentry = dir;
-		ret = security_path_unlink(&path, rep);
-		if (ret < 0) {
-			cachefiles_io_error(cache, "Unlink security error");
-		} else {
-			ret = vfs_unlink(dir->d_inode, rep);
-
-			if (preemptive)
-				cachefiles_mark_object_buried(cache, rep);
-		}
+		ret = vfs_unlink(dir->d_inode, rep);
 
 		mutex_unlock(&dir->d_inode->i_mutex);
 
@@ -388,23 +320,9 @@ try_again:
 	}
 
 	/* attempt the rename */
-	path.mnt = cache->mnt;
-	path.dentry = dir;
-	path_to_graveyard.mnt = cache->mnt;
-	path_to_graveyard.dentry = cache->graveyard;
-	ret = security_path_rename(&path, rep, &path_to_graveyard, grave);
-	if (ret < 0) {
-		cachefiles_io_error(cache, "Rename security error %d", ret);
-	} else {
-		ret = vfs_rename(dir->d_inode, rep,
-				 cache->graveyard->d_inode, grave);
-		if (ret != 0 && ret != -ENOMEM)
-			cachefiles_io_error(cache,
-					    "Rename failed with error %d", ret);
-
-		if (preemptive)
-			cachefiles_mark_object_buried(cache, rep);
-	}
+	ret = vfs_rename(dir->d_inode, rep, cache->graveyard->d_inode, grave);
+	if (ret != 0 && ret != -ENOMEM)
+		cachefiles_io_error(cache, "Rename failed with error %d", ret);
 
 	unlock_rename(cache->graveyard, dir);
 	dput(grave);
@@ -421,7 +339,7 @@ int cachefiles_delete_object(struct cachefiles_cache *cache,
 	struct dentry *dir;
 	int ret;
 
-	_enter(",OBJ%x{%p}", object->fscache.debug_id, object->dentry);
+	_enter(",{%p}", object->dentry);
 
 	ASSERT(object->dentry);
 	ASSERT(object->dentry->d_inode);
@@ -430,27 +348,7 @@ int cachefiles_delete_object(struct cachefiles_cache *cache,
 	dir = dget_parent(object->dentry);
 
 	mutex_lock_nested(&dir->d_inode->i_mutex, I_MUTEX_PARENT);
-
-	if (test_bit(CACHEFILES_OBJECT_BURIED, &object->flags)) {
-		/* object allocation for the same key preemptively deleted this
-		 * object's file so that it could create its own file */
-		_debug("object preemptively buried");
-		mutex_unlock(&dir->d_inode->i_mutex);
-		ret = 0;
-	} else {
-		/* we need to check that our parent is _still_ our parent - it
-		 * may have been renamed */
-		if (dir == object->dentry->d_parent) {
-			ret = cachefiles_bury_object(cache, dir,
-						     object->dentry, false);
-		} else {
-			/* it got moved, presumably by cachefilesd culling it,
-			 * so it's no longer in the key path and we can ignore
-			 * it */
-			mutex_unlock(&dir->d_inode->i_mutex);
-			ret = 0;
-		}
-	}
+	ret = cachefiles_bury_object(cache, dir, object->dentry);
 
 	dput(dir);
 	_leave(" = %d", ret);
@@ -468,18 +366,14 @@ int cachefiles_walk_to_object(struct cachefiles_object *parent,
 {
 	struct cachefiles_cache *cache;
 	struct dentry *dir, *next = NULL;
-	struct path path;
 	unsigned long start;
 	const char *name;
 	int ret, nlen;
 
-	_enter("OBJ%x{%p},OBJ%x,%s,",
-	       parent->fscache.debug_id, parent->dentry,
-	       object->fscache.debug_id, key);
+	_enter("{%p},,%s,", parent->dentry, key);
 
 	cache = container_of(parent->fscache.cache,
 			     struct cachefiles_cache, cache);
-	path.mnt = cache->mnt;
 
 	ASSERT(parent->dentry);
 	ASSERT(parent->dentry->d_inode);
@@ -533,10 +427,6 @@ lookup_again:
 			if (ret < 0)
 				goto create_error;
 
-			path.dentry = dir;
-			ret = security_path_mkdir(&path, next, 0);
-			if (ret < 0)
-				goto create_error;
 			start = jiffies;
 			ret = vfs_mkdir(dir->d_inode, next, 0);
 			cachefiles_hist(cachefiles_mkdir_histogram, start);
@@ -562,10 +452,6 @@ lookup_again:
 			if (ret < 0)
 				goto create_error;
 
-			path.dentry = dir;
-			ret = security_path_mknod(&path, next, S_IFREG, 0);
-			if (ret < 0)
-				goto create_error;
 			start = jiffies;
 			ret = vfs_create(dir->d_inode, next, S_IFREG, NULL);
 			cachefiles_hist(cachefiles_create_histogram, start);
@@ -612,7 +498,7 @@ lookup_again:
 			 * mutex) */
 			object->dentry = NULL;
 
-			ret = cachefiles_bury_object(cache, dir, next, true);
+			ret = cachefiles_bury_object(cache, dir, next);
 			dput(next);
 			next = NULL;
 
@@ -646,8 +532,7 @@ lookup_again:
 		 * (this is used to keep track of culling, and atimes are only
 		 * updated by read, write and readdir but not lookup or
 		 * open) */
-		path.dentry = next;
-		touch_atime(&path);
+		touch_atime(cache->mnt, next);
 	}
 
 	/* open a file interface onto a data file */
@@ -723,7 +608,6 @@ struct dentry *cachefiles_get_directory(struct cachefiles_cache *cache,
 {
 	struct dentry *subdir;
 	unsigned long start;
-	struct path path;
 	int ret;
 
 	_enter(",,%s", dirname);
@@ -751,11 +635,6 @@ struct dentry *cachefiles_get_directory(struct cachefiles_cache *cache,
 
 		_debug("attempt mkdir");
 
-		path.mnt = cache->mnt;
-		path.dentry = dir;
-		ret = security_path_mkdir(&path, subdir, 0700);
-		if (ret < 0)
-			goto mkdir_error;
 		ret = vfs_mkdir(dir->d_inode, subdir, 0700);
 		if (ret < 0)
 			goto mkdir_error;
@@ -938,7 +817,7 @@ int cachefiles_cull(struct cachefiles_cache *cache, struct dentry *dir,
 	/*  actually remove the victim (drops the dir mutex) */
 	_debug("bury");
 
-	ret = cachefiles_bury_object(cache, dir, victim, false);
+	ret = cachefiles_bury_object(cache, dir, victim);
 	if (ret < 0)
 		goto error;
 

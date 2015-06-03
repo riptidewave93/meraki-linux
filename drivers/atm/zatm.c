@@ -16,17 +16,16 @@
 #include <linux/delay.h>
 #include <linux/uio.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
 #include <linux/atm_zatm.h>
 #include <linux/capability.h>
 #include <linux/bitops.h>
 #include <linux/wait.h>
-#include <linux/slab.h>
 #include <asm/byteorder.h>
+#include <asm/system.h>
 #include <asm/string.h>
 #include <asm/io.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 #include <asm/uaccess.h>
 
 #include "uPD98401.h"
@@ -1597,7 +1596,7 @@ static int __devinit zatm_init_one(struct pci_dev *pci_dev,
 		goto out;
 	}
 
-	dev = atm_dev_register(DEV_LABEL, &pci_dev->dev, &ops, -1, NULL);
+	dev = atm_dev_register(DEV_LABEL, &ops, -1, NULL);
 	if (!dev)
 		goto out_free;
 
@@ -1637,8 +1636,10 @@ out_free:
 MODULE_LICENSE("GPL");
 
 static struct pci_device_id zatm_pci_tbl[] __devinitdata = {
-	{ PCI_VDEVICE(ZEITNET, PCI_DEVICE_ID_ZEITNET_1221), ZATM_COPPER },
-	{ PCI_VDEVICE(ZEITNET, PCI_DEVICE_ID_ZEITNET_1225), 0 },
+	{ PCI_VENDOR_ID_ZEITNET, PCI_DEVICE_ID_ZEITNET_1221,
+		PCI_ANY_ID, PCI_ANY_ID, 0, 0, ZATM_COPPER },
+	{ PCI_VENDOR_ID_ZEITNET, PCI_DEVICE_ID_ZEITNET_1225,
+		PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0 },
 	{ 0, }
 };
 MODULE_DEVICE_TABLE(pci, zatm_pci_tbl);

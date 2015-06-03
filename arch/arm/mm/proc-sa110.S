@@ -44,13 +44,17 @@ ENTRY(cpu_sa110_proc_init)
  * cpu_sa110_proc_fin()
  */
 ENTRY(cpu_sa110_proc_fin)
-	mov	r0, #0
+	stmfd	sp!, {lr}
+	mov	ip, #PSR_F_BIT | PSR_I_BIT | SVC_MODE
+	msr	cpsr_c, ip
+	bl	v4wb_flush_kern_cache_all	@ clean caches
+1:	mov	r0, #0
 	mcr	p15, 0, r0, c15, c2, 2		@ Disable clock switching
 	mrc	p15, 0, r0, c1, c0, 0		@ ctrl register
 	bic	r0, r0, #0x1000			@ ...i............
 	bic	r0, r0, #0x000e			@ ............wca.
 	mcr	p15, 0, r0, c1, c0, 0		@ disable caches
-	mov	pc, lr
+	ldmfd	sp!, {pc}
 
 /*
  * cpu_sa110_reset(loc)
@@ -62,7 +66,6 @@ ENTRY(cpu_sa110_proc_fin)
  * loc: location to jump to for soft reset
  */
 	.align	5
-	.pushsection	.idmap.text, "ax"
 ENTRY(cpu_sa110_reset)
 	mov	ip, #0
 	mcr	p15, 0, ip, c7, c7, 0		@ invalidate I,D caches
@@ -75,8 +78,6 @@ ENTRY(cpu_sa110_reset)
 	bic	ip, ip, #0x1100			@ ...i...s........
 	mcr	p15, 0, ip, c1, c0, 0		@ ctrl register
 	mov	pc, r0
-ENDPROC(cpu_sa110_reset)
-	.popsection
 
 /*
  * cpu_sa110_do_idle(type)
@@ -159,7 +160,7 @@ ENTRY(cpu_sa110_set_pte_ext)
 #endif
 	mov	pc, lr
 
-	__CPUINIT
+	__INIT
 
 	.type	__sa110_setup, #function
 __sa110_setup:
@@ -190,14 +191,40 @@ sa110_crval:
 
 	__INITDATA
 
-	@ define struct processor (see <asm/proc-fns.h> and proc-macros.S)
-	define_processor_functions sa110, dabort=v4_early_abort, pabort=legacy_pabort
+/*
+ * Purpose : Function pointers used to access above functions - all calls
+ *	     come through these
+ */
+
+	.type	sa110_processor_functions, #object
+ENTRY(sa110_processor_functions)
+	.word	v4_early_abort
+	.word	legacy_pabort
+	.word	cpu_sa110_proc_init
+	.word	cpu_sa110_proc_fin
+	.word	cpu_sa110_reset
+	.word	cpu_sa110_do_idle
+	.word	cpu_sa110_dcache_clean_area
+	.word	cpu_sa110_switch_mm
+	.word	cpu_sa110_set_pte_ext
+	.size	sa110_processor_functions, . - sa110_processor_functions
 
 	.section ".rodata"
 
-	string	cpu_arch_name, "armv4"
-	string	cpu_elf_name, "v4"
-	string	cpu_sa110_name, "StrongARM-110"
+	.type	cpu_arch_name, #object
+cpu_arch_name:
+	.asciz	"armv4"
+	.size	cpu_arch_name, . - cpu_arch_name
+
+	.type	cpu_elf_name, #object
+cpu_elf_name:
+	.asciz	"v4"
+	.size	cpu_elf_name, . - cpu_elf_name
+
+	.type	cpu_sa110_name, #object
+cpu_sa110_name:
+	.asciz	"StrongARM-110"
+	.size	cpu_sa110_name, . - cpu_sa110_name
 
 	.align
 

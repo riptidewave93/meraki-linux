@@ -155,16 +155,20 @@ static int socrates_nand_device_ready(struct mtd_info *mtd)
 	return 1;
 }
 
+static const char *part_probes[] = { "cmdlinepart", NULL };
+
 /*
  * Probe for the NAND device.
  */
-static int __devinit socrates_nand_probe(struct platform_device *ofdev)
+static int __devinit socrates_nand_probe(struct of_device *ofdev,
+					 const struct of_device_id *ofid)
 {
 	struct socrates_nand_host *host;
 	struct mtd_info *mtd;
 	struct nand_chip *nand_chip;
 	int res;
-	struct mtd_part_parser_data ppdata;
+	struct mtd_partition *partitions = NULL;
+	int num_partitions = 0;
 
 	/* Allocate memory for the device structure (and zero it) */
 	host = kzalloc(sizeof(struct socrates_nand_host), GFP_KERNEL);
@@ -174,7 +178,7 @@ static int __devinit socrates_nand_probe(struct platform_device *ofdev)
 		return -ENOMEM;
 	}
 
-	host->io_base = of_iomap(ofdev->dev.of_node, 0);
+	host->io_base = of_iomap(ofdev->node, 0);
 	if (host->io_base == NULL) {
 		printk(KERN_ERR "socrates_nand: ioremap failed\n");
 		kfree(host);
@@ -190,7 +194,6 @@ static int __devinit socrates_nand_probe(struct platform_device *ofdev)
 	mtd->name = "socrates_nand";
 	mtd->owner = THIS_MODULE;
 	mtd->dev.parent = &ofdev->dev;
-	ppdata.of_node = ofdev->dev.of_node;
 
 	/*should never be accessed directly */
 	nand_chip->IO_ADDR_R = (void *)0xdeadbeef;
@@ -223,10 +226,30 @@ static int __devinit socrates_nand_probe(struct platform_device *ofdev)
 		goto out;
 	}
 
-	res = mtd_device_parse_register(mtd, NULL, &ppdata, NULL, 0);
+#ifdef CONFIG_MTD_CMDLINE_PARTS
+	num_partitions = parse_mtd_partitions(mtd, part_probes,
+					      &partitions, 0);
+	if (num_partitions < 0) {
+		res = num_partitions;
+		goto release;
+	}
+#endif
+
+	if (num_partitions == 0) {
+		num_partitions = of_mtd_parse_partitions(&ofdev->dev,
+							 ofdev->node,
+							 &partitions);
+		if (num_partitions < 0) {
+			res = num_partitions;
+			goto release;
+		}
+	}
+
+	res = mtd_device_register(mtd, partitions, num_partitions);
 	if (!res)
 		return res;
 
+release:
 	nand_release(mtd);
 
 out:
@@ -239,7 +262,7 @@ out:
 /*
  * Remove a NAND device.
  */
-static int __devexit socrates_nand_remove(struct platform_device *ofdev)
+static int __devexit socrates_nand_remove(struct of_device *ofdev)
 {
 	struct socrates_nand_host *host = dev_get_drvdata(&ofdev->dev);
 	struct mtd_info *mtd = &host->mtd;
@@ -263,17 +286,25 @@ static const struct of_device_id socrates_nand_match[] =
 
 MODULE_DEVICE_TABLE(of, socrates_nand_match);
 
-static struct platform_driver socrates_nand_driver = {
-	.driver = {
-		.name = "socrates_nand",
-		.owner = THIS_MODULE,
-		.of_match_table = socrates_nand_match,
-	},
+static struct of_platform_driver socrates_nand_driver = {
+	.name		= "socrates_nand",
+	.match_table	= socrates_nand_match,
 	.probe		= socrates_nand_probe,
 	.remove		= __devexit_p(socrates_nand_remove),
 };
 
-module_platform_driver(socrates_nand_driver);
+static int __init socrates_nand_init(void)
+{
+	return of_register_platform_driver(&socrates_nand_driver);
+}
+
+static void __exit socrates_nand_exit(void)
+{
+	of_unregister_platform_driver(&socrates_nand_driver);
+}
+
+module_init(socrates_nand_init);
+module_exit(socrates_nand_exit);
 
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Ilya Yanok");

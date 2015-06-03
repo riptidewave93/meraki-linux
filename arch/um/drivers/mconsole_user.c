@@ -10,7 +10,9 @@
 #include <sys/socket.h>
 #include <sys/uio.h>
 #include <sys/un.h>
+#include "kern_constants.h"
 #include "mconsole.h"
+#include "user.h"
 
 static struct mconsole_command commands[] = {
 	/*

@@ -30,7 +30,6 @@
 #include <linux/mii.h>
 #include <linux/usb.h>
 #include <linux/usb/usbnet.h>
-#include <linux/gfp.h>
 
 
 /*
@@ -85,10 +84,6 @@ static int genelink_rx_fixup(struct usbnet *dev, struct sk_buff *skb)
 	struct sk_buff		*gl_skb;
 	u32			size;
 	u32			count;
-
-	/* This check is no longer done by usbnet */
-	if (skb->len < dev->net->hard_header_len)
-		return 0;
 
 	header = (struct gl_header *) skb->data;
 
@@ -197,7 +192,7 @@ static int genelink_bind(struct usbnet *dev, struct usb_interface *intf)
 
 static const struct driver_info	genelink_info = {
 	.description =	"Genesys GeneLink",
-	.flags =	FLAG_POINTTOPOINT | FLAG_FRAMING_GL | FLAG_NO_SETINT,
+	.flags =	FLAG_FRAMING_GL | FLAG_NO_SETINT,
 	.bind =		genelink_bind,
 	.rx_fixup =	genelink_rx_fixup,
 	.tx_fixup =	genelink_tx_fixup,
@@ -231,7 +226,17 @@ static struct usb_driver gl620a_driver = {
 	.resume =	usbnet_resume,
 };
 
-module_usb_driver(gl620a_driver);
+static int __init usbnet_init(void)
+{
+ 	return usb_register(&gl620a_driver);
+}
+module_init(usbnet_init);
+
+static void __exit usbnet_exit(void)
+{
+ 	usb_deregister(&gl620a_driver);
+}
+module_exit(usbnet_exit);
 
 MODULE_AUTHOR("Jiun-Jie Huang");
 MODULE_DESCRIPTION("GL620-USB-A Host-to-Host Link cables");

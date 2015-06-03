@@ -13,21 +13,12 @@
 #define _ASM_SYSCALL_H	1
 
 #include <linux/sched.h>
-#include <linux/err.h>
 #include <asm/ptrace.h>
-
-/*
- * The syscall table always contains 32 bit pointers since we know that the
- * address of the function to be called is (way) below 4GB.  So the "int"
- * type here is what we want [need] for both 32 bit and 64 bit systems.
- */
-extern const unsigned int sys_call_table[];
 
 static inline long syscall_get_nr(struct task_struct *task,
 				  struct pt_regs *regs)
 {
-	return test_tsk_thread_flag(task, TIF_SYSCALL) ?
-		(regs->int_code & 0xffff) : -1;
+	return regs->svcnr ? regs->svcnr : -1;
 }
 
 static inline void syscall_rollback(struct task_struct *task,
@@ -39,7 +30,7 @@ static inline void syscall_rollback(struct task_struct *task,
 static inline long syscall_get_error(struct task_struct *task,
 				     struct pt_regs *regs)
 {
-	return IS_ERR_VALUE(regs->gprs[2]) ? regs->gprs[2] : 0;
+	return (regs->gprs[2] >= -4096UL) ? -regs->gprs[2] : 0;
 }
 
 static inline long syscall_get_return_value(struct task_struct *task,
@@ -67,6 +58,8 @@ static inline void syscall_get_arguments(struct task_struct *task,
 	if (test_tsk_thread_flag(task, TIF_31BIT))
 		mask = 0xffffffff;
 #endif
+	if (i + n == 6)
+		args[--n] = regs->args[0] & mask;
 	while (n-- > 0)
 		if (i + n > 0)
 			args[n] = regs->gprs[2 + i + n] & mask;
@@ -80,6 +73,8 @@ static inline void syscall_set_arguments(struct task_struct *task,
 					 const unsigned long *args)
 {
 	BUG_ON(i + n > 6);
+	if (i + n == 6)
+		regs->args[0] = args[--n];
 	while (n-- > 0)
 		if (i + n > 0)
 			regs->gprs[2 + i + n] = args[n];

@@ -16,7 +16,6 @@
 #include <linux/serio.h>
 #include <linux/libps2.h>
 #include <linux/dmi.h>
-#include <linux/slab.h>
 
 #include "psmouse.h"
 #include "lifebook.h"
@@ -26,14 +25,12 @@ struct lifebook_data {
 	char phys[32];
 };
 
-static bool lifebook_present;
-
 static const char *desired_serio_phys;
 
-static int lifebook_limit_serio3(const struct dmi_system_id *d)
+static int lifebook_set_serio_phys(const struct dmi_system_id *d)
 {
-	desired_serio_phys = "isa0060/serio3";
-	return 1;
+	desired_serio_phys = d->driver_data;
+	return 0;
 }
 
 static bool lifebook_use_6byte_proto;
@@ -41,61 +38,56 @@ static bool lifebook_use_6byte_proto;
 static int lifebook_set_6byte_proto(const struct dmi_system_id *d)
 {
 	lifebook_use_6byte_proto = true;
-	return 1;
+	return 0;
 }
 
-static const struct dmi_system_id __initconst lifebook_dmi_table[] = {
+static const struct dmi_system_id lifebook_dmi_table[] = {
 	{
-		/* FLORA-ie 55mi */
+		.ident = "FLORA-ie 55mi",
 		.matches = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "FLORA-ie 55mi"),
 		},
 	},
 	{
-		/* LifeBook B */
-		.matches = {
-			DMI_MATCH(DMI_PRODUCT_NAME, "Lifebook B Series"),
-		},
-	},
-	{
-		/* LifeBook B */
+		.ident = "LifeBook B",
 		.matches = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "LifeBook B Series"),
 		},
 	},
 	{
-		/* Lifebook B */
+		.ident = "Lifebook B",
 		.matches = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "LIFEBOOK B Series"),
 		},
 	},
 	{
-		/* Lifebook B-2130 */
+		.ident = "Lifebook B-2130",
 		.matches = {
 			DMI_MATCH(DMI_BOARD_NAME, "ZEPHYR"),
 		},
 	},
 	{
-		/* Lifebook B213x/B2150 */
+		.ident = "Lifebook B213x/B2150",
 		.matches = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "LifeBook B2131/B2133/B2150"),
 		},
 	},
 	{
-		/* Zephyr */
+		.ident = "Zephyr",
 		.matches = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "ZEPHYR"),
 		},
 	},
 	{
-		/* Panasonic CF-18 */
+		.ident = "CF-18",
 		.matches = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "CF-18"),
 		},
-		.callback = lifebook_limit_serio3,
+		.callback = lifebook_set_serio_phys,
+		.driver_data = "isa0060/serio3",
 	},
 	{
-		/* Panasonic CF-28 */
+		.ident = "Panasonic CF-28",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Matsushita"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "CF-28"),
@@ -103,7 +95,7 @@ static const struct dmi_system_id __initconst lifebook_dmi_table[] = {
 		.callback = lifebook_set_6byte_proto,
 	},
 	{
-		/* Panasonic CF-29 */
+		.ident = "Panasonic CF-29",
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Matsushita"),
 			DMI_MATCH(DMI_PRODUCT_NAME, "CF-29"),
@@ -111,25 +103,20 @@ static const struct dmi_system_id __initconst lifebook_dmi_table[] = {
 		.callback = lifebook_set_6byte_proto,
 	},
 	{
-		/* Panasonic CF-72 */
+		.ident = "CF-72",
 		.matches = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "CF-72"),
 		},
 		.callback = lifebook_set_6byte_proto,
 	},
 	{
-		/* Lifebook B142 */
+		.ident = "Lifebook B142",
 		.matches = {
 			DMI_MATCH(DMI_PRODUCT_NAME, "LifeBook B142"),
 		},
 	},
 	{ }
 };
-
-void __init lifebook_module_init(void)
-{
-	lifebook_present = dmi_check_system(lifebook_dmi_table);
-}
 
 static psmouse_ret_t lifebook_process_byte(struct psmouse *psmouse)
 {
@@ -169,8 +156,8 @@ static psmouse_ret_t lifebook_process_byte(struct psmouse *psmouse)
 
 	if (relative_packet) {
 		if (!dev2)
-			psmouse_warn(psmouse,
-				     "got relative packet but no relative device set up\n");
+			printk(KERN_WARNING "lifebook.c: got relative packet "
+				"but no relative device set up\n");
 	} else {
 		if (lifebook_use_6byte_proto) {
 			input_report_abs(dev1, ABS_X,
@@ -211,10 +198,10 @@ static int lifebook_absolute_mode(struct psmouse *psmouse)
 		return -1;
 
 	/*
-	 * Enable absolute output -- ps2_command fails always but if
-	 * you leave this call out the touchscreen will never send
-	 * absolute coordinates
-	 */
+	   Enable absolute output -- ps2_command fails always but if
+	   you leave this call out the touchsreen will never send
+	   absolute coordinates
+	*/
 	param = lifebook_use_6byte_proto ? 0x08 : 0x07;
 	ps2_command(ps2dev, &param, PSMOUSE_CMD_SETRES);
 
@@ -256,7 +243,7 @@ static void lifebook_disconnect(struct psmouse *psmouse)
 
 int lifebook_detect(struct psmouse *psmouse, bool set_properties)
 {
-        if (!lifebook_present)
+        if (!dmi_check_system(lifebook_dmi_table))
                 return -1;
 
 	if (desired_serio_phys &&
@@ -296,8 +283,8 @@ static int lifebook_create_relative_device(struct psmouse *psmouse)
 
 	dev2->evbit[0] = BIT_MASK(EV_KEY) | BIT_MASK(EV_REL);
 	dev2->relbit[BIT_WORD(REL_X)] = BIT_MASK(REL_X) | BIT_MASK(REL_Y);
-	dev2->keybit[BIT_WORD(BTN_LEFT)] =
-				BIT_MASK(BTN_LEFT) | BIT_MASK(BTN_RIGHT);
+	dev2->keybit[BIT_WORD(BTN_LEFT)] = BIT_MASK(BTN_LEFT) |
+		BIT_MASK(BTN_RIGHT);
 
 	error = input_register_device(priv->dev2);
 	if (error)
@@ -322,7 +309,6 @@ int lifebook_init(struct psmouse *psmouse)
 
 	dev1->evbit[0] = BIT_MASK(EV_ABS) | BIT_MASK(EV_KEY);
 	dev1->relbit[0] = 0;
-	dev1->keybit[BIT_WORD(BTN_MOUSE)] = 0;
 	dev1->keybit[BIT_WORD(BTN_TOUCH)] = BIT_MASK(BTN_TOUCH);
 	input_set_abs_params(dev1, ABS_X, 0, max_coord, 0, 0);
 	input_set_abs_params(dev1, ABS_Y, 0, max_coord, 0, 0);

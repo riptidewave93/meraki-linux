@@ -960,8 +960,11 @@ static int dvb_net_filter_sec_set(struct net_device *dev,
 	(*secfilter)->filter_mask[10] = mac_mask[1];
 	(*secfilter)->filter_mask[11]=mac_mask[0];
 
-	dprintk("%s: filter mac=%pM\n", dev->name, mac);
-	dprintk("%s: filter mask=%pM\n", dev->name, mac_mask);
+	dprintk("%s: filter mac=%02x %02x %02x %02x %02x %02x\n",
+	       dev->name, mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+	dprintk("%s: filter mask=%02x %02x %02x %02x %02x %02x\n",
+	       dev->name, mac_mask[0], mac_mask[1], mac_mask[2],
+	       mac_mask[3], mac_mask[4], mac_mask[5]);
 
 	return 0;
 }
@@ -1119,14 +1122,14 @@ static int dvb_net_feed_stop(struct net_device *dev)
 }
 
 
-static int dvb_set_mc_filter(struct net_device *dev, unsigned char *addr)
+static int dvb_set_mc_filter (struct net_device *dev, struct dev_mc_list *mc)
 {
 	struct dvb_net_priv *priv = netdev_priv(dev);
 
 	if (priv->multi_num == DVB_NET_MULTICAST_MAX)
 		return -ENOMEM;
 
-	memcpy(priv->multi_macs[priv->multi_num], addr, ETH_ALEN);
+	memcpy(priv->multi_macs[priv->multi_num], mc->dmi_addr, 6);
 
 	priv->multi_num++;
 	return 0;
@@ -1149,17 +1152,21 @@ static void wq_set_multicast_list (struct work_struct *work)
 	} else if ((dev->flags & IFF_ALLMULTI)) {
 		dprintk("%s: allmulti mode\n", dev->name);
 		priv->rx_mode = RX_MODE_ALL_MULTI;
-	} else if (!netdev_mc_empty(dev)) {
-		struct netdev_hw_addr *ha;
+	} else if (dev->mc_count) {
+		int mci;
+		struct dev_mc_list *mc;
 
 		dprintk("%s: set_mc_list, %d entries\n",
-			dev->name, netdev_mc_count(dev));
+			dev->name, dev->mc_count);
 
 		priv->rx_mode = RX_MODE_MULTI;
 		priv->multi_num = 0;
 
-		netdev_for_each_mc_addr(ha, dev)
-			dvb_set_mc_filter(dev, ha->addr);
+		for (mci = 0, mc=dev->mc_list;
+		     mci < dev->mc_count;
+		     mc = mc->next, mci++) {
+			dvb_set_mc_filter(dev, mc);
+		}
 	}
 
 	netif_addr_unlock_bh(dev);
@@ -1230,7 +1237,7 @@ static const struct net_device_ops dvb_netdev_ops = {
 	.ndo_open		= dvb_net_open,
 	.ndo_stop		= dvb_net_stop,
 	.ndo_start_xmit		= dvb_net_tx,
-	.ndo_set_rx_mode	= dvb_net_set_multicast_list,
+	.ndo_set_multicast_list = dvb_net_set_multicast_list,
 	.ndo_set_mac_address    = dvb_net_set_mac,
 	.ndo_change_mtu		= eth_change_mtu,
 	.ndo_validate_addr	= eth_validate_addr,
@@ -1243,6 +1250,7 @@ static void dvb_net_setup(struct net_device *dev)
 	dev->header_ops		= &dvb_header_ops;
 	dev->netdev_ops		= &dvb_netdev_ops;
 	dev->mtu		= 4096;
+	dev->mc_count           = 0;
 
 	dev->flags |= IFF_NOARP;
 }
@@ -1329,8 +1337,7 @@ static int dvb_net_remove_if(struct dvb_net *dvbnet, unsigned long num)
 		return -EBUSY;
 
 	dvb_net_stop(net);
-	flush_work_sync(&priv->set_multicast_list_wq);
-	flush_work_sync(&priv->restart_net_feed_wq);
+	flush_scheduled_work();
 	printk("dvb_net: removed network interface %s\n", net->name);
 	unregister_netdev(net);
 	dvbnet->state[num]=0;
@@ -1340,7 +1347,7 @@ static int dvb_net_remove_if(struct dvb_net *dvbnet, unsigned long num)
 	return 0;
 }
 
-static int dvb_net_do_ioctl(struct file *file,
+static int dvb_net_do_ioctl(struct inode *inode, struct file *file,
 		  unsigned int cmd, void *parg)
 {
 	struct dvb_device *dvbdev = file->private_data;
@@ -1400,7 +1407,7 @@ static int dvb_net_do_ioctl(struct file *file,
 		return ret;
 	}
 
-	/* binary compatibility cruft */
+	/* binary compatiblity cruft */
 	case __NET_ADD_IF_OLD:
 	{
 		struct __dvb_net_if_old *dvbnetif = parg;
@@ -1442,10 +1449,10 @@ static int dvb_net_do_ioctl(struct file *file,
 	return 0;
 }
 
-static long dvb_net_ioctl(struct file *file,
+static int dvb_net_ioctl(struct inode *inode, struct file *file,
 	      unsigned int cmd, unsigned long arg)
 {
-	return dvb_usercopy(file, cmd, arg, dvb_net_do_ioctl);
+	return dvb_usercopy(inode, file, cmd, arg, dvb_net_do_ioctl);
 }
 
 static int dvb_net_close(struct inode *inode, struct file *file)
@@ -1466,10 +1473,9 @@ static int dvb_net_close(struct inode *inode, struct file *file)
 
 static const struct file_operations dvb_net_fops = {
 	.owner = THIS_MODULE,
-	.unlocked_ioctl = dvb_net_ioctl,
+	.ioctl = dvb_net_ioctl,
 	.open =	dvb_generic_open,
 	.release = dvb_net_close,
-	.llseek = noop_llseek,
 };
 
 static struct dvb_device dvbdev_net = {
@@ -1510,7 +1516,9 @@ int dvb_net_init (struct dvb_adapter *adap, struct dvb_net *dvbnet,
 	for (i=0; i<DVB_NET_DEVICES_MAX; i++)
 		dvbnet->state[i] = 0;
 
-	return dvb_register_device(adap, &dvbnet->dvbdev, &dvbdev_net,
+	dvb_register_device (adap, &dvbnet->dvbdev, &dvbdev_net,
 			     dvbnet, DVB_DEVICE_NET);
+
+	return 0;
 }
 EXPORT_SYMBOL(dvb_net_init);

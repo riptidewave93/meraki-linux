@@ -26,21 +26,6 @@
 #include "hda_codec.h"
 #include "hda_local.h"
 
-static char *bits_names(unsigned int bits, char *names[], int size)
-{
-	int i, n;
-	static char buf[128];
-
-	for (i = 0, n = 0; i < size; i++) {
-		if (bits & (1U<<i) && names[i])
-			n += snprintf(buf + n, sizeof(buf) - n, " %s",
-				      names[i]);
-	}
-	buf[n] = '\0';
-
-	return buf;
-}
-
 static const char *get_wid_type_name(unsigned int wid_value)
 {
 	static char *names[16] = {
@@ -61,52 +46,6 @@ static const char *get_wid_type_name(unsigned int wid_value)
 		return names[wid_value];
 	else
 		return "UNKNOWN Widget";
-}
-
-static void print_nid_array(struct snd_info_buffer *buffer,
-			    struct hda_codec *codec, hda_nid_t nid,
-			    struct snd_array *array)
-{
-	int i;
-	struct hda_nid_item *items = array->list, *item;
-	struct snd_kcontrol *kctl;
-	for (i = 0; i < array->used; i++) {
-		item = &items[i];
-		if (item->nid == nid) {
-			kctl = item->kctl;
-			snd_iprintf(buffer,
-			  "  Control: name=\"%s\", index=%i, device=%i\n",
-			  kctl->id.name, kctl->id.index + item->index,
-			  kctl->id.device);
-			if (item->flags & HDA_NID_ITEM_AMP)
-				snd_iprintf(buffer,
-				  "    ControlAmp: chs=%lu, dir=%s, "
-				  "idx=%lu, ofs=%lu\n",
-				  get_amp_channels(kctl),
-				  get_amp_direction(kctl) ? "Out" : "In",
-				  get_amp_index(kctl),
-				  get_amp_offset(kctl));
-		}
-	}
-}
-
-static void print_nid_pcms(struct snd_info_buffer *buffer,
-			   struct hda_codec *codec, hda_nid_t nid)
-{
-	int pcm, type;
-	struct hda_pcm *cpcm;
-	for (pcm = 0; pcm < codec->num_pcms; pcm++) {
-		cpcm = &codec->pcm_info[pcm];
-		for (type = 0; type < 2; type++) {
-			if (cpcm->stream[type].nid != nid || cpcm->pcm == NULL)
-				continue;
-			snd_iprintf(buffer, "  Device: name=\"%s\", "
-				    "type=\"%s\", device=%i\n",
-				    cpcm->name,
-				    snd_hda_pcm_type_name[cpcm->pcm_type],
-				    cpcm->pcm->device);
-		}
-	}
 }
 
 static void print_amp_caps(struct snd_info_buffer *buffer,
@@ -154,18 +93,12 @@ static void print_amp_vals(struct snd_info_buffer *buffer,
 
 static void print_pcm_rates(struct snd_info_buffer *buffer, unsigned int pcm)
 {
-	static unsigned int rates[] = {
-		8000, 11025, 16000, 22050, 32000, 44100, 48000, 88200,
-		96000, 176400, 192000, 384000
-	};
-	int i;
+	char buf[SND_PRINT_RATES_ADVISED_BUFSIZE];
 
 	pcm &= AC_SUPPCM_RATES;
 	snd_iprintf(buffer, "    rates [0x%x]:", pcm);
-	for (i = 0; i < ARRAY_SIZE(rates); i++)
-		if (pcm & (1 << i))
-			snd_iprintf(buffer,  " %d", rates[i]);
-	snd_iprintf(buffer, "\n");
+	snd_print_pcm_rates(pcm, buf, sizeof(buf));
+	snd_iprintf(buffer, "%s\n", buf);
 }
 
 static void print_pcm_bits(struct snd_info_buffer *buffer, unsigned int pcm)
@@ -259,14 +192,9 @@ static void print_pin_caps(struct snd_info_buffer *buffer,
 		/* Realtek uses this bit as a different meaning */
 		if ((codec->vendor_id >> 16) == 0x10ec)
 			snd_iprintf(buffer, " R/L");
-		else {
-			if (caps & AC_PINCAP_HBR)
-				snd_iprintf(buffer, " HBR");
+		else
 			snd_iprintf(buffer, " HDMI");
-		}
 	}
-	if (caps & AC_PINCAP_DP)
-		snd_iprintf(buffer, " DP");
 	if (caps & AC_PINCAP_TRIG_REQ)
 		snd_iprintf(buffer, " Trigger");
 	if (caps & AC_PINCAP_IMP_SENSE)
@@ -426,7 +354,7 @@ static void print_digital_conv(struct snd_info_buffer *buffer,
 
 static const char *get_pwr_state(u32 state)
 {
-	static const char * const buf[4] = {
+	static const char *buf[4] = {
 		"D0", "D1", "D2", "D3"
 	};
 	if (state < 4)
@@ -437,24 +365,8 @@ static const char *get_pwr_state(u32 state)
 static void print_power_state(struct snd_info_buffer *buffer,
 			      struct hda_codec *codec, hda_nid_t nid)
 {
-	static char *names[] = {
-		[ilog2(AC_PWRST_D0SUP)]		= "D0",
-		[ilog2(AC_PWRST_D1SUP)]		= "D1",
-		[ilog2(AC_PWRST_D2SUP)]		= "D2",
-		[ilog2(AC_PWRST_D3SUP)]		= "D3",
-		[ilog2(AC_PWRST_D3COLDSUP)]	= "D3cold",
-		[ilog2(AC_PWRST_S3D3COLDSUP)]	= "S3D3cold",
-		[ilog2(AC_PWRST_CLKSTOP)]	= "CLKSTOP",
-		[ilog2(AC_PWRST_EPSS)]		= "EPSS",
-	};
-
-	int sup = snd_hda_param_read(codec, nid, AC_PAR_POWER_STATE);
 	int pwr = snd_hda_codec_read(codec, nid, 0,
 				     AC_VERB_GET_POWER_STATE, 0);
-	if (sup)
-		snd_iprintf(buffer, "  Power states: %s\n",
-			    bits_names(sup, names, ARRAY_SIZE(names)));
-
 	snd_iprintf(buffer, "  Power: setting=%s, actual=%s\n",
 		    get_pwr_state(pwr & AC_PWRST_SETTING),
 		    get_pwr_state((pwr & AC_PWRST_ACTUAL) >>
@@ -547,8 +459,6 @@ static void print_gpio(struct snd_info_buffer *buffer,
 			    (data & (1<<i)) ? 1 : 0,
 			    (unsol & (1<<i)) ? 1 : 0);
 	/* FIXME: add GPO and GPI pin information */
-	print_nid_array(buffer, codec, nid, &codec->mixers);
-	print_nid_array(buffer, codec, nid, &codec->nids);
 }
 
 static void print_codec_info(struct snd_info_entry *entry,
@@ -565,12 +475,7 @@ static void print_codec_info(struct snd_info_entry *entry,
 	else
 		snd_iprintf(buffer, "Not Set\n");
 	snd_iprintf(buffer, "Address: %d\n", codec->addr);
-	if (codec->afg)
-		snd_iprintf(buffer, "AFG Function Id: 0x%x (unsol %u)\n",
-			codec->afg_function_id, codec->afg_unsol);
-	if (codec->mfg)
-		snd_iprintf(buffer, "MFG Function Id: 0x%x (unsol %u)\n",
-			codec->mfg_function_id, codec->mfg_unsol);
+	snd_iprintf(buffer, "Function Id: 0x%x\n", codec->function_id);
 	snd_iprintf(buffer, "Vendor Id: 0x%08x\n", codec->vendor_id);
 	snd_iprintf(buffer, "Subsystem Id: 0x%08x\n", codec->subsystem_id);
 	snd_iprintf(buffer, "Revision Id: 0x%x\n", codec->revision_id);
@@ -633,10 +538,6 @@ static void print_codec_info(struct snd_info_entry *entry,
 			snd_iprintf(buffer, " CP");
 		snd_iprintf(buffer, "\n");
 
-		print_nid_array(buffer, codec, nid, &codec->mixers);
-		print_nid_array(buffer, codec, nid, &codec->nids);
-		print_nid_pcms(buffer, codec, nid);
-
 		/* volume knob is a special widget that always have connection
 		 * list
 		 */
@@ -644,23 +545,16 @@ static void print_codec_info(struct snd_info_entry *entry,
 			wid_caps |= AC_WCAP_CONN_LIST;
 
 		if (wid_caps & AC_WCAP_CONN_LIST)
-			conn_len = snd_hda_get_raw_connections(codec, nid, conn,
+			conn_len = snd_hda_get_connections(codec, nid, conn,
 							   HDA_MAX_CONNECTIONS);
 
 		if (wid_caps & AC_WCAP_IN_AMP) {
 			snd_iprintf(buffer, "  Amp-In caps: ");
 			print_amp_caps(buffer, codec, nid, HDA_INPUT);
 			snd_iprintf(buffer, "  Amp-In vals: ");
-			if (wid_type == AC_WID_PIN ||
-			    (codec->single_adc_amp &&
-			     wid_type == AC_WID_AUD_IN))
-				print_amp_vals(buffer, codec, nid, HDA_INPUT,
-					       wid_caps & AC_WCAP_STEREO,
-					       1);
-			else
-				print_amp_vals(buffer, codec, nid, HDA_INPUT,
-					       wid_caps & AC_WCAP_STEREO,
-					       conn_len);
+			print_amp_vals(buffer, codec, nid, HDA_INPUT,
+				       wid_caps & AC_WCAP_STEREO,
+				       wid_type == AC_WID_PIN ? 1 : conn_len);
 		}
 		if (wid_caps & AC_WCAP_OUT_AMP) {
 			snd_iprintf(buffer, "  Amp-Out caps: ");

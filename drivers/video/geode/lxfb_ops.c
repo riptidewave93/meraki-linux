@@ -13,7 +13,7 @@
 #include <linux/fb.h>
 #include <linux/uaccess.h>
 #include <linux/delay.h>
-#include <linux/cs5535.h>
+#include <asm/geode.h>
 
 #include "lxfb.h"
 
@@ -274,15 +274,7 @@ static void lx_graphics_enable(struct fb_info *info)
 		u32 msrlo, msrhi;
 
 		write_fp(par, FP_PT1, 0);
-		temp = FP_PT2_SCRC;
-
-		if (!(info->var.sync & FB_SYNC_HOR_HIGH_ACT))
-			temp |= FP_PT2_HSP;
-
-		if (!(info->var.sync & FB_SYNC_VERT_HIGH_ACT))
-			temp |= FP_PT2_VSP;
-
-		write_fp(par, FP_PT2, temp);
+		write_fp(par, FP_PT2, FP_PT2_SCRC);
 		write_fp(par, FP_DFC, FP_DFC_BC);
 
 		msrlo = MSR_LX_MSR_PADSEL_TFT_SEL_LOW;
@@ -315,7 +307,7 @@ unsigned int lx_framebuffer_size(void)
 {
 	unsigned int val;
 
-	if (!cs5535_has_vsa2()) {
+	if (!geode_has_vsa2()) {
 		uint32_t hi, lo;
 
 		/* The number of pages is (PMAX - PMIN)+1 */
@@ -610,15 +602,10 @@ static void lx_save_regs(struct lxfb_par *par)
 	memcpy(par->vp, par->vp_regs, sizeof(par->vp));
 	memcpy(par->fp, par->vp_regs + VP_FP_START, sizeof(par->fp));
 
-	/* save the display controller palette */
+	/* save the palette */
 	write_dc(par, DC_PAL_ADDRESS, 0);
-	for (i = 0; i < ARRAY_SIZE(par->dc_pal); i++)
-		par->dc_pal[i] = read_dc(par, DC_PAL_DATA);
-
-	/* save the video processor palette */
-	write_vp(par, VP_PAR, 0);
-	for (i = 0; i < ARRAY_SIZE(par->vp_pal); i++)
-		par->vp_pal[i] = read_vp(par, VP_PDR);
+	for (i = 0; i < ARRAY_SIZE(par->pal); i++)
+		par->pal[i] = read_dc(par, DC_PAL_DATA);
 
 	/* save the horizontal filter coefficients */
 	filt = par->dc[DC_IRQ_FILT_CTL] | DC_IRQ_FILT_CTL_H_FILT_SEL;
@@ -711,8 +698,8 @@ static void lx_restore_display_ctlr(struct lxfb_par *par)
 
 	/* restore the palette */
 	write_dc(par, DC_PAL_ADDRESS, 0);
-	for (i = 0; i < ARRAY_SIZE(par->dc_pal); i++)
-		write_dc(par, DC_PAL_DATA, par->dc_pal[i]);
+	for (i = 0; i < ARRAY_SIZE(par->pal); i++)
+		write_dc(par, DC_PAL_DATA, par->pal[i]);
 
 	/* restore the horizontal filter coefficients */
 	filt = par->dc[DC_IRQ_FILT_CTL] | DC_IRQ_FILT_CTL_H_FILT_SEL;
@@ -755,11 +742,6 @@ static void lx_restore_video_proc(struct lxfb_par *par)
 			write_vp(par, i, par->vp[i]);
 		}
 	}
-
-	/* restore video processor palette */
-	write_vp(par, VP_PAR, 0);
-	for (i = 0; i < ARRAY_SIZE(par->vp_pal); i++)
-		write_vp(par, VP_PDR, par->vp_pal[i]);
 
 	/* restore video coeff ram */
 	memcpy(par->vp_regs + VP_VCR, par->vp_coeff, sizeof(par->vp_coeff));

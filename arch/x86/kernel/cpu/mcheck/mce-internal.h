@@ -1,4 +1,4 @@
-#include <linux/device.h>
+#include <linux/sysdev.h>
 #include <asm/mce.h>
 
 enum severity_level {
@@ -17,7 +17,7 @@ enum severity_level {
 struct mce_bank {
 	u64			ctl;			/* subevents to enable */
 	unsigned char init;				/* initialise bank? */
-	struct device_attribute attr;			/* device attribute */
+	struct sysdev_attribute attr;			/* sysdev attribute */
 	char			attrname[ATTR_LEN];	/* attribute name */
 };
 
@@ -28,26 +28,3 @@ extern int mce_ser;
 
 extern struct mce_bank *mce_banks;
 
-#ifdef CONFIG_ACPI_APEI
-int apei_write_mce(struct mce *m);
-ssize_t apei_read_mce(struct mce *m, u64 *record_id);
-int apei_check_mce(void);
-int apei_clear_mce(u64 record_id);
-#else
-static inline int apei_write_mce(struct mce *m)
-{
-	return -EINVAL;
-}
-static inline ssize_t apei_read_mce(struct mce *m, u64 *record_id)
-{
-	return 0;
-}
-static inline int apei_check_mce(void)
-{
-	return 0;
-}
-static inline int apei_clear_mce(u64 record_id)
-{
-	return -EINVAL;
-}
-#endif

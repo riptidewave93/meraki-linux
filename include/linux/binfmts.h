@@ -18,14 +18,14 @@ struct pt_regs;
 #define BINPRM_BUF_SIZE 128
 
 #ifdef __KERNEL__
-#include <linux/sched.h>
+#include <linux/list.h>
 
 #define CORENAME_MAX_SIZE 128
 
 /*
  * This structure is used to hold the arguments that are used when loading binaries.
  */
-struct linux_binprm {
+struct linux_binprm{
 	char buf[BINPRM_BUF_SIZE];
 #ifdef CONFIG_MMU
 	struct vm_area_struct *vma;
@@ -51,15 +51,18 @@ struct linux_binprm {
 	int unsafe;		/* how unsafe this exec is (mask of LSM_UNSAFE_*) */
 	unsigned int per_clear;	/* bits to clear in current->personality */
 	int argc, envc;
-	const char * filename;	/* Name of binary as seen by procps */
-	const char * interp;	/* Name of the binary really executed. Most
+	char * filename;	/* Name of binary as seen by procps */
+	char * interp;		/* Name of the binary really executed. Most
 				   of the time same as filename, but could be
 				   different for binfmt_{misc,script} */
 	unsigned interp_flags;
 	unsigned interp_data;
 	unsigned long loader, exec;
-	char tcomm[TASK_COMM_LEN];
 };
+
+extern void acct_arg_size(struct linux_binprm *bprm, unsigned long pages);
+extern struct page *get_arg_page(struct linux_binprm *bprm, unsigned long pos,
+					int write);
 
 #define BINPRM_FLAGS_ENFORCE_NONDUMP_BIT 0
 #define BINPRM_FLAGS_ENFORCE_NONDUMP (1 << BINPRM_FLAGS_ENFORCE_NONDUMP_BIT)
@@ -67,15 +70,6 @@ struct linux_binprm {
 /* fd of the binary should be passed to the interpreter */
 #define BINPRM_FLAGS_EXECFD_BIT 1
 #define BINPRM_FLAGS_EXECFD (1 << BINPRM_FLAGS_EXECFD_BIT)
-
-/* Function parameter for binfmt->coredump */
-struct coredump_params {
-	long signr;
-	struct pt_regs *regs;
-	struct file *file;
-	unsigned long limit;
-	unsigned long mm_flags;
-};
 
 /*
  * This structure defines the functions that are used to load the binary formats that
@@ -86,31 +80,31 @@ struct linux_binfmt {
 	struct module *module;
 	int (*load_binary)(struct linux_binprm *, struct  pt_regs * regs);
 	int (*load_shlib)(struct file *);
-	int (*core_dump)(struct coredump_params *cprm);
+	int (*core_dump)(long signr, struct pt_regs *regs, struct file *file, unsigned long limit);
 	unsigned long min_coredump;	/* minimal dump size */
+	int hasvdso;
 };
 
-extern void __register_binfmt(struct linux_binfmt *fmt, int insert);
+extern int __register_binfmt(struct linux_binfmt *fmt, int insert);
 
 /* Registration of default binfmt handlers */
-static inline void register_binfmt(struct linux_binfmt *fmt)
+static inline int register_binfmt(struct linux_binfmt *fmt)
 {
-	__register_binfmt(fmt, 0);
+	return __register_binfmt(fmt, 0);
 }
 /* Same as above, but adds a new binfmt at the top of the list */
-static inline void insert_binfmt(struct linux_binfmt *fmt)
+static inline int insert_binfmt(struct linux_binfmt *fmt)
 {
-	__register_binfmt(fmt, 1);
+	return __register_binfmt(fmt, 1);
 }
 
 extern void unregister_binfmt(struct linux_binfmt *);
 
 extern int prepare_binprm(struct linux_binprm *);
 extern int __must_check remove_arg_zero(struct linux_binprm *);
-extern int search_binary_handler(struct linux_binprm *, struct pt_regs *);
+extern int search_binary_handler(struct linux_binprm *,struct pt_regs *);
 extern int flush_old_exec(struct linux_binprm * bprm);
 extern void setup_new_exec(struct linux_binprm * bprm);
-extern void would_dump(struct linux_binprm *, struct file *);
 
 extern int suid_dumpable;
 
@@ -124,8 +118,7 @@ extern int setup_arg_pages(struct linux_binprm * bprm,
 			   int executable_stack);
 extern int bprm_mm_init(struct linux_binprm *bprm);
 extern int bprm_change_interp(char *interp, struct linux_binprm *bprm);
-extern int copy_strings_kernel(int argc, const char *const *argv,
-			       struct linux_binprm *bprm);
+extern int copy_strings_kernel(int argc,char ** argv,struct linux_binprm *bprm);
 extern int prepare_bprm_creds(struct linux_binprm *bprm);
 extern void install_exec_creds(struct linux_binprm *bprm);
 extern void do_coredump(long signr, int exit_code, struct pt_regs *regs);

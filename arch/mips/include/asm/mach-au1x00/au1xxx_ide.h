@@ -58,7 +58,6 @@ typedef struct {
 #endif
 	int			irq;
 	u32			regbase;
-	int			ddma_id;
 } _auide_hwif;
 
 /******************************************************************************/

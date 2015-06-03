@@ -16,7 +16,6 @@
 #include <linux/crypto.h>
 #include <linux/scatterlist.h>
 #include <linux/ctype.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/af_rxrpc.h>
 #include <keys/rxrpc-type.h>

@@ -29,7 +29,7 @@ F02 Oct/28/02: Add SB device ID for 3147 and 3177.
 
 2004-02-16: <sda@bdit.de>
 - Removed unneeded 'legacy' pci stuff.
-- Make sure SIR mode is set (hw_init()) before calling mode-dependent stuff.
+- Make sure SIR mode is set (hw_init()) before calling mode-dependant stuff.
 - On speed change from core, don't send SIR frame with new speed. 
   Use current speed and change speeds later.
 - Make module-param dongle_id actually work.
@@ -45,12 +45,11 @@ F02 Oct/28/02: Add SB device ID for 3147 and 3177.
 #include <linux/netdevice.h>
 #include <linux/ioport.h>
 #include <linux/delay.h>
+#include <linux/slab.h>
 #include <linux/init.h>
-#include <linux/interrupt.h>
 #include <linux/rtnetlink.h>
 #include <linux/pci.h>
 #include <linux/dma-mapping.h>
-#include <linux/gfp.h>
 
 #include <asm/io.h>
 #include <asm/dma.h>
@@ -76,9 +75,15 @@ static int dongle_id = 0;	/* default: probe */
 /* We can't guess the type of connected dongle, user *must* supply it. */
 module_param(dongle_id, int, 0);
 
+/* FIXME : we should not need this, because instances should be automatically
+ * managed by the PCI layer. Especially that we seem to only be using the
+ * first entry. Jean II */
+/* Max 4 instances for now */
+static struct via_ircc_cb *dev_self[] = { NULL, NULL, NULL, NULL };
+
 /* Some prototypes */
-static int via_ircc_open(struct pci_dev *pdev, chipio_t * info,
-			 unsigned int id);
+static int via_ircc_open(int i, chipio_t * info, unsigned int id);
+static int via_ircc_close(struct via_ircc_cb *self);
 static int via_ircc_dma_receive(struct via_ircc_cb *self);
 static int via_ircc_dma_receive_complete(struct via_ircc_cb *self,
 					 int iobase);
@@ -116,7 +121,7 @@ static void iodelay(int udelay)
 	}
 }
 
-static DEFINE_PCI_DEVICE_TABLE(via_pci_tbl) = {
+static struct pci_device_id via_pci_tbl[] = {
 	{ PCI_VENDOR_ID_VIA, 0x8231, PCI_ANY_ID, PCI_ANY_ID,0,0,0 },
 	{ PCI_VENDOR_ID_VIA, 0x3109, PCI_ANY_ID, PCI_ANY_ID,0,0,1 },
 	{ PCI_VENDOR_ID_VIA, 0x3074, PCI_ANY_ID, PCI_ANY_ID,0,0,2 },
@@ -210,7 +215,7 @@ static int __devinit via_init_one (struct pci_dev *pcidev, const struct pci_devi
 			pci_write_config_byte(pcidev,0x42,(bTmp | 0xf0));
 			pci_write_config_byte(pcidev,0x5a,0xc0);
 			WriteLPCReg(0x28, 0x70 );
-			if (via_ircc_open(pcidev, &info, 0x3076) == 0)
+			if (via_ircc_open(0, &info,0x3076) == 0)
 				rc=0;
 		} else
 			rc = -ENODEV; //IR not turn on	 
@@ -249,7 +254,7 @@ static int __devinit via_init_one (struct pci_dev *pcidev, const struct pci_devi
 			info.irq=FirIRQ;
 			info.dma=FirDRQ1;
 			info.dma2=FirDRQ0;
-			if (via_ircc_open(pcidev, &info, 0x3096) == 0)
+			if (via_ircc_open(0, &info,0x3096) == 0)
 				rc=0;
 		} else
 			rc = -ENODEV; //IR not turn on !!!!!
@@ -259,9 +264,47 @@ static int __devinit via_init_one (struct pci_dev *pcidev, const struct pci_devi
 	return rc;
 }
 
+/*
+ * Function via_ircc_clean ()
+ *
+ *    Close all configured chips
+ *
+ */
+static void via_ircc_clean(void)
+{
+	int i;
+
+	IRDA_DEBUG(3, "%s()\n", __func__);
+
+	for (i=0; i < ARRAY_SIZE(dev_self); i++) {
+		if (dev_self[i])
+			via_ircc_close(dev_self[i]);
+	}
+}
+
+static void __devexit via_remove_one (struct pci_dev *pdev)
+{
+	IRDA_DEBUG(3, "%s()\n", __func__);
+
+	/* FIXME : This is ugly. We should use pci_get_drvdata(pdev);
+	 * to get our driver instance and call directly via_ircc_close().
+	 * See vlsi_ir for details...
+	 * Jean II */
+	via_ircc_clean();
+
+	/* FIXME : This should be in via_ircc_close(), because here we may
+	 * theoritically disable still configured devices :-( - Jean II */
+	pci_disable_device(pdev);
+}
+
 static void __exit via_ircc_cleanup(void)
 {
 	IRDA_DEBUG(3, "%s()\n", __func__);
+
+	/* FIXME : This should be redundant, as pci_unregister_driver()
+	 * should call via_remove_one() on each device.
+	 * Jean II */
+	via_ircc_clean();
 
 	/* Cleanup all instances of the driver */
 	pci_unregister_driver (&via_driver); 
@@ -281,19 +324,21 @@ static const struct net_device_ops via_ircc_fir_ops = {
 };
 
 /*
- * Function via_ircc_open(pdev, iobase, irq)
+ * Function via_ircc_open (iobase, irq)
  *
  *    Open driver instance
  *
  */
-static __devinit int via_ircc_open(struct pci_dev *pdev, chipio_t * info,
-				   unsigned int id)
+static __devinit int via_ircc_open(int i, chipio_t * info, unsigned int id)
 {
 	struct net_device *dev;
 	struct via_ircc_cb *self;
 	int err;
 
 	IRDA_DEBUG(3, "%s()\n", __func__);
+
+	if (i >= ARRAY_SIZE(dev_self))
+		return -ENOMEM;
 
 	/* Allocate new instance of the driver */
 	dev = alloc_irdadev(sizeof(struct via_ircc_cb));
@@ -304,8 +349,13 @@ static __devinit int via_ircc_open(struct pci_dev *pdev, chipio_t * info,
 	self->netdev = dev;
 	spin_lock_init(&self->lock);
 
-	pci_set_drvdata(pdev, self);
-
+	/* FIXME : We should store our driver instance in the PCI layer,
+	 * using pci_set_drvdata(), not in this array.
+	 * See vlsi_ir for details... - Jean II */
+	/* FIXME : 'i' is always 0 (see via_init_one()) :-( - Jean II */
+	/* Need to store self somewhere */
+	dev_self[i] = self;
+	self->index = i;
 	/* Initialize Resource */
 	self->io.cfg_base = info->cfg_base;
 	self->io.fir_base = info->fir_base;
@@ -335,7 +385,7 @@ static __devinit int via_ircc_open(struct pci_dev *pdev, chipio_t * info,
 	self->io.dongle_id = dongle_id;
 
 	/* The only value we must override it the baudrate */
-	/* Maximum speeds and capabilities are dongle-dependent. */
+	/* Maximum speeds and capabilities are dongle-dependant. */
 	switch( self->io.dongle_id ){
 	case 0x0d:
 		self->qos.baud_rate.bits =
@@ -364,7 +414,7 @@ static __devinit int via_ircc_open(struct pci_dev *pdev, chipio_t * info,
 
 	/* Allocate memory if needed */
 	self->rx_buff.head =
-		dma_alloc_coherent(&pdev->dev, self->rx_buff.truesize,
+		dma_alloc_coherent(NULL, self->rx_buff.truesize,
 				   &self->rx_buff_dma, GFP_KERNEL);
 	if (self->rx_buff.head == NULL) {
 		err = -ENOMEM;
@@ -373,7 +423,7 @@ static __devinit int via_ircc_open(struct pci_dev *pdev, chipio_t * info,
 	memset(self->rx_buff.head, 0, self->rx_buff.truesize);
 
 	self->tx_buff.head =
-		dma_alloc_coherent(&pdev->dev, self->tx_buff.truesize,
+		dma_alloc_coherent(NULL, self->tx_buff.truesize,
 				   &self->tx_buff_dma, GFP_KERNEL);
 	if (self->tx_buff.head == NULL) {
 		err = -ENOMEM;
@@ -405,31 +455,32 @@ static __devinit int via_ircc_open(struct pci_dev *pdev, chipio_t * info,
 	via_hw_init(self);
 	return 0;
  err_out4:
-	dma_free_coherent(&pdev->dev, self->tx_buff.truesize,
+	dma_free_coherent(NULL, self->tx_buff.truesize,
 			  self->tx_buff.head, self->tx_buff_dma);
  err_out3:
-	dma_free_coherent(&pdev->dev, self->rx_buff.truesize,
+	dma_free_coherent(NULL, self->rx_buff.truesize,
 			  self->rx_buff.head, self->rx_buff_dma);
  err_out2:
 	release_region(self->io.fir_base, self->io.fir_ext);
  err_out1:
-	pci_set_drvdata(pdev, NULL);
 	free_netdev(dev);
+	dev_self[i] = NULL;
 	return err;
 }
 
 /*
- * Function via_remove_one(pdev)
+ * Function via_ircc_close (self)
  *
  *    Close driver instance
  *
  */
-static void __devexit via_remove_one(struct pci_dev *pdev)
+static int via_ircc_close(struct via_ircc_cb *self)
 {
-	struct via_ircc_cb *self = pci_get_drvdata(pdev);
 	int iobase;
 
 	IRDA_DEBUG(3, "%s()\n", __func__);
+
+	IRDA_ASSERT(self != NULL, return -1;);
 
 	iobase = self->io.fir_base;
 
@@ -442,16 +493,16 @@ static void __devexit via_remove_one(struct pci_dev *pdev)
 		   __func__, self->io.fir_base);
 	release_region(self->io.fir_base, self->io.fir_ext);
 	if (self->tx_buff.head)
-		dma_free_coherent(&pdev->dev, self->tx_buff.truesize,
+		dma_free_coherent(NULL, self->tx_buff.truesize,
 				  self->tx_buff.head, self->tx_buff_dma);
 	if (self->rx_buff.head)
-		dma_free_coherent(&pdev->dev, self->rx_buff.truesize,
+		dma_free_coherent(NULL, self->rx_buff.truesize,
 				  self->rx_buff.head, self->rx_buff_dma);
-	pci_set_drvdata(pdev, NULL);
+	dev_self[self->index] = NULL;
 
 	free_netdev(self->netdev);
 
-	pci_disable_device(pdev);
+	return 0;
 }
 
 /*
@@ -942,14 +993,14 @@ static int via_ircc_dma_xmit_complete(struct via_ircc_cb *self)
 	iobase = self->io.fir_base;
 	/* Disable DMA */
 //      DisableDmaChannel(self->io.dma);
-	/* Check for underrun! */
+	/* Check for underrrun! */
 	/* Clear bit, by writing 1 into it */
 	Tx_status = GetTXStatus(iobase);
 	if (Tx_status & 0x08) {
 		self->netdev->stats.tx_errors++;
 		self->netdev->stats.tx_fifo_errors++;
 		hwreset(self);
-	/* how to clear underrun? */
+// how to clear underrrun ?
 	} else {
 		self->netdev->stats.tx_packets++;
 		ResetChip(iobase, 3);
@@ -1131,13 +1182,12 @@ F01_E */
 
 		skb = dev_alloc_skb(len + 1 - 4);
 		/*
-		 * if frame size, data ptr, or skb ptr are wrong, then get next
+		 * if frame size,data ptr,or skb ptr are wrong ,the get next
 		 * entry.
 		 */
-		if ((skb == NULL) || (skb->data == NULL) ||
-		    (self->rx_buff.data == NULL) || (len < 6)) {
+		if ((skb == NULL) || (skb->data == NULL)
+		    || (self->rx_buff.data == NULL) || (len < 6)) {
 			self->netdev->stats.rx_dropped++;
-			kfree_skb(skb);
 			return TRUE;
 		}
 		skb_reserve(skb, 1);
@@ -1234,8 +1284,8 @@ static int RxTimerHandler(struct via_ircc_cb *self, int iobase)
 		self->RetryCount++;
 
 	if ((self->RetryCount >= 1) ||
-	    ((st_fifo->pending_bytes + 2048) > self->rx_buff.truesize) ||
-	    (st_fifo->len >= (MAX_RX_WINDOW))) {
+	    ((st_fifo->pending_bytes + 2048) > self->rx_buff.truesize)
+	    || (st_fifo->len >= (MAX_RX_WINDOW))) {
 		while (st_fifo->len > 0) {	//upload frame
 			// Put this entry back in fifo 
 			if (st_fifo->head > MAX_RX_WINDOW)
@@ -1250,8 +1300,8 @@ static int RxTimerHandler(struct via_ircc_cb *self, int iobase)
 			 * if frame size, data ptr, or skb ptr are wrong,
 			 * then get next entry.
 			 */
-			if ((skb == NULL) || (skb->data == NULL) ||
-			    (self->rx_buff.data == NULL) || (len < 6)) {
+			if ((skb == NULL) || (skb->data == NULL)
+			    || (self->rx_buff.data == NULL) || (len < 6)) {
 				self->netdev->stats.rx_dropped++;
 				continue;
 			}
@@ -1282,8 +1332,8 @@ static int RxTimerHandler(struct via_ircc_cb *self, int iobase)
 		 * if frame is receive complete at this routine ,then upload
 		 * frame.
 		 */
-		if ((GetRXStatus(iobase) & 0x10) &&
-		    (RxCurCount(iobase, self) != self->RxLastCount)) {
+		if ((GetRXStatus(iobase) & 0x10)
+		    && (RxCurCount(iobase, self) != self->RxLastCount)) {
 			upload_rxdata(self, iobase);
 			if (irda_device_txqueue_empty(self->netdev))
 				via_ircc_dma_receive(self);
@@ -1495,14 +1545,14 @@ static int via_ircc_net_open(struct net_device *dev)
 	if (request_dma(self->io.dma, dev->name)) {
 		IRDA_WARNING("%s, unable to allocate dma=%d\n", driver_name,
 			     self->io.dma);
-		free_irq(self->io.irq, dev);
+		free_irq(self->io.irq, self);
 		return -EAGAIN;
 	}
 	if (self->io.dma2 != self->io.dma) {
 		if (request_dma(self->io.dma2, dev->name)) {
 			IRDA_WARNING("%s, unable to allocate dma2=%d\n",
 				     driver_name, self->io.dma2);
-			free_irq(self->io.irq, dev);
+			free_irq(self->io.irq, self);
 			free_dma(self->io.dma);
 			return -EAGAIN;
 		}

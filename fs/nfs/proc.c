@@ -29,6 +29,7 @@
 
 #include <linux/types.h>
 #include <linux/param.h>
+#include <linux/slab.h>
 #include <linux/time.h>
 #include <linux/mm.h>
 #include <linux/errno.h>
@@ -41,7 +42,6 @@
 #include <linux/nfs_fs.h>
 #include <linux/nfs_page.h>
 #include <linux/lockd/bind.h>
-#include <linux/freezer.h>
 #include "internal.h"
 
 #define NFSDBG_FACILITY		NFSDBG_PROC
@@ -145,7 +145,7 @@ nfs_proc_setattr(struct dentry *dentry, struct nfs_fattr *fattr,
 }
 
 static int
-nfs_proc_lookup(struct rpc_clnt *clnt, struct inode *dir, struct qstr *name,
+nfs_proc_lookup(struct inode *dir, struct qstr *name,
 		struct nfs_fh *fhandle, struct nfs_fattr *fattr)
 {
 	struct nfs_diropargs	arg = {
@@ -192,60 +192,35 @@ static int nfs_proc_readlink(struct inode *inode, struct page *page,
 	return status;
 }
 
-struct nfs_createdata {
-	struct nfs_createargs arg;
-	struct nfs_diropok res;
-	struct nfs_fh fhandle;
-	struct nfs_fattr fattr;
-};
-
-static struct nfs_createdata *nfs_alloc_createdata(struct inode *dir,
-		struct dentry *dentry, struct iattr *sattr)
-{
-	struct nfs_createdata *data;
-
-	data = kmalloc(sizeof(*data), GFP_KERNEL);
-
-	if (data != NULL) {
-		data->arg.fh = NFS_FH(dir);
-		data->arg.name = dentry->d_name.name;
-		data->arg.len = dentry->d_name.len;
-		data->arg.sattr = sattr;
-		nfs_fattr_init(&data->fattr);
-		data->fhandle.size = 0;
-		data->res.fh = &data->fhandle;
-		data->res.fattr = &data->fattr;
-	}
-	return data;
-};
-
-static void nfs_free_createdata(const struct nfs_createdata *data)
-{
-	kfree(data);
-}
-
 static int
 nfs_proc_create(struct inode *dir, struct dentry *dentry, struct iattr *sattr,
-		int flags, struct nfs_open_context *ctx)
+		int flags, struct nameidata *nd)
 {
-	struct nfs_createdata *data;
+	struct nfs_fh		fhandle;
+	struct nfs_fattr	fattr;
+	struct nfs_createargs	arg = {
+		.fh		= NFS_FH(dir),
+		.name		= dentry->d_name.name,
+		.len		= dentry->d_name.len,
+		.sattr		= sattr
+	};
+	struct nfs_diropok	res = {
+		.fh		= &fhandle,
+		.fattr		= &fattr
+	};
 	struct rpc_message msg = {
 		.rpc_proc	= &nfs_procedures[NFSPROC_CREATE],
+		.rpc_argp	= &arg,
+		.rpc_resp	= &res,
 	};
-	int status = -ENOMEM;
+	int			status;
 
+	nfs_fattr_init(&fattr);
 	dprintk("NFS call  create %s\n", dentry->d_name.name);
-	data = nfs_alloc_createdata(dir, dentry, sattr);
-	if (data == NULL)
-		goto out;
-	msg.rpc_argp = &data->arg;
-	msg.rpc_resp = &data->res;
 	status = rpc_call_sync(NFS_CLIENT(dir), &msg, 0);
 	nfs_mark_for_revalidate(dir);
 	if (status == 0)
-		status = nfs_instantiate(dentry, data->res.fh, data->res.fattr);
-	nfs_free_createdata(data);
-out:
+		status = nfs_instantiate(dentry, &fhandle, &fattr);
 	dprintk("NFS reply create: %d\n", status);
 	return status;
 }
@@ -257,12 +232,24 @@ static int
 nfs_proc_mknod(struct inode *dir, struct dentry *dentry, struct iattr *sattr,
 	       dev_t rdev)
 {
-	struct nfs_createdata *data;
+	struct nfs_fh fhandle;
+	struct nfs_fattr fattr;
+	struct nfs_createargs	arg = {
+		.fh		= NFS_FH(dir),
+		.name		= dentry->d_name.name,
+		.len		= dentry->d_name.len,
+		.sattr		= sattr
+	};
+	struct nfs_diropok	res = {
+		.fh		= &fhandle,
+		.fattr		= &fattr
+	};
 	struct rpc_message msg = {
 		.rpc_proc	= &nfs_procedures[NFSPROC_CREATE],
+		.rpc_argp	= &arg,
+		.rpc_resp	= &res,
 	};
-	umode_t mode;
-	int status = -ENOMEM;
+	int status, mode;
 
 	dprintk("NFS call  mknod %s\n", dentry->d_name.name);
 
@@ -275,24 +262,17 @@ nfs_proc_mknod(struct inode *dir, struct dentry *dentry, struct iattr *sattr,
 		sattr->ia_size = new_encode_dev(rdev);/* get out your barf bag */
 	}
 
-	data = nfs_alloc_createdata(dir, dentry, sattr);
-	if (data == NULL)
-		goto out;
-	msg.rpc_argp = &data->arg;
-	msg.rpc_resp = &data->res;
-
+	nfs_fattr_init(&fattr);
 	status = rpc_call_sync(NFS_CLIENT(dir), &msg, 0);
 	nfs_mark_for_revalidate(dir);
 
 	if (status == -EINVAL && S_ISFIFO(mode)) {
 		sattr->ia_mode = mode;
-		nfs_fattr_init(data->res.fattr);
+		nfs_fattr_init(&fattr);
 		status = rpc_call_sync(NFS_CLIENT(dir), &msg, 0);
 	}
 	if (status == 0)
-		status = nfs_instantiate(dentry, data->res.fh, data->res.fattr);
-	nfs_free_createdata(data);
-out:
+		status = nfs_instantiate(dentry, &fhandle, &fattr);
 	dprintk("NFS reply mknod: %d\n", status);
 	return status;
 }
@@ -325,34 +305,9 @@ nfs_proc_unlink_setup(struct rpc_message *msg, struct inode *dir)
 	msg->rpc_proc = &nfs_procedures[NFSPROC_REMOVE];
 }
 
-static void nfs_proc_unlink_rpc_prepare(struct rpc_task *task, struct nfs_unlinkdata *data)
-{
-	rpc_call_start(task);
-}
-
 static int nfs_proc_unlink_done(struct rpc_task *task, struct inode *dir)
 {
 	nfs_mark_for_revalidate(dir);
-	return 1;
-}
-
-static void
-nfs_proc_rename_setup(struct rpc_message *msg, struct inode *dir)
-{
-	msg->rpc_proc = &nfs_procedures[NFSPROC_RENAME];
-}
-
-static void nfs_proc_rename_rpc_prepare(struct rpc_task *task, struct nfs_renamedata *data)
-{
-	rpc_call_start(task);
-}
-
-static int
-nfs_proc_rename_done(struct rpc_task *task, struct inode *old_dir,
-		     struct inode *new_dir)
-{
-	nfs_mark_for_revalidate(old_dir);
-	nfs_mark_for_revalidate(new_dir);
 	return 1;
 }
 
@@ -361,10 +316,12 @@ nfs_proc_rename(struct inode *old_dir, struct qstr *old_name,
 		struct inode *new_dir, struct qstr *new_name)
 {
 	struct nfs_renameargs	arg = {
-		.old_dir	= NFS_FH(old_dir),
-		.old_name	= old_name,
-		.new_dir	= NFS_FH(new_dir),
-		.new_name	= new_name,
+		.fromfh		= NFS_FH(old_dir),
+		.fromname	= old_name->name,
+		.fromlen	= old_name->len,
+		.tofh		= NFS_FH(new_dir),
+		.toname		= new_name->name,
+		.tolen		= new_name->len
 	};
 	struct rpc_message msg = {
 		.rpc_proc	= &nfs_procedures[NFSPROC_RENAME],
@@ -407,8 +364,8 @@ static int
 nfs_proc_symlink(struct inode *dir, struct dentry *dentry, struct page *page,
 		 unsigned int len, struct iattr *sattr)
 {
-	struct nfs_fh *fh;
-	struct nfs_fattr *fattr;
+	struct nfs_fh fhandle;
+	struct nfs_fattr fattr;
 	struct nfs_symlinkargs	arg = {
 		.fromfh		= NFS_FH(dir),
 		.fromname	= dentry->d_name.name,
@@ -421,18 +378,12 @@ nfs_proc_symlink(struct inode *dir, struct dentry *dentry, struct page *page,
 		.rpc_proc	= &nfs_procedures[NFSPROC_SYMLINK],
 		.rpc_argp	= &arg,
 	};
-	int status = -ENAMETOOLONG;
-
-	dprintk("NFS call  symlink %s\n", dentry->d_name.name);
+	int			status;
 
 	if (len > NFS2_MAXPATHLEN)
-		goto out;
+		return -ENAMETOOLONG;
 
-	fh = nfs_alloc_fhandle();
-	fattr = nfs_alloc_fattr();
-	status = -ENOMEM;
-	if (fh == NULL || fattr == NULL)
-		goto out_free;
+	dprintk("NFS call  symlink %s\n", dentry->d_name.name);
 
 	status = rpc_call_sync(NFS_CLIENT(dir), &msg, 0);
 	nfs_mark_for_revalidate(dir);
@@ -442,13 +393,12 @@ nfs_proc_symlink(struct inode *dir, struct dentry *dentry, struct page *page,
 	 * filehandle size to zero indicates to nfs_instantiate that it
 	 * should fill in the data with a LOOKUP call on the wire.
 	 */
-	if (status == 0)
-		status = nfs_instantiate(dentry, fh, fattr);
+	if (status == 0) {
+		nfs_fattr_init(&fattr);
+		fhandle.size = 0;
+		status = nfs_instantiate(dentry, &fhandle, &fattr);
+	}
 
-out_free:
-	nfs_free_fattr(fattr);
-	nfs_free_fhandle(fh);
-out:
 	dprintk("NFS reply symlink: %d\n", status);
 	return status;
 }
@@ -456,25 +406,31 @@ out:
 static int
 nfs_proc_mkdir(struct inode *dir, struct dentry *dentry, struct iattr *sattr)
 {
-	struct nfs_createdata *data;
+	struct nfs_fh fhandle;
+	struct nfs_fattr fattr;
+	struct nfs_createargs	arg = {
+		.fh		= NFS_FH(dir),
+		.name		= dentry->d_name.name,
+		.len		= dentry->d_name.len,
+		.sattr		= sattr
+	};
+	struct nfs_diropok	res = {
+		.fh		= &fhandle,
+		.fattr		= &fattr
+	};
 	struct rpc_message msg = {
 		.rpc_proc	= &nfs_procedures[NFSPROC_MKDIR],
+		.rpc_argp	= &arg,
+		.rpc_resp	= &res,
 	};
-	int status = -ENOMEM;
+	int			status;
 
 	dprintk("NFS call  mkdir %s\n", dentry->d_name.name);
-	data = nfs_alloc_createdata(dir, dentry, sattr);
-	if (data == NULL)
-		goto out;
-	msg.rpc_argp = &data->arg;
-	msg.rpc_resp = &data->res;
-
+	nfs_fattr_init(&fattr);
 	status = rpc_call_sync(NFS_CLIENT(dir), &msg, 0);
 	nfs_mark_for_revalidate(dir);
 	if (status == 0)
-		status = nfs_instantiate(dentry, data->res.fh, data->res.fattr);
-	nfs_free_createdata(data);
-out:
+		status = nfs_instantiate(dentry, &fhandle, &fattr);
 	dprintk("NFS reply mkdir: %d\n", status);
 	return status;
 }
@@ -509,14 +465,14 @@ nfs_proc_rmdir(struct inode *dir, struct qstr *name)
  */
 static int
 nfs_proc_readdir(struct dentry *dentry, struct rpc_cred *cred,
-		 u64 cookie, struct page **pages, unsigned int count, int plus)
+		 u64 cookie, struct page *page, unsigned int count, int plus)
 {
 	struct inode		*dir = dentry->d_inode;
 	struct nfs_readdirargs	arg = {
 		.fh		= NFS_FH(dir),
 		.cookie		= cookie,
 		.count		= count,
-		.pages		= pages,
+		.pages		= &page,
 	};
 	struct rpc_message	msg = {
 		.rpc_proc	= &nfs_procedures[NFSPROC_READDIR],
@@ -621,11 +577,6 @@ static void nfs_proc_read_setup(struct nfs_read_data *data, struct rpc_message *
 	msg->rpc_proc = &nfs_procedures[NFSPROC_READ];
 }
 
-static void nfs_proc_read_rpc_prepare(struct rpc_task *task, struct nfs_read_data *data)
-{
-	rpc_call_start(task);
-}
-
 static int nfs_write_done(struct rpc_task *task, struct nfs_write_data *data)
 {
 	if (task->tk_status >= 0)
@@ -638,11 +589,6 @@ static void nfs_proc_write_setup(struct nfs_write_data *data, struct rpc_message
 	/* Note: NFSv2 ignores @stable and always uses NFS_FILE_SYNC */
 	data->args.stable = NFS_FILE_SYNC;
 	msg->rpc_proc = &nfs_procedures[NFSPROC_WRITE];
-}
-
-static void nfs_proc_write_rpc_prepare(struct rpc_task *task, struct nfs_write_data *data)
-{
-	rpc_call_start(task);
 }
 
 static void
@@ -688,7 +634,6 @@ const struct nfs_rpc_ops nfs_v2_clientops = {
 	.dentry_ops	= &nfs_dentry_operations,
 	.dir_inode_ops	= &nfs_dir_inode_operations,
 	.file_inode_ops	= &nfs_file_inode_operations,
-	.file_ops	= &nfs_file_operations,
 	.getroot	= nfs_proc_get_root,
 	.getattr	= nfs_proc_getattr,
 	.setattr	= nfs_proc_setattr,
@@ -698,12 +643,8 @@ const struct nfs_rpc_ops nfs_v2_clientops = {
 	.create		= nfs_proc_create,
 	.remove		= nfs_proc_remove,
 	.unlink_setup	= nfs_proc_unlink_setup,
-	.unlink_rpc_prepare = nfs_proc_unlink_rpc_prepare,
 	.unlink_done	= nfs_proc_unlink_done,
 	.rename		= nfs_proc_rename,
-	.rename_setup	= nfs_proc_rename_setup,
-	.rename_rpc_prepare = nfs_proc_rename_rpc_prepare,
-	.rename_done	= nfs_proc_rename_done,
 	.link		= nfs_proc_link,
 	.symlink	= nfs_proc_symlink,
 	.mkdir		= nfs_proc_mkdir,
@@ -713,16 +654,13 @@ const struct nfs_rpc_ops nfs_v2_clientops = {
 	.statfs		= nfs_proc_statfs,
 	.fsinfo		= nfs_proc_fsinfo,
 	.pathconf	= nfs_proc_pathconf,
-	.decode_dirent	= nfs2_decode_dirent,
+	.decode_dirent	= nfs_decode_dirent,
 	.read_setup	= nfs_proc_read_setup,
-	.read_rpc_prepare = nfs_proc_read_rpc_prepare,
 	.read_done	= nfs_read_done,
 	.write_setup	= nfs_proc_write_setup,
-	.write_rpc_prepare = nfs_proc_write_rpc_prepare,
 	.write_done	= nfs_write_done,
 	.commit_setup	= nfs_proc_commit_setup,
 	.lock		= nfs_proc_lock,
 	.lock_check_bounds = nfs_lock_check_bounds,
 	.close_context	= nfs_close_context,
-	.init_client	= nfs_init_client,
 };

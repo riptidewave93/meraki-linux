@@ -106,9 +106,8 @@ $bss_loop:
 #endif
 
 
-	/* Now initialize the PTEs themselves.  We use RWX for
-	 * everything ... it will get remapped correctly later */
-	ldo		0+_PAGE_KERNEL_RWX(%r0),%r3 /* Hardwired 0 phys addr start */
+	/* Now initialize the PTEs themselves */
+	ldo		0+_PAGE_KERNEL(%r0),%r3 /* Hardwired 0 phys addr start */
 	ldi		(1<<(KERNEL_INITIAL_ORDER-PAGE_SHIFT)),%r11 /* PFN count */
 	load32		PA(pg0),%r1
 
@@ -132,7 +131,7 @@ $pgt_fill_loop:
 	ldo             THREAD_SZ_ALGN(%r6),%sp
 
 #ifdef CONFIG_SMP
-	/* Set the smp rendezvous address into page zero.
+	/* Set the smp rendevous address into page zero.
 	** It would be safer to do this in init_smp_config() but
 	** it's just way easier to deal with here because
 	** of 64-bit function ptrs and the address is local to this file.
@@ -195,8 +194,6 @@ common_stext:
 	ldw             MEM_PDC_HI(%r0),%r6
 	depd            %r6, 31, 32, %r3        /* move to upper word */
 
-	mfctl		%cr30,%r6		/* PCX-W2 firmware bug */
-
 	ldo             PDC_PSW(%r0),%arg0              /* 21 */
 	ldo             PDC_PSW_SET_DEFAULTS(%r0),%arg1 /* 2 */
 	ldo             PDC_PSW_WIDE_BIT(%r0),%arg2     /* 2 */
@@ -205,8 +202,6 @@ common_stext:
 	copy            %r0,%arg3
 
 stext_pdc_ret:
-	mtctl		%r6,%cr30		/* restore task thread info */
-
 	/* restore rfi target address*/
 	ldd             TI_TASK-THREAD_SZ_ALGN(%sp), %r10
 	tophys_r1       %r10
@@ -350,7 +345,7 @@ smp_slave_stext:
 ENDPROC(stext)
 
 #ifndef CONFIG_64BIT
-	.section .data..read_mostly
+	.section .data.read_mostly
 
 	.align	4
 	.export	$global$,data

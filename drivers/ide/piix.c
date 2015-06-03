@@ -8,8 +8,8 @@
  *
  * Documentation:
  *
- *	Publicly available from Intel web site. Errata documentation
- * is also publicly available. As an aide to anyone hacking on this
+ *	Publically available from Intel web site. Errata documentation
+ * is also publically available. As an aide to anyone hacking on this
  * driver the list of errata that are relevant is below.going back to
  * PIIX4. Older device documentation is now a bit tricky to find.
  *
@@ -59,14 +59,15 @@ static int no_piix_dma;
 
 /**
  *	piix_set_pio_mode	-	set host controller for PIO mode
- *	@port: port
  *	@drive: drive
+ *	@pio: PIO mode number
  *
  *	Set the interface PIO mode based upon the settings done by AMI BIOS.
  */
 
-static void piix_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void piix_set_pio_mode(ide_drive_t *drive, const u8 pio)
 {
+	ide_hwif_t *hwif	= drive->hwif;
 	struct pci_dev *dev	= to_pci_dev(hwif->dev);
 	int is_slave		= drive->dn & 1;
 	int master_port		= hwif->channel ? 0x42 : 0x40;
@@ -76,7 +77,6 @@ static void piix_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 	u8 slave_data;
 	static DEFINE_SPINLOCK(tune_lock);
 	int control = 0;
-	const u8 pio = drive->pio_mode - XFER_PIO_0;
 
 				     /* ISP  RTC */
 	static const u8 timings[][2]= {
@@ -127,15 +127,16 @@ static void piix_set_pio_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 
 /**
  *	piix_set_dma_mode	-	set host controller for DMA mode
- *	@hwif: port
  *	@drive: drive
+ *	@speed: DMA mode
  *
  *	Set a PIIX host controller to the desired DMA mode.  This involves
  *	programming the right timing data into the PCI configuration space.
  */
 
-static void piix_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
+static void piix_set_dma_mode(ide_drive_t *drive, const u8 speed)
 {
+	ide_hwif_t *hwif	= drive->hwif;
 	struct pci_dev *dev	= to_pci_dev(hwif->dev);
 	u8 maslave		= hwif->channel ? 0x42 : 0x40;
 	int a_speed		= 3 << (drive->dn * 4);
@@ -146,7 +147,6 @@ static void piix_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 	int			sitre;
 	u16			reg4042, reg4a;
 	u8			reg48, reg54, reg55;
-	const u8 speed		= drive->dma_mode;
 
 	pci_read_config_word(dev, maslave, &reg4042);
 	sitre = (reg4042 & 0x4000) ? 1 : 0;
@@ -176,6 +176,7 @@ static void piix_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 			pci_write_config_byte(dev, 0x54, reg54 & ~v_flag);
 	} else {
 		const u8 mwdma_to_pio[] = { 0, 3, 4 };
+		u8 pio;
 
 		if (reg48 & u_flag)
 			pci_write_config_byte(dev, 0x48, reg48 & ~u_flag);
@@ -187,12 +188,11 @@ static void piix_set_dma_mode(ide_hwif_t *hwif, ide_drive_t *drive)
 			pci_write_config_byte(dev, 0x55, (u8) reg55 & ~w_flag);
 
 		if (speed >= XFER_MW_DMA_0)
-			drive->pio_mode =
-				mwdma_to_pio[speed - XFER_MW_DMA_0] + XFER_PIO_0;
+			pio = mwdma_to_pio[speed - XFER_MW_DMA_0];
 		else
-			drive->pio_mode = XFER_PIO_2; /* for SWDMA2 */
+			pio = 2; /* only SWDMA2 is allowed */
 
-		piix_set_pio_mode(hwif, drive);
+		piix_set_pio_mode(drive, pio);
 	}
 }
 
@@ -331,7 +331,7 @@ static const struct ide_port_ops ich_port_ops = {
 		.udma_mask	= udma,			\
 	}
 
-#define DECLARE_ICH_DEV(mwdma, udma) \
+#define DECLARE_ICH_DEV(udma) \
 	{ \
 		.name		= DRV_NAME, \
 		.init_chipset	= init_chipset_ich, \
@@ -340,7 +340,7 @@ static const struct ide_port_ops ich_port_ops = {
 		.port_ops	= &ich_port_ops, \
 		.pio_mask	= ATA_PIO4, \
 		.swdma_mask	= ATA_SWDMA2_ONLY, \
-		.mwdma_mask	= mwdma, \
+		.mwdma_mask	= ATA_MWDMA12_ONLY, \
 		.udma_mask	= udma, \
 	}
 
@@ -362,15 +362,13 @@ static const struct ide_port_info piix_pci_info[] __devinitdata = {
 	/* 2: PIIX4 */
 	DECLARE_PIIX_DEV(ATA_UDMA2),
 	/* 3: ICH0 */
-	DECLARE_ICH_DEV(ATA_MWDMA12_ONLY, ATA_UDMA2),
+	DECLARE_ICH_DEV(ATA_UDMA2),
 	/* 4: ICH */
-	DECLARE_ICH_DEV(ATA_MWDMA12_ONLY, ATA_UDMA4),
+	DECLARE_ICH_DEV(ATA_UDMA4),
 	/* 5: PIIX4 */
 	DECLARE_PIIX_DEV(ATA_UDMA4),
-	/* 6: ICH[2-6]/ICH[2-3]M/C-ICH/ICH5-SATA/ESB2/ICH8M */
-	DECLARE_ICH_DEV(ATA_MWDMA12_ONLY, ATA_UDMA5),
-	/* 7: ICH7/7-R, no MWDMA1 */
-	DECLARE_ICH_DEV(ATA_MWDMA2_ONLY, ATA_UDMA5),
+	/* 6: ICH[2-7]/ICH[2-3]M/C-ICH/ICH5-SATA/ESB2/ICH8M */
+	DECLARE_ICH_DEV(ATA_UDMA5),
 };
 
 /**
@@ -440,9 +438,9 @@ static const struct pci_device_id piix_pci_tbl[] = {
 #endif
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_ESB_2),      6 },
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_ICH6_19),    6 },
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_ICH7_21),    7 },
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_ICH7_21),    6 },
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_82801DB_1),  6 },
-	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_ESB2_18),    7 },
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_ESB2_18),    6 },
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_ICH8_6),     6 },
 	{ 0, },
 };

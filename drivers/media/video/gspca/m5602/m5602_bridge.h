@@ -19,7 +19,6 @@
 #ifndef M5602_BRIDGE_H_
 #define M5602_BRIDGE_H_
 
-#include <linux/slab.h>
 #include "gspca.h"
 
 #define MODULE_NAME "ALi m5602"

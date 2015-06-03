@@ -1,4 +1,4 @@
-ccflags-y := -Werror
+EXTRA_CFLAGS := -Werror
 
 obj-$(CONFIG_OPROFILE) += oprofile.o
 
@@ -8,7 +8,7 @@ DRIVER_OBJS = $(addprefix ../../../drivers/oprofile/, \
 		oprofilefs.o oprofile_stats.o \
 		timer_int.o )
 
-oprofile-y				:= $(DRIVER_OBJS) common.o backtrace.o
+oprofile-y				:= $(DRIVER_OBJS) common.o
 
 oprofile-$(CONFIG_CPU_MIPS32)		+= op_model_mipsxx.o
 oprofile-$(CONFIG_CPU_MIPS64)		+= op_model_mipsxx.o

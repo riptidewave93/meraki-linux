@@ -15,7 +15,6 @@
 #include <linux/netfilter_bridge.h>
 #include <linux/etherdevice.h>
 #include <linux/llc.h>
-#include <linux/slab.h>
 #include <linux/pkt_sched.h>
 #include <net/net_namespace.h>
 #include <net/llc.h>
@@ -52,9 +51,7 @@ static void br_send_bpdu(struct net_bridge_port *p,
 
 	llc_mac_hdr_init(skb, p->dev->dev_addr, p->br->group_addr);
 
-	skb_reset_mac_header(skb);
-
-	NF_HOOK(NFPROTO_BRIDGE, NF_BR_LOCAL_OUT, skb, NULL, skb->dev,
+	NF_HOOK(PF_BRIDGE, NF_BR_LOCAL_OUT, skb, NULL, skb->dev,
 		dev_queue_xmit);
 }
 
@@ -135,15 +132,18 @@ void br_send_tcn_bpdu(struct net_bridge_port *p)
 /*
  * Called from llc.
  *
- * NO locks, but rcu_read_lock
+ * NO locks, but rcu_read_lock (preempt_disabled)
  */
 void br_stp_rcv(const struct stp_proto *proto, struct sk_buff *skb,
 		struct net_device *dev)
 {
 	const unsigned char *dest = eth_hdr(skb)->h_dest;
-	struct net_bridge_port *p;
+	struct net_bridge_port *p = rcu_dereference(dev->br_port);
 	struct net_bridge *br;
 	const unsigned char *buf;
+
+	if (!p)
+		goto err;
 
 	if (!pskb_may_pull(skb, 4))
 		goto err;
@@ -151,10 +151,6 @@ void br_stp_rcv(const struct stp_proto *proto, struct sk_buff *skb,
 	/* compare of protocol id and version */
 	buf = skb->data;
 	if (buf[0] != 0 || buf[1] != 0 || buf[2] != 0)
-		goto err;
-
-	p = br_port_get_rcu(dev);
-	if (!p)
 		goto err;
 
 	br = p->br;
@@ -212,19 +208,10 @@ void br_stp_rcv(const struct stp_proto *proto, struct sk_buff *skb,
 		bpdu.hello_time = br_get_ticks(buf+28);
 		bpdu.forward_delay = br_get_ticks(buf+30);
 
-		if (bpdu.message_age > bpdu.max_age) {
-			if (net_ratelimit())
-				br_notice(p->br,
-					  "port %u config from %pM"
-					  " (message_age %ul > max_age %ul)\n",
-					  p->port_no,
-					  eth_hdr(skb)->h_source,
-					  bpdu.message_age, bpdu.max_age);
-			goto out;
-		}
-
 		br_received_config_bpdu(p, &bpdu);
-	} else if (buf[0] == BPDU_TYPE_TCN) {
+	}
+
+	else if (buf[0] == BPDU_TYPE_TCN) {
 		br_received_tcn_bpdu(p);
 	}
  out:

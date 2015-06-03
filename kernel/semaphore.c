@@ -27,7 +27,7 @@
 
 #include <linux/compiler.h>
 #include <linux/kernel.h>
-#include <linux/export.h>
+#include <linux/module.h>
 #include <linux/sched.h>
 #include <linux/semaphore.h>
 #include <linux/spinlock.h>
@@ -54,12 +54,12 @@ void down(struct semaphore *sem)
 {
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&sem->lock, flags);
+	spin_lock_irqsave(&sem->lock, flags);
 	if (likely(sem->count > 0))
 		sem->count--;
 	else
 		__down(sem);
-	raw_spin_unlock_irqrestore(&sem->lock, flags);
+	spin_unlock_irqrestore(&sem->lock, flags);
 }
 EXPORT_SYMBOL(down);
 
@@ -77,12 +77,12 @@ int down_interruptible(struct semaphore *sem)
 	unsigned long flags;
 	int result = 0;
 
-	raw_spin_lock_irqsave(&sem->lock, flags);
+	spin_lock_irqsave(&sem->lock, flags);
 	if (likely(sem->count > 0))
 		sem->count--;
 	else
 		result = __down_interruptible(sem);
-	raw_spin_unlock_irqrestore(&sem->lock, flags);
+	spin_unlock_irqrestore(&sem->lock, flags);
 
 	return result;
 }
@@ -103,12 +103,12 @@ int down_killable(struct semaphore *sem)
 	unsigned long flags;
 	int result = 0;
 
-	raw_spin_lock_irqsave(&sem->lock, flags);
+	spin_lock_irqsave(&sem->lock, flags);
 	if (likely(sem->count > 0))
 		sem->count--;
 	else
 		result = __down_killable(sem);
-	raw_spin_unlock_irqrestore(&sem->lock, flags);
+	spin_unlock_irqrestore(&sem->lock, flags);
 
 	return result;
 }
@@ -132,11 +132,11 @@ int down_trylock(struct semaphore *sem)
 	unsigned long flags;
 	int count;
 
-	raw_spin_lock_irqsave(&sem->lock, flags);
+	spin_lock_irqsave(&sem->lock, flags);
 	count = sem->count - 1;
 	if (likely(count >= 0))
 		sem->count = count;
-	raw_spin_unlock_irqrestore(&sem->lock, flags);
+	spin_unlock_irqrestore(&sem->lock, flags);
 
 	return (count < 0);
 }
@@ -157,12 +157,12 @@ int down_timeout(struct semaphore *sem, long jiffies)
 	unsigned long flags;
 	int result = 0;
 
-	raw_spin_lock_irqsave(&sem->lock, flags);
+	spin_lock_irqsave(&sem->lock, flags);
 	if (likely(sem->count > 0))
 		sem->count--;
 	else
 		result = __down_timeout(sem, jiffies);
-	raw_spin_unlock_irqrestore(&sem->lock, flags);
+	spin_unlock_irqrestore(&sem->lock, flags);
 
 	return result;
 }
@@ -179,12 +179,12 @@ void up(struct semaphore *sem)
 {
 	unsigned long flags;
 
-	raw_spin_lock_irqsave(&sem->lock, flags);
+	spin_lock_irqsave(&sem->lock, flags);
 	if (likely(list_empty(&sem->wait_list)))
 		sem->count++;
 	else
 		__up(sem);
-	raw_spin_unlock_irqrestore(&sem->lock, flags);
+	spin_unlock_irqrestore(&sem->lock, flags);
 }
 EXPORT_SYMBOL(up);
 
@@ -217,9 +217,9 @@ static inline int __sched __down_common(struct semaphore *sem, long state,
 		if (timeout <= 0)
 			goto timed_out;
 		__set_task_state(task, state);
-		raw_spin_unlock_irq(&sem->lock);
+		spin_unlock_irq(&sem->lock);
 		timeout = schedule_timeout(timeout);
-		raw_spin_lock_irq(&sem->lock);
+		spin_lock_irq(&sem->lock);
 		if (waiter.up)
 			return 0;
 	}

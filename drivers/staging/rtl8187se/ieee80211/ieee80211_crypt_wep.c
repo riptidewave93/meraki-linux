@@ -10,6 +10,7 @@
  */
 
 //#include <linux/config.h>
+#include <linux/version.h>
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
@@ -44,9 +45,10 @@ static void * prism2_wep_init(int keyidx)
 {
 	struct prism2_wep_data *priv;
 
-	priv = kzalloc(sizeof(*priv), GFP_ATOMIC);
+	priv = kmalloc(sizeof(*priv), GFP_ATOMIC);
 	if (priv == NULL)
 		goto fail;
+	memset(priv, 0, sizeof(*priv));
 	priv->key_idx = keyidx;
 	priv->tx_tfm = crypto_alloc_blkcipher("ecb(arc4)", 0, CRYPTO_ALG_ASYNC);
 	if (IS_ERR(priv->tx_tfm)) {

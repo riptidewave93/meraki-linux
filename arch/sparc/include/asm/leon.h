@@ -52,6 +52,29 @@
 #define LEON_DIAGF_VALID	0x2000
 #define LEON_DIAGF_VALID_SHIFT	13
 
+/*
+ *  Interrupt Sources
+ *
+ *  The interrupt source numbers directly map to the trap type and to
+ *  the bits used in the Interrupt Clear, Interrupt Force, Interrupt Mask,
+ *  and the Interrupt Pending Registers.
+ */
+#define LEON_INTERRUPT_CORRECTABLE_MEMORY_ERROR	1
+#define LEON_INTERRUPT_UART_1_RX_TX		2
+#define LEON_INTERRUPT_UART_0_RX_TX		3
+#define LEON_INTERRUPT_EXTERNAL_0		4
+#define LEON_INTERRUPT_EXTERNAL_1		5
+#define LEON_INTERRUPT_EXTERNAL_2		6
+#define LEON_INTERRUPT_EXTERNAL_3		7
+#define LEON_INTERRUPT_TIMER1			8
+#define LEON_INTERRUPT_TIMER2			9
+#define LEON_INTERRUPT_EMPTY1			10
+#define LEON_INTERRUPT_EMPTY2			11
+#define LEON_INTERRUPT_OPEN_ETH			12
+#define LEON_INTERRUPT_EMPTY4			13
+#define LEON_INTERRUPT_EMPTY5			14
+#define LEON_INTERRUPT_EMPTY6			15
+
 /* irq masks */
 #define LEON_HARD_INT(x)	(1 << (x))	/* irq 0-15 */
 #define LEON_IRQMASK_R		0x0000fffe	/* bit 15- 1 of lregs.irqmask */
@@ -125,7 +148,7 @@ static inline unsigned long leon_load_reg(unsigned long paddr)
 	return retval;
 }
 
-static inline void leon_srmmu_disabletlb(void)
+extern inline void leon_srmmu_disabletlb(void)
 {
 	unsigned int retval;
 	__asm__ __volatile__("lda [%%g0] %2, %0\n\t" : "=r"(retval) : "r"(0),
@@ -135,7 +158,7 @@ static inline void leon_srmmu_disabletlb(void)
 			     "i"(ASI_LEON_MMUREGS) : "memory");
 }
 
-static inline void leon_srmmu_enabletlb(void)
+extern inline void leon_srmmu_enabletlb(void)
 {
 	unsigned int retval;
 	__asm__ __volatile__("lda [%%g0] %2, %0\n\t" : "=r"(retval) : "r"(0),
@@ -160,13 +183,14 @@ static inline void leon_srmmu_enabletlb(void)
 /* macro access for leon_readnobuffer_reg() */
 #define LEON_BYPASSCACHE_LOAD_VA(x) leon_readnobuffer_reg((unsigned long)(x))
 
+extern void sparc_leon_eirq_register(int eirq);
 extern void leon_init(void);
 extern void leon_switch_mm(void);
 extern void leon_init_IRQ(void);
 
 extern unsigned long last_valid_pfn;
 
-static inline unsigned long sparc_leon3_get_dcachecfg(void)
+extern inline unsigned long sparc_leon3_get_dcachecfg(void)
 {
 	unsigned int retval;
 	__asm__ __volatile__("lda [%1] %2, %0\n\t" :
@@ -177,7 +201,7 @@ static inline unsigned long sparc_leon3_get_dcachecfg(void)
 }
 
 /* enable snooping */
-static inline void sparc_leon3_enable_snooping(void)
+extern inline void sparc_leon3_enable_snooping(void)
 {
 	__asm__ __volatile__ ("lda [%%g0] 2, %%l1\n\t"
 			  "set 0x800000, %%l2\n\t"
@@ -185,14 +209,7 @@ static inline void sparc_leon3_enable_snooping(void)
 			  "sta %%l2, [%%g0] 2\n\t" : : : "l1", "l2");
 };
 
-static inline int sparc_leon3_snooping_enabled(void)
-{
-	u32 cctrl;
-	__asm__ __volatile__("lda [%%g0] 2, %0\n\t" : "=r"(cctrl));
-        return (cctrl >> 23) & 1;
-};
-
-static inline void sparc_leon3_disable_cache(void)
+extern inline void sparc_leon3_disable_cache(void)
 {
 	__asm__ __volatile__ ("lda [%%g0] 2, %%l1\n\t"
 			  "set 0x00000f, %%l2\n\t"
@@ -200,23 +217,11 @@ static inline void sparc_leon3_disable_cache(void)
 			  "sta %%l2, [%%g0] 2\n\t" : : : "l1", "l2");
 };
 
-static inline unsigned long sparc_leon3_asr17(void)
-{
-	u32 asr17;
-	__asm__ __volatile__ ("rd %%asr17, %0\n\t" : "=r"(asr17));
-	return asr17;
-};
-
-static inline int sparc_leon3_cpuid(void)
-{
-	return sparc_leon3_asr17() >> 28;
-}
-
 #endif /*!__ASSEMBLY__*/
 
 #ifdef CONFIG_SMP
-# define LEON3_IRQ_IPI_DEFAULT		13
-# define LEON3_IRQ_TICKER		(leon3_ticker_irq)
+# define LEON3_IRQ_RESCHEDULE		13
+# define LEON3_IRQ_TICKER		(leon_percpu_timer_dev[0].irq)
 # define LEON3_IRQ_CROSS_CALL		15
 #endif
 
@@ -315,13 +320,9 @@ struct leon2_cacheregs {
 #include <linux/interrupt.h>
 
 struct device_node;
-struct task_struct;
-extern unsigned int leon_build_device_irq(unsigned int real_irq,
-					   irq_flow_handler_t flow_handler,
-					   const char *name, int do_ack);
-extern void leon_update_virq_handling(unsigned int virq,
-			      irq_flow_handler_t flow_handler,
-			      const char *name, int do_ack);
+extern int sparc_leon_eirq_get(int eirq, int cpu);
+extern irqreturn_t sparc_leon_eirq_isr(int dummy, void *dev_id);
+extern void sparc_leon_eirq_register(int eirq);
 extern void leon_clear_clock_irq(void);
 extern void leon_load_profile_irq(int cpu, unsigned int limit);
 extern void leon_init_timers(irq_handler_t counter_fn);
@@ -338,30 +339,6 @@ extern void leon3_getCacheRegs(struct leon3_cacheregs *regs);
 extern int leon_flush_needed(void);
 extern void leon_switch_mm(void);
 extern int srmmu_swprobe_trace;
-extern int leon3_ticker_irq;
-
-#ifdef CONFIG_SMP
-extern int leon_smp_nrcpus(void);
-extern void leon_clear_profile_irq(int cpu);
-extern void leon_smp_done(void);
-extern void leon_boot_cpus(void);
-extern int leon_boot_one_cpu(int i, struct task_struct *);
-void leon_init_smp(void);
-extern void cpu_idle(void);
-extern void init_IRQ(void);
-extern void cpu_panic(void);
-extern int __leon_processor_id(void);
-void leon_enable_irq_cpu(unsigned int irq_nr, unsigned int cpu);
-extern irqreturn_t leon_percpu_timer_interrupt(int irq, void *unused);
-
-extern unsigned int real_irq_entry[];
-extern unsigned int smpleon_ipi[];
-extern unsigned int patchme_maybe_smp_msg[];
-extern unsigned int t_nmi[], linux_trap_ipi15_leon[];
-extern unsigned int linux_trap_ipi15_sun4m[];
-extern int leon_ipi_irq;
-
-#endif /* CONFIG_SMP */
 
 #endif /* __KERNEL__ */
 
@@ -379,10 +356,6 @@ extern int leon_ipi_irq;
 #define leon_switch_mm() do {} while (0)
 #define leon_init_IRQ() do {} while (0)
 #define init_leon() do {} while (0)
-#define leon_smp_done() do {} while (0)
-#define leon_boot_cpus() do {} while (0)
-#define leon_boot_one_cpu(i, t) 1
-#define leon_init_smp() do {} while (0)
 
 #endif /* !defined(CONFIG_SPARC_LEON) */
 

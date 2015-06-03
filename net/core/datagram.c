@@ -37,6 +37,7 @@
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <asm/uaccess.h>
+#include <asm/system.h>
 #include <linux/mm.h>
 #include <linux/interrupt.h>
 #include <linux/errno.h>
@@ -47,7 +48,6 @@
 #include <linux/poll.h>
 #include <linux/highmem.h>
 #include <linux/spinlock.h>
-#include <linux/slab.h>
 
 #include <net/protocol.h>
 #include <linux/skbuff.h>
@@ -85,7 +85,7 @@ static int wait_for_packet(struct sock *sk, int *err, long *timeo_p)
 	int error;
 	DEFINE_WAIT_FUNC(wait, receiver_wake_function);
 
-	prepare_to_wait_exclusive(sk_sleep(sk), &wait, TASK_INTERRUPTIBLE);
+	prepare_to_wait_exclusive(sk->sk_sleep, &wait, TASK_INTERRUPTIBLE);
 
 	/* Socket errors? */
 	error = sock_error(sk);
@@ -114,7 +114,7 @@ static int wait_for_packet(struct sock *sk, int *err, long *timeo_p)
 	error = 0;
 	*timeo_p = schedule_timeout(*timeo_p);
 out:
-	finish_wait(sk_sleep(sk), &wait);
+	finish_wait(sk->sk_sleep, &wait);
 	return error;
 interrupted:
 	error = sock_intr_errno(*timeo_p);
@@ -131,8 +131,6 @@ out_noerr:
  *	__skb_recv_datagram - Receive a datagram skbuff
  *	@sk: socket
  *	@flags: MSG_ flags
- *	@off: an offset in bytes to peek skb from. Returns an offset
- *	      within an skb where data actually starts
  *	@peeked: returns non-zero if this packet has been seen before
  *	@err: error code returned
  *
@@ -159,7 +157,7 @@ out_noerr:
  *	the standard around please.
  */
 struct sk_buff *__skb_recv_datagram(struct sock *sk, unsigned flags,
-				    int *peeked, int *off, int *err)
+				    int *peeked, int *err)
 {
 	struct sk_buff *skb;
 	long timeo;
@@ -178,28 +176,24 @@ struct sk_buff *__skb_recv_datagram(struct sock *sk, unsigned flags,
 		 * interrupt level will suddenly eat the receive_queue.
 		 *
 		 * Look at current nfs client by the way...
-		 * However, this function was correct in any case. 8)
+		 * However, this function was corrent in any case. 8)
 		 */
 		unsigned long cpu_flags;
-		struct sk_buff_head *queue = &sk->sk_receive_queue;
 
-		spin_lock_irqsave(&queue->lock, cpu_flags);
-		skb_queue_walk(queue, skb) {
+		spin_lock_irqsave(&sk->sk_receive_queue.lock, cpu_flags);
+		skb = skb_peek(&sk->sk_receive_queue);
+		if (skb) {
 			*peeked = skb->peeked;
 			if (flags & MSG_PEEK) {
-				if (*off >= skb->len && skb->len) {
-					*off -= skb->len;
-					continue;
-				}
 				skb->peeked = 1;
 				atomic_inc(&skb->users);
 			} else
-				__skb_unlink(skb, queue);
-
-			spin_unlock_irqrestore(&queue->lock, cpu_flags);
-			return skb;
+				__skb_unlink(skb, &sk->sk_receive_queue);
 		}
-		spin_unlock_irqrestore(&queue->lock, cpu_flags);
+		spin_unlock_irqrestore(&sk->sk_receive_queue.lock, cpu_flags);
+
+		if (skb)
+			return skb;
 
 		/* User doesn't want to wait */
 		error = -EAGAIN;
@@ -219,12 +213,11 @@ EXPORT_SYMBOL(__skb_recv_datagram);
 struct sk_buff *skb_recv_datagram(struct sock *sk, unsigned flags,
 				  int noblock, int *err)
 {
-	int peeked, off = 0;
+	int peeked;
 
 	return __skb_recv_datagram(sk, flags | (noblock ? MSG_DONTWAIT : 0),
-				   &peeked, &off, err);
+				   &peeked, err);
 }
-EXPORT_SYMBOL(skb_recv_datagram);
 
 void skb_free_datagram(struct sock *sk, struct sk_buff *skb)
 {
@@ -235,21 +228,9 @@ EXPORT_SYMBOL(skb_free_datagram);
 
 void skb_free_datagram_locked(struct sock *sk, struct sk_buff *skb)
 {
-	bool slow;
-
-	if (likely(atomic_read(&skb->users) == 1))
-		smp_rmb();
-	else if (likely(!atomic_dec_and_test(&skb->users)))
-		return;
-
-	slow = lock_sock_fast(sk);
-	skb_orphan(skb);
-	sk_mem_reclaim_partial(sk);
-	unlock_sock_fast(sk, slow);
-
-	/* skb is now orphaned, can be freed outside of locked section */
-	trace_kfree_skb(skb, skb_free_datagram_locked);
-	__kfree_skb(skb);
+	lock_sock(sk);
+	skb_free_datagram(sk, skb);
+	release_sock(sk);
 }
 EXPORT_SYMBOL(skb_free_datagram_locked);
 
@@ -290,11 +271,11 @@ int skb_kill_datagram(struct sock *sk, struct sk_buff *skb, unsigned int flags)
 	}
 
 	kfree_skb(skb);
-	atomic_inc(&sk->sk_drops);
 	sk_mem_reclaim_partial(sk);
 
 	return err;
 }
+
 EXPORT_SYMBOL(skb_kill_datagram);
 
 /**
@@ -329,15 +310,15 @@ int skb_copy_datagram_iovec(const struct sk_buff *skb, int offset,
 	/* Copy paged appendix. Hmm... why does this look so complicated? */
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
 		int end;
-		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
 		WARN_ON(start > offset + len);
 
-		end = start + skb_frag_size(frag);
+		end = start + skb_shinfo(skb)->frags[i].size;
 		if ((copy = end - offset) > 0) {
 			int err;
 			u8  *vaddr;
-			struct page *page = skb_frag_page(frag);
+			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+			struct page *page = frag->page;
 
 			if (copy > len)
 				copy = len;
@@ -379,7 +360,6 @@ int skb_copy_datagram_iovec(const struct sk_buff *skb, int offset,
 fault:
 	return -EFAULT;
 }
-EXPORT_SYMBOL(skb_copy_datagram_iovec);
 
 /**
  *	skb_copy_datagram_const_iovec - Copy a datagram to an iovec.
@@ -415,15 +395,15 @@ int skb_copy_datagram_const_iovec(const struct sk_buff *skb, int offset,
 	/* Copy paged appendix. Hmm... why does this look so complicated? */
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
 		int end;
-		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
 		WARN_ON(start > offset + len);
 
-		end = start + skb_frag_size(frag);
+		end = start + skb_shinfo(skb)->frags[i].size;
 		if ((copy = end - offset) > 0) {
 			int err;
 			u8  *vaddr;
-			struct page *page = skb_frag_page(frag);
+			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+			struct page *page = frag->page;
 
 			if (copy > len)
 				copy = len;
@@ -505,15 +485,15 @@ int skb_copy_datagram_from_iovec(struct sk_buff *skb, int offset,
 	/* Copy paged appendix. Hmm... why does this look so complicated? */
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
 		int end;
-		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
 		WARN_ON(start > offset + len);
 
-		end = start + skb_frag_size(frag);
+		end = start + skb_shinfo(skb)->frags[i].size;
 		if ((copy = end - offset) > 0) {
 			int err;
 			u8  *vaddr;
-			struct page *page = skb_frag_page(frag);
+			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+			struct page *page = frag->page;
 
 			if (copy > len)
 				copy = len;
@@ -590,16 +570,16 @@ static int skb_copy_and_csum_datagram(const struct sk_buff *skb, int offset,
 
 	for (i = 0; i < skb_shinfo(skb)->nr_frags; i++) {
 		int end;
-		const skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
 
 		WARN_ON(start > offset + len);
 
-		end = start + skb_frag_size(frag);
+		end = start + skb_shinfo(skb)->frags[i].size;
 		if ((copy = end - offset) > 0) {
 			__wsum csum2;
 			int err = 0;
 			u8  *vaddr;
-			struct page *page = skb_frag_page(frag);
+			skb_frag_t *frag = &skb_shinfo(skb)->frags[i];
+			struct page *page = frag->page;
 
 			if (copy > len)
 				copy = len;
@@ -723,7 +703,6 @@ csum_error:
 fault:
 	return -EFAULT;
 }
-EXPORT_SYMBOL(skb_copy_and_csum_datagram_iovec);
 
 /**
  * 	datagram_poll - generic datagram poll
@@ -745,19 +724,20 @@ unsigned int datagram_poll(struct file *file, struct socket *sock,
 	struct sock *sk = sock->sk;
 	unsigned int mask;
 
-	sock_poll_wait(file, sk_sleep(sk), wait);
+	sock_poll_wait(file, sk->sk_sleep, wait);
 	mask = 0;
 
 	/* exceptional events? */
 	if (sk->sk_err || !skb_queue_empty(&sk->sk_error_queue))
 		mask |= POLLERR;
 	if (sk->sk_shutdown & RCV_SHUTDOWN)
-		mask |= POLLRDHUP | POLLIN | POLLRDNORM;
+		mask |= POLLRDHUP;
 	if (sk->sk_shutdown == SHUTDOWN_MASK)
 		mask |= POLLHUP;
 
 	/* readable? */
-	if (!skb_queue_empty(&sk->sk_receive_queue))
+	if (!skb_queue_empty(&sk->sk_receive_queue) ||
+	    (sk->sk_shutdown & RCV_SHUTDOWN))
 		mask |= POLLIN | POLLRDNORM;
 
 	/* Connection-based need to check for termination and startup */
@@ -777,4 +757,8 @@ unsigned int datagram_poll(struct file *file, struct socket *sock,
 
 	return mask;
 }
+
 EXPORT_SYMBOL(datagram_poll);
+EXPORT_SYMBOL(skb_copy_and_csum_datagram_iovec);
+EXPORT_SYMBOL(skb_copy_datagram_iovec);
+EXPORT_SYMBOL(skb_recv_datagram);

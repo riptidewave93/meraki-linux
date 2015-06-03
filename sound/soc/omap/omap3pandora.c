@@ -23,33 +23,41 @@
 #include <linux/platform_device.h>
 #include <linux/gpio.h>
 #include <linux/delay.h>
-#include <linux/regulator/consumer.h>
-#include <linux/module.h>
 
 #include <sound/core.h>
 #include <sound/pcm.h>
 #include <sound/soc.h>
+#include <sound/soc-dapm.h>
 
 #include <asm/mach-types.h>
-#include <plat/mcbsp.h>
 
 #include "omap-mcbsp.h"
 #include "omap-pcm.h"
+#include "../codecs/twl4030.h"
 
 #define OMAP3_PANDORA_DAC_POWER_GPIO	118
 #define OMAP3_PANDORA_AMP_POWER_GPIO	14
 
 #define PREFIX "ASoC omap3pandora: "
 
-static struct regulator *omap3pandora_dac_reg;
-
-static int omap3pandora_hw_params(struct snd_pcm_substream *substream,
-	struct snd_pcm_hw_params *params)
+static int omap3pandora_cmn_hw_params(struct snd_soc_dai *codec_dai,
+	struct snd_soc_dai *cpu_dai, unsigned int fmt)
 {
-	struct snd_soc_pcm_runtime *rtd = substream->private_data;
-	struct snd_soc_dai *codec_dai = rtd->codec_dai;
-	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
 	int ret;
+
+	/* Set codec DAI configuration */
+	ret = snd_soc_dai_set_fmt(codec_dai, fmt);
+	if (ret < 0) {
+		pr_err(PREFIX "can't set codec DAI configuration\n");
+		return ret;
+	}
+
+	/* Set cpu DAI configuration */
+	ret = snd_soc_dai_set_fmt(cpu_dai, fmt);
+	if (ret < 0) {
+		pr_err(PREFIX "can't set cpu DAI configuration\n");
+		return ret;
+	}
 
 	/* Set the codec system clock for DAC and ADC */
 	ret = snd_soc_dai_set_sysclk(codec_dai, 0, 26000000,
@@ -60,9 +68,8 @@ static int omap3pandora_hw_params(struct snd_pcm_substream *substream,
 	}
 
 	/* Set McBSP clock to external */
-	ret = snd_soc_dai_set_sysclk(cpu_dai, OMAP_MCBSP_SYSCLK_CLKS_EXT,
-				     256 * params_rate(params),
-				     SND_SOC_CLOCK_IN);
+	ret = snd_soc_dai_set_sysclk(cpu_dai, OMAP_MCBSP_SYSCLK_CLKS_EXT, 0,
+					    SND_SOC_CLOCK_IN);
 	if (ret < 0) {
 		pr_err(PREFIX "can't set cpu system clock\n");
 		return ret;
@@ -77,33 +84,43 @@ static int omap3pandora_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static int omap3pandora_dac_event(struct snd_soc_dapm_widget *w,
-	struct snd_kcontrol *k, int event)
+static int omap3pandora_out_hw_params(struct snd_pcm_substream *substream,
+	struct snd_pcm_hw_params *params)
 {
-	/*
-	 * The PCM1773 DAC datasheet requires 1ms delay between switching
-	 * VCC power on/off and /PD pin high/low
-	 */
-	if (SND_SOC_DAPM_EVENT_ON(event)) {
-		regulator_enable(omap3pandora_dac_reg);
-		mdelay(1);
-		gpio_set_value(OMAP3_PANDORA_DAC_POWER_GPIO, 1);
-	} else {
-		gpio_set_value(OMAP3_PANDORA_DAC_POWER_GPIO, 0);
-		mdelay(1);
-		regulator_disable(omap3pandora_dac_reg);
-	}
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_dai *codec_dai = rtd->dai->codec_dai;
+	struct snd_soc_dai *cpu_dai = rtd->dai->cpu_dai;
 
-	return 0;
+	return omap3pandora_cmn_hw_params(codec_dai, cpu_dai,
+					  SND_SOC_DAIFMT_I2S |
+					  SND_SOC_DAIFMT_IB_NF |
+					  SND_SOC_DAIFMT_CBS_CFS);
+}
+
+static int omap3pandora_in_hw_params(struct snd_pcm_substream *substream,
+	struct snd_pcm_hw_params *params)
+{
+	struct snd_soc_pcm_runtime *rtd = substream->private_data;
+	struct snd_soc_dai *codec_dai = rtd->dai->codec_dai;
+	struct snd_soc_dai *cpu_dai = rtd->dai->cpu_dai;
+
+	return omap3pandora_cmn_hw_params(codec_dai, cpu_dai,
+					  SND_SOC_DAIFMT_I2S |
+					  SND_SOC_DAIFMT_NB_NF |
+					  SND_SOC_DAIFMT_CBS_CFS);
 }
 
 static int omap3pandora_hp_event(struct snd_soc_dapm_widget *w,
 	struct snd_kcontrol *k, int event)
 {
-	if (SND_SOC_DAPM_EVENT_ON(event))
+	if (SND_SOC_DAPM_EVENT_ON(event)) {
+		gpio_set_value(OMAP3_PANDORA_DAC_POWER_GPIO, 1);
 		gpio_set_value(OMAP3_PANDORA_AMP_POWER_GPIO, 1);
-	else
+	} else {
 		gpio_set_value(OMAP3_PANDORA_AMP_POWER_GPIO, 0);
+		mdelay(1);
+		gpio_set_value(OMAP3_PANDORA_DAC_POWER_GPIO, 0);
+	}
 
 	return 0;
 }
@@ -117,9 +134,7 @@ static int omap3pandora_hp_event(struct snd_soc_dapm_widget *w,
  *  |P| <--- TWL4030 <--------- Line In and MICs
  */
 static const struct snd_soc_dapm_widget omap3pandora_out_dapm_widgets[] = {
-	SND_SOC_DAPM_DAC_E("PCM DAC", "HiFi Playback", SND_SOC_NOPM,
-			   0, 0, omap3pandora_dac_event,
-			   SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
+	SND_SOC_DAPM_DAC("PCM DAC", "HiFi Playback", SND_SOC_NOPM, 0, 0),
 	SND_SOC_DAPM_PGA_E("Headphone Amplifier", SND_SOC_NOPM,
 			   0, 0, NULL, 0, omap3pandora_hp_event,
 			   SND_SOC_DAPM_POST_PMU | SND_SOC_DAPM_PRE_PMD),
@@ -134,7 +149,6 @@ static const struct snd_soc_dapm_widget omap3pandora_in_dapm_widgets[] = {
 };
 
 static const struct snd_soc_dapm_route omap3pandora_out_map[] = {
-	{"PCM DAC", NULL, "APLL Enable"},
 	{"Headphone Amplifier", NULL, "PCM DAC"},
 	{"Line Out", NULL, "PCM DAC"},
 	{"Headphone Jack", NULL, "Headphone Amplifier"},
@@ -151,56 +165,62 @@ static const struct snd_soc_dapm_route omap3pandora_in_map[] = {
 	{"Mic Bias 2", NULL, "Mic (external)"},
 };
 
-static int omap3pandora_out_init(struct snd_soc_pcm_runtime *rtd)
+static int omap3pandora_out_init(struct snd_soc_codec *codec)
 {
-	struct snd_soc_codec *codec = rtd->codec;
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
 	int ret;
 
 	/* All TWL4030 output pins are floating */
-	snd_soc_dapm_nc_pin(dapm, "EARPIECE");
-	snd_soc_dapm_nc_pin(dapm, "PREDRIVEL");
-	snd_soc_dapm_nc_pin(dapm, "PREDRIVER");
-	snd_soc_dapm_nc_pin(dapm, "HSOL");
-	snd_soc_dapm_nc_pin(dapm, "HSOR");
-	snd_soc_dapm_nc_pin(dapm, "CARKITL");
-	snd_soc_dapm_nc_pin(dapm, "CARKITR");
-	snd_soc_dapm_nc_pin(dapm, "HFL");
-	snd_soc_dapm_nc_pin(dapm, "HFR");
-	snd_soc_dapm_nc_pin(dapm, "VIBRA");
+	snd_soc_dapm_nc_pin(codec, "OUTL");
+	snd_soc_dapm_nc_pin(codec, "OUTR");
+	snd_soc_dapm_nc_pin(codec, "EARPIECE");
+	snd_soc_dapm_nc_pin(codec, "PREDRIVEL");
+	snd_soc_dapm_nc_pin(codec, "PREDRIVER");
+	snd_soc_dapm_nc_pin(codec, "HSOL");
+	snd_soc_dapm_nc_pin(codec, "HSOR");
+	snd_soc_dapm_nc_pin(codec, "CARKITL");
+	snd_soc_dapm_nc_pin(codec, "CARKITR");
+	snd_soc_dapm_nc_pin(codec, "HFL");
+	snd_soc_dapm_nc_pin(codec, "HFR");
+	snd_soc_dapm_nc_pin(codec, "VIBRA");
 
-	ret = snd_soc_dapm_new_controls(dapm, omap3pandora_out_dapm_widgets,
+	ret = snd_soc_dapm_new_controls(codec, omap3pandora_out_dapm_widgets,
 				ARRAY_SIZE(omap3pandora_out_dapm_widgets));
 	if (ret < 0)
 		return ret;
 
-	return snd_soc_dapm_add_routes(dapm, omap3pandora_out_map,
+	snd_soc_dapm_add_routes(codec, omap3pandora_out_map,
 		ARRAY_SIZE(omap3pandora_out_map));
+
+	return snd_soc_dapm_sync(codec);
 }
 
-static int omap3pandora_in_init(struct snd_soc_pcm_runtime *rtd)
+static int omap3pandora_in_init(struct snd_soc_codec *codec)
 {
-	struct snd_soc_codec *codec = rtd->codec;
-	struct snd_soc_dapm_context *dapm = &codec->dapm;
 	int ret;
 
 	/* Not comnnected */
-	snd_soc_dapm_nc_pin(dapm, "HSMIC");
-	snd_soc_dapm_nc_pin(dapm, "CARKITMIC");
-	snd_soc_dapm_nc_pin(dapm, "DIGIMIC0");
-	snd_soc_dapm_nc_pin(dapm, "DIGIMIC1");
+	snd_soc_dapm_nc_pin(codec, "HSMIC");
+	snd_soc_dapm_nc_pin(codec, "CARKITMIC");
+	snd_soc_dapm_nc_pin(codec, "DIGIMIC0");
+	snd_soc_dapm_nc_pin(codec, "DIGIMIC1");
 
-	ret = snd_soc_dapm_new_controls(dapm, omap3pandora_in_dapm_widgets,
+	ret = snd_soc_dapm_new_controls(codec, omap3pandora_in_dapm_widgets,
 				ARRAY_SIZE(omap3pandora_in_dapm_widgets));
 	if (ret < 0)
 		return ret;
 
-	return snd_soc_dapm_add_routes(dapm, omap3pandora_in_map,
+	snd_soc_dapm_add_routes(codec, omap3pandora_in_map,
 		ARRAY_SIZE(omap3pandora_in_map));
+
+	return snd_soc_dapm_sync(codec);
 }
 
-static struct snd_soc_ops omap3pandora_ops = {
-	.hw_params = omap3pandora_hw_params,
+static struct snd_soc_ops omap3pandora_out_ops = {
+	.hw_params = omap3pandora_out_hw_params,
+};
+
+static struct snd_soc_ops omap3pandora_in_ops = {
+	.hw_params = omap3pandora_in_hw_params,
 };
 
 /* Digital audio interface glue - connects codec <--> CPU */
@@ -208,24 +228,16 @@ static struct snd_soc_dai_link omap3pandora_dai[] = {
 	{
 		.name = "PCM1773",
 		.stream_name = "HiFi Out",
-		.cpu_dai_name = "omap-mcbsp.2",
-		.codec_dai_name = "twl4030-hifi",
-		.platform_name = "omap-pcm-audio",
-		.codec_name = "twl4030-codec",
-		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF |
-			   SND_SOC_DAIFMT_CBS_CFS,
-		.ops = &omap3pandora_ops,
+		.cpu_dai = &omap_mcbsp_dai[0],
+		.codec_dai = &twl4030_dai[TWL4030_DAI_HIFI],
+		.ops = &omap3pandora_out_ops,
 		.init = omap3pandora_out_init,
 	}, {
 		.name = "TWL4030",
 		.stream_name = "Line/Mic In",
-		.cpu_dai_name = "omap-mcbsp.4",
-		.codec_dai_name = "twl4030-hifi",
-		.platform_name = "omap-pcm-audio",
-		.codec_name = "twl4030-codec",
-		.dai_fmt = SND_SOC_DAIFMT_I2S | SND_SOC_DAIFMT_NB_NF |
-			   SND_SOC_DAIFMT_CBS_CFS,
-		.ops = &omap3pandora_ops,
+		.cpu_dai = &omap_mcbsp_dai[1],
+		.codec_dai = &twl4030_dai[TWL4030_DAI_HIFI],
+		.ops = &omap3pandora_in_ops,
 		.init = omap3pandora_in_init,
 	}
 };
@@ -233,9 +245,15 @@ static struct snd_soc_dai_link omap3pandora_dai[] = {
 /* SoC card */
 static struct snd_soc_card snd_soc_card_omap3pandora = {
 	.name = "omap3pandora",
-	.owner = THIS_MODULE,
+	.platform = &omap_soc_platform,
 	.dai_link = omap3pandora_dai,
 	.num_links = ARRAY_SIZE(omap3pandora_dai),
+};
+
+/* Audio subsystem */
+static struct snd_soc_device omap3pandora_snd_data = {
+	.card = &snd_soc_card_omap3pandora,
+	.codec_dev = &soc_codec_dev_twl4030,
 };
 
 static struct platform_device *omap3pandora_snd_device;
@@ -280,7 +298,10 @@ static int __init omap3pandora_soc_init(void)
 		goto fail1;
 	}
 
-	platform_set_drvdata(omap3pandora_snd_device, &snd_soc_card_omap3pandora);
+	platform_set_drvdata(omap3pandora_snd_device, &omap3pandora_snd_data);
+	omap3pandora_snd_data.dev = &omap3pandora_snd_device->dev;
+	*(unsigned int *)omap_mcbsp_dai[0].private_data = 1; /* McBSP2 */
+	*(unsigned int *)omap_mcbsp_dai[1].private_data = 3; /* McBSP4 */
 
 	ret = platform_device_add(omap3pandora_snd_device);
 	if (ret) {
@@ -288,19 +309,8 @@ static int __init omap3pandora_soc_init(void)
 		goto fail2;
 	}
 
-	omap3pandora_dac_reg = regulator_get(&omap3pandora_snd_device->dev, "vcc");
-	if (IS_ERR(omap3pandora_dac_reg)) {
-		pr_err(PREFIX "Failed to get DAC regulator from %s: %ld\n",
-			dev_name(&omap3pandora_snd_device->dev),
-			PTR_ERR(omap3pandora_dac_reg));
-		ret = PTR_ERR(omap3pandora_dac_reg);
-		goto fail3;
-	}
-
 	return 0;
 
-fail3:
-	platform_device_del(omap3pandora_snd_device);
 fail2:
 	platform_device_put(omap3pandora_snd_device);
 fail1:
@@ -313,7 +323,6 @@ module_init(omap3pandora_soc_init);
 
 static void __exit omap3pandora_soc_exit(void)
 {
-	regulator_put(omap3pandora_dac_reg);
 	platform_device_unregister(omap3pandora_snd_device);
 	gpio_free(OMAP3_PANDORA_AMP_POWER_GPIO);
 	gpio_free(OMAP3_PANDORA_DAC_POWER_GPIO);

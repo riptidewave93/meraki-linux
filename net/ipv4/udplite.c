@@ -10,13 +10,9 @@
  *		as published by the Free Software Foundation; either version
  *		2 of the License, or (at your option) any later version.
  */
-
-#define pr_fmt(fmt) "UDPLite: " fmt
-
-#include <linux/export.h>
 #include "udp_impl.h"
 
-struct udp_table 	udplite_table __read_mostly;
+struct udp_table 	udplite_table;
 EXPORT_SYMBOL(udplite_table);
 
 static int udplite_rcv(struct sk_buff *skb)
@@ -61,45 +57,37 @@ struct proto 	udplite_prot = {
 	.compat_setsockopt = compat_udp_setsockopt,
 	.compat_getsockopt = compat_udp_getsockopt,
 #endif
-	.clear_sk	   = sk_prot_clear_portaddr_nulls,
 };
-EXPORT_SYMBOL(udplite_prot);
 
 static struct inet_protosw udplite4_protosw = {
 	.type		=  SOCK_DGRAM,
 	.protocol	=  IPPROTO_UDPLITE,
 	.prot		=  &udplite_prot,
 	.ops		=  &inet_dgram_ops,
+	.capability	= -1,
 	.no_check	=  0,		/* must checksum (RFC 3828) */
 	.flags		=  INET_PROTOSW_PERMANENT,
 };
 
 #ifdef CONFIG_PROC_FS
-
-static const struct file_operations udplite_afinfo_seq_fops = {
-	.owner    = THIS_MODULE,
-	.open     = udp_seq_open,
-	.read     = seq_read,
-	.llseek   = seq_lseek,
-	.release  = seq_release_net
-};
-
 static struct udp_seq_afinfo udplite4_seq_afinfo = {
 	.name		= "udplite",
 	.family		= AF_INET,
 	.udp_table 	= &udplite_table,
-	.seq_fops	= &udplite_afinfo_seq_fops,
+	.seq_fops	= {
+		.owner	=	THIS_MODULE,
+	},
 	.seq_ops	= {
 		.show		= udp4_seq_show,
 	},
 };
 
-static int __net_init udplite4_proc_init_net(struct net *net)
+static int udplite4_proc_init_net(struct net *net)
 {
 	return udp_proc_register(net, &udplite4_seq_afinfo);
 }
 
-static void __net_exit udplite4_proc_exit_net(struct net *net)
+static void udplite4_proc_exit_net(struct net *net)
 {
 	udp_proc_unregister(net, &udplite4_seq_afinfo);
 }
@@ -122,7 +110,7 @@ static inline int udplite4_proc_init(void)
 
 void __init udplite4_register(void)
 {
-	udp_table_init(&udplite_table, "UDP-Lite");
+	udp_table_init(&udplite_table);
 	if (proto_register(&udplite_prot, 1))
 		goto out_register_err;
 
@@ -132,11 +120,13 @@ void __init udplite4_register(void)
 	inet_register_protosw(&udplite4_protosw);
 
 	if (udplite4_proc_init())
-		pr_err("%s: Cannot register /proc!\n", __func__);
+		printk(KERN_ERR "%s: Cannot register /proc!\n", __func__);
 	return;
 
 out_unregister_proto:
 	proto_unregister(&udplite_prot);
 out_register_err:
-	pr_crit("%s: Cannot add UDP-Lite protocol\n", __func__);
+	printk(KERN_CRIT "%s: Cannot add UDP-Lite protocol.\n", __func__);
 }
+
+EXPORT_SYMBOL(udplite_prot);

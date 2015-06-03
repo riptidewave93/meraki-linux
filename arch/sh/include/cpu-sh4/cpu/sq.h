@@ -12,7 +12,6 @@
 #define __ASM_CPU_SH4_SQ_H
 
 #include <asm/addrspace.h>
-#include <asm/page.h>
 
 /*
  * Store queues range from e0000000-e3fffffc, allowing approx. 64MB to be
@@ -29,7 +28,7 @@
 
 /* arch/sh/kernel/cpu/sh4/sq.c */
 unsigned long sq_remap(unsigned long phys, unsigned int size,
-		       const char *name, pgprot_t prot);
+		       const char *name, unsigned long flags);
 void sq_unmap(unsigned long vaddr);
 void sq_flush_range(unsigned long start, unsigned int len);
 

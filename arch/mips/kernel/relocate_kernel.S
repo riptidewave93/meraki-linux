@@ -13,6 +13,7 @@
 #include <asm/mipsregs.h>
 #include <asm/stackframe.h>
 #include <asm/addrspace.h>
+#include <asm/cacheops.h>
 
 LEAF(relocate_new_kernel)
 	PTR_L		s0, kexec_indirection_page
@@ -50,6 +51,7 @@ process_entry:
 
 copy_word:
 	/* copy page word by word */
+	cache		Hit_Invalidate_I, (s4)
 	REG_L		s5, (s2)
 	REG_S		s5, (s4)
 	PTR_ADD		s4, s4, SZREG

@@ -4,6 +4,7 @@
 
 #include <linux/kernel.h>
 
+#include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/init.h>
 #include <linux/delay.h>
@@ -79,6 +80,7 @@
 static unsigned long __init SMCConfigState(unsigned long baseAddr)
 {
 	unsigned char devId;
+	unsigned char devRev;
 
 	unsigned long configPort;
 	unsigned long indexPort;
@@ -99,7 +101,7 @@ static unsigned long __init SMCConfigState(unsigned long baseAddr)
 		devId = inb(dataPort);
 		if (devId == VALID_DEVICE_ID) {
 			outb(DEVICE_REV, indexPort);
-			/* unsigned char devRev = */ inb(dataPort);
+			devRev = inb(dataPort);
 			break;
 		}
 		else

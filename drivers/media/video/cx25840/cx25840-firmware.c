@@ -67,9 +67,9 @@ static const char *get_fw_name(struct i2c_client *client)
 
 	if (firmware[0])
 		return firmware;
-	if (is_cx2388x(state))
+	if (state->is_cx23885)
 		return "v4l-cx23885-avcore-01.fw";
-	if (is_cx231xx(state))
+	if (state->is_cx231xx)
 		return "v4l-cx231xx-avcore-01.fw";
 	return "v4l-cx25840.fw";
 }
@@ -112,13 +112,13 @@ int cx25840_loadfw(struct i2c_client *client)
 	int MAX_BUF_SIZE = FWSEND;
 	u32 gpio_oe = 0, gpio_da = 0;
 
-	if (is_cx2388x(state)) {
+	if (state->is_cx23885) {
 		/* Preserve the GPIO OE and output bits */
 		gpio_oe = cx25840_read(client, 0x160);
 		gpio_da = cx25840_read(client, 0x164);
 	}
 
-	if (is_cx231xx(state) && MAX_BUF_SIZE > 16) {
+	if ((state->is_cx231xx) && MAX_BUF_SIZE > 16) {
 		v4l_err(client, " Firmware download size changed to 16 bytes max length\n");
 		MAX_BUF_SIZE = 16;  /* cx231xx cannot accept more than 16 bytes at a time */
 	}
@@ -156,7 +156,7 @@ int cx25840_loadfw(struct i2c_client *client)
 	size = fw->size;
 	release_firmware(fw);
 
-	if (is_cx2388x(state)) {
+	if (state->is_cx23885) {
 		/* Restore GPIO configuration after f/w load */
 		cx25840_write(client, 0x160, gpio_oe);
 		cx25840_write(client, 0x164, gpio_da);

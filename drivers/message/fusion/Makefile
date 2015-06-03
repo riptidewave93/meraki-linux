@@ -2,7 +2,7 @@
 
 # enable verbose logging
 # CONFIG_FUSION_LOGGING needs to be enabled in Kconfig
-#ccflags-y := -DMPT_DEBUG_VERBOSE
+#EXTRA_CFLAGS += -DMPT_DEBUG_VERBOSE
 
 
 #=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-} LSI_LOGIC

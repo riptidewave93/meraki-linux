@@ -15,8 +15,6 @@
  * or implied.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/fs.h>
 #include <linux/init.h>
 #include <linux/kernel.h>
@@ -60,8 +58,8 @@ static unsigned int bus_clk;
 static char expect_close;
 static DEFINE_SPINLOCK(mv64x60_wdt_spinlock);
 
-static bool nowayout = WATCHDOG_NOWAYOUT;
-module_param(nowayout, bool, 0);
+static int nowayout = WATCHDOG_NOWAYOUT;
+module_param(nowayout, int, 0);
 MODULE_PARM_DESC(nowayout,
 		"Watchdog cannot be stopped once started (default="
 				__MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
@@ -102,7 +100,7 @@ static void mv64x60_wdt_handler_enable(void)
 	if (mv64x60_wdt_toggle_wdc(MV64x60_WDC_ENABLED_FALSE,
 				   MV64x60_WDC_ENABLE_SHIFT)) {
 		mv64x60_wdt_service();
-		pr_notice("watchdog activated\n");
+		printk(KERN_NOTICE "mv64x60_wdt: watchdog activated\n");
 	}
 }
 
@@ -110,7 +108,7 @@ static void mv64x60_wdt_handler_disable(void)
 {
 	if (mv64x60_wdt_toggle_wdc(MV64x60_WDC_ENABLED_TRUE,
 				   MV64x60_WDC_ENABLE_SHIFT))
-		pr_notice("watchdog deactivated\n");
+		printk(KERN_NOTICE "mv64x60_wdt: watchdog deactivated\n");
 }
 
 static void mv64x60_wdt_set_timeout(unsigned int timeout)
@@ -141,7 +139,8 @@ static int mv64x60_wdt_release(struct inode *inode, struct file *file)
 	if (expect_close == 42)
 		mv64x60_wdt_handler_disable();
 	else {
-		pr_crit("unexpected close, not stopping timer!\n");
+		printk(KERN_CRIT
+		       "mv64x60_wdt: unexpected close, not stopping timer!\n");
 		mv64x60_wdt_service();
 	}
 	expect_close = 0;
@@ -180,7 +179,7 @@ static long mv64x60_wdt_ioctl(struct file *file,
 	int timeout;
 	int options;
 	void __user *argp = (void __user *)arg;
-	static const struct watchdog_info info = {
+	static struct watchdog_info info = {
 		.options =	WDIOF_SETTIMEOUT	|
 				WDIOF_MAGICCLOSE	|
 				WDIOF_KEEPALIVEPING,
@@ -276,7 +275,7 @@ static int __devinit mv64x60_wdt_probe(struct platform_device *dev)
 	if (!r)
 		return -ENODEV;
 
-	mv64x60_wdt_regs = ioremap(r->start, resource_size(r));
+	mv64x60_wdt_regs = ioremap(r->start, r->end - r->start + 1);
 	if (mv64x60_wdt_regs == NULL)
 		return -ENOMEM;
 
@@ -309,7 +308,7 @@ static struct platform_driver mv64x60_wdt_driver = {
 
 static int __init mv64x60_wdt_init(void)
 {
-	pr_info("MV64x60 watchdog driver\n");
+	printk(KERN_INFO "MV64x60 watchdog driver\n");
 
 	return platform_driver_register(&mv64x60_wdt_driver);
 }

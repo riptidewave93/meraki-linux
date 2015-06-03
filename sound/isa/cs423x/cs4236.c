@@ -22,8 +22,9 @@
 #include <linux/init.h>
 #include <linux/err.h>
 #include <linux/isa.h>
+#include <linux/slab.h>
 #include <linux/pnp.h>
-#include <linux/module.h>
+#include <linux/moduleparam.h>
 #include <sound/core.h>
 #include <sound/wss.h>
 #include <sound/mpu401.h>
@@ -74,9 +75,9 @@ MODULE_ALIAS("snd_cs4232");
 
 static int index[SNDRV_CARDS] = SNDRV_DEFAULT_IDX;	/* Index 0-MAX */
 static char *id[SNDRV_CARDS] = SNDRV_DEFAULT_STR;	/* ID for this card */
-static bool enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_ISAPNP; /* Enable this card */
+static int enable[SNDRV_CARDS] = SNDRV_DEFAULT_ENABLE_ISAPNP; /* Enable this card */
 #ifdef CONFIG_PNP
-static bool isapnp[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS - 1)] = 1};
+static int isapnp[SNDRV_CARDS] = {[0 ... (SNDRV_CARDS - 1)] = 1};
 #endif
 static long port[SNDRV_CARDS] = SNDRV_DEFAULT_PORT;	/* PnP setup */
 static long cport[SNDRV_CARDS] = SNDRV_DEFAULT_PORT;	/* PnP setup */
@@ -176,7 +177,7 @@ static struct pnp_card_device_id snd_cs423x_pnpids[] = {
 	{ .id = "CSC0437", .devs = { { "CSC0000" }, { "CSC0010" }, { "CSC0003" } } },
 	/* Digital PC 5000 Onboard - CS4236B */
 	{ .id = "CSC0735", .devs = { { "CSC0000" }, { "CSC0010" } } },
-	/* some unknown CS4236B */
+	/* some uknown CS4236B */
 	{ .id = "CSC0b35", .devs = { { "CSC0000" }, { "CSC0010" }, { "CSC0003" } } },
 	/* Intel PR440FX Onboard sound */
 	{ .id = "CSC0b36", .devs = { { "CSC0000" }, { "CSC0010" }, { "CSC0003" } } },
@@ -393,15 +394,21 @@ static int __devinit snd_cs423x_probe(struct snd_card *card, int dev)
 			return -EBUSY;
 		}
 
-	err = snd_cs4236_create(card, port[dev], cport[dev],
+	err = snd_wss_create(card, port[dev], cport[dev],
 			     irq[dev],
 			     dma1[dev], dma2[dev],
 			     WSS_HW_DETECT3, 0, &chip);
 	if (err < 0)
 		return err;
-
-	acard->chip = chip;
 	if (chip->hardware & WSS_HW_CS4236B_MASK) {
+		snd_wss_free(chip);
+		err = snd_cs4236_create(card,
+					port[dev], cport[dev],
+					irq[dev], dma1[dev], dma2[dev],
+					WSS_HW_DETECT, 0, &chip);
+		if (err < 0)
+			return err;
+		acard->chip = chip;
 
 		err = snd_cs4236_pcm(chip, 0, &pcm);
 		if (err < 0)
@@ -411,6 +418,7 @@ static int __devinit snd_cs423x_probe(struct snd_card *card, int dev)
 		if (err < 0)
 			return err;
 	} else {
+		acard->chip = chip;
 		err = snd_wss_pcm(chip, 0, &pcm);
 		if (err < 0)
 			return err;
@@ -449,7 +457,8 @@ static int __devinit snd_cs423x_probe(struct snd_card *card, int dev)
 			mpu_irq[dev] = -1;
 		if (snd_mpu401_uart_new(card, 0, MPU401_HW_CS4232,
 					mpu_port[dev], 0,
-					mpu_irq[dev], NULL) < 0)
+					mpu_irq[dev],
+					mpu_irq[dev] >= 0 ? IRQF_DISABLED : 0, NULL) < 0)
 			printk(KERN_WARNING IDENT ": MPU401 not detected\n");
 	}
 

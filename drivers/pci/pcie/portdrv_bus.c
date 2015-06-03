@@ -26,6 +26,7 @@ EXPORT_SYMBOL_GPL(pcie_port_bus_type);
 static int pcie_port_bus_match(struct device *dev, struct device_driver *drv)
 {
 	struct pcie_device *pciedev;
+	struct pcie_port_data *port_data;
 	struct pcie_port_service_driver *driver;
 
 	if (drv->bus != &pcie_port_bus_type || dev->bus != &pcie_port_bus_type)
@@ -37,8 +38,10 @@ static int pcie_port_bus_match(struct device *dev, struct device_driver *drv)
 	if (driver->service != pciedev->service)
 		return 0;
 
-	if ((driver->port_type != PCIE_ANY_PORT) &&
-	    (driver->port_type != pciedev->port->pcie_type))
+	port_data = pci_get_drvdata(pciedev->port);
+
+	if (driver->port_type != PCIE_ANY_PORT
+	     && driver->port_type != port_data->port_type)
 		return 0;
 
 	return 1;

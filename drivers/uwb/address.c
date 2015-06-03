@@ -23,7 +23,6 @@
  * FIXME: docs
  */
 
-#include <linux/slab.h>
 #include <linux/errno.h>
 #include <linux/module.h>
 #include <linux/device.h>
@@ -363,7 +362,10 @@ size_t __uwb_addr_print(char *buf, size_t buf_size, const unsigned char *addr,
 {
 	size_t result;
 	if (type)
-		result = scnprintf(buf, buf_size, "%pM", addr);
+		result = scnprintf(buf, buf_size,
+				  "%02x:%02x:%02x:%02x:%02x:%02x",
+				  addr[0], addr[1], addr[2],
+				  addr[3], addr[4], addr[5]);
 	else
 		result = scnprintf(buf, buf_size, "%02x:%02x",
 				  addr[1], addr[0]);

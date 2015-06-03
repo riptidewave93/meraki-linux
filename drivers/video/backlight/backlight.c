@@ -13,17 +13,10 @@
 #include <linux/ctype.h>
 #include <linux/err.h>
 #include <linux/fb.h>
-#include <linux/slab.h>
 
 #ifdef CONFIG_PMAC_BACKLIGHT
 #include <asm/backlight.h>
 #endif
-
-static const char *const backlight_types[] = {
-	[BACKLIGHT_RAW] = "raw",
-	[BACKLIGHT_PLATFORM] = "platform",
-	[BACKLIGHT_FIRMWARE] = "firmware",
-};
 
 #if defined(CONFIG_FB) || (defined(CONFIG_FB_MODULE) && \
 			   defined(CONFIG_BACKLIGHT_CLASS_DEVICE_MODULE))
@@ -45,7 +38,7 @@ static int fb_notifier_callback(struct notifier_block *self,
 	mutex_lock(&bd->ops_lock);
 	if (bd->ops)
 		if (!bd->ops->check_fb ||
-		    bd->ops->check_fb(bd, evdata->info)) {
+		    bd->ops->check_fb(evdata->info)) {
 			bd->props.fb_blank = *(int *)evdata->data;
 			if (bd->props.fb_blank == FB_BLANK_UNBLANK)
 				bd->props.state &= ~BL_CORE_FBBLANK;
@@ -102,7 +95,7 @@ static void backlight_generate_event(struct backlight_device *bd,
 }
 
 static ssize_t backlight_show_power(struct device *dev,
-		struct device_attribute *attr, char *buf)
+		struct device_attribute *attr,char *buf)
 {
 	struct backlight_device *bd = to_backlight_device(dev);
 
@@ -116,7 +109,7 @@ static ssize_t backlight_store_power(struct device *dev,
 	struct backlight_device *bd = to_backlight_device(dev);
 	unsigned long power;
 
-	rc = kstrtoul(buf, 0, &power);
+	rc = strict_strtoul(buf, 0, &power);
 	if (rc)
 		return rc;
 
@@ -150,7 +143,7 @@ static ssize_t backlight_store_brightness(struct device *dev,
 	struct backlight_device *bd = to_backlight_device(dev);
 	unsigned long brightness;
 
-	rc = kstrtoul(buf, 0, &brightness);
+	rc = strict_strtoul(buf, 0, &brightness);
 	if (rc)
 		return rc;
 
@@ -173,14 +166,6 @@ static ssize_t backlight_store_brightness(struct device *dev,
 	backlight_generate_event(bd, BACKLIGHT_UPDATE_SYSFS);
 
 	return rc;
-}
-
-static ssize_t backlight_show_type(struct device *dev,
-		struct device_attribute *attr, char *buf)
-{
-	struct backlight_device *bd = to_backlight_device(dev);
-
-	return sprintf(buf, "%s\n", backlight_types[bd->props.type]);
 }
 
 static ssize_t backlight_show_max_brightness(struct device *dev,
@@ -248,7 +233,6 @@ static struct device_attribute bl_device_attributes[] = {
 	__ATTR(actual_brightness, 0444, backlight_show_actual_brightness,
 		     NULL),
 	__ATTR(max_brightness, 0444, backlight_show_max_brightness, NULL),
-	__ATTR(type, 0444, backlight_show_type, NULL),
 	__ATTR_NULL,
 };
 
@@ -285,8 +269,7 @@ EXPORT_SYMBOL(backlight_force_update);
  * ERR_PTR() or a pointer to the newly allocated device.
  */
 struct backlight_device *backlight_device_register(const char *name,
-	struct device *parent, void *devdata, const struct backlight_ops *ops,
-	const struct backlight_properties *props)
+		struct device *parent, void *devdata, struct backlight_ops *ops)
 {
 	struct backlight_device *new_bd;
 	int rc;
@@ -305,18 +288,6 @@ struct backlight_device *backlight_device_register(const char *name,
 	new_bd->dev.release = bl_device_release;
 	dev_set_name(&new_bd->dev, name);
 	dev_set_drvdata(&new_bd->dev, devdata);
-
-	/* Set default properties */
-	if (props) {
-		memcpy(&new_bd->props, props,
-		       sizeof(struct backlight_properties));
-		if (props->type <= 0 || props->type >= BACKLIGHT_TYPE_MAX) {
-			WARN(1, "%s: invalid backlight type", name);
-			new_bd->props.type = BACKLIGHT_RAW;
-		}
-	} else {
-		new_bd->props.type = BACKLIGHT_RAW;
-	}
 
 	rc = device_register(&new_bd->dev);
 	if (rc) {

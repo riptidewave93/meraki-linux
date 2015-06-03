@@ -52,7 +52,7 @@
 #define BUG()								\
 	do {								\
 		_BUG_OR_WARN(0);					\
-		unreachable();						\
+		for (;;);						\
 	} while (0)
 
 #define WARN_ON(condition)							\
@@ -69,10 +69,5 @@
 #endif /* CONFIG_BUG */
 
 #include <asm-generic/bug.h>
-
-struct pt_regs;
-void die(const char *str, struct pt_regs *regs, long err);
-void _exception(long signr, struct pt_regs *regs, int code,
-		unsigned long addr);
 
 #endif /* __ASM_AVR32_BUG_H */

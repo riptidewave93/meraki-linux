@@ -28,14 +28,23 @@
 #include <linux/timex.h>
 #include <linux/profile.h>
 
+static inline int set_rtc_mmss(unsigned long nowtime)
+{
+  if (mach_set_clock_mmss)
+    return mach_set_clock_mmss (nowtime);
+  return -1;
+}
+
 /*
  * timer_interrupt() needs to keep up the real-time clock,
- * as well as call the "xtime_update()" routine every clocktick
+ * as well as call the "do_timer()" routine every clocktick
  */
 static irqreturn_t timer_interrupt(int irq, void *dummy)
 {
-	xtime_update(1);
+	do_timer(1);
+#ifndef CONFIG_SMP
 	update_process_times(user_mode(get_irq_regs()));
+#endif
 	profile_tick(CPU_PROFILING);
 
 #ifdef CONFIG_HEARTBEAT
@@ -64,28 +73,23 @@ static irqreturn_t timer_interrupt(int irq, void *dummy)
 	return IRQ_HANDLED;
 }
 
-void read_persistent_clock(struct timespec *ts)
+void __init time_init(void)
 {
 	struct rtc_time time;
-	ts->tv_sec = 0;
-	ts->tv_nsec = 0;
 
 	if (mach_hwclk) {
 		mach_hwclk(0, &time);
 
 		if ((time.tm_year += 1900) < 1970)
 			time.tm_year += 100;
-		ts->tv_sec = mktime(time.tm_year, time.tm_mon, time.tm_mday,
+		xtime.tv_sec = mktime(time.tm_year, time.tm_mon, time.tm_mday,
 				      time.tm_hour, time.tm_min, time.tm_sec);
+		xtime.tv_nsec = 0;
 	}
-}
+	wall_to_monotonic.tv_sec = -xtime.tv_sec;
 
-void __init time_init(void)
-{
 	mach_sched_init(timer_interrupt);
 }
-
-#ifdef CONFIG_M68KCLASSIC
 
 u32 arch_gettimeoffset(void)
 {
@@ -107,5 +111,3 @@ static int __init rtc_init(void)
 }
 
 module_init(rtc_init);
-
-#endif /* CONFIG_M68KCLASSIC */

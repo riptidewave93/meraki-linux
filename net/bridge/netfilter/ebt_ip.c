@@ -25,7 +25,7 @@ struct tcpudphdr {
 };
 
 static bool
-ebt_ip_mt(const struct sk_buff *skb, struct xt_action_param *par)
+ebt_ip_mt(const struct sk_buff *skb, const struct xt_match_param *par)
 {
 	const struct ebt_ip_info *info = par->matchinfo;
 	const struct iphdr *ih;
@@ -77,31 +77,31 @@ ebt_ip_mt(const struct sk_buff *skb, struct xt_action_param *par)
 	return true;
 }
 
-static int ebt_ip_mt_check(const struct xt_mtchk_param *par)
+static bool ebt_ip_mt_check(const struct xt_mtchk_param *par)
 {
 	const struct ebt_ip_info *info = par->matchinfo;
 	const struct ebt_entry *e = par->entryinfo;
 
 	if (e->ethproto != htons(ETH_P_IP) ||
 	   e->invflags & EBT_IPROTO)
-		return -EINVAL;
+		return false;
 	if (info->bitmask & ~EBT_IP_MASK || info->invflags & ~EBT_IP_MASK)
-		return -EINVAL;
+		return false;
 	if (info->bitmask & (EBT_IP_DPORT | EBT_IP_SPORT)) {
 		if (info->invflags & EBT_IP_PROTO)
-			return -EINVAL;
+			return false;
 		if (info->protocol != IPPROTO_TCP &&
 		    info->protocol != IPPROTO_UDP &&
 		    info->protocol != IPPROTO_UDPLITE &&
 		    info->protocol != IPPROTO_SCTP &&
 		    info->protocol != IPPROTO_DCCP)
-			 return -EINVAL;
+			 return false;
 	}
 	if (info->bitmask & EBT_IP_DPORT && info->dport[0] > info->dport[1])
-		return -EINVAL;
+		return false;
 	if (info->bitmask & EBT_IP_SPORT && info->sport[0] > info->sport[1])
-		return -EINVAL;
-	return 0;
+		return false;
+	return true;
 }
 
 static struct xt_match ebt_ip_mt_reg __read_mostly = {
@@ -110,7 +110,7 @@ static struct xt_match ebt_ip_mt_reg __read_mostly = {
 	.family		= NFPROTO_BRIDGE,
 	.match		= ebt_ip_mt,
 	.checkentry	= ebt_ip_mt_check,
-	.matchsize	= sizeof(struct ebt_ip_info),
+	.matchsize	= XT_ALIGN(sizeof(struct ebt_ip_info)),
 	.me		= THIS_MODULE,
 };
 

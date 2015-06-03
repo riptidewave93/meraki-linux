@@ -62,7 +62,7 @@ do {								\
 		"	.previous"				\
 		:"=&r"(res), "=r"(count), "=&r"(w)		\
 		:"i"(-EFAULT), "1"(count), "a"(src), "a"(dst)	\
-		: "memory", "cc");					\
+		:"memory");					\
 } while (0)
 
 long
@@ -109,7 +109,7 @@ do {						\
 		".previous\n"			\
 		: "+r"(size), "=&r"(w)		\
 		: "a"(addr), "d"(0)		\
-		: "memory", "cc");		\
+		: "memory");			\
 } while (0)
 
 unsigned long
@@ -161,6 +161,6 @@ long strnlen_user(const char *s, long n)
 		".previous\n"
 		:"=d"(res), "=&r"(w)
 		:"0"(0), "a"(s), "r"(n)
-		: "memory", "cc");
+		:"memory");
 	return res;
 }

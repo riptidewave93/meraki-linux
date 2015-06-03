@@ -18,14 +18,13 @@
 
 #include <linux/module.h>
 #include <linux/fd.h>
-#include <linux/slab.h>
 #include <linux/blkdev.h>
-#include <linux/mutex.h>
 #include <linux/hdreg.h>
 #include <linux/kernel.h>
 #include <linux/delay.h>
 #include <linux/platform_device.h>
 
+#include <asm/macintosh.h>
 #include <asm/mac_via.h>
 
 #define CARDNAME "swim"
@@ -221,7 +220,6 @@ extern int swim_read_sector_header(struct swim __iomem *base,
 extern int swim_read_sector_data(struct swim __iomem *base,
 				 unsigned char *data);
 
-static DEFINE_MUTEX(swim_mutex);
 static inline void set_swim_mode(struct swim __iomem *base, int enable)
 {
 	struct iwm __iomem *iwm_base;
@@ -662,23 +660,11 @@ out:
 	return err;
 }
 
-static int floppy_unlocked_open(struct block_device *bdev, fmode_t mode)
-{
-	int ret;
-
-	mutex_lock(&swim_mutex);
-	ret = floppy_open(bdev, mode);
-	mutex_unlock(&swim_mutex);
-
-	return ret;
-}
-
 static int floppy_release(struct gendisk *disk, fmode_t mode)
 {
 	struct floppy_state *fs = disk->private_data;
 	struct swim __iomem *base = fs->swd->base;
 
-	mutex_lock(&swim_mutex);
 	if (fs->ref_count < 0)
 		fs->ref_count = 0;
 	else if (fs->ref_count > 0)
@@ -686,7 +672,6 @@ static int floppy_release(struct gendisk *disk, fmode_t mode)
 
 	if (fs->ref_count == 0)
 		swim_motor(base, OFF);
-	mutex_unlock(&swim_mutex);
 
 	return 0;
 }
@@ -704,9 +689,7 @@ static int floppy_ioctl(struct block_device *bdev, fmode_t mode,
 	case FDEJECT:
 		if (fs->ref_count != 1)
 			return -EBUSY;
-		mutex_lock(&swim_mutex);
 		err = floppy_eject(fs);
-		mutex_unlock(&swim_mutex);
 		return err;
 
 	case FDGETPRM:
@@ -740,12 +723,11 @@ static int floppy_getgeo(struct block_device *bdev, struct hd_geometry *geo)
 	return 0;
 }
 
-static unsigned int floppy_check_events(struct gendisk *disk,
-					unsigned int clearing)
+static int floppy_check_change(struct gendisk *disk)
 {
 	struct floppy_state *fs = disk->private_data;
 
-	return fs->ejected ? DISK_EVENT_MEDIA_CHANGE : 0;
+	return fs->ejected;
 }
 
 static int floppy_revalidate(struct gendisk *disk)
@@ -768,11 +750,11 @@ static int floppy_revalidate(struct gendisk *disk)
 
 static const struct block_device_operations floppy_fops = {
 	.owner		 = THIS_MODULE,
-	.open		 = floppy_unlocked_open,
+	.open		 = floppy_open,
 	.release	 = floppy_release,
-	.ioctl		 = floppy_ioctl,
+	.locked_ioctl	 = floppy_ioctl,
 	.getgeo		 = floppy_getgeo,
-	.check_events	 = floppy_check_events,
+	.media_changed	 = floppy_check_change,
 	.revalidate_disk = floppy_revalidate,
 };
 
@@ -882,7 +864,7 @@ static int __devinit swim_probe(struct platform_device *dev)
 	struct swim_priv *swd;
 	int ret;
 
-	res = platform_get_resource(dev, IORESOURCE_MEM, 0);
+	res = platform_get_resource_byname(dev, IORESOURCE_MEM, "swim-regs");
 	if (!res) {
 		ret = -ENODEV;
 		goto out;
@@ -960,7 +942,7 @@ static int __devexit swim_remove(struct platform_device *dev)
 
 	iounmap(swd->base);
 
-	res = platform_get_resource(dev, IORESOURCE_MEM, 0);
+	res = platform_get_resource_byname(dev, IORESOURCE_MEM, "swim-regs");
 	if (res)
 		release_mem_region(res->start, resource_size(res));
 

@@ -26,7 +26,7 @@
  *	Theory of Operation:
  *		The Watch-Dog Timer is provided to ensure that standalone
  *		Systems can always recover from catastrophic conditions that
- *		caused the CPU to crash. This condition may have occurred by
+ *		caused the CPU to crash. This condition may have occured by
  *		external EMI or a software bug. When the CPU stops working
  *		correctly, hardware on the board will either perform a hardware
  *		reset (cold boot) or a non-maskable interrupt (NMI) to bring the
@@ -52,8 +52,6 @@
  *	Includes, defines, variables, module parameters, ...
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 /* Includes */
 #include <linux/module.h>		/* For module specific items */
 #include <linux/moduleparam.h>		/* For new moduleparam's */
@@ -72,6 +70,7 @@
 
 /* Module information */
 #define DRV_NAME "acquirewdt"
+#define PFX DRV_NAME ": "
 #define WATCHDOG_NAME "Acquire WDT"
 /* There is no way to see what the correct time-out period is */
 #define WATCHDOG_HEARTBEAT 0
@@ -93,8 +92,8 @@ static int wdt_start = 0x443;
 module_param(wdt_start, int, 0);
 MODULE_PARM_DESC(wdt_start, "Acquire WDT 'start' io port (default 0x443)");
 
-static bool nowayout = WATCHDOG_NOWAYOUT;
-module_param(nowayout, bool, 0);
+static int nowayout = WATCHDOG_NOWAYOUT;
+module_param(nowayout, int, 0);
 MODULE_PARM_DESC(nowayout,
 	"Watchdog cannot be stopped once started (default="
 	__MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
@@ -151,7 +150,7 @@ static long acq_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	int options, retval = -EINVAL;
 	void __user *argp = (void __user *)arg;
 	int __user *p = argp;
-	static const struct watchdog_info ident = {
+	static struct watchdog_info ident = {
 		.options = WDIOF_KEEPALIVEPING | WDIOF_MAGICCLOSE,
 		.firmware_version = 1,
 		.identity = WATCHDOG_NAME,
@@ -209,7 +208,8 @@ static int acq_close(struct inode *inode, struct file *file)
 	if (expect_close == 42) {
 		acq_stop();
 	} else {
-		pr_crit("Unexpected close, not stopping watchdog!\n");
+		printk(KERN_CRIT PFX
+			"Unexpected close, not stopping watchdog!\n");
 		acq_keepalive();
 	}
 	clear_bit(0, &acq_is_open);
@@ -246,24 +246,27 @@ static int __devinit acq_probe(struct platform_device *dev)
 
 	if (wdt_stop != wdt_start) {
 		if (!request_region(wdt_stop, 1, WATCHDOG_NAME)) {
-			pr_err("I/O address 0x%04x already in use\n", wdt_stop);
+			printk(KERN_ERR PFX
+			    "I/O address 0x%04x already in use\n", wdt_stop);
 			ret = -EIO;
 			goto out;
 		}
 	}
 
 	if (!request_region(wdt_start, 1, WATCHDOG_NAME)) {
-		pr_err("I/O address 0x%04x already in use\n", wdt_start);
+		printk(KERN_ERR PFX "I/O address 0x%04x already in use\n",
+			wdt_start);
 		ret = -EIO;
 		goto unreg_stop;
 	}
 	ret = misc_register(&acq_miscdev);
 	if (ret != 0) {
-		pr_err("cannot register miscdev on minor=%d (err=%d)\n",
-		       WATCHDOG_MINOR, ret);
+		printk(KERN_ERR PFX
+			"cannot register miscdev on minor=%d (err=%d)\n",
+							WATCHDOG_MINOR, ret);
 		goto unreg_regions;
 	}
-	pr_info("initialized. (nowayout=%d)\n", nowayout);
+	printk(KERN_INFO PFX "initialized. (nowayout=%d)\n", nowayout);
 
 	return 0;
 unreg_regions:
@@ -305,7 +308,8 @@ static int __init acq_init(void)
 {
 	int err;
 
-	pr_info("WDT driver for Acquire single board computer initialising\n");
+	printk(KERN_INFO
+	      "WDT driver for Acquire single board computer initialising.\n");
 
 	err = platform_driver_register(&acquirewdt_driver);
 	if (err)
@@ -328,7 +332,7 @@ static void __exit acq_exit(void)
 {
 	platform_device_unregister(acq_platform_device);
 	platform_driver_unregister(&acquirewdt_driver);
-	pr_info("Watchdog Module Unloaded\n");
+	printk(KERN_INFO PFX "Watchdog Module Unloaded.\n");
 }
 
 module_init(acq_init);

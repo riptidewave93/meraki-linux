@@ -5,11 +5,26 @@
  * This program is free software; you can redistribute it and/or modify it
  * under the terms and conditions of the GNU General Public License,
  * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc.,
+ * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+ *
  */
 
 
 /* #undef	DEBUG */
-/* #undef	VERBOSE_DEBUG */
+/* #undef	VERBOSE */
+
+#if defined(CONFIG_USB_LANGWELL_OTG)
+#define	OTG_TRANSCEIVER
+#endif
+
 
 #include <linux/module.h>
 #include <linux/pci.h>
@@ -32,6 +47,7 @@
 #include <linux/pm.h>
 #include <linux/io.h>
 #include <linux/irq.h>
+#include <asm/system.h>
 #include <asm/unaligned.h>
 
 #include "langwell_udc.h"
@@ -43,6 +59,9 @@
 static const char driver_name[] = "langwell_udc";
 static const char driver_desc[] = DRIVER_DESC;
 
+
+/* controller device global variable */
+static struct langwell_udc	*the_controller;
 
 /* for endpoint 0 operations */
 static const struct usb_endpoint_descriptor
@@ -58,110 +77,141 @@ langwell_ep0_desc = {
 /*-------------------------------------------------------------------------*/
 /* debugging */
 
-#ifdef	VERBOSE_DEBUG
+#ifdef	DEBUG
+#define	DBG(dev, fmt, args...) \
+	pr_debug("%s %s: " fmt , driver_name, \
+			pci_name(dev->pdev), ## args)
+#else
+#define	DBG(dev, fmt, args...) \
+	do { } while (0)
+#endif /* DEBUG */
+
+
+#ifdef	VERBOSE
+#define	VDBG DBG
+#else
+#define	VDBG(dev, fmt, args...) \
+	do { } while (0)
+#endif	/* VERBOSE */
+
+
+#define	ERROR(dev, fmt, args...) \
+	pr_err("%s %s: " fmt , driver_name, \
+			pci_name(dev->pdev), ## args)
+
+#define	WARNING(dev, fmt, args...) \
+	pr_warning("%s %s: " fmt , driver_name, \
+			pci_name(dev->pdev), ## args)
+
+#define	INFO(dev, fmt, args...) \
+	pr_info("%s %s: " fmt , driver_name, \
+			pci_name(dev->pdev), ## args)
+
+
+#ifdef	VERBOSE
 static inline void print_all_registers(struct langwell_udc *dev)
 {
 	int	i;
 
 	/* Capability Registers */
-	dev_dbg(&dev->pdev->dev,
-		"Capability Registers (offset: 0x%04x, length: 0x%08x)\n",
-		CAP_REG_OFFSET, (u32)sizeof(struct langwell_cap_regs));
-	dev_dbg(&dev->pdev->dev, "caplength=0x%02x\n",
+	printk(KERN_DEBUG "Capability Registers (offset: "
+			"0x%04x, length: 0x%08x)\n",
+			CAP_REG_OFFSET,
+			(u32)sizeof(struct langwell_cap_regs));
+	printk(KERN_DEBUG "caplength=0x%02x\n",
 			readb(&dev->cap_regs->caplength));
-	dev_dbg(&dev->pdev->dev, "hciversion=0x%04x\n",
+	printk(KERN_DEBUG "hciversion=0x%04x\n",
 			readw(&dev->cap_regs->hciversion));
-	dev_dbg(&dev->pdev->dev, "hcsparams=0x%08x\n",
+	printk(KERN_DEBUG "hcsparams=0x%08x\n",
 			readl(&dev->cap_regs->hcsparams));
-	dev_dbg(&dev->pdev->dev, "hccparams=0x%08x\n",
+	printk(KERN_DEBUG "hccparams=0x%08x\n",
 			readl(&dev->cap_regs->hccparams));
-	dev_dbg(&dev->pdev->dev, "dciversion=0x%04x\n",
+	printk(KERN_DEBUG "dciversion=0x%04x\n",
 			readw(&dev->cap_regs->dciversion));
-	dev_dbg(&dev->pdev->dev, "dccparams=0x%08x\n",
+	printk(KERN_DEBUG "dccparams=0x%08x\n",
 			readl(&dev->cap_regs->dccparams));
 
 	/* Operational Registers */
-	dev_dbg(&dev->pdev->dev,
-		"Operational Registers (offset: 0x%04x, length: 0x%08x)\n",
-		OP_REG_OFFSET, (u32)sizeof(struct langwell_op_regs));
-	dev_dbg(&dev->pdev->dev, "extsts=0x%08x\n",
+	printk(KERN_DEBUG "Operational Registers (offset: "
+			"0x%04x, length: 0x%08x)\n",
+			OP_REG_OFFSET,
+			(u32)sizeof(struct langwell_op_regs));
+	printk(KERN_DEBUG "extsts=0x%08x\n",
 			readl(&dev->op_regs->extsts));
-	dev_dbg(&dev->pdev->dev, "extintr=0x%08x\n",
+	printk(KERN_DEBUG "extintr=0x%08x\n",
 			readl(&dev->op_regs->extintr));
-	dev_dbg(&dev->pdev->dev, "usbcmd=0x%08x\n",
+	printk(KERN_DEBUG "usbcmd=0x%08x\n",
 			readl(&dev->op_regs->usbcmd));
-	dev_dbg(&dev->pdev->dev, "usbsts=0x%08x\n",
+	printk(KERN_DEBUG "usbsts=0x%08x\n",
 			readl(&dev->op_regs->usbsts));
-	dev_dbg(&dev->pdev->dev, "usbintr=0x%08x\n",
+	printk(KERN_DEBUG "usbintr=0x%08x\n",
 			readl(&dev->op_regs->usbintr));
-	dev_dbg(&dev->pdev->dev, "frindex=0x%08x\n",
+	printk(KERN_DEBUG "frindex=0x%08x\n",
 			readl(&dev->op_regs->frindex));
-	dev_dbg(&dev->pdev->dev, "ctrldssegment=0x%08x\n",
+	printk(KERN_DEBUG "ctrldssegment=0x%08x\n",
 			readl(&dev->op_regs->ctrldssegment));
-	dev_dbg(&dev->pdev->dev, "deviceaddr=0x%08x\n",
+	printk(KERN_DEBUG "deviceaddr=0x%08x\n",
 			readl(&dev->op_regs->deviceaddr));
-	dev_dbg(&dev->pdev->dev, "endpointlistaddr=0x%08x\n",
+	printk(KERN_DEBUG "endpointlistaddr=0x%08x\n",
 			readl(&dev->op_regs->endpointlistaddr));
-	dev_dbg(&dev->pdev->dev, "ttctrl=0x%08x\n",
+	printk(KERN_DEBUG "ttctrl=0x%08x\n",
 			readl(&dev->op_regs->ttctrl));
-	dev_dbg(&dev->pdev->dev, "burstsize=0x%08x\n",
+	printk(KERN_DEBUG "burstsize=0x%08x\n",
 			readl(&dev->op_regs->burstsize));
-	dev_dbg(&dev->pdev->dev, "txfilltuning=0x%08x\n",
+	printk(KERN_DEBUG "txfilltuning=0x%08x\n",
 			readl(&dev->op_regs->txfilltuning));
-	dev_dbg(&dev->pdev->dev, "txttfilltuning=0x%08x\n",
+	printk(KERN_DEBUG "txttfilltuning=0x%08x\n",
 			readl(&dev->op_regs->txttfilltuning));
-	dev_dbg(&dev->pdev->dev, "ic_usb=0x%08x\n",
+	printk(KERN_DEBUG "ic_usb=0x%08x\n",
 			readl(&dev->op_regs->ic_usb));
-	dev_dbg(&dev->pdev->dev, "ulpi_viewport=0x%08x\n",
+	printk(KERN_DEBUG "ulpi_viewport=0x%08x\n",
 			readl(&dev->op_regs->ulpi_viewport));
-	dev_dbg(&dev->pdev->dev, "configflag=0x%08x\n",
+	printk(KERN_DEBUG "configflag=0x%08x\n",
 			readl(&dev->op_regs->configflag));
-	dev_dbg(&dev->pdev->dev, "portsc1=0x%08x\n",
+	printk(KERN_DEBUG "portsc1=0x%08x\n",
 			readl(&dev->op_regs->portsc1));
-	dev_dbg(&dev->pdev->dev, "devlc=0x%08x\n",
+	printk(KERN_DEBUG "devlc=0x%08x\n",
 			readl(&dev->op_regs->devlc));
-	dev_dbg(&dev->pdev->dev, "otgsc=0x%08x\n",
+	printk(KERN_DEBUG "otgsc=0x%08x\n",
 			readl(&dev->op_regs->otgsc));
-	dev_dbg(&dev->pdev->dev, "usbmode=0x%08x\n",
+	printk(KERN_DEBUG "usbmode=0x%08x\n",
 			readl(&dev->op_regs->usbmode));
-	dev_dbg(&dev->pdev->dev, "endptnak=0x%08x\n",
+	printk(KERN_DEBUG "endptnak=0x%08x\n",
 			readl(&dev->op_regs->endptnak));
-	dev_dbg(&dev->pdev->dev, "endptnaken=0x%08x\n",
+	printk(KERN_DEBUG "endptnaken=0x%08x\n",
 			readl(&dev->op_regs->endptnaken));
-	dev_dbg(&dev->pdev->dev, "endptsetupstat=0x%08x\n",
+	printk(KERN_DEBUG "endptsetupstat=0x%08x\n",
 			readl(&dev->op_regs->endptsetupstat));
-	dev_dbg(&dev->pdev->dev, "endptprime=0x%08x\n",
+	printk(KERN_DEBUG "endptprime=0x%08x\n",
 			readl(&dev->op_regs->endptprime));
-	dev_dbg(&dev->pdev->dev, "endptflush=0x%08x\n",
+	printk(KERN_DEBUG "endptflush=0x%08x\n",
 			readl(&dev->op_regs->endptflush));
-	dev_dbg(&dev->pdev->dev, "endptstat=0x%08x\n",
+	printk(KERN_DEBUG "endptstat=0x%08x\n",
 			readl(&dev->op_regs->endptstat));
-	dev_dbg(&dev->pdev->dev, "endptcomplete=0x%08x\n",
+	printk(KERN_DEBUG "endptcomplete=0x%08x\n",
 			readl(&dev->op_regs->endptcomplete));
 
 	for (i = 0; i < dev->ep_max / 2; i++) {
-		dev_dbg(&dev->pdev->dev, "endptctrl[%d]=0x%08x\n",
+		printk(KERN_DEBUG "endptctrl[%d]=0x%08x\n",
 				i, readl(&dev->op_regs->endptctrl[i]));
 	}
 }
-#else
-
-#define	print_all_registers(dev)	do { } while (0)
-
-#endif /* VERBOSE_DEBUG */
+#endif /* VERBOSE */
 
 
 /*-------------------------------------------------------------------------*/
 
-#define	is_in(ep)	(((ep)->ep_num == 0) ? ((ep)->dev->ep0_dir ==	\
-			USB_DIR_IN) : (usb_endpoint_dir_in((ep)->desc)))
+#define	DIR_STRING(bAddress)	(((bAddress) & USB_DIR_IN) ? "in" : "out")
 
-#define	DIR_STRING(ep)	(is_in(ep) ? "in" : "out")
+#define is_in(ep)	(((ep)->ep_num == 0) ? ((ep)->dev->ep0_dir == \
+			USB_DIR_IN) : ((ep)->desc->bEndpointAddress \
+			& USB_DIR_IN) == USB_DIR_IN)
 
 
-static char *type_string(const struct usb_endpoint_descriptor *desc)
+#ifdef	DEBUG
+static char *type_string(u8 bmAttributes)
 {
-	switch (usb_endpoint_type(desc)) {
+	switch ((bmAttributes) & USB_ENDPOINT_XFERTYPE_MASK) {
 	case USB_ENDPOINT_XFER_BULK:
 		return "bulk";
 	case USB_ENDPOINT_XFER_ISOC:
@@ -172,6 +222,7 @@ static char *type_string(const struct usb_endpoint_descriptor *desc)
 
 	return "control";
 }
+#endif
 
 
 /* configure endpoint control registers */
@@ -182,7 +233,7 @@ static void ep_reset(struct langwell_ep *ep, unsigned char ep_num,
 	u32			endptctrl;
 
 	dev = ep->dev;
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	endptctrl = readl(&dev->op_regs->endptctrl[ep_num]);
 	if (is_in) {	/* TX */
@@ -199,7 +250,7 @@ static void ep_reset(struct langwell_ep *ep, unsigned char ep_num,
 
 	writel(endptctrl, &dev->op_regs->endptctrl[ep_num]);
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 }
 
 
@@ -209,7 +260,7 @@ static void ep0_reset(struct langwell_udc *dev)
 	struct langwell_ep	*ep;
 	int			i;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	/* ep0 in and out */
 	for (i = 0; i < 2; i++) {
@@ -223,18 +274,17 @@ static void ep0_reset(struct langwell_udc *dev)
 		ep->dqh->dqh_ios = 1;
 		ep->dqh->dqh_mpl = EP0_MAX_PKT_SIZE;
 
-		/* enable ep0-in HW zero length termination select */
+		/* FIXME: enable ep0-in HW zero length termination select */
 		if (is_in(ep))
 			ep->dqh->dqh_zlt = 0;
 		ep->dqh->dqh_mult = 0;
-
-		ep->dqh->dtd_next = DTD_TERM;
 
 		/* configure ep0 control registers */
 		ep_reset(&dev->ep[0], 0, i, USB_ENDPOINT_XFER_CONTROL);
 	}
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
+	return;
 }
 
 
@@ -250,12 +300,12 @@ static int langwell_ep_enable(struct usb_ep *_ep,
 	struct langwell_ep	*ep;
 	u16			max = 0;
 	unsigned long		flags;
-	int			i, retval = 0;
+	int			retval = 0;
 	unsigned char		zlt, ios = 0, mult = 0;
 
 	ep = container_of(_ep, struct langwell_ep, ep);
 	dev = ep->dev;
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	if (!_ep || !desc || ep->desc
 			|| desc->bDescriptorType != USB_DT_ENDPOINT)
@@ -264,7 +314,7 @@ static int langwell_ep_enable(struct usb_ep *_ep,
 	if (!dev->driver || dev->gadget.speed == USB_SPEED_UNKNOWN)
 		return -ESHUTDOWN;
 
-	max = usb_endpoint_maxp(desc);
+	max = le16_to_cpu(desc->wMaxPacketSize);
 
 	/*
 	 * disable HW zero length termination select
@@ -276,7 +326,7 @@ static int langwell_ep_enable(struct usb_ep *_ep,
 	 * sanity check type, direction, address, and then
 	 * initialize the endpoint capabilities fields in dQH
 	 */
-	switch (usb_endpoint_type(desc)) {
+	switch (desc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK) {
 	case USB_ENDPOINT_XFER_CONTROL:
 		ios = 1;
 		break;
@@ -336,36 +386,33 @@ static int langwell_ep_enable(struct usb_ep *_ep,
 
 	spin_lock_irqsave(&dev->lock, flags);
 
-	ep->ep.maxpacket = max;
-	ep->desc = desc;
-	ep->stopped = 0;
-	ep->ep_num = usb_endpoint_num(desc);
-
-	/* ep_type */
-	ep->ep_type = usb_endpoint_type(desc);
-
-	/* configure endpoint control registers */
-	ep_reset(ep, ep->ep_num, is_in(ep), ep->ep_type);
-
 	/* configure endpoint capabilities in dQH */
-	i = ep->ep_num * 2 + is_in(ep);
-	ep->dqh = &dev->ep_dqh[i];
 	ep->dqh->dqh_ios = ios;
 	ep->dqh->dqh_mpl = cpu_to_le16(max);
 	ep->dqh->dqh_zlt = zlt;
 	ep->dqh->dqh_mult = mult;
-	ep->dqh->dtd_next = DTD_TERM;
 
-	dev_dbg(&dev->pdev->dev, "enabled %s (ep%d%s-%s), max %04x\n",
+	ep->ep.maxpacket = max;
+	ep->desc = desc;
+	ep->stopped = 0;
+	ep->ep_num = desc->bEndpointAddress & USB_ENDPOINT_NUMBER_MASK;
+
+	/* ep_type */
+	ep->ep_type = desc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK;
+
+	/* configure endpoint control registers */
+	ep_reset(ep, ep->ep_num, is_in(ep), ep->ep_type);
+
+	DBG(dev, "enabled %s (ep%d%s-%s), max %04x\n",
 			_ep->name,
 			ep->ep_num,
-			DIR_STRING(ep),
-			type_string(desc),
+			DIR_STRING(desc->bEndpointAddress),
+			type_string(desc->bmAttributes),
 			max);
 
 	spin_unlock_irqrestore(&dev->lock, flags);
 done:
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return retval;
 }
 
@@ -381,7 +428,7 @@ static void done(struct langwell_ep *ep, struct langwell_request *req,
 	struct langwell_dtd	*curr_dtd, *next_dtd;
 	int			i;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	/* remove the req from ep->queue */
 	list_del_init(&req->queue);
@@ -400,13 +447,20 @@ static void done(struct langwell_ep *ep, struct langwell_request *req,
 		dma_pool_free(dev->dtd_pool, curr_dtd, curr_dtd->dtd_dma);
 	}
 
-	usb_gadget_unmap_request(&dev->gadget, &req->req, is_in(ep));
+	if (req->mapped) {
+		dma_unmap_single(&dev->pdev->dev, req->req.dma, req->req.length,
+			is_in(ep) ? PCI_DMA_TODEVICE : PCI_DMA_FROMDEVICE);
+		req->req.dma = DMA_ADDR_INVALID;
+		req->mapped = 0;
+	} else
+		dma_sync_single_for_cpu(&dev->pdev->dev, req->req.dma,
+				req->req.length,
+				is_in(ep) ? DMA_TO_DEVICE : DMA_FROM_DEVICE);
 
 	if (status != -ESHUTDOWN)
-		dev_dbg(&dev->pdev->dev,
-				"complete %s, req %p, stat %d, len %u/%u\n",
-				ep->ep.name, &req->req, status,
-				req->req.actual, req->req.length);
+		DBG(dev, "complete %s, req %p, stat %d, len %u/%u\n",
+			ep->ep.name, &req->req, status,
+			req->req.actual, req->req.length);
 
 	/* don't modify queue heads during completion callback */
 	ep->stopped = 1;
@@ -419,7 +473,7 @@ static void done(struct langwell_ep *ep, struct langwell_request *req,
 	spin_lock(&dev->lock);
 	ep->stopped = stopped;
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 }
 
 
@@ -457,7 +511,7 @@ static int langwell_ep_disable(struct usb_ep *_ep)
 
 	ep = container_of(_ep, struct langwell_ep, ep);
 	dev = ep->dev;
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	if (!_ep || !ep->desc)
 		return -EINVAL;
@@ -477,13 +531,12 @@ static int langwell_ep_disable(struct usb_ep *_ep)
 	nuke(ep, -ESHUTDOWN);
 
 	ep->desc = NULL;
-	ep->ep.desc = NULL;
 	ep->stopped = 1;
 
 	spin_unlock_irqrestore(&dev->lock, flags);
 
-	dev_dbg(&dev->pdev->dev, "disabled %s\n", _ep->name);
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	DBG(dev, "disabled %s\n", _ep->name);
+	VDBG(dev, "<--- %s()\n", __func__);
 
 	return 0;
 }
@@ -502,7 +555,7 @@ static struct usb_request *langwell_alloc_request(struct usb_ep *_ep,
 
 	ep = container_of(_ep, struct langwell_ep, ep);
 	dev = ep->dev;
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	req = kzalloc(sizeof(*req), gfp_flags);
 	if (!req)
@@ -511,8 +564,8 @@ static struct usb_request *langwell_alloc_request(struct usb_ep *_ep,
 	req->req.dma = DMA_ADDR_INVALID;
 	INIT_LIST_HEAD(&req->queue);
 
-	dev_vdbg(&dev->pdev->dev, "alloc request for %s\n", _ep->name);
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "alloc request for %s\n", _ep->name);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return &req->req;
 }
 
@@ -527,7 +580,7 @@ static void langwell_free_request(struct usb_ep *_ep,
 
 	ep = container_of(_ep, struct langwell_ep, ep);
 	dev = ep->dev;
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	if (!_ep || !_req)
 		return;
@@ -538,8 +591,8 @@ static void langwell_free_request(struct usb_ep *_ep,
 	if (_req)
 		kfree(req);
 
-	dev_vdbg(&dev->pdev->dev, "free request for %s\n", _ep->name);
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "free request for %s\n", _ep->name);
+	VDBG(dev, "<--- %s()\n", __func__);
 }
 
 
@@ -555,24 +608,23 @@ static int queue_dtd(struct langwell_ep *ep, struct langwell_request *req)
 	struct langwell_udc	*dev;
 
 	dev = ep->dev;
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	i = ep->ep_num * 2 + is_in(ep);
 	dqh = &dev->ep_dqh[i];
 
 	if (ep->ep_num)
-		dev_vdbg(&dev->pdev->dev, "%s\n", ep->name);
+		VDBG(dev, "%s\n", ep->name);
 	else
 		/* ep0 */
-		dev_vdbg(&dev->pdev->dev, "%s-%s\n", ep->name, DIR_STRING(ep));
+		VDBG(dev, "%s-%s\n", ep->name, is_in(ep) ? "in" : "out");
 
-	dev_vdbg(&dev->pdev->dev, "ep_dqh[%d] addr: 0x%p\n",
-			i, &(dev->ep_dqh[i]));
+	VDBG(dev, "ep_dqh[%d] addr: 0x%08x\n", i, (u32)&(dev->ep_dqh[i]));
 
 	bit_mask = is_in(ep) ?
 		(1 << (ep->ep_num + 16)) : (1 << (ep->ep_num));
 
-	dev_vdbg(&dev->pdev->dev, "bit_mask = 0x%08x\n", bit_mask);
+	VDBG(dev, "bit_mask = 0x%08x\n", bit_mask);
 
 	/* check if the pipe is empty */
 	if (!(list_empty(&ep->queue))) {
@@ -613,17 +665,14 @@ static int queue_dtd(struct langwell_ep *ep, struct langwell_request *req)
 	/* clear active and halt bit */
 	dtd_status = (u8) ~(DTD_STS_ACTIVE | DTD_STS_HALTED);
 	dqh->dtd_status &= dtd_status;
-	dev_vdbg(&dev->pdev->dev, "dqh->dtd_status = 0x%x\n", dqh->dtd_status);
-
-	/* ensure that updates to the dQH will occur before priming */
-	wmb();
+	VDBG(dev, "dqh->dtd_status = 0x%x\n", dqh->dtd_status);
 
 	/* write 1 to endptprime register to PRIME endpoint */
 	bit_mask = is_in(ep) ? (1 << (ep->ep_num + 16)) : (1 << ep->ep_num);
-	dev_vdbg(&dev->pdev->dev, "endprime bit_mask = 0x%08x\n", bit_mask);
+	VDBG(dev, "endprime bit_mask = 0x%08x\n", bit_mask);
 	writel(bit_mask, &dev->op_regs->endptprime);
 out:
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return 0;
 }
 
@@ -638,7 +687,7 @@ static struct langwell_dtd *build_dtd(struct langwell_request *req,
 	int			i;
 
 	dev = req->ep->dev;
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	/* the maximum transfer length, up to 16k bytes */
 	*length = min(req->req.length - req->req.actual,
@@ -659,7 +708,7 @@ static struct langwell_dtd *build_dtd(struct langwell_request *req,
 
 	/* fill in total bytes with transfer size */
 	dtd->dtd_total = cpu_to_le16(*length);
-	dev_vdbg(&dev->pdev->dev, "dtd->dtd_total = %d\n", dtd->dtd_total);
+	VDBG(dev, "dtd->dtd_total = %d\n", dtd->dtd_total);
 
 	/* set is_last flag if req->req.zero is set or not */
 	if (req->req.zero) {
@@ -673,7 +722,7 @@ static struct langwell_dtd *build_dtd(struct langwell_request *req,
 		*is_last = 0;
 
 	if (*is_last == 0)
-		dev_vdbg(&dev->pdev->dev, "multi-dtd request!\n");
+		VDBG(dev, "multi-dtd request!\n");
 
 	/* set interrupt on complete bit for the last dTD */
 	if (*is_last && !req->req.no_interrupt)
@@ -684,12 +733,10 @@ static struct langwell_dtd *build_dtd(struct langwell_request *req,
 
 	/* set the active bit of status field to 1 */
 	dtd->dtd_status = DTD_STS_ACTIVE;
-	dev_vdbg(&dev->pdev->dev, "dtd->dtd_status = 0x%02x\n",
-			dtd->dtd_status);
+	VDBG(dev, "dtd->dtd_status = 0x%02x\n", dtd->dtd_status);
 
-	dev_vdbg(&dev->pdev->dev, "length = %d, dma addr= 0x%08x\n",
-			*length, (int)*dma);
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "length = %d, dma addr= 0x%08x\n", *length, (int)*dma);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return dtd;
 }
 
@@ -704,7 +751,7 @@ static int req_to_dtd(struct langwell_request *req)
 	dma_addr_t		dma;
 
 	dev = req->ep->dev;
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 	do {
 		dtd = build_dtd(req, &count, &dma, &is_last);
 		if (dtd == NULL)
@@ -726,7 +773,7 @@ static int req_to_dtd(struct langwell_request *req)
 
 	req->tail = dtd;
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return 0;
 }
 
@@ -740,8 +787,7 @@ static int langwell_ep_queue(struct usb_ep *_ep, struct usb_request *_req,
 	struct langwell_ep	*ep;
 	struct langwell_udc	*dev;
 	unsigned long		flags;
-	int			is_iso = 0;
-	int			ret;
+	int			is_iso = 0, zlflag = 0;
 
 	/* always require a cpu-view buffer */
 	req = container_of(_req, struct langwell_request, req);
@@ -757,9 +803,9 @@ static int langwell_ep_queue(struct usb_ep *_ep, struct usb_request *_req,
 
 	dev = ep->dev;
 	req->ep = ep;
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
-	if (usb_endpoint_xfer_isoc(ep->desc)) {
+	if (ep->desc->bmAttributes == USB_ENDPOINT_XFER_ISOC) {
 		if (req->req.length > ep->ep.maxpacket)
 			return -EMSGSIZE;
 		is_iso = 1;
@@ -768,15 +814,37 @@ static int langwell_ep_queue(struct usb_ep *_ep, struct usb_request *_req,
 	if (unlikely(!dev->driver || dev->gadget.speed == USB_SPEED_UNKNOWN))
 		return -ESHUTDOWN;
 
-	/* set up dma mapping */
-	ret = usb_gadget_map_request(&dev->gadget, &req->req, is_in(ep));
-	if (ret)
-		return ret;
+	/* set up dma mapping in case the caller didn't */
+	if (_req->dma == DMA_ADDR_INVALID) {
+		/* WORKAROUND: WARN_ON(size == 0) */
+		if (_req->length == 0) {
+			VDBG(dev, "req->length: 0->1\n");
+			zlflag = 1;
+			_req->length++;
+		}
 
-	dev_dbg(&dev->pdev->dev,
-			"%s queue req %p, len %u, buf %p, dma 0x%08x\n",
+		_req->dma = dma_map_single(&dev->pdev->dev,
+				_req->buf, _req->length,
+				is_in(ep) ? DMA_TO_DEVICE : DMA_FROM_DEVICE);
+		if (zlflag && (_req->length == 1)) {
+			VDBG(dev, "req->length: 1->0\n");
+			zlflag = 0;
+			_req->length = 0;
+		}
+
+		req->mapped = 1;
+		VDBG(dev, "req->mapped = 1\n");
+	} else {
+		dma_sync_single_for_device(&dev->pdev->dev,
+				_req->dma, _req->length,
+				is_in(ep) ?  DMA_TO_DEVICE : DMA_FROM_DEVICE);
+		req->mapped = 0;
+		VDBG(dev, "req->mapped = 0\n");
+	}
+
+	DBG(dev, "%s queue req %p, len %u, buf %p, dma 0x%08x\n",
 			_ep->name,
-			_req, _req->length, _req->buf, (int)_req->dma);
+			_req, _req->length, _req->buf, _req->dma);
 
 	_req->status = -EINPROGRESS;
 	_req->actual = 0;
@@ -798,12 +866,12 @@ static int langwell_ep_queue(struct usb_ep *_ep, struct usb_request *_req,
 
 	if (likely(req != NULL)) {
 		list_add_tail(&req->queue, &ep->queue);
-		dev_vdbg(&dev->pdev->dev, "list_add_tail()\n");
+		VDBG(dev, "list_add_tail() \n");
 	}
 
 	spin_unlock_irqrestore(&dev->lock, flags);
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return 0;
 }
 
@@ -820,7 +888,7 @@ static int langwell_ep_dequeue(struct usb_ep *_ep, struct usb_request *_req)
 
 	ep = container_of(_ep, struct langwell_ep, ep);
 	dev = ep->dev;
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	if (!_ep || !ep->desc || !_req)
 		return -EINVAL;
@@ -856,7 +924,7 @@ static int langwell_ep_dequeue(struct usb_ep *_ep, struct usb_request *_req)
 
 	/* queue head may be partially complete. */
 	if (ep->queue.next == &req->queue) {
-		dev_dbg(&dev->pdev->dev, "unlink (%s) dma\n", _ep->name);
+		DBG(dev, "unlink (%s) dma\n", _ep->name);
 		_req->status = -ECONNRESET;
 		langwell_ep_fifo_flush(&ep->ep);
 
@@ -895,7 +963,7 @@ done:
 	ep->stopped = stopped;
 	spin_unlock_irqrestore(&dev->lock, flags);
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return retval;
 }
 
@@ -908,7 +976,7 @@ static void ep_set_halt(struct langwell_ep *ep, int value)
 	u32			endptctrl = 0;
 	int			ep_num;
 	struct langwell_udc	*dev = ep->dev;
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	ep_num = ep->ep_num;
 	endptctrl = readl(&dev->op_regs->endptctrl[ep_num]);
@@ -933,7 +1001,7 @@ static void ep_set_halt(struct langwell_ep *ep, int value)
 
 	writel(endptctrl, &dev->op_regs->endptctrl[ep_num]);
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 }
 
 
@@ -948,7 +1016,7 @@ static int langwell_ep_set_halt(struct usb_ep *_ep, int value)
 	ep = container_of(_ep, struct langwell_ep, ep);
 	dev = ep->dev;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	if (!_ep || !ep->desc)
 		return -EINVAL;
@@ -956,7 +1024,8 @@ static int langwell_ep_set_halt(struct usb_ep *_ep, int value)
 	if (!dev->driver || dev->gadget.speed == USB_SPEED_UNKNOWN)
 		return -ESHUTDOWN;
 
-	if (usb_endpoint_xfer_isoc(ep->desc))
+	if (ep->desc && (ep->desc->bmAttributes & USB_ENDPOINT_XFERTYPE_MASK)
+			== USB_ENDPOINT_XFER_ISOC)
 		return  -EOPNOTSUPP;
 
 	spin_lock_irqsave(&dev->lock, flags);
@@ -967,7 +1036,7 @@ static int langwell_ep_set_halt(struct usb_ep *_ep, int value)
 	 */
 	if (!list_empty(&ep->queue) && is_in(ep) && value) {
 		/* IN endpoint FIFO holds bytes */
-		dev_dbg(&dev->pdev->dev, "%s FIFO holds bytes\n", _ep->name);
+		DBG(dev, "%s FIFO holds bytes\n", _ep->name);
 		retval = -EAGAIN;
 		goto done;
 	}
@@ -981,9 +1050,8 @@ static int langwell_ep_set_halt(struct usb_ep *_ep, int value)
 	}
 done:
 	spin_unlock_irqrestore(&dev->lock, flags);
-	dev_dbg(&dev->pdev->dev, "%s %s halt\n",
-			_ep->name, value ? "set" : "clear");
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	DBG(dev, "%s %s halt\n", _ep->name, value ? "set" : "clear");
+	VDBG(dev, "<--- %s()\n", __func__);
 	return retval;
 }
 
@@ -997,12 +1065,12 @@ static int langwell_ep_set_wedge(struct usb_ep *_ep)
 	ep = container_of(_ep, struct langwell_ep, ep);
 	dev = ep->dev;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	if (!_ep || !ep->desc)
 		return -EINVAL;
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return usb_ep_set_halt(_ep);
 }
 
@@ -1018,16 +1086,15 @@ static void langwell_ep_fifo_flush(struct usb_ep *_ep)
 	ep = container_of(_ep, struct langwell_ep, ep);
 	dev = ep->dev;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	if (!_ep || !ep->desc) {
-		dev_vdbg(&dev->pdev->dev, "ep or ep->desc is NULL\n");
-		dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+		VDBG(dev, "ep or ep->desc is NULL\n");
+		VDBG(dev, "<--- %s()\n", __func__);
 		return;
 	}
 
-	dev_vdbg(&dev->pdev->dev, "%s-%s fifo flush\n",
-			_ep->name, DIR_STRING(ep));
+	VDBG(dev, "%s-%s fifo flush\n", _ep->name, is_in(ep) ? "in" : "out");
 
 	/* flush endpoint buffer */
 	if (ep->ep_num == 0)
@@ -1043,14 +1110,14 @@ static void langwell_ep_fifo_flush(struct usb_ep *_ep)
 		writel(flush_bit, &dev->op_regs->endptflush);
 		while (readl(&dev->op_regs->endptflush)) {
 			if (time_after(jiffies, timeout)) {
-				dev_err(&dev->pdev->dev, "ep flush timeout\n");
+				ERROR(dev, "ep flush timeout\n");
 				goto done;
 			}
 			cpu_relax();
 		}
 	} while (readl(&dev->op_regs->endptstat) & flush_bit);
 done:
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 }
 
 
@@ -1100,38 +1167,12 @@ static int langwell_get_frame(struct usb_gadget *_gadget)
 		return -ENODEV;
 
 	dev = container_of(_gadget, struct langwell_udc, gadget);
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	retval = readl(&dev->op_regs->frindex) & FRINDEX_MASK;
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return retval;
-}
-
-
-/* enter or exit PHY low power state */
-static void langwell_phy_low_power(struct langwell_udc *dev, bool flag)
-{
-	u32		devlc;
-	u8		devlc_byte2;
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
-
-	devlc = readl(&dev->op_regs->devlc);
-	dev_vdbg(&dev->pdev->dev, "devlc = 0x%08x\n", devlc);
-
-	if (flag)
-		devlc |= LPM_PHCD;
-	else
-		devlc &= ~LPM_PHCD;
-
-	/* FIXME: workaround for Langwell A1/A2/A3 sighting */
-	devlc_byte2 = (devlc >> 16) & 0xff;
-	writeb(devlc_byte2, (u8 *)&dev->op_regs->devlc + 2);
-
-	devlc = readl(&dev->op_regs->devlc);
-	dev_vdbg(&dev->pdev->dev,
-			"%s PHY low power suspend, devlc = 0x%08x\n",
-			flag ? "enter" : "exit", devlc);
 }
 
 
@@ -1139,20 +1180,18 @@ static void langwell_phy_low_power(struct langwell_udc *dev, bool flag)
 static int langwell_wakeup(struct usb_gadget *_gadget)
 {
 	struct langwell_udc	*dev;
-	u32			portsc1;
-	unsigned long		flags;
+	u32 			portsc1, devlc;
+	unsigned long   	flags;
 
 	if (!_gadget)
 		return 0;
 
 	dev = container_of(_gadget, struct langwell_udc, gadget);
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
-	/* remote wakeup feature not enabled by host */
-	if (!dev->remote_wakeup) {
-		dev_info(&dev->pdev->dev, "remote wakeup is disabled\n");
+	/* Remote Wakeup feature not enabled by host */
+	if (!dev->remote_wakeup)
 		return -ENOTSUPP;
-	}
 
 	spin_lock_irqsave(&dev->lock, flags);
 
@@ -1162,23 +1201,27 @@ static int langwell_wakeup(struct usb_gadget *_gadget)
 		return 0;
 	}
 
-	/* LPM L1 to L0 or legacy remote wakeup */
-	if (dev->lpm && dev->lpm_state == LPM_L1)
-		dev_info(&dev->pdev->dev, "LPM L1 to L0 remote wakeup\n");
-	else
-		dev_info(&dev->pdev->dev, "device remote wakeup\n");
-
-	/* exit PHY low power suspend */
-	if (dev->pdev->device != 0x0829)
-		langwell_phy_low_power(dev, 0);
+	/* LPM L1 to L0, remote wakeup */
+	if (dev->lpm && dev->lpm_state == LPM_L1) {
+		portsc1 |= PORTS_SLP;
+		writel(portsc1, &dev->op_regs->portsc1);
+	}
 
 	/* force port resume */
-	portsc1 |= PORTS_FPR;
-	writel(portsc1, &dev->op_regs->portsc1);
+	if (dev->usb_state == USB_STATE_SUSPENDED) {
+		portsc1 |= PORTS_FPR;
+		writel(portsc1, &dev->op_regs->portsc1);
+	}
+
+	/* exit PHY low power suspend */
+	devlc = readl(&dev->op_regs->devlc);
+	VDBG(dev, "devlc = 0x%08x\n", devlc);
+	devlc &= ~LPM_PHCD;
+	writel(devlc, &dev->op_regs->devlc);
 
 	spin_unlock_irqrestore(&dev->lock, flags);
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return 0;
 }
 
@@ -1188,17 +1231,16 @@ static int langwell_vbus_session(struct usb_gadget *_gadget, int is_active)
 {
 	struct langwell_udc	*dev;
 	unsigned long		flags;
-	u32			usbcmd;
+	u32             	usbcmd;
 
 	if (!_gadget)
 		return -ENODEV;
 
 	dev = container_of(_gadget, struct langwell_udc, gadget);
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	spin_lock_irqsave(&dev->lock, flags);
-	dev_vdbg(&dev->pdev->dev, "VBUS status: %s\n",
-			is_active ? "on" : "off");
+	VDBG(dev, "VBUS status: %s\n", is_active ? "on" : "off");
 
 	dev->vbus_active = (is_active != 0);
 	if (dev->driver && dev->softconnected && dev->vbus_active) {
@@ -1213,7 +1255,7 @@ static int langwell_vbus_session(struct usb_gadget *_gadget, int is_active)
 
 	spin_unlock_irqrestore(&dev->lock, flags);
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return 0;
 }
 
@@ -1227,15 +1269,15 @@ static int langwell_vbus_draw(struct usb_gadget *_gadget, unsigned mA)
 		return -ENODEV;
 
 	dev = container_of(_gadget, struct langwell_udc, gadget);
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	if (dev->transceiver) {
-		dev_vdbg(&dev->pdev->dev, "usb_phy_set_power\n");
-		dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
-		return usb_phy_set_power(dev->transceiver, mA);
+		VDBG(dev, "otg_set_power\n");
+		VDBG(dev, "<--- %s()\n", __func__);
+		return otg_set_power(dev->transceiver, mA);
 	}
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return -ENOTSUPP;
 }
 
@@ -1244,15 +1286,15 @@ static int langwell_vbus_draw(struct usb_gadget *_gadget, unsigned mA)
 static int langwell_pullup(struct usb_gadget *_gadget, int is_on)
 {
 	struct langwell_udc	*dev;
-	u32			usbcmd;
-	unsigned long		flags;
+	u32             	usbcmd;
+	unsigned long   	flags;
 
 	if (!_gadget)
 		return -ENODEV;
 
 	dev = container_of(_gadget, struct langwell_udc, gadget);
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	spin_lock_irqsave(&dev->lock, flags);
 	dev->softconnected = (is_on != 0);
@@ -1268,15 +1310,10 @@ static int langwell_pullup(struct usb_gadget *_gadget, int is_on)
 	}
 	spin_unlock_irqrestore(&dev->lock, flags);
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return 0;
 }
 
-static int langwell_start(struct usb_gadget *g,
-		struct usb_gadget_driver *driver);
-
-static int langwell_stop(struct usb_gadget *g,
-		struct usb_gadget_driver *driver);
 
 /* device controller usb_gadget_ops structure */
 static const struct usb_gadget_ops langwell_ops = {
@@ -1298,9 +1335,6 @@ static const struct usb_gadget_ops langwell_ops = {
 
 	/* D+ pullup, software-controlled connect/disconnect to USB host */
 	.pullup		= langwell_pullup,
-
-	.udc_start	= langwell_start,
-	.udc_stop	= langwell_stop,
 };
 
 
@@ -1312,13 +1346,12 @@ static const struct usb_gadget_ops langwell_ops = {
 static int langwell_udc_reset(struct langwell_udc *dev)
 {
 	u32		usbcmd, usbmode, devlc, endpointlistaddr;
-	u8		devlc_byte0, devlc_byte2;
 	unsigned long	timeout;
 
 	if (!dev)
 		return -EINVAL;
 
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	DBG(dev, "---> %s()\n", __func__);
 
 	/* set controller to stop state */
 	usbcmd = readl(&dev->op_regs->usbcmd);
@@ -1334,7 +1367,7 @@ static int langwell_udc_reset(struct langwell_udc *dev)
 	timeout = jiffies + RESET_TIMEOUT;
 	while (readl(&dev->op_regs->usbcmd) & CMD_RST) {
 		if (time_after(jiffies, timeout)) {
-			dev_err(&dev->pdev->dev, "device reset timeout\n");
+			ERROR(dev, "device reset timeout\n");
 			return -ETIMEDOUT;
 		}
 		cpu_relax();
@@ -1349,7 +1382,7 @@ static int langwell_udc_reset(struct langwell_udc *dev)
 
 	writel(usbmode, &dev->op_regs->usbmode);
 	usbmode = readl(&dev->op_regs->usbmode);
-	dev_vdbg(&dev->pdev->dev, "usbmode=0x%08x\n", usbmode);
+	VDBG(dev, "usbmode=0x%08x\n", usbmode);
 
 	/* Write-Clear setup status */
 	writel(0, &dev->op_regs->usbsts);
@@ -1357,17 +1390,9 @@ static int langwell_udc_reset(struct langwell_udc *dev)
 	/* if support USB LPM, ACK all LPM token */
 	if (dev->lpm) {
 		devlc = readl(&dev->op_regs->devlc);
-		dev_vdbg(&dev->pdev->dev, "devlc = 0x%08x\n", devlc);
-		/* FIXME: workaround for Langwell A1/A2/A3 sighting */
 		devlc &= ~LPM_STL;	/* don't STALL LPM token */
 		devlc &= ~LPM_NYT_ACK;	/* ACK LPM token */
-		devlc_byte0 = devlc & 0xff;
-		devlc_byte2 = (devlc >> 16) & 0xff;
-		writeb(devlc_byte0, (u8 *)&dev->op_regs->devlc);
-		writeb(devlc_byte2, (u8 *)&dev->op_regs->devlc + 2);
-		devlc = readl(&dev->op_regs->devlc);
-		dev_vdbg(&dev->pdev->dev,
-				"ACK LPM token, devlc = 0x%08x\n", devlc);
+		writel(devlc, &dev->op_regs->devlc);
 	}
 
 	/* fill endpointlistaddr register */
@@ -1375,11 +1400,10 @@ static int langwell_udc_reset(struct langwell_udc *dev)
 	endpointlistaddr &= ENDPOINTLISTADDR_MASK;
 	writel(endpointlistaddr, &dev->op_regs->endpointlistaddr);
 
-	dev_vdbg(&dev->pdev->dev,
-		"dQH base (vir: %p, phy: 0x%08x), endpointlistaddr=0x%08x\n",
-		dev->ep_dqh, endpointlistaddr,
-		readl(&dev->op_regs->endpointlistaddr));
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "dQH base (vir: %p, phy: 0x%08x), endpointlistaddr=0x%08x\n",
+			dev->ep_dqh, endpointlistaddr,
+			readl(&dev->op_regs->endpointlistaddr));
+	DBG(dev, "<--- %s()\n", __func__);
 	return 0;
 }
 
@@ -1391,7 +1415,7 @@ static int eps_reinit(struct langwell_udc *dev)
 	char			name[14];
 	int			i;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	/* initialize ep0 */
 	ep = &dev->ep[0];
@@ -1425,9 +1449,11 @@ static int eps_reinit(struct langwell_udc *dev)
 
 		INIT_LIST_HEAD(&ep->queue);
 		list_add_tail(&ep->ep.ep_list, &dev->gadget.ep_list);
+
+		ep->dqh = &dev->ep_dqh[i];
 	}
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return 0;
 }
 
@@ -1436,7 +1462,7 @@ static int eps_reinit(struct langwell_udc *dev)
 static void langwell_udc_start(struct langwell_udc *dev)
 {
 	u32	usbintr, usbcmd;
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	DBG(dev, "---> %s()\n", __func__);
 
 	/* enable interrupts */
 	usbintr = INTR_ULPIE	/* ULPI */
@@ -1459,7 +1485,8 @@ static void langwell_udc_start(struct langwell_udc *dev)
 	usbcmd |= CMD_RUNSTOP;
 	writel(usbcmd, &dev->op_regs->usbcmd);
 
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	DBG(dev, "<--- %s()\n", __func__);
+	return;
 }
 
 
@@ -1468,7 +1495,7 @@ static void langwell_udc_stop(struct langwell_udc *dev)
 {
 	u32	usbcmd;
 
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	DBG(dev, "---> %s()\n", __func__);
 
 	/* disable all interrupts */
 	writel(0, &dev->op_regs->usbintr);
@@ -1481,15 +1508,17 @@ static void langwell_udc_stop(struct langwell_udc *dev)
 	usbcmd &= ~CMD_RUNSTOP;
 	writel(usbcmd, &dev->op_regs->usbcmd);
 
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	DBG(dev, "<--- %s()\n", __func__);
+	return;
 }
 
 
 /* stop all USB activities */
-static void stop_activity(struct langwell_udc *dev)
+static void stop_activity(struct langwell_udc *dev,
+		struct usb_gadget_driver *driver)
 {
 	struct langwell_ep	*ep;
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	DBG(dev, "---> %s()\n", __func__);
 
 	nuke(&dev->ep[0], -ESHUTDOWN);
 
@@ -1498,13 +1527,13 @@ static void stop_activity(struct langwell_udc *dev)
 	}
 
 	/* report disconnect; the driver is already quiesced */
-	if (dev->driver) {
+	if (driver) {
 		spin_unlock(&dev->lock);
-		dev->driver->disconnect(&dev->gadget);
+		driver->disconnect(&dev->gadget);
 		spin_lock(&dev->lock);
 	}
 
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	DBG(dev, "<--- %s()\n", __func__);
 }
 
 
@@ -1514,7 +1543,7 @@ static void stop_activity(struct langwell_udc *dev)
 static ssize_t show_function(struct device *_dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct langwell_udc	*dev = dev_get_drvdata(_dev);
+	struct langwell_udc	*dev = the_controller;
 
 	if (!dev->driver || !dev->driver->function
 			|| strlen(dev->driver->function) > PAGE_SIZE)
@@ -1525,25 +1554,11 @@ static ssize_t show_function(struct device *_dev,
 static DEVICE_ATTR(function, S_IRUGO, show_function, NULL);
 
 
-static inline enum usb_device_speed lpm_device_speed(u32 reg)
-{
-	switch (LPM_PSPD(reg)) {
-	case LPM_SPEED_HIGH:
-		return USB_SPEED_HIGH;
-	case LPM_SPEED_FULL:
-		return USB_SPEED_FULL;
-	case LPM_SPEED_LOW:
-		return USB_SPEED_LOW;
-	default:
-		return USB_SPEED_UNKNOWN;
-	}
-}
-
 /* device "langwell_udc" sysfs attribute file */
 static ssize_t show_langwell_udc(struct device *_dev,
 		struct device_attribute *attr, char *buf)
 {
-	struct langwell_udc	*dev = dev_get_drvdata(_dev);
+	struct langwell_udc	*dev = the_controller;
 	struct langwell_request *req;
 	struct langwell_ep	*ep = NULL;
 	char			*next;
@@ -1644,15 +1659,13 @@ static ssize_t show_langwell_udc(struct device *_dev,
 		"Over-current Change: %s\n"
 		"Port Enable/Disable Change: %s\n"
 		"Port Enabled/Disabled: %s\n"
-		"Current Connect Status: %s\n"
-		"LPM Suspend Status: %s\n\n",
+		"Current Connect Status: %s\n\n",
 		(tmp_reg & PORTS_PR) ? "Reset" : "Not Reset",
 		(tmp_reg & PORTS_SUSP) ? "Suspend " : "Not Suspend",
 		(tmp_reg & PORTS_OCC) ? "Detected" : "No",
 		(tmp_reg & PORTS_PEC) ? "Changed" : "Not Changed",
 		(tmp_reg & PORTS_PE) ? "Enable" : "Not Correct",
-		(tmp_reg & PORTS_CCS) ?  "Attached" : "Not Attached",
-		(tmp_reg & PORTS_SLP) ? "LPM L1" : "LPM L0");
+		(tmp_reg & PORTS_CCS) ?  "Attached" : "Not Attached");
 	size -= t;
 	next += t;
 
@@ -1663,11 +1676,24 @@ static ssize_t show_langwell_udc(struct device *_dev,
 		"Serial Transceiver : %d\n"
 		"Port Speed: %s\n"
 		"Port Force Full Speed Connenct: %s\n"
-		"PHY Low Power Suspend Clock: %s\n"
+		"PHY Low Power Suspend Clock Disable: %s\n"
 		"BmAttributes: %d\n\n",
 		LPM_PTS(tmp_reg),
 		(tmp_reg & LPM_STS) ? 1 : 0,
-		usb_speed_string(lpm_device_speed(tmp_reg)),
+		({
+			char	*s;
+			switch (LPM_PSPD(tmp_reg)) {
+			case LPM_SPEED_FULL:
+				s = "Full Speed"; break;
+			case LPM_SPEED_LOW:
+				s = "Low Speed"; break;
+			case LPM_SPEED_HIGH:
+				s = "High Speed"; break;
+			default:
+				s = "Unknown Speed"; break;
+			}
+			s;
+		}),
 		(tmp_reg & LPM_PFSC) ? "Force Full Speed" : "Not Force",
 		(tmp_reg & LPM_PHCD) ? "Disabled" : "Enabled",
 		LPM_BA(tmp_reg));
@@ -1771,36 +1797,6 @@ static ssize_t show_langwell_udc(struct device *_dev,
 static DEVICE_ATTR(langwell_udc, S_IRUGO, show_langwell_udc, NULL);
 
 
-/* device "remote_wakeup" sysfs attribute file */
-static ssize_t store_remote_wakeup(struct device *_dev,
-		struct device_attribute *attr, const char *buf, size_t count)
-{
-	struct langwell_udc	*dev = dev_get_drvdata(_dev);
-	unsigned long		flags;
-	ssize_t			rc = count;
-
-	if (count > 2)
-		return -EINVAL;
-
-	if (count > 0 && buf[count-1] == '\n')
-		((char *) buf)[count-1] = 0;
-
-	if (buf[0] != '1')
-		return -EINVAL;
-
-	/* force remote wakeup enabled in case gadget driver doesn't support */
-	spin_lock_irqsave(&dev->lock, flags);
-	dev->remote_wakeup = 1;
-	dev->dev_status |= (1 << USB_DEVICE_REMOTE_WAKEUP);
-	spin_unlock_irqrestore(&dev->lock, flags);
-
-	langwell_wakeup(&dev->gadget);
-
-	return rc;
-}
-static DEVICE_ATTR(remote_wakeup, S_IWUSR, NULL, store_remote_wakeup);
-
-
 /*-------------------------------------------------------------------------*/
 
 /*
@@ -1811,14 +1807,19 @@ static DEVICE_ATTR(remote_wakeup, S_IWUSR, NULL, store_remote_wakeup);
  * the driver might get unbound.
  */
 
-static int langwell_start(struct usb_gadget *g,
-		struct usb_gadget_driver *driver)
+int usb_gadget_register_driver(struct usb_gadget_driver *driver)
 {
-	struct langwell_udc	*dev = gadget_to_langwell(g);
+	struct langwell_udc	*dev = the_controller;
 	unsigned long		flags;
 	int			retval;
 
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	if (!dev)
+		return -ENODEV;
+
+	DBG(dev, "---> %s()\n", __func__);
+
+	if (dev->driver)
+		return -EBUSY;
 
 	spin_lock_irqsave(&dev->lock, flags);
 
@@ -1829,9 +1830,18 @@ static int langwell_start(struct usb_gadget *g,
 
 	spin_unlock_irqrestore(&dev->lock, flags);
 
+	retval = driver->bind(&dev->gadget);
+	if (retval) {
+		DBG(dev, "bind to driver %s --> %d\n",
+				driver->driver.name, retval);
+		dev->driver = NULL;
+		dev->gadget.dev.driver = NULL;
+		return retval;
+	}
+
 	retval = device_create_file(&dev->pdev->dev, &dev_attr_function);
 	if (retval)
-		goto err;
+		goto err_unbind;
 
 	dev->usb_state = USB_STATE_ATTACHED;
 	dev->ep0_state = WAIT_FOR_SETUP;
@@ -1841,41 +1851,43 @@ static int langwell_start(struct usb_gadget *g,
 	if (dev->got_irq)
 		langwell_udc_start(dev);
 
-	dev_vdbg(&dev->pdev->dev,
-			"After langwell_udc_start(), print all registers:\n");
+	VDBG(dev, "After langwell_udc_start(), print all registers:\n");
+#ifdef	VERBOSE
 	print_all_registers(dev);
+#endif
 
-	dev_info(&dev->pdev->dev, "register driver: %s\n",
-			driver->driver.name);
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
-
+	INFO(dev, "register driver: %s\n", driver->driver.name);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return 0;
 
-err:
+err_unbind:
+	driver->unbind(&dev->gadget);
 	dev->gadget.dev.driver = NULL;
 	dev->driver = NULL;
 
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
-
+	DBG(dev, "<--- %s()\n", __func__);
 	return retval;
 }
+EXPORT_SYMBOL(usb_gadget_register_driver);
+
 
 /* unregister gadget driver */
-static int langwell_stop(struct usb_gadget *g,
-		struct usb_gadget_driver *driver)
+int usb_gadget_unregister_driver(struct usb_gadget_driver *driver)
 {
-	struct langwell_udc	*dev = gadget_to_langwell(g);
+	struct langwell_udc	*dev = the_controller;
 	unsigned long		flags;
 
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	if (!dev)
+		return -ENODEV;
 
-	/* exit PHY low power suspend */
-	if (dev->pdev->device != 0x0829)
-		langwell_phy_low_power(dev, 0);
+	DBG(dev, "---> %s()\n", __func__);
+
+	if (unlikely(!driver || !driver->bind || !driver->unbind))
+		return -EINVAL;
 
 	/* unbind OTG transceiver */
 	if (dev->transceiver)
-		(void)otg_set_peripheral(dev->transceiver->otg, 0);
+		(void)otg_set_peripheral(dev->transceiver, 0);
 
 	/* disable interrupt and set controller to stop state */
 	langwell_udc_stop(dev);
@@ -1888,19 +1900,22 @@ static int langwell_stop(struct usb_gadget *g,
 
 	/* stop all usb activities */
 	dev->gadget.speed = USB_SPEED_UNKNOWN;
+	stop_activity(dev, driver);
+	spin_unlock_irqrestore(&dev->lock, flags);
+
+	/* unbind gadget driver */
+	driver->unbind(&dev->gadget);
 	dev->gadget.dev.driver = NULL;
 	dev->driver = NULL;
-	stop_activity(dev);
-	spin_unlock_irqrestore(&dev->lock, flags);
 
 	device_remove_file(&dev->pdev->dev, &dev_attr_function);
 
-	dev_info(&dev->pdev->dev, "unregistered driver '%s'\n",
-			driver->driver.name);
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
-
+	INFO(dev, "unregistered driver '%s'\n", driver->driver.name);
+	DBG(dev, "<--- %s()\n", __func__);
 	return 0;
 }
+EXPORT_SYMBOL(usb_gadget_unregister_driver);
+
 
 /*-------------------------------------------------------------------------*/
 
@@ -1915,7 +1930,7 @@ static void setup_tripwire(struct langwell_udc *dev)
 	unsigned long		timeout;
 	struct langwell_dqh	*dqh;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	/* ep0 OUT dQH */
 	dqh = &dev->ep_dqh[EP_DIR_OUT];
@@ -1928,7 +1943,7 @@ static void setup_tripwire(struct langwell_udc *dev)
 	timeout = jiffies + SETUPSTAT_TIMEOUT;
 	while (readl(&dev->op_regs->endptsetupstat)) {
 		if (time_after(jiffies, timeout)) {
-			dev_err(&dev->pdev->dev, "setup_tripwire timeout\n");
+			ERROR(dev, "setup_tripwire timeout\n");
 			break;
 		}
 		cpu_relax();
@@ -1948,7 +1963,7 @@ static void setup_tripwire(struct langwell_udc *dev)
 	usbcmd = readl(&dev->op_regs->usbcmd);
 	writel(usbcmd & ~CMD_SUTW, &dev->op_regs->usbcmd);
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 }
 
 
@@ -1957,7 +1972,7 @@ static void ep0_stall(struct langwell_udc *dev)
 {
 	u32	endptctrl;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	/* set TX and RX to stall */
 	endptctrl = readl(&dev->op_regs->endptctrl[0]);
@@ -1968,7 +1983,7 @@ static void ep0_stall(struct langwell_udc *dev)
 	dev->ep0_state = WAIT_FOR_SETUP;
 	dev->ep0_dir = USB_DIR_OUT;
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 }
 
 
@@ -1979,7 +1994,7 @@ static int prime_status_phase(struct langwell_udc *dev, int dir)
 	struct langwell_ep	*ep;
 	int			status = 0;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	if (dir == EP_DIR_IN)
 		dev->ep0_dir = USB_DIR_IN;
@@ -2004,11 +2019,11 @@ static int prime_status_phase(struct langwell_udc *dev, int dir)
 		return -ENOMEM;
 
 	if (status)
-		dev_err(&dev->pdev->dev, "can't queue ep0 status request\n");
+		ERROR(dev, "can't queue ep0 status request\n");
 
 	list_add_tail(&req->queue, &ep->queue);
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return status;
 }
 
@@ -2017,11 +2032,11 @@ static int prime_status_phase(struct langwell_udc *dev, int dir)
 static void set_address(struct langwell_udc *dev, u16 value,
 		u16 index, u16 length)
 {
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	/* save the new address to device struct */
 	dev->dev_addr = (u8) value;
-	dev_vdbg(&dev->pdev->dev, "dev->dev_addr = %d\n", dev->dev_addr);
+	VDBG(dev, "dev->dev_addr = %d\n", dev->dev_addr);
 
 	/* update usb state */
 	dev->usb_state = USB_STATE_ADDRESS;
@@ -2030,7 +2045,7 @@ static void set_address(struct langwell_udc *dev, u16 value,
 	if (prime_status_phase(dev, EP_DIR_IN))
 		ep0_stall(dev);
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 }
 
 
@@ -2039,7 +2054,7 @@ static struct langwell_ep *get_ep_by_windex(struct langwell_udc *dev,
 		u16 wIndex)
 {
 	struct langwell_ep		*ep;
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	if ((wIndex & USB_ENDPOINT_NUMBER_MASK) == 0)
 		return &dev->ep[0];
@@ -2058,7 +2073,7 @@ static struct langwell_ep *get_ep_by_windex(struct langwell_udc *dev,
 			return ep;
 	}
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return NULL;
 }
 
@@ -2070,7 +2085,7 @@ static int ep_is_stall(struct langwell_ep *ep)
 	u32			endptctrl;
 	int			retval;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	endptctrl = readl(&dev->op_regs->endptctrl[ep->ep_num]);
 	if (is_in(ep))
@@ -2078,7 +2093,7 @@ static int ep_is_stall(struct langwell_ep *ep)
 	else
 		retval = endptctrl & EPCTRL_RXS ? 1 : 0;
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return retval;
 }
 
@@ -2092,13 +2107,14 @@ static void get_status(struct langwell_udc *dev, u8 request_type, u16 value,
 	u16	status_data = 0;	/* 16 bits cpu view status data */
 	int	status = 0;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	ep = &dev->ep[0];
 
 	if ((request_type & USB_RECIP_MASK) == USB_RECIP_DEVICE) {
 		/* get device status */
-		status_data = dev->dev_status;
+		status_data = 1 << USB_DEVICE_SELF_POWERED;
+		status_data |= dev->remote_wakeup << USB_DEVICE_REMOTE_WAKEUP;
 	} else if ((request_type & USB_RECIP_MASK) == USB_RECIP_INTERFACE) {
 		/* get interface status */
 		status_data = 0;
@@ -2112,8 +2128,6 @@ static void get_status(struct langwell_udc *dev, u8 request_type, u16 value,
 
 		status_data = ep_is_stall(epn) << USB_ENDPOINT_HALT;
 	}
-
-	dev_dbg(&dev->pdev->dev, "get status data: 0x%04x\n", status_data);
 
 	dev->ep0_dir = USB_DIR_IN;
 
@@ -2136,19 +2150,18 @@ static void get_status(struct langwell_udc *dev, u8 request_type, u16 value,
 		goto stall;
 
 	if (status) {
-		dev_err(&dev->pdev->dev,
-				"response error on GET_STATUS request\n");
+		ERROR(dev, "response error on GET_STATUS request\n");
 		goto stall;
 	}
 
 	list_add_tail(&req->queue, &ep->queue);
 	dev->ep0_state = DATA_STATE_XMIT;
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return;
 stall:
 	ep0_stall(dev);
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 }
 
 
@@ -2159,14 +2172,13 @@ static void handle_setup_packet(struct langwell_udc *dev,
 	u16	wValue = le16_to_cpu(setup->wValue);
 	u16	wIndex = le16_to_cpu(setup->wIndex);
 	u16	wLength = le16_to_cpu(setup->wLength);
-	u32	portsc1;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	/* ep0 fifo flush */
 	nuke(&dev->ep[0], -ESHUTDOWN);
 
-	dev_dbg(&dev->pdev->dev, "SETUP %02x.%02x v%04x i%04x l%04x\n",
+	DBG(dev, "SETUP %02x.%02x v%04x i%04x l%04x\n",
 			setup->bRequestType, setup->bRequest,
 			wValue, wIndex, wLength);
 
@@ -2185,7 +2197,7 @@ static void handle_setup_packet(struct langwell_udc *dev,
 	/* We process some stardard setup requests here */
 	switch (setup->bRequest) {
 	case USB_REQ_GET_STATUS:
-		dev_dbg(&dev->pdev->dev, "SETUP: USB_REQ_GET_STATUS\n");
+		DBG(dev, "SETUP: USB_REQ_GET_STATUS\n");
 		/* get status, DATA and STATUS phase */
 		if ((setup->bRequestType & (USB_DIR_IN | USB_TYPE_MASK))
 					!= (USB_DIR_IN | USB_TYPE_STANDARD))
@@ -2194,7 +2206,7 @@ static void handle_setup_packet(struct langwell_udc *dev,
 		goto end;
 
 	case USB_REQ_SET_ADDRESS:
-		dev_dbg(&dev->pdev->dev, "SETUP: USB_REQ_SET_ADDRESS\n");
+		DBG(dev, "SETUP: USB_REQ_SET_ADDRESS\n");
 		/* STATUS phase */
 		if (setup->bRequestType != (USB_DIR_OUT | USB_TYPE_STANDARD
 						| USB_RECIP_DEVICE))
@@ -2208,11 +2220,9 @@ static void handle_setup_packet(struct langwell_udc *dev,
 	{
 		int rc = -EOPNOTSUPP;
 		if (setup->bRequest == USB_REQ_SET_FEATURE)
-			dev_dbg(&dev->pdev->dev,
-					"SETUP: USB_REQ_SET_FEATURE\n");
+			DBG(dev, "SETUP: USB_REQ_SET_FEATURE\n");
 		else if (setup->bRequest == USB_REQ_CLEAR_FEATURE)
-			dev_dbg(&dev->pdev->dev,
-					"SETUP: USB_REQ_CLEAR_FEATURE\n");
+			DBG(dev, "SETUP: USB_REQ_CLEAR_FEATURE\n");
 
 		if ((setup->bRequestType & (USB_RECIP_MASK | USB_TYPE_MASK))
 				== (USB_RECIP_ENDPOINT | USB_TYPE_STANDARD)) {
@@ -2230,62 +2240,29 @@ static void handle_setup_packet(struct langwell_udc *dev,
 
 			spin_unlock(&dev->lock);
 			rc = langwell_ep_set_halt(&epn->ep,
-				(setup->bRequest == USB_REQ_SET_FEATURE)
-				? 1 : 0);
+					(setup->bRequest == USB_REQ_SET_FEATURE)
+						? 1 : 0);
 			spin_lock(&dev->lock);
 
 		} else if ((setup->bRequestType & (USB_RECIP_MASK
 				| USB_TYPE_MASK)) == (USB_RECIP_DEVICE
 				| USB_TYPE_STANDARD)) {
-			rc = 0;
-			switch (wValue) {
-			case USB_DEVICE_REMOTE_WAKEUP:
-				if (setup->bRequest == USB_REQ_SET_FEATURE) {
-					dev->remote_wakeup = 1;
-					dev->dev_status |= (1 << wValue);
-				} else {
-					dev->remote_wakeup = 0;
-					dev->dev_status &= ~(1 << wValue);
-				}
-				break;
-			case USB_DEVICE_TEST_MODE:
-				dev_dbg(&dev->pdev->dev, "SETUP: TEST MODE\n");
-				if ((wIndex & 0xff) ||
-					(dev->gadget.speed != USB_SPEED_HIGH))
-					ep0_stall(dev);
-
-				switch (wIndex >> 8) {
-				case TEST_J:
-				case TEST_K:
-				case TEST_SE0_NAK:
-				case TEST_PACKET:
-				case TEST_FORCE_EN:
-					if (prime_status_phase(dev, EP_DIR_IN))
-						ep0_stall(dev);
-					portsc1 = readl(&dev->op_regs->portsc1);
-					portsc1 |= (wIndex & 0xf00) << 8;
-					writel(portsc1, &dev->op_regs->portsc1);
-					goto end;
-				default:
-					rc = -EOPNOTSUPP;
-				}
-				break;
-			default:
-				rc = -EOPNOTSUPP;
-				break;
-			}
-
 			if (!gadget_is_otg(&dev->gadget))
 				break;
-			else if (setup->bRequest == USB_DEVICE_B_HNP_ENABLE)
+			else if (setup->bRequest == USB_DEVICE_B_HNP_ENABLE) {
 				dev->gadget.b_hnp_enable = 1;
-			else if (setup->bRequest == USB_DEVICE_A_HNP_SUPPORT)
+#ifdef	OTG_TRANSCEIVER
+				if (!dev->lotg->otg.default_a)
+					dev->lotg->hsm.b_hnp_enable = 1;
+#endif
+			} else if (setup->bRequest == USB_DEVICE_A_HNP_SUPPORT)
 				dev->gadget.a_hnp_support = 1;
 			else if (setup->bRequest ==
 					USB_DEVICE_A_ALT_HNP_SUPPORT)
 				dev->gadget.a_alt_hnp_support = 1;
 			else
 				break;
+			rc = 0;
 		} else
 			break;
 
@@ -2297,38 +2274,31 @@ static void handle_setup_packet(struct langwell_udc *dev,
 	}
 
 	case USB_REQ_GET_DESCRIPTOR:
-		dev_dbg(&dev->pdev->dev,
-				"SETUP: USB_REQ_GET_DESCRIPTOR\n");
+		DBG(dev, "SETUP: USB_REQ_GET_DESCRIPTOR\n");
 		goto delegate;
 
 	case USB_REQ_SET_DESCRIPTOR:
-		dev_dbg(&dev->pdev->dev,
-				"SETUP: USB_REQ_SET_DESCRIPTOR unsupported\n");
+		DBG(dev, "SETUP: USB_REQ_SET_DESCRIPTOR unsupported\n");
 		goto delegate;
 
 	case USB_REQ_GET_CONFIGURATION:
-		dev_dbg(&dev->pdev->dev,
-				"SETUP: USB_REQ_GET_CONFIGURATION\n");
+		DBG(dev, "SETUP: USB_REQ_GET_CONFIGURATION\n");
 		goto delegate;
 
 	case USB_REQ_SET_CONFIGURATION:
-		dev_dbg(&dev->pdev->dev,
-				"SETUP: USB_REQ_SET_CONFIGURATION\n");
+		DBG(dev, "SETUP: USB_REQ_SET_CONFIGURATION\n");
 		goto delegate;
 
 	case USB_REQ_GET_INTERFACE:
-		dev_dbg(&dev->pdev->dev,
-				"SETUP: USB_REQ_GET_INTERFACE\n");
+		DBG(dev, "SETUP: USB_REQ_GET_INTERFACE\n");
 		goto delegate;
 
 	case USB_REQ_SET_INTERFACE:
-		dev_dbg(&dev->pdev->dev,
-				"SETUP: USB_REQ_SET_INTERFACE\n");
+		DBG(dev, "SETUP: USB_REQ_SET_INTERFACE\n");
 		goto delegate;
 
 	case USB_REQ_SYNCH_FRAME:
-		dev_dbg(&dev->pdev->dev,
-				"SETUP: USB_REQ_SYNCH_FRAME unsupported\n");
+		DBG(dev, "SETUP: USB_REQ_SYNCH_FRAME unsupported\n");
 		goto delegate;
 
 	default:
@@ -2340,8 +2310,7 @@ delegate:
 			/* DATA phase from gadget, STATUS phase from udc */
 			dev->ep0_dir = (setup->bRequestType & USB_DIR_IN)
 					?  USB_DIR_IN : USB_DIR_OUT;
-			dev_vdbg(&dev->pdev->dev,
-					"dev->ep0_dir = 0x%x, wLength = %d\n",
+			VDBG(dev, "dev->ep0_dir = 0x%x, wLength = %d\n",
 					dev->ep0_dir, wLength);
 			spin_unlock(&dev->lock);
 			if (dev->driver->setup(&dev->gadget,
@@ -2353,8 +2322,7 @@ delegate:
 		} else {
 			/* no DATA phase, IN STATUS phase from gadget */
 			dev->ep0_dir = USB_DIR_IN;
-			dev_vdbg(&dev->pdev->dev,
-					"dev->ep0_dir = 0x%x, wLength = %d\n",
+			VDBG(dev, "dev->ep0_dir = 0x%x, wLength = %d\n",
 					dev->ep0_dir, wLength);
 			spin_unlock(&dev->lock);
 			if (dev->driver->setup(&dev->gadget,
@@ -2366,7 +2334,8 @@ delegate:
 		break;
 	}
 end:
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
+	return;
 }
 
 
@@ -2390,27 +2359,23 @@ static int process_ep_req(struct langwell_udc *dev, int index,
 	td_complete = 0;
 	actual = curr_req->req.length;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	for (i = 0; i < curr_req->dtd_count; i++) {
+		remaining_length = le16_to_cpu(curr_dtd->dtd_total);
+		actual -= remaining_length;
 
 		/* command execution states by dTD */
 		dtd_status = curr_dtd->dtd_status;
-
-		barrier();
-		remaining_length = le16_to_cpu(curr_dtd->dtd_total);
-		actual -= remaining_length;
 
 		if (!dtd_status) {
 			/* transfers completed successfully */
 			if (!remaining_length) {
 				td_complete++;
-				dev_vdbg(&dev->pdev->dev,
-					"dTD transmitted successfully\n");
+				VDBG(dev, "dTD transmitted successfully\n");
 			} else {
 				if (dir) {
-					dev_vdbg(&dev->pdev->dev,
-						"TX dTD remains data\n");
+					VDBG(dev, "TX dTD remains data\n");
 					retval = -EPROTO;
 					break;
 
@@ -2422,32 +2387,27 @@ static int process_ep_req(struct langwell_udc *dev, int index,
 		} else {
 			/* transfers completed with errors */
 			if (dtd_status & DTD_STS_ACTIVE) {
-				dev_dbg(&dev->pdev->dev,
-					"dTD status ACTIVE dQH[%d]\n", index);
+				DBG(dev, "request not completed\n");
 				retval = 1;
 				return retval;
 			} else if (dtd_status & DTD_STS_HALTED) {
-				dev_err(&dev->pdev->dev,
-					"dTD error %08x dQH[%d]\n",
-					dtd_status, index);
+				ERROR(dev, "dTD error %08x dQH[%d]\n",
+						dtd_status, index);
 				/* clear the errors and halt condition */
 				curr_dqh->dtd_status = 0;
 				retval = -EPIPE;
 				break;
 			} else if (dtd_status & DTD_STS_DBE) {
-				dev_dbg(&dev->pdev->dev,
-					"data buffer (overflow) error\n");
+				DBG(dev, "data buffer (overflow) error\n");
 				retval = -EPROTO;
 				break;
 			} else if (dtd_status & DTD_STS_TRE) {
-				dev_dbg(&dev->pdev->dev,
-					"transaction(ISO) error\n");
+				DBG(dev, "transaction(ISO) error\n");
 				retval = -EILSEQ;
 				break;
 			} else
-				dev_err(&dev->pdev->dev,
-					"unknown error (0x%x)!\n",
-					dtd_status);
+				ERROR(dev, "unknown error (0x%x)!\n",
+						dtd_status);
 		}
 
 		if (i != curr_req->dtd_count - 1)
@@ -2460,7 +2420,7 @@ static int process_ep_req(struct langwell_udc *dev, int index,
 
 	curr_req->req.actual = actual;
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return 0;
 }
 
@@ -2470,7 +2430,7 @@ static void ep0_req_complete(struct langwell_udc *dev,
 		struct langwell_ep *ep0, struct langwell_request *req)
 {
 	u32	new_addr;
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	if (dev->usb_state == USB_STATE_ADDRESS) {
 		/* set the new address */
@@ -2478,7 +2438,7 @@ static void ep0_req_complete(struct langwell_udc *dev,
 		writel(new_addr << USBADR_SHIFT, &dev->op_regs->deviceaddr);
 
 		new_addr = USBADR(readl(&dev->op_regs->deviceaddr));
-		dev_vdbg(&dev->pdev->dev, "new_addr = %d\n", new_addr);
+		VDBG(dev, "new_addr = %d\n", new_addr);
 	}
 
 	done(ep0, req, 0);
@@ -2498,14 +2458,14 @@ static void ep0_req_complete(struct langwell_udc *dev,
 		dev->ep0_state = WAIT_FOR_SETUP;
 		break;
 	case WAIT_FOR_SETUP:
-		dev_err(&dev->pdev->dev, "unexpect ep0 packets\n");
+		ERROR(dev, "unexpect ep0 packets\n");
 		break;
 	default:
 		ep0_stall(dev);
 		break;
 	}
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 }
 
 
@@ -2517,17 +2477,16 @@ static void handle_trans_complete(struct langwell_udc *dev)
 	struct langwell_ep	*epn;
 	struct langwell_request	*curr_req, *temp_req;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	complete_bits = readl(&dev->op_regs->endptcomplete);
-	dev_vdbg(&dev->pdev->dev, "endptcomplete register: 0x%08x\n",
-			complete_bits);
+	VDBG(dev, "endptcomplete register: 0x%08x\n", complete_bits);
 
 	/* Write-Clear the bits in endptcomplete register */
 	writel(complete_bits, &dev->op_regs->endptcomplete);
 
 	if (!complete_bits) {
-		dev_dbg(&dev->pdev->dev, "complete_bits = 0\n");
+		DBG(dev, "complete_bits = 0\n");
 		goto done;
 	}
 
@@ -2547,25 +2506,23 @@ static void handle_trans_complete(struct langwell_udc *dev)
 			epn = &dev->ep[i];
 
 		if (epn->name == NULL) {
-			dev_warn(&dev->pdev->dev, "invalid endpoint\n");
+			WARNING(dev, "invalid endpoint\n");
 			continue;
 		}
 
 		if (i < 2)
 			/* ep0 in and out */
-			dev_dbg(&dev->pdev->dev, "%s-%s transfer completed\n",
+			DBG(dev, "%s-%s transfer completed\n",
 					epn->name,
 					is_in(epn) ? "in" : "out");
 		else
-			dev_dbg(&dev->pdev->dev, "%s transfer completed\n",
-					epn->name);
+			DBG(dev, "%s transfer completed\n", epn->name);
 
 		/* process the req queue until an uncomplete request */
 		list_for_each_entry_safe(curr_req, temp_req,
 				&epn->queue, queue) {
 			status = process_ep_req(dev, i, curr_req);
-			dev_vdbg(&dev->pdev->dev, "%s req status: %d\n",
-					epn->name, status);
+			VDBG(dev, "%s req status: %d\n", epn->name, status);
 
 			if (status)
 				break;
@@ -2583,43 +2540,64 @@ static void handle_trans_complete(struct langwell_udc *dev)
 		}
 	}
 done:
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
+	return;
 }
+
 
 /* port change detect interrupt handler */
 static void handle_port_change(struct langwell_udc *dev)
 {
 	u32	portsc1, devlc;
+	u32	speed;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	if (dev->bus_reset)
 		dev->bus_reset = 0;
 
 	portsc1 = readl(&dev->op_regs->portsc1);
 	devlc = readl(&dev->op_regs->devlc);
-	dev_vdbg(&dev->pdev->dev, "portsc1 = 0x%08x, devlc = 0x%08x\n",
+	VDBG(dev, "portsc1 = 0x%08x, devlc = 0x%08x\n",
 			portsc1, devlc);
 
 	/* bus reset is finished */
 	if (!(portsc1 & PORTS_PR)) {
 		/* get the speed */
-		dev->gadget.speed = lpm_device_speed(devlc);
-		dev_vdbg(&dev->pdev->dev, "dev->gadget.speed = %d\n",
-			dev->gadget.speed);
+		speed = LPM_PSPD(devlc);
+		switch (speed) {
+		case LPM_SPEED_HIGH:
+			dev->gadget.speed = USB_SPEED_HIGH;
+			break;
+		case LPM_SPEED_FULL:
+			dev->gadget.speed = USB_SPEED_FULL;
+			break;
+		case LPM_SPEED_LOW:
+			dev->gadget.speed = USB_SPEED_LOW;
+			break;
+		default:
+			dev->gadget.speed = USB_SPEED_UNKNOWN;
+			break;
+		}
+		VDBG(dev, "speed = %d, dev->gadget.speed = %d\n",
+				speed, dev->gadget.speed);
 	}
 
 	/* LPM L0 to L1 */
 	if (dev->lpm && dev->lpm_state == LPM_L0)
 		if (portsc1 & PORTS_SUSP && portsc1 & PORTS_SLP) {
-			dev_info(&dev->pdev->dev, "LPM L0 to L1\n");
-			dev->lpm_state = LPM_L1;
+				INFO(dev, "LPM L0 to L1\n");
+				dev->lpm_state = LPM_L1;
 		}
 
 	/* LPM L1 to L0, force resume or remote wakeup finished */
 	if (dev->lpm && dev->lpm_state == LPM_L1)
 		if (!(portsc1 & PORTS_SUSP)) {
-			dev_info(&dev->pdev->dev, "LPM L1 to L0\n");
+			if (portsc1 & PORTS_SLP)
+				INFO(dev, "LPM L1 to L0, force resume\n");
+			else
+				INFO(dev, "LPM L1 to L0, remote wakeup\n");
+
 			dev->lpm_state = LPM_L0;
 		}
 
@@ -2627,7 +2605,7 @@ static void handle_port_change(struct langwell_udc *dev)
 	if (!dev->resume_state)
 		dev->usb_state = USB_STATE_DEFAULT;
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 }
 
 
@@ -2639,7 +2617,7 @@ static void handle_usb_reset(struct langwell_udc *dev)
 			endptcomplete;
 	unsigned long	timeout;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	/* Write-Clear the device address */
 	deviceaddr = readl(&dev->op_regs->deviceaddr);
@@ -2656,10 +2634,7 @@ static void handle_usb_reset(struct langwell_udc *dev)
 
 	dev->ep0_dir = USB_DIR_OUT;
 	dev->ep0_state = WAIT_FOR_SETUP;
-
-	/* remote wakeup reset to 0 when the device is reset */
-	dev->remote_wakeup = 0;
-	dev->dev_status = 1 << USB_DEVICE_SELF_POWERED;
+	dev->remote_wakeup = 0;		/* default to 0 on reset */
 	dev->gadget.b_hnp_enable = 0;
 	dev->gadget.a_hnp_support = 0;
 	dev->gadget.a_alt_hnp_support = 0;
@@ -2676,7 +2651,7 @@ static void handle_usb_reset(struct langwell_udc *dev)
 	timeout = jiffies + PRIME_TIMEOUT;
 	while (readl(&dev->op_regs->endptprime)) {
 		if (time_after(jiffies, timeout)) {
-			dev_err(&dev->pdev->dev, "USB reset timeout\n");
+			ERROR(dev, "USB reset timeout\n");
 			break;
 		}
 		cpu_relax();
@@ -2686,20 +2661,20 @@ static void handle_usb_reset(struct langwell_udc *dev)
 	writel((u32) ~0, &dev->op_regs->endptflush);
 
 	if (readl(&dev->op_regs->portsc1) & PORTS_PR) {
-		dev_vdbg(&dev->pdev->dev, "USB bus reset\n");
+		VDBG(dev, "USB bus reset\n");
 		/* bus is reseting */
 		dev->bus_reset = 1;
 
 		/* reset all the queues, stop all USB activities */
-		stop_activity(dev);
+		stop_activity(dev, dev->driver);
 		dev->usb_state = USB_STATE_DEFAULT;
 	} else {
-		dev_vdbg(&dev->pdev->dev, "device controller reset\n");
+		VDBG(dev, "device controller reset\n");
 		/* controller reset */
 		langwell_udc_reset(dev);
 
 		/* reset all the queues, stop all USB activities */
-		stop_activity(dev);
+		stop_activity(dev, dev->driver);
 
 		/* reset ep0 dQH and endptctrl */
 		ep0_reset(dev);
@@ -2710,17 +2685,47 @@ static void handle_usb_reset(struct langwell_udc *dev)
 		dev->usb_state = USB_STATE_ATTACHED;
 	}
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+#ifdef	OTG_TRANSCEIVER
+	/* refer to USB OTG 6.6.2.3 b_hnp_en is cleared */
+	if (!dev->lotg->otg.default_a)
+		dev->lotg->hsm.b_hnp_enable = 0;
+#endif
+
+	VDBG(dev, "<--- %s()\n", __func__);
 }
 
 
 /* USB bus suspend/resume interrupt */
 static void handle_bus_suspend(struct langwell_udc *dev)
 {
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	u32		devlc;
+	DBG(dev, "---> %s()\n", __func__);
 
 	dev->resume_state = dev->usb_state;
 	dev->usb_state = USB_STATE_SUSPENDED;
+
+#ifdef	OTG_TRANSCEIVER
+	if (dev->lotg->otg.default_a) {
+		if (dev->lotg->hsm.b_bus_suspend_vld == 1) {
+			dev->lotg->hsm.b_bus_suspend = 1;
+			/* notify transceiver the state changes */
+			if (spin_trylock(&dev->lotg->wq_lock)) {
+				langwell_update_transceiver();
+				spin_unlock(&dev->lotg->wq_lock);
+			}
+		}
+		dev->lotg->hsm.b_bus_suspend_vld++;
+	} else {
+		if (!dev->lotg->hsm.a_bus_suspend) {
+			dev->lotg->hsm.a_bus_suspend = 1;
+			/* notify transceiver the state changes */
+			if (spin_trylock(&dev->lotg->wq_lock)) {
+				langwell_update_transceiver();
+				spin_unlock(&dev->lotg->wq_lock);
+			}
+		}
+	}
+#endif
 
 	/* report suspend to the driver */
 	if (dev->driver) {
@@ -2728,29 +2733,38 @@ static void handle_bus_suspend(struct langwell_udc *dev)
 			spin_unlock(&dev->lock);
 			dev->driver->suspend(&dev->gadget);
 			spin_lock(&dev->lock);
-			dev_dbg(&dev->pdev->dev, "suspend %s\n",
-					dev->driver->driver.name);
+			DBG(dev, "suspend %s\n", dev->driver->driver.name);
 		}
 	}
 
 	/* enter PHY low power suspend */
-	if (dev->pdev->device != 0x0829)
-		langwell_phy_low_power(dev, 0);
+	devlc = readl(&dev->op_regs->devlc);
+	VDBG(dev, "devlc = 0x%08x\n", devlc);
+	devlc |= LPM_PHCD;
+	writel(devlc, &dev->op_regs->devlc);
 
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	DBG(dev, "<--- %s()\n", __func__);
 }
 
 
 static void handle_bus_resume(struct langwell_udc *dev)
 {
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	u32		devlc;
+	DBG(dev, "---> %s()\n", __func__);
 
 	dev->usb_state = dev->resume_state;
 	dev->resume_state = 0;
 
 	/* exit PHY low power suspend */
-	if (dev->pdev->device != 0x0829)
-		langwell_phy_low_power(dev, 0);
+	devlc = readl(&dev->op_regs->devlc);
+	VDBG(dev, "devlc = 0x%08x\n", devlc);
+	devlc &= ~LPM_PHCD;
+	writel(devlc, &dev->op_regs->devlc);
+
+#ifdef	OTG_TRANSCEIVER
+	if (dev->lotg->otg.default_a == 0)
+		dev->lotg->hsm.a_bus_suspend = 0;
+#endif
 
 	/* report resume to the driver */
 	if (dev->driver) {
@@ -2758,12 +2772,11 @@ static void handle_bus_resume(struct langwell_udc *dev)
 			spin_unlock(&dev->lock);
 			dev->driver->resume(&dev->gadget);
 			spin_lock(&dev->lock);
-			dev_dbg(&dev->pdev->dev, "resume %s\n",
-					dev->driver->driver.name);
+			DBG(dev, "resume %s\n", dev->driver->driver.name);
 		}
 	}
 
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	DBG(dev, "<--- %s()\n", __func__);
 }
 
 
@@ -2776,11 +2789,11 @@ static irqreturn_t langwell_irq(int irq, void *_dev)
 				irq_sts,
 				portsc1;
 
-	dev_vdbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	VDBG(dev, "---> %s()\n", __func__);
 
 	if (dev->stopped) {
-		dev_vdbg(&dev->pdev->dev, "handle IRQ_NONE\n");
-		dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+		VDBG(dev, "handle IRQ_NONE\n");
+		VDBG(dev, "<--- %s()\n", __func__);
 		return IRQ_NONE;
 	}
 
@@ -2793,13 +2806,12 @@ static irqreturn_t langwell_irq(int irq, void *_dev)
 	usbintr = readl(&dev->op_regs->usbintr);
 
 	irq_sts = usbsts & usbintr;
-	dev_vdbg(&dev->pdev->dev,
-			"usbsts = 0x%08x, usbintr = 0x%08x, irq_sts = 0x%08x\n",
+	VDBG(dev, "usbsts = 0x%08x, usbintr = 0x%08x, irq_sts = 0x%08x\n",
 			usbsts, usbintr, irq_sts);
 
 	if (!irq_sts) {
-		dev_vdbg(&dev->pdev->dev, "handle IRQ_NONE\n");
-		dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+		VDBG(dev, "handle IRQ_NONE\n");
+		VDBG(dev, "<--- %s()\n", __func__);
 		spin_unlock(&dev->lock);
 		return IRQ_NONE;
 	}
@@ -2815,13 +2827,12 @@ static irqreturn_t langwell_irq(int irq, void *_dev)
 
 	/* USB interrupt */
 	if (irq_sts & STS_UI) {
-		dev_vdbg(&dev->pdev->dev, "USB interrupt\n");
+		VDBG(dev, "USB interrupt\n");
 
 		/* setup packet received from ep0 */
 		if (readl(&dev->op_regs->endptsetupstat)
 				& EP0SETUPSTAT_MASK) {
-			dev_vdbg(&dev->pdev->dev,
-				"USB SETUP packet received interrupt\n");
+			VDBG(dev, "USB SETUP packet received interrupt\n");
 			/* setup tripwire semaphone */
 			setup_tripwire(dev);
 			handle_setup_packet(dev, &dev->local_setup_buff);
@@ -2829,8 +2840,7 @@ static irqreturn_t langwell_irq(int irq, void *_dev)
 
 		/* USB transfer completion */
 		if (readl(&dev->op_regs->endptcomplete)) {
-			dev_vdbg(&dev->pdev->dev,
-				"USB transfer completion interrupt\n");
+			VDBG(dev, "USB transfer completion interrupt\n");
 			handle_trans_complete(dev);
 		}
 	}
@@ -2838,36 +2848,36 @@ static irqreturn_t langwell_irq(int irq, void *_dev)
 	/* SOF received interrupt (for ISO transfer) */
 	if (irq_sts & STS_SRI) {
 		/* FIXME */
-		/* dev_vdbg(&dev->pdev->dev, "SOF received interrupt\n"); */
+		/* VDBG(dev, "SOF received interrupt\n"); */
 	}
 
 	/* port change detect interrupt */
 	if (irq_sts & STS_PCI) {
-		dev_vdbg(&dev->pdev->dev, "port change detect interrupt\n");
+		VDBG(dev, "port change detect interrupt\n");
 		handle_port_change(dev);
 	}
 
-	/* suspend interrupt */
+	/* suspend interrrupt */
 	if (irq_sts & STS_SLI) {
-		dev_vdbg(&dev->pdev->dev, "suspend interrupt\n");
+		VDBG(dev, "suspend interrupt\n");
 		handle_bus_suspend(dev);
 	}
 
 	/* USB reset interrupt */
 	if (irq_sts & STS_URI) {
-		dev_vdbg(&dev->pdev->dev, "USB reset interrupt\n");
+		VDBG(dev, "USB reset interrupt\n");
 		handle_usb_reset(dev);
 	}
 
 	/* USB error or system error interrupt */
 	if (irq_sts & (STS_UEI | STS_SEI)) {
 		/* FIXME */
-		dev_warn(&dev->pdev->dev, "error IRQ, irq_sts: %x\n", irq_sts);
+		WARNING(dev, "error IRQ, irq_sts: %x\n", irq_sts);
 	}
 
 	spin_unlock(&dev->lock);
 
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return IRQ_HANDLED;
 }
 
@@ -2877,96 +2887,49 @@ static irqreturn_t langwell_irq(int irq, void *_dev)
 /* release device structure */
 static void gadget_release(struct device *_dev)
 {
-	struct langwell_udc	*dev = dev_get_drvdata(_dev);
+	struct langwell_udc	*dev = the_controller;
 
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	DBG(dev, "---> %s()\n", __func__);
 
 	complete(dev->done);
 
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	DBG(dev, "<--- %s()\n", __func__);
 	kfree(dev);
-}
-
-
-/* enable SRAM caching if SRAM detected */
-static void sram_init(struct langwell_udc *dev)
-{
-	struct pci_dev		*pdev = dev->pdev;
-
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
-
-	dev->sram_addr = pci_resource_start(pdev, 1);
-	dev->sram_size = pci_resource_len(pdev, 1);
-	dev_info(&dev->pdev->dev, "Found private SRAM at %x size:%x\n",
-			dev->sram_addr, dev->sram_size);
-	dev->got_sram = 1;
-
-	if (pci_request_region(pdev, 1, kobject_name(&pdev->dev.kobj))) {
-		dev_warn(&dev->pdev->dev, "SRAM request failed\n");
-		dev->got_sram = 0;
-	} else if (!dma_declare_coherent_memory(&pdev->dev, dev->sram_addr,
-			dev->sram_addr, dev->sram_size, DMA_MEMORY_MAP)) {
-		dev_warn(&dev->pdev->dev, "SRAM DMA declare failed\n");
-		pci_release_region(pdev, 1);
-		dev->got_sram = 0;
-	}
-
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
-}
-
-
-/* release SRAM caching */
-static void sram_deinit(struct langwell_udc *dev)
-{
-	struct pci_dev *pdev = dev->pdev;
-
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
-
-	dma_release_declared_memory(&pdev->dev);
-	pci_release_region(pdev, 1);
-
-	dev->got_sram = 0;
-
-	dev_info(&dev->pdev->dev, "release SRAM caching\n");
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
 }
 
 
 /* tear down the binding between this driver and the pci device */
 static void langwell_udc_remove(struct pci_dev *pdev)
 {
-	struct langwell_udc	*dev = pci_get_drvdata(pdev);
+	struct langwell_udc	*dev = the_controller;
 
 	DECLARE_COMPLETION(done);
 
 	BUG_ON(dev->driver);
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	DBG(dev, "---> %s()\n", __func__);
 
 	dev->done = &done;
 
-	/* free dTD dma_pool and dQH */
+	/* free memory allocated in probe */
 	if (dev->dtd_pool)
 		dma_pool_destroy(dev->dtd_pool);
-
-	if (dev->ep_dqh)
-		dma_free_coherent(&pdev->dev, dev->ep_dqh_size,
-			dev->ep_dqh, dev->ep_dqh_dma);
-
-	/* release SRAM caching */
-	if (dev->has_sram && dev->got_sram)
-		sram_deinit(dev);
 
 	if (dev->status_req) {
 		kfree(dev->status_req->req.buf);
 		kfree(dev->status_req);
 	}
 
+	if (dev->ep_dqh)
+		dma_free_coherent(&pdev->dev, dev->ep_dqh_size,
+			dev->ep_dqh, dev->ep_dqh_dma);
+
 	kfree(dev->ep);
 
-	/* disable IRQ handler */
+	/* diable IRQ handler */
 	if (dev->got_irq)
 		free_irq(pdev->irq, dev);
 
+#ifndef	OTG_TRANSCEIVER
 	if (dev->cap_regs)
 		iounmap(dev->cap_regs);
 
@@ -2976,20 +2939,30 @@ static void langwell_udc_remove(struct pci_dev *pdev)
 
 	if (dev->enabled)
 		pci_disable_device(pdev);
+#else
+	if (dev->transceiver) {
+		otg_put_transceiver(dev->transceiver);
+		dev->transceiver = NULL;
+		dev->lotg = NULL;
+	}
+#endif
 
 	dev->cap_regs = NULL;
 
-	dev_info(&dev->pdev->dev, "unbind\n");
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	INFO(dev, "unbind\n");
+	DBG(dev, "<--- %s()\n", __func__);
 
 	device_unregister(&dev->gadget.dev);
 	device_remove_file(&pdev->dev, &dev_attr_langwell_udc);
-	device_remove_file(&pdev->dev, &dev_attr_remote_wakeup);
 
+#ifndef	OTG_TRANSCEIVER
 	pci_set_drvdata(pdev, NULL);
+#endif
 
 	/* free dev, wait for the release() finished */
 	wait_for_completion(&done);
+
+	the_controller = NULL;
 }
 
 
@@ -3001,10 +2974,17 @@ static int langwell_udc_probe(struct pci_dev *pdev,
 		const struct pci_device_id *id)
 {
 	struct langwell_udc	*dev;
+#ifndef	OTG_TRANSCEIVER
 	unsigned long		resource, len;
+#endif
 	void			__iomem *base = NULL;
 	size_t			size;
 	int			retval;
+
+	if (the_controller) {
+		dev_warn(&pdev->dev, "ignoring\n");
+		return -EBUSY;
+	}
 
 	/* alloc, and start init */
 	dev = kzalloc(sizeof *dev, GFP_KERNEL);
@@ -3017,8 +2997,18 @@ static int langwell_udc_probe(struct pci_dev *pdev,
 	spin_lock_init(&dev->lock);
 
 	dev->pdev = pdev;
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	DBG(dev, "---> %s()\n", __func__);
 
+#ifdef	OTG_TRANSCEIVER
+	/* PCI device is already enabled by otg_transceiver driver */
+	dev->enabled = 1;
+
+	/* mem region and register base */
+	dev->region = 1;
+	dev->transceiver = otg_get_transceiver();
+	dev->lotg = otg_to_langwell(dev->transceiver);
+	base = dev->lotg->regs;
+#else
 	pci_set_drvdata(pdev, dev);
 
 	/* now all the pci goodies ... */
@@ -3032,54 +3022,47 @@ static int langwell_udc_probe(struct pci_dev *pdev,
 	resource = pci_resource_start(pdev, 0);
 	len = pci_resource_len(pdev, 0);
 	if (!request_mem_region(resource, len, driver_name)) {
-		dev_err(&dev->pdev->dev, "controller already in use\n");
+		ERROR(dev, "controller already in use\n");
 		retval = -EBUSY;
 		goto error;
 	}
 	dev->region = 1;
 
 	base = ioremap_nocache(resource, len);
+#endif
 	if (base == NULL) {
-		dev_err(&dev->pdev->dev, "can't map memory\n");
+		ERROR(dev, "can't map memory\n");
 		retval = -EFAULT;
 		goto error;
 	}
 
 	dev->cap_regs = (struct langwell_cap_regs __iomem *) base;
-	dev_vdbg(&dev->pdev->dev, "dev->cap_regs: %p\n", dev->cap_regs);
+	VDBG(dev, "dev->cap_regs: %p\n", dev->cap_regs);
 	dev->op_regs = (struct langwell_op_regs __iomem *)
 		(base + OP_REG_OFFSET);
-	dev_vdbg(&dev->pdev->dev, "dev->op_regs: %p\n", dev->op_regs);
+	VDBG(dev, "dev->op_regs: %p\n", dev->op_regs);
 
 	/* irq setup after old hardware is cleaned up */
 	if (!pdev->irq) {
-		dev_err(&dev->pdev->dev, "No IRQ. Check PCI setup!\n");
+		ERROR(dev, "No IRQ. Check PCI setup!\n");
 		retval = -ENODEV;
 		goto error;
 	}
 
-	dev->has_sram = 1;
-	dev->got_sram = 0;
-	dev_vdbg(&dev->pdev->dev, "dev->has_sram: %d\n", dev->has_sram);
-
-	/* enable SRAM caching if detected */
-	if (dev->has_sram && !dev->got_sram)
-		sram_init(dev);
-
-	dev_info(&dev->pdev->dev,
-			"irq %d, io mem: 0x%08lx, len: 0x%08lx, pci mem 0x%p\n",
+#ifndef	OTG_TRANSCEIVER
+	INFO(dev, "irq %d, io mem: 0x%08lx, len: 0x%08lx, pci mem 0x%p\n",
 			pdev->irq, resource, len, base);
 	/* enables bus-mastering for device dev */
 	pci_set_master(pdev);
 
 	if (request_irq(pdev->irq, langwell_irq, IRQF_SHARED,
 				driver_name, dev) != 0) {
-		dev_err(&dev->pdev->dev,
-				"request interrupt %d failed\n", pdev->irq);
+		ERROR(dev, "request interrupt %d failed\n", pdev->irq);
 		retval = -EBUSY;
 		goto error;
 	}
 	dev->got_irq = 1;
+#endif
 
 	/* set stopped bit */
 	dev->stopped = 1;
@@ -3088,34 +3071,32 @@ static int langwell_udc_probe(struct pci_dev *pdev,
 	dev->lpm = (readl(&dev->cap_regs->hccparams) & HCC_LEN) ? 1 : 0;
 	dev->dciversion = readw(&dev->cap_regs->dciversion);
 	dev->devcap = (readl(&dev->cap_regs->dccparams) & DEVCAP) ? 1 : 0;
-	dev_vdbg(&dev->pdev->dev, "dev->lpm: %d\n", dev->lpm);
-	dev_vdbg(&dev->pdev->dev, "dev->dciversion: 0x%04x\n",
-			dev->dciversion);
-	dev_vdbg(&dev->pdev->dev, "dccparams: 0x%08x\n",
-			readl(&dev->cap_regs->dccparams));
-	dev_vdbg(&dev->pdev->dev, "dev->devcap: %d\n", dev->devcap);
+	VDBG(dev, "dev->lpm: %d\n", dev->lpm);
+	VDBG(dev, "dev->dciversion: 0x%04x\n", dev->dciversion);
+	VDBG(dev, "dccparams: 0x%08x\n", readl(&dev->cap_regs->dccparams));
+	VDBG(dev, "dev->devcap: %d\n", dev->devcap);
 	if (!dev->devcap) {
-		dev_err(&dev->pdev->dev, "can't support device mode\n");
+		ERROR(dev, "can't support device mode\n");
 		retval = -ENODEV;
 		goto error;
 	}
 
 	/* a pair of endpoints (out/in) for each address */
 	dev->ep_max = DEN(readl(&dev->cap_regs->dccparams)) * 2;
-	dev_vdbg(&dev->pdev->dev, "dev->ep_max: %d\n", dev->ep_max);
+	VDBG(dev, "dev->ep_max: %d\n", dev->ep_max);
 
 	/* allocate endpoints memory */
 	dev->ep = kzalloc(sizeof(struct langwell_ep) * dev->ep_max,
 			GFP_KERNEL);
 	if (!dev->ep) {
-		dev_err(&dev->pdev->dev, "allocate endpoints memory failed\n");
+		ERROR(dev, "allocate endpoints memory failed\n");
 		retval = -ENOMEM;
 		goto error;
 	}
 
 	/* allocate device dQH memory */
 	size = dev->ep_max * sizeof(struct langwell_dqh);
-	dev_vdbg(&dev->pdev->dev, "orig size = %zd\n", size);
+	VDBG(dev, "orig size = %d\n", size);
 	if (size < DQH_ALIGNMENT)
 		size = DQH_ALIGNMENT;
 	else if ((size % DQH_ALIGNMENT) != 0) {
@@ -3125,18 +3106,17 @@ static int langwell_udc_probe(struct pci_dev *pdev,
 	dev->ep_dqh = dma_alloc_coherent(&pdev->dev, size,
 					&dev->ep_dqh_dma, GFP_KERNEL);
 	if (!dev->ep_dqh) {
-		dev_err(&dev->pdev->dev, "allocate dQH memory failed\n");
+		ERROR(dev, "allocate dQH memory failed\n");
 		retval = -ENOMEM;
 		goto error;
 	}
 	dev->ep_dqh_size = size;
-	dev_vdbg(&dev->pdev->dev, "ep_dqh_size = %zd\n", dev->ep_dqh_size);
+	VDBG(dev, "ep_dqh_size = %d\n", dev->ep_dqh_size);
 
 	/* initialize ep0 status request structure */
 	dev->status_req = kzalloc(sizeof(struct langwell_request), GFP_KERNEL);
 	if (!dev->status_req) {
-		dev_err(&dev->pdev->dev,
-				"allocate status_req memory failed\n");
+		ERROR(dev, "allocate status_req memory failed\n");
 		retval = -ENOMEM;
 		goto error;
 	}
@@ -3149,20 +3129,22 @@ static int langwell_udc_probe(struct pci_dev *pdev,
 	dev->resume_state = USB_STATE_NOTATTACHED;
 	dev->usb_state = USB_STATE_POWERED;
 	dev->ep0_dir = USB_DIR_OUT;
+	dev->remote_wakeup = 0;	/* default to 0 on reset */
 
-	/* remote wakeup reset to 0 when the device is reset */
-	dev->remote_wakeup = 0;
-	dev->dev_status = 1 << USB_DEVICE_SELF_POWERED;
-
+#ifndef	OTG_TRANSCEIVER
 	/* reset device controller */
 	langwell_udc_reset(dev);
+#endif
 
 	/* initialize gadget structure */
 	dev->gadget.ops = &langwell_ops;	/* usb_gadget_ops */
 	dev->gadget.ep0 = &dev->ep[0].ep;	/* gadget ep0 */
 	INIT_LIST_HEAD(&dev->gadget.ep_list);	/* ep_list */
 	dev->gadget.speed = USB_SPEED_UNKNOWN;	/* speed */
-	dev->gadget.max_speed = USB_SPEED_HIGH;	/* support dual speed */
+	dev->gadget.is_dualspeed = 1;		/* support dual speed */
+#ifdef	OTG_TRANSCEIVER
+	dev->gadget.is_otg = 1;			/* support otg mode */
+#endif
 
 	/* the "gadget" abstracts/virtualizes the controller */
 	dev_set_name(&dev->gadget.dev, "gadget");
@@ -3174,8 +3156,10 @@ static int langwell_udc_probe(struct pci_dev *pdev,
 	/* controller endpoints reinit */
 	eps_reinit(dev);
 
+#ifndef	OTG_TRANSCEIVER
 	/* reset ep0 dQH and endptctrl */
 	ep0_reset(dev);
+#endif
 
 	/* create dTD dma_pool resource */
 	dev->dtd_pool = dma_pool_create("langwell_dtd",
@@ -3190,26 +3174,22 @@ static int langwell_udc_probe(struct pci_dev *pdev,
 	}
 
 	/* done */
-	dev_info(&dev->pdev->dev, "%s\n", driver_desc);
-	dev_info(&dev->pdev->dev, "irq %d, pci mem %p\n", pdev->irq, base);
-	dev_info(&dev->pdev->dev, "Driver version: " DRIVER_VERSION "\n");
-	dev_info(&dev->pdev->dev, "Support (max) %d endpoints\n", dev->ep_max);
-	dev_info(&dev->pdev->dev, "Device interface version: 0x%04x\n",
-			dev->dciversion);
-	dev_info(&dev->pdev->dev, "Controller mode: %s\n",
-			dev->devcap ? "Device" : "Host");
-	dev_info(&dev->pdev->dev, "Support USB LPM: %s\n",
-			dev->lpm ? "Yes" : "No");
+	INFO(dev, "%s\n", driver_desc);
+	INFO(dev, "irq %d, pci mem %p\n", pdev->irq, base);
+	INFO(dev, "Driver version: " DRIVER_VERSION "\n");
+	INFO(dev, "Support (max) %d endpoints\n", dev->ep_max);
+	INFO(dev, "Device interface version: 0x%04x\n", dev->dciversion);
+	INFO(dev, "Controller mode: %s\n", dev->devcap ? "Device" : "Host");
+	INFO(dev, "Support USB LPM: %s\n", dev->lpm ? "Yes" : "No");
 
-	dev_vdbg(&dev->pdev->dev,
-			"After langwell_udc_probe(), print all registers:\n");
+	VDBG(dev, "After langwell_udc_probe(), print all registers:\n");
+#ifdef	VERBOSE
 	print_all_registers(dev);
+#endif
+
+	the_controller = dev;
 
 	retval = device_register(&dev->gadget.dev);
-	if (retval)
-		goto error;
-
-	retval = usb_add_gadget_udc(&pdev->dev, &dev->gadget);
 	if (retval)
 		goto error;
 
@@ -3217,18 +3197,12 @@ static int langwell_udc_probe(struct pci_dev *pdev,
 	if (retval)
 		goto error;
 
-	retval = device_create_file(&pdev->dev, &dev_attr_remote_wakeup);
-	if (retval)
-		goto error_attr1;
-
-	dev_vdbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	VDBG(dev, "<--- %s()\n", __func__);
 	return 0;
 
-error_attr1:
-	device_remove_file(&pdev->dev, &dev_attr_langwell_udc);
 error:
 	if (dev) {
-		dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+		DBG(dev, "<--- %s()\n", __func__);
 		langwell_udc_remove(pdev);
 	}
 
@@ -3239,47 +3213,33 @@ error:
 /* device controller suspend */
 static int langwell_udc_suspend(struct pci_dev *pdev, pm_message_t state)
 {
-	struct langwell_udc	*dev = pci_get_drvdata(pdev);
+	struct langwell_udc	*dev = the_controller;
+	u32			devlc;
 
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	DBG(dev, "---> %s()\n", __func__);
 
-	usb_del_gadget_udc(&dev->gadget);
 	/* disable interrupt and set controller to stop state */
 	langwell_udc_stop(dev);
 
-	/* disable IRQ handler */
+	/* diable IRQ handler */
 	if (dev->got_irq)
 		free_irq(pdev->irq, dev);
 	dev->got_irq = 0;
 
+
 	/* save PCI state */
 	pci_save_state(pdev);
-
-	spin_lock_irq(&dev->lock);
-	/* stop all usb activities */
-	stop_activity(dev);
-	spin_unlock_irq(&dev->lock);
-
-	/* free dTD dma_pool and dQH */
-	if (dev->dtd_pool)
-		dma_pool_destroy(dev->dtd_pool);
-
-	if (dev->ep_dqh)
-		dma_free_coherent(&pdev->dev, dev->ep_dqh_size,
-			dev->ep_dqh, dev->ep_dqh_dma);
-
-	/* release SRAM caching */
-	if (dev->has_sram && dev->got_sram)
-		sram_deinit(dev);
 
 	/* set device power state */
 	pci_set_power_state(pdev, PCI_D3hot);
 
 	/* enter PHY low power suspend */
-	if (dev->pdev->device != 0x0829)
-		langwell_phy_low_power(dev, 1);
+	devlc = readl(&dev->op_regs->devlc);
+	VDBG(dev, "devlc = 0x%08x\n", devlc);
+	devlc |= LPM_PHCD;
+	writel(devlc, &dev->op_regs->devlc);
 
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	DBG(dev, "<--- %s()\n", __func__);
 	return 0;
 }
 
@@ -3287,59 +3247,28 @@ static int langwell_udc_suspend(struct pci_dev *pdev, pm_message_t state)
 /* device controller resume */
 static int langwell_udc_resume(struct pci_dev *pdev)
 {
-	struct langwell_udc	*dev = pci_get_drvdata(pdev);
-	size_t			size;
+	struct langwell_udc	*dev = the_controller;
+	u32			devlc;
 
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	DBG(dev, "---> %s()\n", __func__);
 
 	/* exit PHY low power suspend */
-	if (dev->pdev->device != 0x0829)
-		langwell_phy_low_power(dev, 0);
+	devlc = readl(&dev->op_regs->devlc);
+	VDBG(dev, "devlc = 0x%08x\n", devlc);
+	devlc &= ~LPM_PHCD;
+	writel(devlc, &dev->op_regs->devlc);
 
 	/* set device D0 power state */
 	pci_set_power_state(pdev, PCI_D0);
-
-	/* enable SRAM caching if detected */
-	if (dev->has_sram && !dev->got_sram)
-		sram_init(dev);
-
-	/* allocate device dQH memory */
-	size = dev->ep_max * sizeof(struct langwell_dqh);
-	dev_vdbg(&dev->pdev->dev, "orig size = %zd\n", size);
-	if (size < DQH_ALIGNMENT)
-		size = DQH_ALIGNMENT;
-	else if ((size % DQH_ALIGNMENT) != 0) {
-		size += DQH_ALIGNMENT + 1;
-		size &= ~(DQH_ALIGNMENT - 1);
-	}
-	dev->ep_dqh = dma_alloc_coherent(&pdev->dev, size,
-					&dev->ep_dqh_dma, GFP_KERNEL);
-	if (!dev->ep_dqh) {
-		dev_err(&dev->pdev->dev, "allocate dQH memory failed\n");
-		return -ENOMEM;
-	}
-	dev->ep_dqh_size = size;
-	dev_vdbg(&dev->pdev->dev, "ep_dqh_size = %zd\n", dev->ep_dqh_size);
-
-	/* create dTD dma_pool resource */
-	dev->dtd_pool = dma_pool_create("langwell_dtd",
-			&dev->pdev->dev,
-			sizeof(struct langwell_dtd),
-			DTD_ALIGNMENT,
-			DMA_BOUNDARY);
-
-	if (!dev->dtd_pool)
-		return -ENOMEM;
 
 	/* restore PCI state */
 	pci_restore_state(pdev);
 
 	/* enable IRQ handler */
-	if (request_irq(pdev->irq, langwell_irq, IRQF_SHARED,
-				driver_name, dev) != 0) {
-		dev_err(&dev->pdev->dev, "request interrupt %d failed\n",
-				pdev->irq);
-		return -EBUSY;
+	if (request_irq(pdev->irq, langwell_irq, IRQF_SHARED, driver_name, dev)
+			!= 0) {
+		ERROR(dev, "request interrupt %d failed\n", pdev->irq);
+		return -1;
 	}
 	dev->got_irq = 1;
 
@@ -3361,7 +3290,7 @@ static int langwell_udc_resume(struct pci_dev *pdev)
 	dev->ep0_state = WAIT_FOR_SETUP;
 	dev->ep0_dir = USB_DIR_OUT;
 
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	DBG(dev, "<--- %s()\n", __func__);
 	return 0;
 }
 
@@ -3369,18 +3298,18 @@ static int langwell_udc_resume(struct pci_dev *pdev)
 /* pci driver shutdown */
 static void langwell_udc_shutdown(struct pci_dev *pdev)
 {
-	struct langwell_udc	*dev = pci_get_drvdata(pdev);
+	struct langwell_udc	*dev = the_controller;
 	u32			usbmode;
 
-	dev_dbg(&dev->pdev->dev, "---> %s()\n", __func__);
+	DBG(dev, "---> %s()\n", __func__);
 
 	/* reset controller mode to IDLE */
 	usbmode = readl(&dev->op_regs->usbmode);
-	dev_dbg(&dev->pdev->dev, "usbmode = 0x%08x\n", usbmode);
+	DBG(dev, "usbmode = 0x%08x\n", usbmode);
 	usbmode &= (~3 | MODE_IDLE);
 	writel(usbmode, &dev->op_regs->usbmode);
 
-	dev_dbg(&dev->pdev->dev, "<--- %s()\n", __func__);
+	DBG(dev, "<--- %s()\n", __func__);
 }
 
 /*-------------------------------------------------------------------------*/
@@ -3394,6 +3323,7 @@ static const struct pci_device_id pci_ids[] = { {
 	.subdevice =	PCI_ANY_ID,
 }, { /* end: all zeroes */ }
 };
+
 
 MODULE_DEVICE_TABLE(pci, pci_ids);
 
@@ -3413,22 +3343,30 @@ static struct pci_driver langwell_pci_driver = {
 };
 
 
+MODULE_DESCRIPTION(DRIVER_DESC);
+MODULE_AUTHOR("Xiaochen Shen <xiaochen.shen@intel.com>");
+MODULE_VERSION(DRIVER_VERSION);
+MODULE_LICENSE("GPL");
+
+
 static int __init init(void)
 {
+#ifdef	OTG_TRANSCEIVER
+	return langwell_register_peripheral(&langwell_pci_driver);
+#else
 	return pci_register_driver(&langwell_pci_driver);
+#endif
 }
 module_init(init);
 
 
 static void __exit cleanup(void)
 {
+#ifdef	OTG_TRANSCEIVER
+	return langwell_unregister_peripheral(&langwell_pci_driver);
+#else
 	pci_unregister_driver(&langwell_pci_driver);
+#endif
 }
 module_exit(cleanup);
-
-
-MODULE_DESCRIPTION(DRIVER_DESC);
-MODULE_AUTHOR("Xiaochen Shen <xiaochen.shen@intel.com>");
-MODULE_VERSION(DRIVER_VERSION);
-MODULE_LICENSE("GPL");
 

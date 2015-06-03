@@ -12,7 +12,7 @@
  *	Software Developer's Manual
  *	Order Number 253668 or free download from:
  *
- *	http://developer.intel.com/Assets/PDF/manual/253668.pdf	
+ *	http://developer.intel.com/design/pentium4/manuals/253668.htm
  *
  *	For more information, go to http://www.urbanmyth.org/microcode
  *
@@ -70,9 +70,6 @@
  *		Fix sigmatch() macro to handle old CPUs with pf == 0.
  *		Thanks to Stuart Swales for pointing out this bug.
  */
-
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/firmware.h>
 #include <linux/uaccess.h>
 #include <linux/kernel.h>
@@ -147,6 +144,13 @@ static int collect_cpu_info(int cpu_num, struct cpu_signature *csig)
 
 	memset(csig, 0, sizeof(*csig));
 
+	if (c->x86_vendor != X86_VENDOR_INTEL || c->x86 < 6 ||
+	    cpu_has(c, X86_FEATURE_IA64)) {
+		printk(KERN_ERR "microcode: CPU%d not a capable Intel "
+			"processor\n", cpu_num);
+		return -1;
+	}
+
 	csig->sig = cpuid_eax(0x00000001);
 
 	if ((c->x86_model >= 5) || (c->x86 > 6)) {
@@ -155,9 +159,14 @@ static int collect_cpu_info(int cpu_num, struct cpu_signature *csig)
 		csig->pf = 1 << ((val[1] >> 18) & 7);
 	}
 
-	csig->rev = c->microcode;
-	pr_info("CPU%d sig=0x%x, pf=0x%x, revision=0x%x\n",
-		cpu_num, csig->sig, csig->pf, csig->rev);
+	wrmsr(MSR_IA32_UCODE_REV, 0, 0);
+	/* see notes above for revision 1.07.  Apparent chip bug */
+	sync_core();
+	/* get the current revision from MSR 0x8B */
+	rdmsr(MSR_IA32_UCODE_REV, val[0], csig->rev);
+
+	printk(KERN_INFO "microcode: CPU%d sig=0x%x, pf=0x%x, revision=0x%x\n",
+			cpu_num, csig->sig, csig->pf, csig->rev);
 
 	return 0;
 }
@@ -185,24 +194,28 @@ static int microcode_sanity_check(void *mc)
 	data_size = get_datasize(mc_header);
 
 	if (data_size + MC_HEADER_SIZE > total_size) {
-		pr_err("error! Bad data size in microcode data file\n");
+		printk(KERN_ERR "microcode: error! "
+				"Bad data size in microcode data file\n");
 		return -EINVAL;
 	}
 
 	if (mc_header->ldrver != 1 || mc_header->hdrver != 1) {
-		pr_err("error! Unknown microcode update format\n");
+		printk(KERN_ERR "microcode: error! "
+				"Unknown microcode update format\n");
 		return -EINVAL;
 	}
 	ext_table_size = total_size - (MC_HEADER_SIZE + data_size);
 	if (ext_table_size) {
 		if ((ext_table_size < EXT_HEADER_SIZE)
 		 || ((ext_table_size - EXT_HEADER_SIZE) % EXT_SIGNATURE_SIZE)) {
-			pr_err("error! Small exttable size in microcode data file\n");
+			printk(KERN_ERR "microcode: error! "
+				"Small exttable size in microcode data file\n");
 			return -EINVAL;
 		}
 		ext_header = mc + MC_HEADER_SIZE + data_size;
 		if (ext_table_size != exttable_size(ext_header)) {
-			pr_err("error! Bad exttable size in microcode data file\n");
+			printk(KERN_ERR "microcode: error! "
+				"Bad exttable size in microcode data file\n");
 			return -EFAULT;
 		}
 		ext_sigcount = ext_header->count;
@@ -217,7 +230,8 @@ static int microcode_sanity_check(void *mc)
 		while (i--)
 			ext_table_sum += ext_tablep[i];
 		if (ext_table_sum) {
-			pr_warning("aborting, bad extended signature table checksum\n");
+			printk(KERN_WARNING "microcode: aborting, "
+				"bad extended signature table checksum\n");
 			return -EINVAL;
 		}
 	}
@@ -228,7 +242,7 @@ static int microcode_sanity_check(void *mc)
 	while (i--)
 		orig_sum += ((int *)mc)[i];
 	if (orig_sum) {
-		pr_err("aborting, bad checksum\n");
+		printk(KERN_ERR "microcode: aborting, bad checksum\n");
 		return -EINVAL;
 	}
 	if (!ext_table_size)
@@ -241,7 +255,7 @@ static int microcode_sanity_check(void *mc)
 			- (mc_header->sig + mc_header->pf + mc_header->cksum)
 			+ (ext_sig->sig + ext_sig->pf + ext_sig->cksum);
 		if (sum) {
-			pr_err("aborting, bad checksum\n");
+			printk(KERN_ERR "microcode: aborting, bad checksum\n");
 			return -EINVAL;
 		}
 	}
@@ -288,9 +302,9 @@ static int apply_microcode(int cpu)
 	struct microcode_intel *mc_intel;
 	struct ucode_cpu_info *uci;
 	unsigned int val[2];
-	int cpu_num = raw_smp_processor_id();
-	struct cpuinfo_x86 *c = &cpu_data(cpu_num);
+	int cpu_num;
 
+	cpu_num = raw_smp_processor_id();
 	uci = ucode_cpu_info + cpu;
 	mc_intel = uci->mc;
 
@@ -306,25 +320,26 @@ static int apply_microcode(int cpu)
 	      (unsigned long) mc_intel->bits >> 16 >> 16);
 	wrmsr(MSR_IA32_UCODE_REV, 0, 0);
 
-	/* As documented in the SDM: Do a CPUID 1 here */
+	/* see notes above for revision 1.07.  Apparent chip bug */
 	sync_core();
 
 	/* get the current revision from MSR 0x8B */
 	rdmsr(MSR_IA32_UCODE_REV, val[0], val[1]);
 
 	if (val[1] != mc_intel->hdr.rev) {
-		pr_err("CPU%d update to revision 0x%x failed\n",
-		       cpu_num, mc_intel->hdr.rev);
+		printk(KERN_ERR "microcode: CPU%d update "
+				"to revision 0x%x failed\n",
+			cpu_num, mc_intel->hdr.rev);
 		return -1;
 	}
-	pr_info("CPU%d updated to revision 0x%x, date = %04x-%02x-%02x\n",
+	printk(KERN_INFO "microcode: CPU%d updated to revision "
+			 "0x%x, date = %04x-%02x-%02x \n",
 		cpu_num, val[1],
 		mc_intel->hdr.date & 0xffff,
 		mc_intel->hdr.date >> 24,
 		(mc_intel->hdr.date >> 16) & 0xff);
 
 	uci->cpu_sig.rev = val[1];
-	c->microcode = val[1];
 
 	return 0;
 }
@@ -333,11 +348,10 @@ static enum ucode_state generic_load_microcode(int cpu, void *data, size_t size,
 				int (*get_ucode_data)(void *, const void *, size_t))
 {
 	struct ucode_cpu_info *uci = ucode_cpu_info + cpu;
-	u8 *ucode_ptr = data, *new_mc = NULL, *mc = NULL;
+	u8 *ucode_ptr = data, *new_mc = NULL, *mc;
 	int new_rev = uci->cpu_sig.rev;
 	unsigned int leftover = size;
 	enum ucode_state state = UCODE_OK;
-	unsigned int curr_mc_size = 0;
 
 	while (leftover) {
 		struct microcode_header_intel mc_header;
@@ -348,39 +362,36 @@ static enum ucode_state generic_load_microcode(int cpu, void *data, size_t size,
 
 		mc_size = get_totalsize(&mc_header);
 		if (!mc_size || mc_size > leftover) {
-			pr_err("error! Bad data in microcode data file\n");
+			printk(KERN_ERR "microcode: error!"
+					"Bad data in microcode data file\n");
 			break;
 		}
 
-		/* For performance reasons, reuse mc area when possible */
-		if (!mc || mc_size > curr_mc_size) {
-			vfree(mc);
-			mc = vmalloc(mc_size);
-			if (!mc)
-				break;
-			curr_mc_size = mc_size;
-		}
+		mc = vmalloc(mc_size);
+		if (!mc)
+			break;
 
 		if (get_ucode_data(mc, ucode_ptr, mc_size) ||
 		    microcode_sanity_check(mc) < 0) {
+			vfree(mc);
 			break;
 		}
 
 		if (get_matching_microcode(&uci->cpu_sig, mc, new_rev)) {
-			vfree(new_mc);
+			if (new_mc)
+				vfree(new_mc);
 			new_rev = mc_header.rev;
 			new_mc  = mc;
-			mc = NULL;	/* trigger new vmalloc */
-		}
+		} else
+			vfree(mc);
 
 		ucode_ptr += mc_size;
 		leftover  -= mc_size;
 	}
 
-	vfree(mc);
-
 	if (leftover) {
-		vfree(new_mc);
+		if (new_mc)
+			vfree(new_mc);
 		state = UCODE_ERROR;
 		goto out;
 	}
@@ -390,11 +401,13 @@ static enum ucode_state generic_load_microcode(int cpu, void *data, size_t size,
 		goto out;
 	}
 
-	vfree(uci->mc);
+	if (uci->mc)
+		vfree(uci->mc);
 	uci->mc = (struct microcode_intel *)new_mc;
 
-	pr_debug("CPU%d found a matching microcode update with version 0x%x (current=0x%x)\n",
-		 cpu, new_rev, uci->cpu_sig.rev);
+	pr_debug("microcode: CPU%d found a matching microcode update with"
+		 " version 0x%x (current=0x%x)\n",
+			cpu, new_rev, uci->cpu_sig.rev);
 out:
 	return state;
 }
@@ -416,7 +429,7 @@ static enum ucode_state request_microcode_fw(int cpu, struct device *device)
 		c->x86, c->x86_model, c->x86_mask);
 
 	if (request_firmware(&firmware, name, device)) {
-		pr_debug("data file %s load failed\n", name);
+		pr_debug("microcode: data file %s load failed\n", name);
 		return UCODE_NFOUND;
 	}
 
@@ -457,14 +470,6 @@ static struct microcode_ops microcode_intel_ops = {
 
 struct microcode_ops * __init init_intel_microcode(void)
 {
-	struct cpuinfo_x86 *c = &cpu_data(0);
-
-	if (c->x86_vendor != X86_VENDOR_INTEL || c->x86 < 6 ||
-	    cpu_has(c, X86_FEATURE_IA64)) {
-		pr_err("Intel CPU family 0x%x not supported\n", c->x86);
-		return NULL;
-	}
-
 	return &microcode_intel_ops;
 }
 

@@ -23,7 +23,6 @@
  */
 #include <linux/module.h>
 #include <linux/video_output.h>
-#include <linux/slab.h>
 #include <linux/err.h>
 #include <linux/ctype.h>
 
@@ -51,7 +50,7 @@ static ssize_t video_output_store_state(struct device *dev,
 	int request_state = simple_strtoul(buf,&endp,0);
 	size_t size = endp - buf;
 
-	if (isspace(*endp))
+	if (*endp && isspace(*endp))
 		size++;
 	if (size != count)
 		return -EINVAL;

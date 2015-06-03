@@ -6,8 +6,8 @@
 #include <linux/kernel.h>
 #include <linux/string.h>
 #include <linux/init.h>
-#include <linux/export.h>
-#include <linux/memblock.h>
+#include <linux/module.h>
+#include <linux/lmb.h>
 
 #include <asm/sections.h>
 #include <asm/prom.h>
@@ -99,7 +99,7 @@ void __init btext_prepare_BAT(void)
 
 /* This function can be used to enable the early boot text when doing
  * OF booting or within bootx init. It must be followed by a btext_unmap()
- * call before the logical address becomes unusable
+ * call before the logical address becomes unuseable
  */
 void __init btext_setup_display(int width, int height, int depth, int pitch,
 				unsigned long address)

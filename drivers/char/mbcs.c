@@ -25,9 +25,10 @@
 #include <linux/mm.h>
 #include <linux/uio.h>
 #include <linux/mutex.h>
-#include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <asm/io.h>
 #include <asm/uaccess.h>
+#include <asm/system.h>
 #include <asm/pgtable.h>
 #include <asm/sn/addrs.h>
 #include <asm/sn/intr.h>
@@ -40,7 +41,6 @@
 #else
 #define DBG(fmt...)
 #endif
-static DEFINE_MUTEX(mbcs_mutex);
 static int mbcs_major;
 
 static LIST_HEAD(soft_list);
@@ -384,19 +384,19 @@ static int mbcs_open(struct inode *ip, struct file *fp)
 	struct mbcs_soft *soft;
 	int minor;
 
-	mutex_lock(&mbcs_mutex);
+	lock_kernel();
 	minor = iminor(ip);
 
 	/* Nothing protects access to this list... */
 	list_for_each_entry(soft, &soft_list, list) {
 		if (soft->nasid == minor) {
 			fp->private_data = soft->cxdev;
-			mutex_unlock(&mbcs_mutex);
+			unlock_kernel();
 			return 0;
 		}
 	}
 
-	mutex_unlock(&mbcs_mutex);
+	unlock_kernel();
 	return -ENODEV;
 }
 

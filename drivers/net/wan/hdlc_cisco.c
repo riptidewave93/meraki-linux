@@ -20,6 +20,7 @@
 #include <linux/poll.h>
 #include <linux/rtnetlink.h>
 #include <linux/skbuff.h>
+#include <linux/slab.h>
 
 #undef DEBUG_HARD_HEADER
 
@@ -36,7 +37,7 @@ struct hdlc_header {
 	u8 address;
 	u8 control;
 	__be16 protocol;
-}__packed;
+}__attribute__ ((packed));
 
 
 struct cisco_packet {
@@ -45,7 +46,7 @@ struct cisco_packet {
 	__be32 par2;
 	__be16 rel;		/* reliability */
 	__be32 time;
-}__packed;
+}__attribute__ ((packed));
 #define	CISCO_PACKET_LEN	18
 #define	CISCO_BIG_PACKET_LEN	20
 
@@ -103,7 +104,9 @@ static void cisco_keepalive_send(struct net_device *dev, u32 type,
 	skb = dev_alloc_skb(sizeof(struct hdlc_header) +
 			    sizeof(struct cisco_packet));
 	if (!skb) {
-		netdev_warn(dev, "Memory squeeze on cisco_keepalive_send()\n");
+		printk(KERN_WARNING
+		       "%s: Memory squeeze on cisco_keepalive_send()\n",
+		       dev->name);
 		return;
 	}
 	skb_reserve(skb, 4);
@@ -138,7 +141,7 @@ static __be16 cisco_type_trans(struct sk_buff *skb, struct net_device *dev)
 	    data->address != CISCO_UNICAST)
 		return cpu_to_be16(ETH_P_HDLC);
 
-	switch (data->protocol) {
+	switch(data->protocol) {
 	case cpu_to_be16(ETH_P_IP):
 	case cpu_to_be16(ETH_P_IPX):
 	case cpu_to_be16(ETH_P_IPV6):
@@ -179,18 +182,17 @@ static int cisco_rx(struct sk_buff *skb)
 		     CISCO_PACKET_LEN) &&
 		    (skb->len != sizeof(struct hdlc_header) +
 		     CISCO_BIG_PACKET_LEN)) {
-			netdev_info(dev, "Invalid length of Cisco control packet (%d bytes)\n",
-				    skb->len);
+			printk(KERN_INFO "%s: Invalid length of Cisco control"
+			       " packet (%d bytes)\n", dev->name, skb->len);
 			goto rx_error;
 		}
 
 		cisco_data = (struct cisco_packet*)(skb->data + sizeof
 						    (struct hdlc_header));
 
-		switch (ntohl (cisco_data->type)) {
+		switch(ntohl (cisco_data->type)) {
 		case CISCO_ADDR_REQ: /* Stolen from syncppp.c :-) */
-			rcu_read_lock();
-			in_dev = __in_dev_get_rcu(dev);
+			in_dev = dev->ip_ptr;
 			addr = 0;
 			mask = ~cpu_to_be32(0); /* is the mask correct? */
 
@@ -210,12 +212,12 @@ static int cisco_rx(struct sk_buff *skb)
 				cisco_keepalive_send(dev, CISCO_ADDR_REPLY,
 						     addr, mask);
 			}
-			rcu_read_unlock();
 			dev_kfree_skb_any(skb);
 			return NET_RX_SUCCESS;
 
 		case CISCO_ADDR_REPLY:
-			netdev_info(dev, "Unexpected Cisco IP address reply\n");
+			printk(KERN_INFO "%s: Unexpected Cisco IP address "
+			       "reply\n", dev->name);
 			goto rx_error;
 
 		case CISCO_KEEPALIVE_REQ:
@@ -232,8 +234,9 @@ static int cisco_rx(struct sk_buff *skb)
 					min = sec / 60; sec -= min * 60;
 					hrs = min / 60; min -= hrs * 60;
 					days = hrs / 24; hrs -= days * 24;
-					netdev_info(dev, "Link up (peer uptime %ud%uh%um%us)\n",
-						    days, hrs, min, sec);
+					printk(KERN_INFO "%s: Link up (peer "
+					       "uptime %ud%uh%um%us)\n",
+					       dev->name, days, hrs, min, sec);
 					netif_dormant_off(dev);
 					st->up = 1;
 				}
@@ -242,10 +245,11 @@ static int cisco_rx(struct sk_buff *skb)
 
 			dev_kfree_skb_any(skb);
 			return NET_RX_SUCCESS;
-		} /* switch (keepalive type) */
-	} /* switch (protocol) */
+		} /* switch(keepalive type) */
+	} /* switch(protocol) */
 
-	netdev_info(dev, "Unsupported protocol %x\n", ntohs(data->protocol));
+	printk(KERN_INFO "%s: Unsupported protocol %x\n", dev->name,
+	       ntohs(data->protocol));
 	dev_kfree_skb_any(skb);
 	return NET_RX_DROP;
 
@@ -267,7 +271,7 @@ static void cisco_timer(unsigned long arg)
 	if (st->up &&
 	    time_after(jiffies, st->last_poll + st->settings.timeout * HZ)) {
 		st->up = 0;
-		netdev_info(dev, "Link down\n");
+		printk(KERN_INFO "%s: Link down\n", dev->name);
 		netif_dormant_on(dev);
 	}
 

@@ -29,6 +29,9 @@
 #define BRIDGE_CAUSE		(BRIDGE_VIRT_BASE | 0x0110)
 #define WDT_INT_REQ		0x0008
 
+#define BRIDGE_MASK		(BRIDGE_VIRT_BASE | 0x0114)
+#define BRIDGE_INT_TIMER0	0x0002
+#define BRIDGE_INT_TIMER1	0x0004
 #define BRIDGE_INT_TIMER1_CLR	(~0x0004)
 
 #define IRQ_VIRT_BASE		(BRIDGE_VIRT_BASE | 0x0200)
@@ -38,7 +41,6 @@
 #define IRQ_MASK_HIGH_OFF	0x0014
 
 #define TIMER_VIRT_BASE		(BRIDGE_VIRT_BASE | 0x0300)
-#define TIMER_PHYS_BASE		(BRIDGE_PHYS_BASE | 0x0300)
 
 #define L2_CONFIG_REG		(BRIDGE_VIRT_BASE | 0x0128)
 #define L2_WRITETHROUGH		0x00000010
@@ -57,9 +59,8 @@
 #define CGC_SATA1		(1 << 15)
 #define CGC_XOR1		(1 << 16)
 #define CGC_CRYPTO		(1 << 17)
-#define CGC_PEX1		(1 << 18)
 #define CGC_GE1			(1 << 19)
 #define CGC_TDM			(1 << 20)
-#define CGC_RESERVED		(0x6 << 21)
+#define CGC_RESERVED		((1 << 18) | (0x6 << 21))
 
 #endif

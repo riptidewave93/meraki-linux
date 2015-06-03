@@ -48,7 +48,7 @@
 #include <linux/kernel.h>
 #include <linux/module.h>	/* support for loadable modules */
 #include <linux/slab.h>		/* kmalloc(), kfree() */
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/mm.h>
 #include <linux/string.h>	/* inline mem*, str* functions */
 
@@ -58,6 +58,8 @@
 #include <linux/vmalloc.h>	/* vmalloc, vfree */
 #include <asm/uaccess.h>        /* copy_to/from_user */
 #include <linux/init.h>         /* __initfunc et al. */
+
+#define KMEM_SAFETYZONE 8
 
 #define DEV_TO_SLAVE(dev)	(*((struct net_device **)netdev_priv(dev)))
 
@@ -69,7 +71,6 @@
  *	WAN device IOCTL handlers
  */
 
-static DEFINE_MUTEX(wanrouter_mutex);
 static int wanrouter_device_setup(struct wan_device *wandev,
 				  wandev_conf_t __user *u_conf);
 static int wanrouter_device_stat(struct wan_device *wandev,
@@ -375,7 +376,7 @@ long wanrouter_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 	if (wandev->magic != ROUTER_MAGIC)
 		return -EINVAL;
 
-	mutex_lock(&wanrouter_mutex);
+	lock_kernel();
 	switch (cmd) {
 	case ROUTER_SETUP:
 		err = wanrouter_device_setup(wandev, data);
@@ -407,7 +408,7 @@ long wanrouter_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			err = wandev->ioctl(wandev, cmd, arg);
 		else err = -EINVAL;
 	}
-	mutex_unlock(&wanrouter_mutex);
+	unlock_kernel();
 	return err;
 }
 
@@ -469,7 +470,7 @@ static int wanrouter_device_setup(struct wan_device *wandev,
 		data = vmalloc(conf->data_size);
 		if (!data) {
 			printk(KERN_INFO
-				"%s: ERROR, Failed allocate kernel memory !\n",
+				"%s: ERROR, Faild allocate kernel memory !\n",
 				wandev->name);
 			kfree(conf);
 			return -ENOBUFS;
@@ -479,7 +480,7 @@ static int wanrouter_device_setup(struct wan_device *wandev,
 			err = wandev->setup(wandev, conf);
 		} else {
 			printk(KERN_INFO
-			     "%s: ERROR, Failed to copy from user data !\n",
+			     "%s: ERROR, Faild to copy from user data !\n",
 			       wandev->name);
 			err = -EFAULT;
 		}

@@ -294,10 +294,7 @@ static int pvr2_encoder_cmd(void *ctxt,
 			pvr2_trace(
 				PVR2_TRACE_ERROR_LEGS,
 				"Giving up on command."
-				"  This is normally recovered via a firmware"
-				" reload and re-initialization; concern"
-				" is only warranted if this happens repeatedly"
-				" and rapidly.");
+				"  This is normally recovered by the driver.");
 			break;
 		}
 		wrData[0] = 0x7;

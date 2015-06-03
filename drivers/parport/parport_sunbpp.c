@@ -286,7 +286,7 @@ static struct parport_operations parport_sunbpp_ops =
 	.owner		= THIS_MODULE,
 };
 
-static int __devinit bpp_probe(struct platform_device *op)
+static int __devinit bpp_probe(struct of_device *op, const struct of_device_id *match)
 {
 	struct parport_operations *ops;
 	struct bpp_regs __iomem *regs;
@@ -295,7 +295,7 @@ static int __devinit bpp_probe(struct platform_device *op)
 	void __iomem *base;
 	struct parport *p;
 
-	irq = op->archdata.irqs[0];
+	irq = op->irqs[0];
 	base = of_ioremap(&op->resource[0], 0,
 			  resource_size(&op->resource[0]),
 			  "sunbpp");
@@ -351,7 +351,7 @@ out_unmap:
 	return err;
 }
 
-static int __devexit bpp_remove(struct platform_device *op)
+static int __devexit bpp_remove(struct of_device *op)
 {
 	struct parport *p = dev_get_drvdata(&op->dev);
 	struct parport_operations *ops = p->ops;
@@ -381,20 +381,28 @@ static const struct of_device_id bpp_match[] = {
 
 MODULE_DEVICE_TABLE(of, bpp_match);
 
-static struct platform_driver bpp_sbus_driver = {
-	.driver = {
-		.name = "bpp",
-		.owner = THIS_MODULE,
-		.of_match_table = bpp_match,
-	},
+static struct of_platform_driver bpp_sbus_driver = {
+	.name		= "bpp",
+	.match_table	= bpp_match,
 	.probe		= bpp_probe,
 	.remove		= __devexit_p(bpp_remove),
 };
 
-module_platform_driver(bpp_sbus_driver);
+static int __init parport_sunbpp_init(void)
+{
+	return of_register_driver(&bpp_sbus_driver, &of_bus_type);
+}
+
+static void __exit parport_sunbpp_exit(void)
+{
+	of_unregister_driver(&bpp_sbus_driver);
+}
 
 MODULE_AUTHOR("Derrick J Brashear");
 MODULE_DESCRIPTION("Parport Driver for Sparc bidirectional Port");
 MODULE_SUPPORTED_DEVICE("Sparc Bidirectional Parallel Port");
 MODULE_VERSION("2.0");
 MODULE_LICENSE("GPL");
+
+module_init(parport_sunbpp_init)
+module_exit(parport_sunbpp_exit)

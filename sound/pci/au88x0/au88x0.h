@@ -26,7 +26,7 @@
 #include <sound/mpu401.h>
 #include <sound/hwdep.h>
 #include <sound/ac97_codec.h>
-#include <sound/tlv.h>
+
 #endif
 
 #ifndef CHIP_AU8820
@@ -104,16 +104,7 @@
 #define MIX_PLAYB(x) (vortex->mixplayb[x])
 #define MIX_SPDIF(x) (vortex->mixspdif[x])
 
-#define NR_WTPB 0x20		/* WT channels per each bank. */
-#define NR_PCM	0x10
-
-struct pcm_vol {
-	struct snd_kcontrol *kctl;
-	int active;
-	int dma;
-	int mixin[4];
-	int vol[4];
-};
+#define NR_WTPB 0x20		/* WT channels per eahc bank. */
 
 /* Structs */
 typedef struct {
@@ -176,7 +167,6 @@ struct snd_vortex {
 	/* Xtalk canceler */
 	int xt_mode;		/* 1: speakers, 0:headphones. */
 #endif
-	struct pcm_vol pcm_vol[NR_PCM];
 
 	int isquad;		/* cache of extended ID codec flag. */
 
@@ -221,7 +211,7 @@ static void vortex_adbdma_startfifo(vortex_t * vortex, int adbdma);
 //static void vortex_adbdma_stopfifo(vortex_t *vortex, int adbdma);
 static void vortex_adbdma_pausefifo(vortex_t * vortex, int adbdma);
 static void vortex_adbdma_resumefifo(vortex_t * vortex, int adbdma);
-static inline int vortex_adbdma_getlinearpos(vortex_t * vortex, int adbdma);
+static int inline vortex_adbdma_getlinearpos(vortex_t * vortex, int adbdma);
 static void vortex_adbdma_resetup(vortex_t *vortex, int adbdma);
 
 #ifndef CHIP_AU8810
@@ -229,7 +219,7 @@ static void vortex_wtdma_startfifo(vortex_t * vortex, int wtdma);
 static void vortex_wtdma_stopfifo(vortex_t * vortex, int wtdma);
 static void vortex_wtdma_pausefifo(vortex_t * vortex, int wtdma);
 static void vortex_wtdma_resumefifo(vortex_t * vortex, int wtdma);
-static inline int vortex_wtdma_getlinearpos(vortex_t * vortex, int wtdma);
+static int inline vortex_wtdma_getlinearpos(vortex_t * vortex, int wtdma);
 #endif
 
 /* global stuff. */
@@ -248,7 +238,7 @@ static int vortex_alsafmt_aspfmt(int alsafmt);
 /* Connection  stuff. */
 static void vortex_connect_default(vortex_t * vortex, int en);
 static int vortex_adb_allocroute(vortex_t * vortex, int dma, int nr_ch,
-				 int dir, int type, int subdev);
+				 int dir, int type);
 static char vortex_adb_checkinout(vortex_t * vortex, int resmap[], int out,
 				  int restype);
 #ifndef CHIP_AU8810

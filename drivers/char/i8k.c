@@ -5,9 +5,6 @@
  *
  * Copyright (C) 2001  Massimo Dal Zotto <dz@debian.org>
  *
- * Hwmon integration:
- * Copyright (C) 2011  Jean Delvare <khali@linux-fr.org>
- *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
  * Free Software Foundation; either version 2, or (at your option) any
@@ -26,9 +23,6 @@
 #include <linux/seq_file.h>
 #include <linux/dmi.h>
 #include <linux/capability.h>
-#include <linux/mutex.h>
-#include <linux/hwmon.h>
-#include <linux/hwmon-sysfs.h>
 #include <asm/uaccess.h>
 #include <asm/io.h>
 
@@ -61,27 +55,25 @@
 
 #define I8K_TEMPERATURE_BUG	1
 
-static DEFINE_MUTEX(i8k_mutex);
 static char bios_version[4];
-static struct device *i8k_hwmon_dev;
 
 MODULE_AUTHOR("Massimo Dal Zotto (dz@debian.org)");
 MODULE_DESCRIPTION("Driver for accessing SMM BIOS on Dell laptops");
 MODULE_LICENSE("GPL");
 
-static bool force;
+static int force;
 module_param(force, bool, 0);
 MODULE_PARM_DESC(force, "Force loading without checking for supported models");
 
-static bool ignore_dmi;
+static int ignore_dmi;
 module_param(ignore_dmi, bool, 0);
 MODULE_PARM_DESC(ignore_dmi, "Continue probing hardware even if DMI data does not match");
 
-static bool restricted;
+static int restricted;
 module_param(restricted, bool, 0);
 MODULE_PARM_DESC(restricted, "Allow fan control if SYS_ADMIN capability set");
 
-static bool power_status;
+static int power_status;
 module_param(power_status, bool, 0600);
 MODULE_PARM_DESC(power_status, "Report power status in /proc/i8k");
 
@@ -90,7 +82,8 @@ module_param(fan_mult, int, 0);
 MODULE_PARM_DESC(fan_mult, "Factor to multiply fan speed with");
 
 static int i8k_open_fs(struct inode *inode, struct file *file);
-static long i8k_ioctl(struct file *, unsigned int, unsigned long);
+static int i8k_ioctl(struct inode *, struct file *, unsigned int,
+		     unsigned long);
 
 static const struct file_operations i8k_fops = {
 	.owner		= THIS_MODULE,
@@ -98,7 +91,7 @@ static const struct file_operations i8k_fops = {
 	.read		= seq_read,
 	.llseek		= seq_lseek,
 	.release	= single_release,
-	.unlocked_ioctl	= i8k_ioctl,
+	.ioctl		= i8k_ioctl,
 };
 
 struct smm_regs {
@@ -315,8 +308,8 @@ static int i8k_get_dell_signature(int req_fn)
 	return regs.eax == 1145651527 && regs.edx == 1145392204 ? 0 : -1;
 }
 
-static int
-i8k_ioctl_unlocked(struct file *fp, unsigned int cmd, unsigned long arg)
+static int i8k_ioctl(struct inode *ip, struct file *fp, unsigned int cmd,
+		     unsigned long arg)
 {
 	int val = 0;
 	int speed;
@@ -403,17 +396,6 @@ i8k_ioctl_unlocked(struct file *fp, unsigned int cmd, unsigned long arg)
 	return 0;
 }
 
-static long i8k_ioctl(struct file *fp, unsigned int cmd, unsigned long arg)
-{
-	long ret;
-
-	mutex_lock(&i8k_mutex);
-	ret = i8k_ioctl_unlocked(fp, cmd, arg);
-	mutex_unlock(&i8k_mutex);
-
-	return ret;
-}
-
 /*
  * Print the information for /proc/i8k.
  */
@@ -459,152 +441,6 @@ static int i8k_proc_show(struct seq_file *seq, void *offset)
 static int i8k_open_fs(struct inode *inode, struct file *file)
 {
 	return single_open(file, i8k_proc_show, NULL);
-}
-
-
-/*
- * Hwmon interface
- */
-
-static ssize_t i8k_hwmon_show_temp(struct device *dev,
-				   struct device_attribute *devattr,
-				   char *buf)
-{
-	int cpu_temp;
-
-	cpu_temp = i8k_get_temp(0);
-	if (cpu_temp < 0)
-		return cpu_temp;
-	return sprintf(buf, "%d\n", cpu_temp * 1000);
-}
-
-static ssize_t i8k_hwmon_show_fan(struct device *dev,
-				  struct device_attribute *devattr,
-				  char *buf)
-{
-	int index = to_sensor_dev_attr(devattr)->index;
-	int fan_speed;
-
-	fan_speed = i8k_get_fan_speed(index);
-	if (fan_speed < 0)
-		return fan_speed;
-	return sprintf(buf, "%d\n", fan_speed);
-}
-
-static ssize_t i8k_hwmon_show_label(struct device *dev,
-				    struct device_attribute *devattr,
-				    char *buf)
-{
-	static const char *labels[4] = {
-		"i8k",
-		"CPU",
-		"Left Fan",
-		"Right Fan",
-	};
-	int index = to_sensor_dev_attr(devattr)->index;
-
-	return sprintf(buf, "%s\n", labels[index]);
-}
-
-static DEVICE_ATTR(temp1_input, S_IRUGO, i8k_hwmon_show_temp, NULL);
-static SENSOR_DEVICE_ATTR(fan1_input, S_IRUGO, i8k_hwmon_show_fan, NULL,
-			  I8K_FAN_LEFT);
-static SENSOR_DEVICE_ATTR(fan2_input, S_IRUGO, i8k_hwmon_show_fan, NULL,
-			  I8K_FAN_RIGHT);
-static SENSOR_DEVICE_ATTR(name, S_IRUGO, i8k_hwmon_show_label, NULL, 0);
-static SENSOR_DEVICE_ATTR(temp1_label, S_IRUGO, i8k_hwmon_show_label, NULL, 1);
-static SENSOR_DEVICE_ATTR(fan1_label, S_IRUGO, i8k_hwmon_show_label, NULL, 2);
-static SENSOR_DEVICE_ATTR(fan2_label, S_IRUGO, i8k_hwmon_show_label, NULL, 3);
-
-static void i8k_hwmon_remove_files(struct device *dev)
-{
-	device_remove_file(dev, &dev_attr_temp1_input);
-	device_remove_file(dev, &sensor_dev_attr_fan1_input.dev_attr);
-	device_remove_file(dev, &sensor_dev_attr_fan2_input.dev_attr);
-	device_remove_file(dev, &sensor_dev_attr_temp1_label.dev_attr);
-	device_remove_file(dev, &sensor_dev_attr_fan1_label.dev_attr);
-	device_remove_file(dev, &sensor_dev_attr_fan2_label.dev_attr);
-	device_remove_file(dev, &sensor_dev_attr_name.dev_attr);
-}
-
-static int __init i8k_init_hwmon(void)
-{
-	int err;
-
-	i8k_hwmon_dev = hwmon_device_register(NULL);
-	if (IS_ERR(i8k_hwmon_dev)) {
-		err = PTR_ERR(i8k_hwmon_dev);
-		i8k_hwmon_dev = NULL;
-		printk(KERN_ERR "i8k: hwmon registration failed (%d)\n", err);
-		return err;
-	}
-
-	/* Required name attribute */
-	err = device_create_file(i8k_hwmon_dev,
-				 &sensor_dev_attr_name.dev_attr);
-	if (err)
-		goto exit_unregister;
-
-	/* CPU temperature attributes, if temperature reading is OK */
-	err = i8k_get_temp(0);
-	if (err < 0) {
-		dev_dbg(i8k_hwmon_dev,
-			"Not creating temperature attributes (%d)\n", err);
-	} else {
-		err = device_create_file(i8k_hwmon_dev, &dev_attr_temp1_input);
-		if (err)
-			goto exit_remove_files;
-		err = device_create_file(i8k_hwmon_dev,
-					 &sensor_dev_attr_temp1_label.dev_attr);
-		if (err)
-			goto exit_remove_files;
-	}
-
-	/* Left fan attributes, if left fan is present */
-	err = i8k_get_fan_status(I8K_FAN_LEFT);
-	if (err < 0) {
-		dev_dbg(i8k_hwmon_dev,
-			"Not creating %s fan attributes (%d)\n", "left", err);
-	} else {
-		err = device_create_file(i8k_hwmon_dev,
-					 &sensor_dev_attr_fan1_input.dev_attr);
-		if (err)
-			goto exit_remove_files;
-		err = device_create_file(i8k_hwmon_dev,
-					 &sensor_dev_attr_fan1_label.dev_attr);
-		if (err)
-			goto exit_remove_files;
-	}
-
-	/* Right fan attributes, if right fan is present */
-	err = i8k_get_fan_status(I8K_FAN_RIGHT);
-	if (err < 0) {
-		dev_dbg(i8k_hwmon_dev,
-			"Not creating %s fan attributes (%d)\n", "right", err);
-	} else {
-		err = device_create_file(i8k_hwmon_dev,
-					 &sensor_dev_attr_fan2_input.dev_attr);
-		if (err)
-			goto exit_remove_files;
-		err = device_create_file(i8k_hwmon_dev,
-					 &sensor_dev_attr_fan2_label.dev_attr);
-		if (err)
-			goto exit_remove_files;
-	}
-
-	return 0;
-
- exit_remove_files:
-	i8k_hwmon_remove_files(i8k_hwmon_dev);
- exit_unregister:
-	hwmon_device_unregister(i8k_hwmon_dev);
-	return err;
-}
-
-static void __exit i8k_exit_hwmon(void)
-{
-	i8k_hwmon_remove_files(i8k_hwmon_dev);
-	hwmon_device_unregister(i8k_hwmon_dev);
 }
 
 static struct dmi_system_id __initdata i8k_dmi_table[] = {
@@ -662,13 +498,6 @@ static struct dmi_system_id __initdata i8k_dmi_table[] = {
 		.matches = {
 			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
 			DMI_MATCH(DMI_PRODUCT_NAME, "Vostro"),
-		},
-	},
-	{
-		.ident = "Dell XPS421",
-		.matches = {
-			DMI_MATCH(DMI_SYS_VENDOR, "Dell Inc."),
-			DMI_MATCH(DMI_PRODUCT_NAME, "XPS L421X"),
 		},
 	},
         { }
@@ -739,7 +568,6 @@ static int __init i8k_probe(void)
 static int __init i8k_init(void)
 {
 	struct proc_dir_entry *proc_i8k;
-	int err;
 
 	/* Are we running on an supported laptop? */
 	if (i8k_probe())
@@ -750,24 +578,15 @@ static int __init i8k_init(void)
 	if (!proc_i8k)
 		return -ENOENT;
 
-	err = i8k_init_hwmon();
-	if (err)
-		goto exit_remove_proc;
-
 	printk(KERN_INFO
 	       "Dell laptop SMM driver v%s Massimo Dal Zotto (dz@debian.org)\n",
 	       I8K_VERSION);
 
 	return 0;
-
- exit_remove_proc:
-	remove_proc_entry("i8k", NULL);
-	return err;
 }
 
 static void __exit i8k_exit(void)
 {
-	i8k_exit_hwmon();
 	remove_proc_entry("i8k", NULL);
 }
 

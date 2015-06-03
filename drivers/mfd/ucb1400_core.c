@@ -8,7 +8,7 @@
  *  Copyright:	MontaVista Software, Inc.
  *
  * Spliting done by: Marek Vasut <marek.vasut@gmail.com>
- * If something doesn't work and it worked before spliting, e-mail me,
+ * If something doesnt work and it worked before spliting, e-mail me,
  * dont bother Nicolas please ;-)
  *
  * This program is free software; you can redistribute it and/or modify
@@ -22,7 +22,6 @@
 
 #include <linux/module.h>
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/ucb1400.h>
 
 unsigned int ucb1400_adc_read(struct snd_ac97 *ac97, u16 adc_channel,
@@ -52,7 +51,6 @@ static int ucb1400_core_probe(struct device *dev)
 	struct ucb1400_ts ucb_ts;
 	struct ucb1400_gpio ucb_gpio;
 	struct snd_ac97 *ac97;
-	struct ucb1400_pdata *pdata = dev->platform_data;
 
 	memset(&ucb_ts, 0, sizeof(ucb_ts));
 	memset(&ucb_gpio, 0, sizeof(ucb_gpio));
@@ -90,12 +88,6 @@ static int ucb1400_core_probe(struct device *dev)
 
 	/* TOUCHSCREEN */
 	ucb_ts.ac97 = ac97;
-
-	if (pdata != NULL && pdata->irq >= 0)
-		ucb_ts.irq = pdata->irq;
-	else
-		ucb_ts.irq = -1;
-
 	ucb->ucb1400_ts = platform_device_alloc("ucb1400_ts", -1);
 	if (!ucb->ucb1400_ts) {
 		err = -ENOMEM;
@@ -114,7 +106,7 @@ static int ucb1400_core_probe(struct device *dev)
 err3:
 	platform_device_put(ucb->ucb1400_ts);
 err2:
-	platform_device_del(ucb->ucb1400_gpio);
+	platform_device_unregister(ucb->ucb1400_gpio);
 err1:
 	platform_device_put(ucb->ucb1400_gpio);
 err0:

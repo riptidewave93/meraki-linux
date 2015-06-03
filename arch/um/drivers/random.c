@@ -7,6 +7,7 @@
  * of the GNU General Public License, incorporated herein by reference.
  */
 #include <linux/sched.h>
+#include <linux/smp_lock.h>
 #include <linux/module.h>
 #include <linux/fs.h>
 #include <linux/interrupt.h>
@@ -33,6 +34,8 @@ static DECLARE_WAIT_QUEUE_HEAD(host_read_wait);
 
 static int rng_dev_open (struct inode *inode, struct file *filp)
 {
+	cycle_kernel_lock();
+
 	/* enforce read-only access to this chrdev */
 	if ((filp->f_mode & FMODE_READ) == 0)
 		return -EINVAL;
@@ -100,7 +103,6 @@ static const struct file_operations rng_chrdev_ops = {
 	.owner		= THIS_MODULE,
 	.open		= rng_dev_open,
 	.read		= rng_dev_read,
-	.llseek		= noop_llseek,
 };
 
 /* rng_init shouldn't be called more than once at boot time */
@@ -131,7 +133,7 @@ static int __init rng_init (void)
 	random_fd = err;
 
 	err = um_request_irq(RANDOM_IRQ, random_fd, IRQ_READ, random_interrupt,
-			     IRQF_SAMPLE_RANDOM, "random",
+			     IRQF_DISABLED | IRQF_SAMPLE_RANDOM, "random",
 			     NULL);
 	if (err)
 		goto err_out_cleanup_hw;

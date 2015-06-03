@@ -1,8 +1,7 @@
 /*
  * devices.c
  * (C) Copyright 1999 Randy Dunlap.
- * (C) Copyright 1999,2000 Thomas Sailer <sailer@ife.ee.ethz.ch>.
- *     (proc file per device)
+ * (C) Copyright 1999,2000 Thomas Sailer <sailer@ife.ee.ethz.ch>. (proc file per device)
  * (C) Copyright 1999 Deti Fliegl (new USB architecture)
  *
  * This program is free software; you can redistribute it and/or modify
@@ -51,62 +50,63 @@
 
 #include <linux/fs.h>
 #include <linux/mm.h>
-#include <linux/gfp.h>
+#include <linux/slab.h>
 #include <linux/poll.h>
 #include <linux/usb.h>
+#include <linux/smp_lock.h>
 #include <linux/usbdevice_fs.h>
-#include <linux/usb/hcd.h>
 #include <linux/mutex.h>
-#include <linux/uaccess.h>
+#include <asm/uaccess.h>
 
 #include "usb.h"
+#include "hcd.h"
 
 /* Define ALLOW_SERIAL_NUMBER if you want to see the serial number of devices */
 #define ALLOW_SERIAL_NUMBER
 
-static const char format_topo[] =
+static const char *format_topo =
 /* T:  Bus=dd Lev=dd Prnt=dd Port=dd Cnt=dd Dev#=ddd Spd=dddd MxCh=dd */
 "\nT:  Bus=%2.2d Lev=%2.2d Prnt=%2.2d Port=%2.2d Cnt=%2.2d Dev#=%3d Spd=%-4s MxCh=%2d\n";
 
-static const char format_string_manufacturer[] =
+static const char *format_string_manufacturer =
 /* S:  Manufacturer=xxxx */
   "S:  Manufacturer=%.100s\n";
 
-static const char format_string_product[] =
+static const char *format_string_product =
 /* S:  Product=xxxx */
   "S:  Product=%.100s\n";
 
 #ifdef ALLOW_SERIAL_NUMBER
-static const char format_string_serialnumber[] =
+static const char *format_string_serialnumber =
 /* S:  SerialNumber=xxxx */
   "S:  SerialNumber=%.100s\n";
 #endif
 
-static const char format_bandwidth[] =
+static const char *format_bandwidth =
 /* B:  Alloc=ddd/ddd us (xx%), #Int=ddd, #Iso=ddd */
   "B:  Alloc=%3d/%3d us (%2d%%), #Int=%3d, #Iso=%3d\n";
 
-static const char format_device1[] =
+static const char *format_device1 =
 /* D:  Ver=xx.xx Cls=xx(sssss) Sub=xx Prot=xx MxPS=dd #Cfgs=dd */
   "D:  Ver=%2x.%02x Cls=%02x(%-5s) Sub=%02x Prot=%02x MxPS=%2d #Cfgs=%3d\n";
 
-static const char format_device2[] =
+static const char *format_device2 =
 /* P:  Vendor=xxxx ProdID=xxxx Rev=xx.xx */
   "P:  Vendor=%04x ProdID=%04x Rev=%2x.%02x\n";
 
-static const char format_config[] =
+static const char *format_config =
 /* C:  #Ifs=dd Cfg#=dd Atr=xx MPwr=dddmA */
   "C:%c #Ifs=%2d Cfg#=%2d Atr=%02x MxPwr=%3dmA\n";
 
-static const char format_iad[] =
+static const char *format_iad =
 /* A:  FirstIf#=dd IfCount=dd Cls=xx(sssss) Sub=xx Prot=xx */
   "A:  FirstIf#=%2d IfCount=%2d Cls=%02x(%-5s) Sub=%02x Prot=%02x\n";
 
-static const char format_iface[] =
+static const char *format_iface =
 /* I:  If#=dd Alt=dd #EPs=dd Cls=xx(sssss) Sub=xx Prot=xx Driver=xxxx*/
   "I:%c If#=%2d Alt=%2d #EPs=%2d Cls=%02x(%-5s) Sub=%02x Prot=%02x Driver=%s\n";
 
-static const char format_endpt[] =
+static const char *format_endpt =
 /* E:  Ad=xx(s) Atr=xx(ssss) MxPS=dddd Ivl=D?s */
   "E:  Ad=%02x(%c) Atr=%02x(%-4s) MxPS=%4d Ivl=%d%cs\n";
 
@@ -117,20 +117,12 @@ static const char format_endpt[] =
  * However, these will come from functions that return ptrs to each of them.
  */
 
-/*
- * Wait for an connect/disconnect event to happen. We initialize
- * the event counter with an odd number, and each event will increment
- * the event counter by two, so it will always _stay_ odd. That means
- * that it will never be zero, so "event 0" will never match a current
- * event, and thus 'poll' will always trigger as readable for the first
- * time it gets called.
- */
-static struct device_connect_event {
-	atomic_t count;
-	wait_queue_head_t wait;
-} device_event = {
-	.count = ATOMIC_INIT(1),
-	.wait = __WAIT_QUEUE_HEAD_INITIALIZER(device_event.wait)
+static DECLARE_WAIT_QUEUE_HEAD(deviceconndiscwq);
+static unsigned int conndiscevcnt;
+
+/* this struct stores the poll state for <mountpoint>/devices pollers */
+struct usb_device_status {
+	unsigned int lastev;
 };
 
 struct class_info {
@@ -138,8 +130,8 @@ struct class_info {
 	char *class_name;
 };
 
-static const struct class_info clas_info[] = {
-	/* max. 5 chars. per name string */
+static const struct class_info clas_info[] =
+{					/* max. 5 chars. per name string */
 	{USB_CLASS_PER_INTERFACE,	">ifc"},
 	{USB_CLASS_AUDIO,		"audio"},
 	{USB_CLASS_COMM,		"comm."},
@@ -164,8 +156,8 @@ static const struct class_info clas_info[] = {
 
 void usbfs_conn_disc_event(void)
 {
-	atomic_add(2, &device_event.count);
-	wake_up(&device_event.wait);
+	conndiscevcnt++;
+	wake_up(&deviceconndiscwq);
 }
 
 static const char *class_decode(const int class)
@@ -190,11 +182,9 @@ static char *usb_dump_endpoint_descriptor(int speed, char *start, char *end,
 	dir = usb_endpoint_dir_in(desc) ? 'I' : 'O';
 
 	if (speed == USB_SPEED_HIGH) {
-		switch (usb_endpoint_maxp(desc) & (0x03 << 11)) {
-		case 1 << 11:
-			bandwidth = 2; break;
-		case 2 << 11:
-			bandwidth = 3; break;
+		switch (le16_to_cpu(desc->wMaxPacketSize) & (0x03 << 11)) {
+		case 1 << 11:	bandwidth = 2; break;
+		case 2 << 11:	bandwidth = 3; break;
 		}
 	}
 
@@ -202,7 +192,7 @@ static char *usb_dump_endpoint_descriptor(int speed, char *start, char *end,
 	switch (usb_endpoint_type(desc)) {
 	case USB_ENDPOINT_XFER_CONTROL:
 		type = "Ctrl";
-		if (speed == USB_SPEED_HIGH)	/* uframes per NAK */
+		if (speed == USB_SPEED_HIGH) 	/* uframes per NAK */
 			interval = desc->bInterval;
 		else
 			interval = 0;
@@ -240,7 +230,7 @@ static char *usb_dump_endpoint_descriptor(int speed, char *start, char *end,
 
 	start += sprintf(start, format_endpt, desc->bEndpointAddress, dir,
 			 desc->bmAttributes, type,
-			 (usb_endpoint_maxp(desc) & 0x07ff) *
+			 (le16_to_cpu(desc->wMaxPacketSize) & 0x07ff) *
 			 bandwidth,
 			 interval, unit);
 	return start;
@@ -521,7 +511,6 @@ static ssize_t usb_device_dump(char __user **buffer, size_t *nbytes,
 	case USB_SPEED_UNKNOWN:		/* usb 1.1 root hub code */
 	case USB_SPEED_FULL:
 		speed = "12"; break;
-	case USB_SPEED_WIRELESS:	/* Wireless has no real fixed speed */
 	case USB_SPEED_HIGH:
 		speed = "480"; break;
 	case USB_SPEED_SUPER:
@@ -624,7 +613,7 @@ static ssize_t usb_device_read(struct file *file, char __user *buf,
 	/* print devices for all busses */
 	list_for_each_entry(bus, &usb_bus_list, bus_list) {
 		/* recurse through all children of the root hub */
-		if (!bus_to_hcd(bus)->rh_registered)
+		if (!bus->root_hub)
 			continue;
 		usb_lock_device(bus->root_hub);
 		ret = usb_device_dump(&buf, &nbytes, &skip_bytes, ppos,
@@ -644,16 +633,55 @@ static ssize_t usb_device_read(struct file *file, char __user *buf,
 static unsigned int usb_device_poll(struct file *file,
 				    struct poll_table_struct *wait)
 {
-	unsigned int event_count;
+	struct usb_device_status *st = file->private_data;
+	unsigned int mask = 0;
 
-	poll_wait(file, &device_event.wait, wait);
+	lock_kernel();
+	if (!st) {
+		st = kmalloc(sizeof(struct usb_device_status), GFP_KERNEL);
 
-	event_count = atomic_read(&device_event.count);
-	if (file->f_version != event_count) {
-		file->f_version = event_count;
-		return POLLIN | POLLRDNORM;
+		/* we may have dropped BKL -
+		 * need to check for having lost the race */
+		if (file->private_data) {
+			kfree(st);
+			st = file->private_data;
+			goto lost_race;
+		}
+		/* we haven't lost - check for allocation failure now */
+		if (!st) {
+			unlock_kernel();
+			return POLLIN;
+		}
+
+		/*
+		 * need to prevent the module from being unloaded, since
+		 * proc_unregister does not call the release method and
+		 * we would have a memory leak
+		 */
+		st->lastev = conndiscevcnt;
+		file->private_data = st;
+		mask = POLLIN;
 	}
+lost_race:
+	if (file->f_mode & FMODE_READ)
+		poll_wait(file, &deviceconndiscwq, wait);
+	if (st->lastev != conndiscevcnt)
+		mask |= POLLIN;
+	st->lastev = conndiscevcnt;
+	unlock_kernel();
+	return mask;
+}
 
+static int usb_device_open(struct inode *inode, struct file *file)
+{
+	file->private_data = NULL;
+	return 0;
+}
+
+static int usb_device_release(struct inode *inode, struct file *file)
+{
+	kfree(file->private_data);
+	file->private_data = NULL;
 	return 0;
 }
 
@@ -661,7 +689,7 @@ static loff_t usb_device_lseek(struct file *file, loff_t offset, int orig)
 {
 	loff_t ret;
 
-	mutex_lock(&file->f_dentry->d_inode->i_mutex);
+	lock_kernel();
 
 	switch (orig) {
 	case 0:
@@ -677,7 +705,7 @@ static loff_t usb_device_lseek(struct file *file, loff_t offset, int orig)
 		ret = -EINVAL;
 	}
 
-	mutex_unlock(&file->f_dentry->d_inode->i_mutex);
+	unlock_kernel();
 	return ret;
 }
 
@@ -685,4 +713,6 @@ const struct file_operations usbfs_devices_fops = {
 	.llseek =	usb_device_lseek,
 	.read =		usb_device_read,
 	.poll =		usb_device_poll,
+	.open =		usb_device_open,
+	.release =	usb_device_release,
 };

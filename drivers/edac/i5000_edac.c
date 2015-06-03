@@ -27,7 +27,7 @@
 /*
  * Alter this version for the I5000 module when modifications are made
  */
-#define I5000_REVISION    " Ver: 2.0.12"
+#define I5000_REVISION    " Ver: 2.0.12 " __DATE__
 #define EDAC_MOD_STR      "i5000_edac"
 
 #define i5000_printk(level, fmt, arg...) \
@@ -774,7 +774,7 @@ static void i5000_clear_error(struct mem_ctl_info *mci)
 static void i5000_check_error(struct mem_ctl_info *mci)
 {
 	struct i5000_error_info info;
-	debugf4("MC%d: %s: %s()\n", mci->mc_idx, __FILE__, __func__);
+	debugf4("MC%d: " __FILE__ ": %s()\n", mci->mc_idx, __func__);
 	i5000_get_error_info(mci, &info);
 	i5000_process_error_info(mci, &info, 1);
 }
@@ -1353,8 +1353,8 @@ static int i5000_probe1(struct pci_dev *pdev, int dev_idx)
 	int num_dimms_per_channel;
 	int num_csrows;
 
-	debugf0("MC: %s: %s(), pdev bus %u dev=0x%x fn=0x%x\n",
-		__FILE__, __func__,
+	debugf0("MC: " __FILE__ ": %s(), pdev bus %u dev=0x%x fn=0x%x\n",
+		__func__,
 		pdev->bus->number,
 		PCI_SLOT(pdev->devfn), PCI_FUNC(pdev->devfn));
 
@@ -1372,7 +1372,7 @@ static int i5000_probe1(struct pci_dev *pdev, int dev_idx)
 	 * actual number of slots/dimms per channel, we thus utilize the
 	 * resource as specified by the chipset. Thus, we might have
 	 * have more DIMMs per channel than actually on the mobo, but this
-	 * allows the driver to support up to the chipset max, without
+	 * allows the driver to support upto the chipset max, without
 	 * some fancy mobo determination.
 	 */
 	i5000_get_dimm_and_channel_counts(pdev, &num_dimms_per_channel,
@@ -1389,7 +1389,7 @@ static int i5000_probe1(struct pci_dev *pdev, int dev_idx)
 		return -ENOMEM;
 
 	kobject_get(&mci->edac_mci_kobj);
-	debugf0("MC: %s: %s(): mci = %p\n", __FILE__, __func__, mci);
+	debugf0("MC: " __FILE__ ": %s(): mci = %p\n", __func__, mci);
 
 	mci->dev = &pdev->dev;	/* record ptr  to the generic device */
 
@@ -1432,8 +1432,8 @@ static int i5000_probe1(struct pci_dev *pdev, int dev_idx)
 
 	/* add this new MC control structure to EDAC's list of MCs */
 	if (edac_mc_add_mc(mci)) {
-		debugf0("MC: %s: %s(): failed edac_mc_add_mc()\n",
-			__FILE__, __func__);
+		debugf0("MC: " __FILE__
+			": %s(): failed edac_mc_add_mc()\n", __func__);
 		/* FIXME: perhaps some code should go here that disables error
 		 * reporting if we just enabled it
 		 */
@@ -1478,11 +1478,11 @@ static int __devinit i5000_init_one(struct pci_dev *pdev,
 {
 	int rc;
 
-	debugf0("MC: %s: %s()\n", __FILE__, __func__);
+	debugf0("MC: " __FILE__ ": %s()\n", __func__);
 
 	/* wake up device */
 	rc = pci_enable_device(pdev);
-	if (rc)
+	if (rc == -EIO)
 		return rc;
 
 	/* now probe and enable the device */
@@ -1497,7 +1497,7 @@ static void __devexit i5000_remove_one(struct pci_dev *pdev)
 {
 	struct mem_ctl_info *mci;
 
-	debugf0("%s: %s()\n", __FILE__, __func__);
+	debugf0(__FILE__ ": %s()\n", __func__);
 
 	if (i5000_pci)
 		edac_pci_release_generic_ctl(i5000_pci);
@@ -1516,7 +1516,7 @@ static void __devexit i5000_remove_one(struct pci_dev *pdev)
  *
  *	The "E500P" device is the first device supported.
  */
-static DEFINE_PCI_DEVICE_TABLE(i5000_pci_tbl) = {
+static const struct pci_device_id i5000_pci_tbl[] __devinitdata = {
 	{PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_I5000_DEV16),
 	 .driver_data = I5000P},
 
@@ -1544,7 +1544,7 @@ static int __init i5000_init(void)
 {
 	int pci_rc;
 
-	debugf2("MC: %s: %s()\n", __FILE__, __func__);
+	debugf2("MC: " __FILE__ ": %s()\n", __func__);
 
        /* Ensure that the OPSTATE is set correctly for POLL or NMI */
        opstate_init();
@@ -1560,7 +1560,7 @@ static int __init i5000_init(void)
  */
 static void __exit i5000_exit(void)
 {
-	debugf2("MC: %s: %s()\n", __FILE__, __func__);
+	debugf2("MC: " __FILE__ ": %s()\n", __func__);
 	pci_unregister_driver(&i5000_driver);
 }
 

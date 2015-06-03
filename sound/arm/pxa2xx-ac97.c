@@ -11,7 +11,6 @@
  */
 
 #include <linux/init.h>
-#include <linux/io.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 
@@ -160,7 +159,7 @@ static int pxa2xx_ac97_resume(struct device *dev)
 	return ret;
 }
 
-static const struct dev_pm_ops pxa2xx_ac97_pm_ops = {
+static struct dev_pm_ops pxa2xx_ac97_pm_ops = {
 	.suspend	= pxa2xx_ac97_suspend,
 	.resume		= pxa2xx_ac97_resume,
 };
@@ -252,7 +251,18 @@ static struct platform_driver pxa2xx_ac97_driver = {
 	},
 };
 
-module_platform_driver(pxa2xx_ac97_driver);
+static int __init pxa2xx_ac97_init(void)
+{
+	return platform_driver_register(&pxa2xx_ac97_driver);
+}
+
+static void __exit pxa2xx_ac97_exit(void)
+{
+	platform_driver_unregister(&pxa2xx_ac97_driver);
+}
+
+module_init(pxa2xx_ac97_init);
+module_exit(pxa2xx_ac97_exit);
 
 MODULE_AUTHOR("Nicolas Pitre");
 MODULE_DESCRIPTION("AC97 driver for the Intel PXA2xx chip");

@@ -37,14 +37,11 @@
  * be incorporated into the next SCTP release.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/types.h>
 #include <linux/kernel.h>
 #include <linux/net.h>
 #include <linux/inet.h>
 #include <linux/skbuff.h>
-#include <linux/slab.h>
 #include <net/sock.h>
 #include <net/sctp/sctp.h>
 #include <net/sctp/sm.h>
@@ -60,9 +57,9 @@ static void sctp_datamsg_init(struct sctp_datamsg *msg)
 	msg->send_failed = 0;
 	msg->send_error = 0;
 	msg->can_abandon = 0;
-	msg->can_delay = 1;
 	msg->expires_at = 0;
 	INIT_LIST_HEAD(&msg->chunks);
+	msg->msg_size = 0;
 }
 
 /* Allocate and initialize datamsg. */
@@ -159,6 +156,7 @@ static void sctp_datamsg_assign(struct sctp_datamsg *msg, struct sctp_chunk *chu
 {
 	sctp_datamsg_hold(msg);
 	chunk->msg = msg;
+	msg->msg_size += chunk->skb->len;
 }
 
 
@@ -183,7 +181,7 @@ struct sctp_datamsg *sctp_datamsg_from_user(struct sctp_association *asoc,
 
 	msg = sctp_datamsg_new(GFP_KERNEL);
 	if (!msg)
-		return ERR_PTR(-ENOMEM);
+		return NULL;
 
 	/* Note: Calculate this outside of the loop, so that all fragments
 	 * have the same expiration.
@@ -248,7 +246,6 @@ struct sctp_datamsg *sctp_datamsg_from_user(struct sctp_association *asoc,
 	if (msg_len >= first_len) {
 		msg_len -= first_len;
 		whole = 1;
-		msg->can_delay = 0;
 	}
 
 	/* How many full sized?  How many bytes leftover? */
@@ -266,25 +263,13 @@ struct sctp_datamsg *sctp_datamsg_from_user(struct sctp_association *asoc,
 		if (0 == i)
 			frag |= SCTP_DATA_FIRST_FRAG;
 
-		if ((i == (whole - 1)) && !over) {
+		if ((i == (whole - 1)) && !over)
 			frag |= SCTP_DATA_LAST_FRAG;
-
-			/* The application requests to set the I-bit of the
-			 * last DATA chunk of a user message when providing
-			 * the user message to the SCTP implementation.
-			 */
-			if ((sinfo->sinfo_flags & SCTP_EOF) ||
-			    (sinfo->sinfo_flags & SCTP_SACK_IMMEDIATELY))
-				frag |= SCTP_DATA_SACK_IMM;
-		}
 
 		chunk = sctp_make_datafrag_empty(asoc, sinfo, len, frag, 0);
 
-		if (!chunk) {
-			err = -ENOMEM;
+		if (!chunk)
 			goto errout;
-		}
-
 		err = sctp_user_addto_chunk(chunk, offset, len, msgh->msg_iov);
 		if (err < 0)
 			goto errout_chunk_free;
@@ -312,16 +297,10 @@ struct sctp_datamsg *sctp_datamsg_from_user(struct sctp_association *asoc,
 		else
 			frag = SCTP_DATA_LAST_FRAG;
 
-		if ((sinfo->sinfo_flags & SCTP_EOF) ||
-		    (sinfo->sinfo_flags & SCTP_SACK_IMMEDIATELY))
-			frag |= SCTP_DATA_SACK_IMM;
-
 		chunk = sctp_make_datafrag_empty(asoc, sinfo, over, frag, 0);
 
-		if (!chunk) {
-			err = -ENOMEM;
+		if (!chunk)
 			goto errout;
-		}
 
 		err = sctp_user_addto_chunk(chunk, offset, over,msgh->msg_iov);
 
@@ -347,7 +326,7 @@ errout:
 		sctp_chunk_free(chunk);
 	}
 	sctp_datamsg_put(msg);
-	return ERR_PTR(err);
+	return NULL;
 }
 
 /* Check whether this message has expired. */

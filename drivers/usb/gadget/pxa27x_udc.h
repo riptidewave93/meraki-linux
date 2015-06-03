@@ -9,6 +9,15 @@
  * it under the terms of the GNU General Public License as published by
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
+ *
+ * This program is distributed in the hope that it will be useful,
+ * but WITHOUT ANY WARRANTY; without even the implied warranty of
+ * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+ * GNU General Public License for more details.
+ *
+ * You should have received a copy of the GNU General Public License
+ * along with this program; if not, write to the Free Software
+ * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA  02111-1307	 USA
  */
 
 #ifndef __LINUX_USB_GADGET_PXA27X_H
@@ -79,9 +88,9 @@
 #define UDCISR_INT_MASK	(UDCICR_FIFOERR | UDCICR_PKTCOMPL)
 
 #define UDCOTGICR_IESF	(1 << 24)	/* OTG SET_FEATURE command recvd */
-#define UDCOTGICR_IEXR	(1 << 17)	/* Extra Transceiver Interrupt
+#define UDCOTGICR_IEXR	(1 << 17)	/* Extra Transciever Interrupt
 					   Rising Edge Interrupt Enable */
-#define UDCOTGICR_IEXF	(1 << 16)	/* Extra Transceiver Interrupt
+#define UDCOTGICR_IEXF	(1 << 16)	/* Extra Transciever Interrupt
 					   Falling Edge Interrupt Enable */
 #define UDCOTGICR_IEVV40R (1 << 9)	/* OTG Vbus Valid 4.0V Rising Edge
 					   Interrupt Enable */
@@ -309,11 +318,6 @@ struct udc_usb_ep {
  * @queue: requests queue
  * @lock: lock to pxa_ep data (queues and stats)
  * @enabled: true when endpoint enabled (not stopped by gadget layer)
- * @in_handle_ep: number of recursions of handle_ep() function
- * 	Prevents deadlocks or infinite recursions of types :
- *	  irq->handle_ep()->req_done()->req.complete()->pxa_ep_queue()->handle_ep()
- *      or
- *        pxa_ep_queue()->handle_ep()->req_done()->req.complete()->pxa_ep_queue()
  * @idx: endpoint index (1 => epA, 2 => epB, ..., 24 => epX)
  * @name: endpoint name (for trace/debug purpose)
  * @dir_in: 1 if IN endpoint, 0 if OUT endpoint
@@ -342,7 +346,6 @@ struct pxa_ep {
 	spinlock_t		lock;		/* Protects this structure */
 						/* (queues, stats) */
 	unsigned		enabled:1;
-	unsigned		in_handle_ep:1;
 
 	unsigned		idx:5;
 	char			*name;
@@ -351,7 +354,7 @@ struct pxa_ep {
 	 * Specific pxa endpoint data, needed for hardware initialization
 	 */
 	unsigned		dir_in:1;
-	unsigned		addr:4;
+	unsigned		addr:3;
 	unsigned		config:2;
 	unsigned		interface:3;
 	unsigned		alternate:3;
@@ -447,7 +450,7 @@ struct pxa_udc {
 	struct usb_gadget_driver		*driver;
 	struct device				*dev;
 	struct pxa2xx_udc_mach_info		*mach;
-	struct usb_phy				*transceiver;
+	struct otg_transceiver			*transceiver;
 
 	enum ep0_state				ep0state;
 	struct udc_stats			stats;

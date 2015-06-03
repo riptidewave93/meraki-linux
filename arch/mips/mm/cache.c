@@ -35,11 +35,6 @@ void (*local_flush_icache_range)(unsigned long start, unsigned long end);
 void (*__flush_cache_vmap)(void);
 void (*__flush_cache_vunmap)(void);
 
-void (*__flush_kernel_vmap_range)(unsigned long vaddr, int size);
-void (*__invalidate_kernel_vmap_range)(unsigned long vaddr, int size);
-
-EXPORT_SYMBOL_GPL(__flush_kernel_vmap_range);
-
 /* MIPS specific cache operations */
 void (*flush_cache_sigtramp)(unsigned long addr);
 void (*local_flush_data_cache_page)(void * addr);
@@ -56,8 +51,6 @@ void (*_dma_cache_wback_inv)(unsigned long start, unsigned long size);
 void (*_dma_cache_wback)(unsigned long start, unsigned long size);
 void (*_dma_cache_inv)(unsigned long start, unsigned long size);
 
-EXPORT_SYMBOL(_dma_cache_inv);
-EXPORT_SYMBOL(_dma_cache_wback);
 EXPORT_SYMBOL(_dma_cache_wback_inv);
 
 #endif /* CONFIG_DMA_NONCOHERENT */
@@ -140,50 +133,29 @@ void __update_cache(struct vm_area_struct *vma, unsigned long address,
 }
 
 unsigned long _page_cachable_default;
-EXPORT_SYMBOL(_page_cachable_default);
+EXPORT_SYMBOL_GPL(_page_cachable_default);
 
 static inline void setup_protection_map(void)
 {
-	if (kernel_uses_smartmips_rixi) {
-		protection_map[0]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC | _PAGE_NO_READ);
-		protection_map[1]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC);
-		protection_map[2]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC | _PAGE_NO_READ);
-		protection_map[3]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC);
-		protection_map[4]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_READ);
-		protection_map[5]  = __pgprot(_page_cachable_default | _PAGE_PRESENT);
-		protection_map[6]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_READ);
-		protection_map[7]  = __pgprot(_page_cachable_default | _PAGE_PRESENT);
-
-		protection_map[8]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC | _PAGE_NO_READ);
-		protection_map[9]  = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC);
-		protection_map[10] = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC | _PAGE_WRITE | _PAGE_NO_READ);
-		protection_map[11] = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_EXEC | _PAGE_WRITE);
-		protection_map[12] = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_NO_READ);
-		protection_map[13] = __pgprot(_page_cachable_default | _PAGE_PRESENT);
-		protection_map[14] = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_WRITE  | _PAGE_NO_READ);
-		protection_map[15] = __pgprot(_page_cachable_default | _PAGE_PRESENT | _PAGE_WRITE);
-
-	} else {
-		protection_map[0] = PAGE_NONE;
-		protection_map[1] = PAGE_READONLY;
-		protection_map[2] = PAGE_COPY;
-		protection_map[3] = PAGE_COPY;
-		protection_map[4] = PAGE_READONLY;
-		protection_map[5] = PAGE_READONLY;
-		protection_map[6] = PAGE_COPY;
-		protection_map[7] = PAGE_COPY;
-		protection_map[8] = PAGE_NONE;
-		protection_map[9] = PAGE_READONLY;
-		protection_map[10] = PAGE_SHARED;
-		protection_map[11] = PAGE_SHARED;
-		protection_map[12] = PAGE_READONLY;
-		protection_map[13] = PAGE_READONLY;
-		protection_map[14] = PAGE_SHARED;
-		protection_map[15] = PAGE_SHARED;
-	}
+	protection_map[0] = PAGE_NONE;
+	protection_map[1] = PAGE_READONLY;
+	protection_map[2] = PAGE_COPY;
+	protection_map[3] = PAGE_COPY;
+	protection_map[4] = PAGE_READONLY;
+	protection_map[5] = PAGE_READONLY;
+	protection_map[6] = PAGE_COPY;
+	protection_map[7] = PAGE_COPY;
+	protection_map[8] = PAGE_NONE;
+	protection_map[9] = PAGE_READONLY;
+	protection_map[10] = PAGE_SHARED;
+	protection_map[11] = PAGE_SHARED;
+	protection_map[12] = PAGE_READONLY;
+	protection_map[13] = PAGE_READONLY;
+	protection_map[14] = PAGE_SHARED;
+	protection_map[15] = PAGE_SHARED;
 }
 
-void __cpuinit cpu_cache_init(void)
+void __devinit cpu_cache_init(void)
 {
 	if (cpu_has_3k_cache) {
 		extern void __weak r3k_cache_init(void);
@@ -222,7 +194,7 @@ void __cpuinit cpu_cache_init(void)
 
 int __weak __uncached_access(struct file *file, unsigned long addr)
 {
-	if (file->f_flags & O_DSYNC)
+	if (file->f_flags & O_SYNC)
 		return 1;
 
 	return addr >= __pa(high_memory);

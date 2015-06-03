@@ -38,8 +38,6 @@
  * be incorporated into the next SCTP release.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/kernel.h>
 #include <net/sctp/sctp.h>
 
@@ -136,7 +134,8 @@ void sctp_dbg_objcnt_init(void)
 	ent = proc_create("sctp_dbg_objcnt", 0,
 			  proc_net_sctp, &sctp_objcnt_ops);
 	if (!ent)
-		pr_warn("sctp_dbg_objcnt: Unable to create /proc entry.\n");
+		printk(KERN_WARNING
+			"sctp_dbg_objcnt: Unable to create /proc entry.\n");
 }
 
 /* Cleanup the objcount entry in the proc filesystem.  */

@@ -26,7 +26,6 @@
 #include <linux/errno.h>
 #include <linux/bootmem.h>
 #include <linux/kernel.h>
-#include <linux/gfp.h>
 #include <linux/init.h>
 #include <linux/mm.h>
 #include <linux/mman.h>
@@ -37,6 +36,8 @@
 
 #include <asm/sections.h>
 #include <asm/tlb.h>
+
+DEFINE_PER_CPU(struct mmu_gather, mmu_gathers);
 
 unsigned long empty_zero_page;
 EXPORT_SYMBOL_GPL(empty_zero_page);
@@ -58,7 +59,7 @@ static unsigned long setup_zero_page(void)
 }
 
 #ifndef CONFIG_NEED_MULTIPLE_NODES
-int page_is_ram(unsigned long pagenr)
+static int __init page_is_ram(unsigned long pagenr)
 {
 	if (pagenr >= min_low_pfn && pagenr < max_low_pfn)
 		return 1;
@@ -82,6 +83,7 @@ void __init mem_init(void)
 	unsigned long codesize, reservedpages, datasize, initsize;
 	unsigned long tmp, ram = 0;
 
+	max_mapnr = max_low_pfn;
 	high_memory = (void *) __va(max_low_pfn << PAGE_SHIFT);
 	totalram_pages += free_all_bootmem();
 	totalram_pages -= setup_zero_page();	/* Setup zeroed pages. */
@@ -99,13 +101,17 @@ void __init mem_init(void)
 	datasize = (unsigned long) &_edata - (unsigned long) &_etext;
 	initsize = (unsigned long) &__init_end - (unsigned long) &__init_begin;
 
+	kclist_add(&kcore_mem, __va(0), max_low_pfn << PAGE_SHIFT);
+	kclist_add(&kcore_vmalloc, (void *) VMALLOC_START,
+			VMALLOC_END - VMALLOC_START);
+
 	printk(KERN_INFO "Memory: %luk/%luk available (%ldk kernel code, "
 			"%ldk reserved, %ldk data, %ldk init, %ldk highmem)\n",
 			(unsigned long) nr_free_pages() << (PAGE_SHIFT-10),
 			ram << (PAGE_SHIFT-10), codesize >> 10,
 			reservedpages << (PAGE_SHIFT-10), datasize >> 10,
 			initsize >> 10,
-			totalhigh_pages << (PAGE_SHIFT-10));
+			(unsigned long) (totalhigh_pages << (PAGE_SHIFT-10)));
 }
 #endif /* !CONFIG_NEED_MULTIPLE_NODES */
 

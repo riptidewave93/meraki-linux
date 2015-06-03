@@ -2,6 +2,7 @@
 #include <linux/kernel.h>
 #include <linux/fs.h>
 #include <linux/minix_fs.h>
+#include <linux/ext2_fs.h>
 #include <linux/romfs_fs.h>
 #include <linux/initrd.h>
 #include <linux/sched.h>
@@ -23,14 +24,17 @@ static int __init no_initrd(char *str)
 
 __setup("noinitrd", no_initrd);
 
-static int __init do_linuxrc(void *_shell)
+static int __init do_linuxrc(void * shell)
 {
-	static const char *argv[] = { "linuxrc", NULL, };
-	extern const char *envp_init[];
-	const char *shell = _shell;
+	static char *argv[] = { "linuxrc", NULL, };
+	extern char * envp_init[];
 
 	sys_close(old_fd);sys_close(root_fd);
+	sys_close(0);sys_close(1);sys_close(2);
 	sys_setsid();
+	(void) sys_open("/dev/console",O_RDWR,0);
+	(void) sys_dup(0);
+	(void) sys_dup(0);
 	return kernel_execve(shell, argv, envp_init);
 }
 

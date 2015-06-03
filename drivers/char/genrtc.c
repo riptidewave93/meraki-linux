@@ -52,10 +52,11 @@
 #include <linux/init.h>
 #include <linux/poll.h>
 #include <linux/proc_fs.h>
-#include <linux/mutex.h>
+#include <linux/smp_lock.h>
 #include <linux/workqueue.h>
 
 #include <asm/uaccess.h>
+#include <asm/system.h>
 #include <asm/rtc.h>
 
 /*
@@ -65,7 +66,6 @@
  *	ioctls.
  */
 
-static DEFINE_MUTEX(gen_rtc_mutex);
 static DECLARE_WAIT_QUEUE_HEAD(gen_rtc_wait);
 
 /*
@@ -262,7 +262,7 @@ static inline int gen_set_rtc_irq_bit(unsigned char bit)
 #endif
 }
 
-static int gen_rtc_ioctl(struct file *file,
+static int gen_rtc_ioctl(struct inode *inode, struct file *file,
 			 unsigned int cmd, unsigned long arg)
 {
 	struct rtc_time wtime;
@@ -332,18 +332,6 @@ static int gen_rtc_ioctl(struct file *file,
 	return -EINVAL;
 }
 
-static long gen_rtc_unlocked_ioctl(struct file *file, unsigned int cmd,
-				   unsigned long arg)
-{
-	int ret;
-
-	mutex_lock(&gen_rtc_mutex);
-	ret = gen_rtc_ioctl(file, cmd, arg);
-	mutex_unlock(&gen_rtc_mutex);
-
-	return ret;
-}
-
 /*
  *	We enforce only one user at a time here with the open/close.
  *	Also clear the previous interrupt data on an open, and clean
@@ -352,16 +340,16 @@ static long gen_rtc_unlocked_ioctl(struct file *file, unsigned int cmd,
 
 static int gen_rtc_open(struct inode *inode, struct file *file)
 {
-	mutex_lock(&gen_rtc_mutex);
+	lock_kernel();
 	if (gen_rtc_status & RTC_IS_OPEN) {
-		mutex_unlock(&gen_rtc_mutex);
+		unlock_kernel();
 		return -EBUSY;
 	}
 
 	gen_rtc_status |= RTC_IS_OPEN;
 	gen_rtc_irq_data = 0;
 	irq_active = 0;
-	mutex_unlock(&gen_rtc_mutex);
+	unlock_kernel();
 
 	return 0;
 }
@@ -494,10 +482,9 @@ static const struct file_operations gen_rtc_fops = {
 	.read		= gen_rtc_read,
 	.poll		= gen_rtc_poll,
 #endif
-	.unlocked_ioctl	= gen_rtc_unlocked_ioctl,
+	.ioctl		= gen_rtc_ioctl,
 	.open		= gen_rtc_open,
 	.release	= gen_rtc_release,
-	.llseek		= noop_llseek,
 };
 
 static struct miscdevice rtc_gen_dev =

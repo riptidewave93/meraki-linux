@@ -12,7 +12,6 @@
 #include <linux/seq_file.h>
 #include <linux/init.h>
 #include <linux/dma-mapping.h>
-#include <linux/export.h>
 
 #include <asm/setup.h>
 
@@ -28,7 +27,24 @@ struct iommu_table;
 struct rtc_time;
 struct file;
 struct pci_controller;
+#ifdef CONFIG_KEXEC
 struct kimage;
+#endif
+
+#ifdef CONFIG_SMP
+struct smp_ops_t {
+	void  (*message_pass)(int target, int msg);
+	int   (*probe)(void);
+	void  (*kick_cpu)(int nr);
+	void  (*setup_cpu)(int nr);
+	void  (*take_timebase)(void);
+	void  (*give_timebase)(void);
+	int   (*cpu_enable)(unsigned int nr);
+	int   (*cpu_disable)(void);
+	void  (*cpu_die)(unsigned int nr);
+	int   (*cpu_bootable)(unsigned int nr);
+};
+#endif
 
 struct machdep_calls {
 	char		*name;
@@ -56,7 +72,7 @@ struct machdep_calls {
 					     int psize, int ssize);
 	void		(*flush_hash_range)(unsigned long number, int local);
 
-	/* special for kexec, to be called in real mode, linear mapping is
+	/* special for kexec, to be called in real mode, linar mapping is
 	 * destroyed as well */
 	void		(*hpte_clear_all)(void);
 
@@ -86,10 +102,6 @@ struct machdep_calls {
 	void		(*pci_dma_dev_setup)(struct pci_dev *dev);
 	void		(*pci_dma_bus_setup)(struct pci_bus *bus);
 
-	/* Platform set_dma_mask and dma_get_required_mask overrides */
-	int		(*dma_set_mask)(struct device *dev, u64 dma_mask);
-	u64		(*dma_get_required_mask)(struct device *dev);
-
 	int		(*probe)(void);
 	void		(*setup_arch)(void); /* Optional, may be NULL */
 	void		(*init_early)(void);
@@ -99,8 +111,13 @@ struct machdep_calls {
 
 	void		(*init_IRQ)(void);
 
-	/* Return an irq, or NO_IRQ to indicate there are none pending. */
+	/* Return an irq, or NO_IRQ to indicate there are none pending.
+	 * If for some reason there is no irq, but the interrupt
+	 * shouldn't be counted as spurious, return NO_IRQ_IGNORE. */
 	unsigned int	(*get_irq)(void);
+#ifdef CONFIG_KEXEC
+	void		(*kexec_cpu_down)(int crash_shutdown, int secondary);
+#endif
 
 	/* PCI stuff */
 	/* Called after scanning the bus, before allocating resources */
@@ -211,16 +228,17 @@ struct machdep_calls {
 	 * allow assignment/enabling of the device. */
 	int  (*pcibios_enable_device_hook)(struct pci_dev *);
 
-	/* Called after scan and before resource survey */
-	void (*pcibios_fixup_phb)(struct pci_controller *hose);
-
 	/* Called to shutdown machine specific hardware not already controlled
 	 * by other drivers.
 	 */
 	void (*machine_shutdown)(void);
 
 #ifdef CONFIG_KEXEC
-	void (*kexec_cpu_down)(int crash_shutdown, int secondary);
+	/* Called to do the minimal shutdown needed to run a kexec'd kernel
+	 * to run successfully.
+	 * XXX Should we move this one out of kexec scope?
+	 */
+	void (*machine_crash_shutdown)(struct pt_regs *regs);
 
 	/* Called to do what every setup is needed on image and the
 	 * reboot code buffer. Returns 0 on success.
@@ -228,6 +246,9 @@ struct machdep_calls {
 	 * claims to support kexec.
 	 */
 	int (*machine_kexec_prepare)(struct kimage *image);
+
+	/* Called to handle any machine specific cleanup on image */
+	void (*machine_kexec_cleanup)(struct kimage *image);
 
 	/* Called to perform the _real_ kexec.
 	 * Do NOT allocate memory or fail here. We are past the point of
@@ -245,19 +266,12 @@ struct machdep_calls {
 	void (*suspend_disable_irqs)(void);
 	void (*suspend_enable_irqs)(void);
 #endif
-	int (*suspend_disable_cpu)(void);
-
-#ifdef CONFIG_ARCH_CPU_PROBE_RELEASE
-	ssize_t (*cpu_probe)(const char *, size_t);
-	ssize_t (*cpu_release)(const char *, size_t);
-#endif
 };
 
 extern void e500_idle(void);
 extern void power4_idle(void);
-extern void power7_idle(void);
+extern void power4_cpu_offline_powersave(void);
 extern void ppc6xx_idle(void);
-extern void book3e_idle(void);
 
 /*
  * ppc_md contains a copy of the machine description structure for the
@@ -300,6 +314,14 @@ extern sys_ctrler_t sys_ctrler;
 
 #endif /* CONFIG_PPC_PMAC */
 
+extern void setup_pci_ptrs(void);
+
+#ifdef CONFIG_SMP
+/* Poor default implementations */
+extern void __devinit smp_generic_give_timebase(void);
+extern void __devinit smp_generic_take_timebase(void);
+#endif /* CONFIG_SMP */
+
 
 /* Functions to produce codes on the leds.
  * The SRC code should be unique for the message category and should
@@ -338,6 +360,9 @@ static inline void log_error(char *buf, unsigned int err_type, int fatal)
 #define machine_device_initcall_sync(mach,fn)	__define_machine_initcall(mach,"6s",fn,6s)
 #define machine_late_initcall(mach,fn)		__define_machine_initcall(mach,"7",fn,7)
 #define machine_late_initcall_sync(mach,fn)	__define_machine_initcall(mach,"7s",fn,7s)
+
+void generic_suspend_disable_irqs(void);
+void generic_suspend_enable_irqs(void);
 
 #endif /* __KERNEL__ */
 #endif /* _ASM_POWERPC_MACHDEP_H */

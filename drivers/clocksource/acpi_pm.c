@@ -68,7 +68,10 @@ static struct clocksource clocksource_acpi_pm = {
 	.rating		= 200,
 	.read		= acpi_pm_read,
 	.mask		= (cycle_t)ACPI_PM_MASK,
+	.mult		= 0, /*to be calculated*/
+	.shift		= 22,
 	.flags		= CLOCK_SOURCE_IS_CONTINUOUS,
+
 };
 
 
@@ -143,7 +146,7 @@ DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_SERVERWORKS, PCI_DEVICE_ID_SERVERWORKS_LE,
 #ifndef CONFIG_X86_64
 #include <asm/mach_timer.h>
 #define PMTMR_EXPECTED_RATE \
-  ((CALIBRATE_LATCH * (PMTMR_TICKS_PER_SEC >> 10)) / (PIT_TICK_RATE>>10))
+  ((CALIBRATE_LATCH * (PMTMR_TICKS_PER_SEC >> 10)) / (CLOCK_TICK_RATE>>10))
 /*
  * Some boards have the PMTMR running way too fast. We check
  * the PMTMR rate against PIT channel 2 to catch these cases.
@@ -187,6 +190,9 @@ static int __init init_acpi_pm_clocksource(void)
 	if (!pmtmr_ioport)
 		return -ENODEV;
 
+	clocksource_acpi_pm.mult = clocksource_hz2mult(PMTMR_TICKS_PER_SEC,
+						clocksource_acpi_pm.shift);
+
 	/* "verify" this timing source: */
 	for (j = 0; j < ACPI_PM_MONOTONICITY_CHECKS; j++) {
 		udelay(100 * j);
@@ -202,24 +208,19 @@ static int __init init_acpi_pm_clocksource(void)
 			printk(KERN_INFO "PM-Timer had inconsistent results:"
 			       " 0x%#llx, 0x%#llx - aborting.\n",
 			       value1, value2);
-			pmtmr_ioport = 0;
 			return -EINVAL;
 		}
 		if (i == ACPI_PM_READ_CHECKS) {
 			printk(KERN_INFO "PM-Timer failed consistency check "
 			       " (0x%#llx) - aborting.\n", value1);
-			pmtmr_ioport = 0;
 			return -ENODEV;
 		}
 	}
 
-	if (verify_pmtmr_rate() != 0){
-		pmtmr_ioport = 0;
+	if (verify_pmtmr_rate() != 0)
 		return -ENODEV;
-	}
 
-	return clocksource_register_hz(&clocksource_acpi_pm,
-						PMTMR_TICKS_PER_SEC);
+	return clocksource_register(&clocksource_acpi_pm);
 }
 
 /* We use fs_initcall because we want the PCI fixups to have run

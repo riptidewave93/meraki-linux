@@ -15,7 +15,6 @@
 
 #include <linux/input.h>
 #include <linux/slab.h>
-#include <linux/moduleparam.h>
 #include <linux/workqueue.h>
 #include <linux/init.h>
 #include <linux/rfkill.h>
@@ -143,7 +142,7 @@ static unsigned long rfkill_last_scheduled;
 static unsigned long rfkill_ratelimit(const unsigned long last)
 {
 	const unsigned long delay = msecs_to_jiffies(RFKILL_OPS_DELAY);
-	return time_after(jiffies, last + delay) ? 0 : delay;
+	return (time_after(jiffies, last + delay)) ? 0 : delay;
 }
 
 static void rfkill_schedule_ratelimited(void)
@@ -212,9 +211,6 @@ static void rfkill_event(struct input_handle *handle, unsigned int type,
 			break;
 		case KEY_WIMAX:
 			rfkill_schedule_toggle(RFKILL_TYPE_WIMAX);
-			break;
-		case KEY_RFKILL:
-			rfkill_schedule_toggle(RFKILL_TYPE_ALL);
 			break;
 		}
 	} else if (type == EV_SW && code == SW_RFKILL_ALL)
@@ -297,11 +293,6 @@ static const struct input_device_id rfkill_ids[] = {
 		.flags = INPUT_DEVICE_ID_MATCH_EVBIT | INPUT_DEVICE_ID_MATCH_KEYBIT,
 		.evbit = { BIT_MASK(EV_KEY) },
 		.keybit = { [BIT_WORD(KEY_WIMAX)] = BIT_MASK(KEY_WIMAX) },
-	},
-	{
-		.flags = INPUT_DEVICE_ID_MATCH_EVBIT | INPUT_DEVICE_ID_MATCH_KEYBIT,
-		.evbit = { BIT_MASK(EV_KEY) },
-		.keybit = { [BIT_WORD(KEY_RFKILL)] = BIT_MASK(KEY_RFKILL) },
 	},
 	{
 		.flags = INPUT_DEVICE_ID_MATCH_EVBIT | INPUT_DEVICE_ID_MATCH_SWBIT,

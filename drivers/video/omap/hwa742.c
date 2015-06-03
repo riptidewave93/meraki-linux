@@ -25,10 +25,10 @@
 #include <linux/fb.h>
 #include <linux/delay.h>
 #include <linux/clk.h>
-#include <linux/interrupt.h>
 
-#include <plat/dma.h>
-#include "omapfb.h"
+#include <mach/dma.h>
+#include <mach/omapfb.h>
+#include <mach/hwa742.h>
 
 #define HWA742_REV_CODE_REG       0x0
 #define HWA742_CONFIG_REG         0x2
@@ -268,7 +268,8 @@ static inline void free_req(struct hwa742_request *req)
 
 	spin_lock_irqsave(&hwa742.req_lock, flags);
 
-	list_move(&req->entry, &hwa742.free_req_list);
+	list_del(&req->entry);
+	list_add(&req->entry, &hwa742.free_req_list);
 	if (!(req->flags & REQ_FROM_IRQ_POOL))
 		up(&hwa742.req_sema);
 
@@ -941,6 +942,7 @@ static int hwa742_init(struct omapfb_device *fbdev, int ext_mode,
 	unsigned long sys_clk, pix_clk;
 	int extif_mem_div;
 	struct omapfb_platform_data *omapfb_conf;
+	struct hwa742_platform_data *ctrl_conf;
 
 	BUG_ON(!fbdev->ext_if || !fbdev->int_ctrl);
 
@@ -949,6 +951,13 @@ static int hwa742_init(struct omapfb_device *fbdev, int ext_mode,
 	hwa742.int_ctrl = fbdev->int_ctrl;
 
 	omapfb_conf = fbdev->dev->platform_data;
+	ctrl_conf = omapfb_conf->ctrl_platform_data;
+
+	if (ctrl_conf == NULL) {
+		dev_err(fbdev->dev, "HWA742: missing platform data\n");
+		r = -ENOENT;
+		goto err1;
+	}
 
 	hwa742.sys_ck = clk_get(NULL, "hwa_sys_ck");
 
@@ -986,12 +995,14 @@ static int hwa742_init(struct omapfb_device *fbdev, int ext_mode,
 		goto err4;
 	}
 
-	if ((r = setup_tearsync(pix_clk, extif_mem_div)) < 0) {
-		dev_err(hwa742.fbdev->dev,
-			"HWA742: can't setup tearing synchronization\n");
-		goto err4;
+	if (ctrl_conf->te_connected) {
+		if ((r = setup_tearsync(pix_clk, extif_mem_div)) < 0) {
+			dev_err(hwa742.fbdev->dev,
+			       "HWA742: can't setup tearing synchronization\n");
+			goto err4;
+		}
+		hwa742.te_connected = 1;
 	}
-	hwa742.te_connected = 1;
 
 	hwa742.max_transmit_size = hwa742.extif->max_transmit_size;
 

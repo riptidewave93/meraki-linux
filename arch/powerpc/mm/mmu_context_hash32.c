@@ -24,7 +24,6 @@
 
 #include <linux/mm.h>
 #include <linux/init.h>
-#include <linux/export.h>
 
 #include <asm/mmu_context.h>
 #include <asm/tlbflush.h>
@@ -61,7 +60,11 @@
 static unsigned long next_mmu_context;
 static unsigned long context_map[LAST_CONTEXT / BITS_PER_LONG + 1];
 
-unsigned long __init_new_context(void)
+
+/*
+ * Set up the context for a new address space.
+ */
+int init_new_context(struct task_struct *t, struct mm_struct *mm)
 {
 	unsigned long ctx = next_mmu_context;
 
@@ -71,29 +74,10 @@ unsigned long __init_new_context(void)
 			ctx = 0;
 	}
 	next_mmu_context = (ctx + 1) & LAST_CONTEXT;
-
-	return ctx;
-}
-EXPORT_SYMBOL_GPL(__init_new_context);
-
-/*
- * Set up the context for a new address space.
- */
-int init_new_context(struct task_struct *t, struct mm_struct *mm)
-{
-	mm->context.id = __init_new_context();
+	mm->context.id = ctx;
 
 	return 0;
 }
-
-/*
- * Free a context ID. Make sure to call this with preempt disabled!
- */
-void __destroy_context(unsigned long ctx)
-{
-	clear_bit(ctx, context_map);
-}
-EXPORT_SYMBOL_GPL(__destroy_context);
 
 /*
  * We're finished using the context for an address space.
@@ -102,7 +86,7 @@ void destroy_context(struct mm_struct *mm)
 {
 	preempt_disable();
 	if (mm->context.id != NO_CONTEXT) {
-		__destroy_context(mm->context.id);
+		clear_bit(mm->context.id, context_map);
 		mm->context.id = NO_CONTEXT;
 	}
 	preempt_enable();

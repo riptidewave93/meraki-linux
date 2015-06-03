@@ -294,7 +294,7 @@ static ssize_t afs_proc_cells_write(struct file *file, const char __user *buf,
 	if (strcmp(kbuf, "add") == 0) {
 		struct afs_cell *cell;
 
-		cell = afs_cell_create(name, strlen(name), args, false);
+		cell = afs_cell_create(name, args);
 		if (IS_ERR(cell)) {
 			ret = PTR_ERR(cell);
 			goto done;

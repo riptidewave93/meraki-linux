@@ -23,14 +23,12 @@
  */
 
 #include <linux/sched.h>
-#include <linux/slab.h>
 #include <linux/kernel.h>
 #include <linux/errno.h>
 #include <linux/string.h>
 #include <linux/types.h>
 #include <linux/highmem.h>
 #include <linux/dma-mapping.h>
-#include <linux/export.h>
 
 #include <asm/tlbflush.h>
 
@@ -365,11 +363,12 @@ static inline void __dma_sync_page_highmem(struct page *page,
 	local_irq_save(flags);
 
 	do {
-		start = (unsigned long)kmap_atomic(page + seg_nr) + seg_offset;
+		start = (unsigned long)kmap_atomic(page + seg_nr,
+				KM_PPC_SYNC_PAGE) + seg_offset;
 
 		/* Sync this buffer segment */
 		__dma_sync((void *)start, seg_size, direction);
-		kunmap_atomic((void *)start);
+		kunmap_atomic((void *)start, KM_PPC_SYNC_PAGE);
 		seg_nr++;
 
 		/* Calculate next buffer segment size */
@@ -399,23 +398,3 @@ void __dma_sync_page(struct page *page, unsigned long offset,
 #endif
 }
 EXPORT_SYMBOL(__dma_sync_page);
-
-/*
- * Return the PFN for a given cpu virtual address returned by
- * __dma_alloc_coherent. This is used by dma_mmap_coherent()
- */
-unsigned long __dma_get_coherent_pfn(unsigned long cpu_addr)
-{
-	/* This should always be populated, so we don't test every
-	 * level. If that fails, we'll have a nice crash which
-	 * will be as good as a BUG_ON()
-	 */
-	pgd_t *pgd = pgd_offset_k(cpu_addr);
-	pud_t *pud = pud_offset(pgd, cpu_addr);
-	pmd_t *pmd = pmd_offset(pud, cpu_addr);
-	pte_t *ptep = pte_offset_kernel(pmd, cpu_addr);
-
-	if (pte_none(*ptep) || !pte_present(*ptep))
-		return 0;
-	return pte_pfn(*ptep);
-}

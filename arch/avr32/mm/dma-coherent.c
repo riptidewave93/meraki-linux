@@ -7,8 +7,6 @@
  */
 
 #include <linux/dma-mapping.h>
-#include <linux/gfp.h>
-#include <linux/export.h>
 
 #include <asm/addrspace.h>
 #include <asm/cacheflush.h>

@@ -124,8 +124,8 @@ void ipc_init_ids(struct ipc_ids *ids)
 	ids->seq = 0;
 	{
 		int seq_limit = INT_MAX/SEQ_MULTIPLIER;
-		if (seq_limit > USHRT_MAX)
-			ids->seq_max = USHRT_MAX;
+		if (seq_limit > USHORT_MAX)
+			ids->seq_max = USHORT_MAX;
 		 else
 		 	ids->seq_max = seq_limit;
 	}
@@ -317,7 +317,6 @@ retry:
 
 /**
  *	ipc_check_perms	-	check security and permissions for an IPC
- *	@ns: IPC namespace
  *	@ipcp: ipc permission set
  *	@ops: the actual security routine to call
  *	@params: its parameters
@@ -330,14 +329,12 @@ retry:
  *
  *	It is called with ipc_ids.rw_mutex and ipcp->lock held.
  */
-static int ipc_check_perms(struct ipc_namespace *ns,
-			   struct kern_ipc_perm *ipcp,
-			   struct ipc_ops *ops,
-			   struct ipc_params *params)
+static int ipc_check_perms(struct kern_ipc_perm *ipcp, struct ipc_ops *ops,
+			struct ipc_params *params)
 {
 	int err;
 
-	if (ipcperms(ns, ipcp, params->flg))
+	if (ipcperms(ipcp, params->flg))
 		err = -EACCES;
 	else {
 		err = ops->associate(ipcp, params->flg);
@@ -399,7 +396,7 @@ retry:
 				 * ipc_check_perms returns the IPC id on
 				 * success
 				 */
-				err = ipc_check_perms(ns, ipcp, ops, params);
+				err = ipc_check_perms(ipcp, ops, params);
 		}
 		ipc_unlock(ipcp);
 	}
@@ -579,6 +576,19 @@ static void ipc_schedule_free(struct rcu_head *head)
 	schedule_work(&sched->work);
 }
 
+/**
+ * ipc_immediate_free - free ipc + rcu space
+ * @head: RCU callback structure that contains pointer to be freed
+ *
+ * Free from the RCU callback context.
+ */
+static void ipc_immediate_free(struct rcu_head *head)
+{
+	struct ipc_rcu_grace *free =
+		container_of(head, struct ipc_rcu_grace, rcu);
+	kfree(free);
+}
+
 void ipc_rcu_putref(void *ptr)
 {
 	if (--container_of(ptr, struct ipc_rcu_hdr, data)->refcount > 0)
@@ -588,24 +598,22 @@ void ipc_rcu_putref(void *ptr)
 		call_rcu(&container_of(ptr, struct ipc_rcu_grace, data)->rcu,
 				ipc_schedule_free);
 	} else {
-		kfree_rcu(container_of(ptr, struct ipc_rcu_grace, data), rcu);
+		call_rcu(&container_of(ptr, struct ipc_rcu_grace, data)->rcu,
+				ipc_immediate_free);
 	}
 }
 
 /**
  *	ipcperms	-	check IPC permissions
- *	@ns: IPC namespace
  *	@ipcp: IPC permission set
  *	@flag: desired permission set.
  *
  *	Check user, group, other permissions for access
  *	to ipc resources. return 0 if allowed
- *
- * 	@flag will most probably be 0 or S_...UGO from <linux/stat.h>
  */
  
-int ipcperms(struct ipc_namespace *ns, struct kern_ipc_perm *ipcp, short flag)
-{
+int ipcperms (struct kern_ipc_perm *ipcp, short flag)
+{	/* flag will most probably be 0 or S_...UGO from <linux/stat.h> */
 	uid_t euid = current_euid();
 	int requested_mode, granted_mode;
 
@@ -619,7 +627,7 @@ int ipcperms(struct ipc_namespace *ns, struct kern_ipc_perm *ipcp, short flag)
 		granted_mode >>= 3;
 	/* is there some bit set in requested_mode but not in granted_mode? */
 	if ((requested_mode & ~granted_mode & 0007) && 
-	    !ns_capable(ns->user_ns, CAP_IPC_OWNER))
+	    !capable(CAP_IPC_OWNER))
 		return -1;
 
 	return security_ipc_permission(ipcp, flag);
@@ -757,7 +765,6 @@ void ipc_update_perm(struct ipc64_perm *in, struct kern_ipc_perm *out)
 
 /**
  * ipcctl_pre_down - retrieve an ipc and check permissions for some IPC_XXX cmd
- * @ns:  the ipc namespace
  * @ids:  the table of ids where to look for the ipc
  * @id:   the id of the ipc to retrieve
  * @cmd:  the cmd to check
@@ -772,8 +779,7 @@ void ipc_update_perm(struct ipc64_perm *in, struct kern_ipc_perm *out)
  *  - returns the ipc with both ipc and rw_mutex locks held in case of success
  *    or an err-code without any lock held otherwise.
  */
-struct kern_ipc_perm *ipcctl_pre_down(struct ipc_namespace *ns,
-				      struct ipc_ids *ids, int id, int cmd,
+struct kern_ipc_perm *ipcctl_pre_down(struct ipc_ids *ids, int id, int cmd,
 				      struct ipc64_perm *perm, int extra_perm)
 {
 	struct kern_ipc_perm *ipcp;
@@ -793,8 +799,8 @@ struct kern_ipc_perm *ipcctl_pre_down(struct ipc_namespace *ns,
 					 perm->gid, perm->mode);
 
 	euid = current_euid();
-	if (euid == ipcp->cuid || euid == ipcp->uid  ||
-	    ns_capable(ns->user_ns, CAP_SYS_ADMIN))
+	if (euid == ipcp->cuid ||
+	    euid == ipcp->uid  || capable(CAP_SYS_ADMIN))
 		return ipcp;
 
 	err = -EPERM;

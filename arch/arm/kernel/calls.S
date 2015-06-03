@@ -91,7 +91,7 @@
 		CALL(sys_settimeofday)
 /* 80 */	CALL(sys_getgroups16)
 		CALL(sys_setgroups16)
-		CALL(OBSOLETE(sys_old_select))	/* used by libc4 */
+		CALL(OBSOLETE(old_select))	/* used by libc4 */
 		CALL(sys_symlink)
 		CALL(sys_ni_syscall)		/* was sys_lstat */
 /* 85 */	CALL(sys_readlink)
@@ -99,7 +99,7 @@
 		CALL(sys_swapon)
 		CALL(sys_reboot)
 		CALL(OBSOLETE(sys_old_readdir))	/* used by libc4 */
-/* 90 */	CALL(OBSOLETE(sys_old_mmap))	/* used by libc4 */
+/* 90 */	CALL(OBSOLETE(old_mmap))	/* used by libc4 */
 		CALL(sys_munmap)
 		CALL(sys_truncate)
 		CALL(sys_ftruncate)
@@ -178,7 +178,7 @@
 		CALL(sys_ni_syscall)		/* vm86 */
 		CALL(sys_ni_syscall)		/* was sys_query_module */
 		CALL(sys_poll)
-		CALL(sys_ni_syscall)		/* was nfsservctl */
+		CALL(sys_nfsservctl)
 /* 170 */	CALL(sys_setresgid16)
 		CALL(sys_getresgid16)
 		CALL(sys_prctl)
@@ -374,19 +374,6 @@
 		CALL(sys_pwritev)
 		CALL(sys_rt_tgsigqueueinfo)
 		CALL(sys_perf_event_open)
-/* 365 */	CALL(sys_recvmmsg)
-		CALL(sys_accept4)
-		CALL(sys_fanotify_init)
-		CALL(sys_fanotify_mark)
-		CALL(sys_prlimit64)
-/* 370 */	CALL(sys_name_to_handle_at)
-		CALL(sys_open_by_handle_at)
-		CALL(sys_clock_adjtime)
-		CALL(sys_syncfs)
-		CALL(sys_sendmmsg)
-/* 375 */	CALL(sys_setns)
-		CALL(sys_process_vm_readv)
-		CALL(sys_process_vm_writev)
 #ifndef syscalls_counted
 .equ syscalls_padding, ((NR_syscalls + 3) & ~3) - NR_syscalls
 #define syscalls_counted

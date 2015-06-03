@@ -29,12 +29,15 @@
 #include <asm/ptrace.h>
 #include <asm/sal.h>
 #include <asm/sections.h>
+#include <asm/system.h>
 
 #include "fsyscall_gtod_data.h"
 
 static cycle_t itc_get_cycles(struct clocksource *cs);
 
-struct fsyscall_gtod_data_t fsyscall_gtod_data;
+struct fsyscall_gtod_data_t fsyscall_gtod_data = {
+	.lock = SEQLOCK_UNLOCKED,
+};
 
 struct itc_jitter_data_t itc_jitter_data;
 
@@ -58,7 +61,7 @@ unsigned long long sched_clock(void)
 
 #ifdef CONFIG_PARAVIRT
 static void
-paravirt_clocksource_resume(struct clocksource *cs)
+paravirt_clocksource_resume(void)
 {
 	if (pv_time_ops.clocksource_resume)
 		pv_time_ops.clocksource_resume();
@@ -70,6 +73,8 @@ static struct clocksource clocksource_itc = {
 	.rating         = 350,
 	.read           = itc_get_cycles,
 	.mask           = CLOCKSOURCE_MASK(64),
+	.mult           = 0, /*to be calculated*/
+	.shift          = 16,
 	.flags          = CLOCK_SOURCE_IS_CONTINUOUS,
 #ifdef CONFIG_PARAVIRT
 	.resume		= paravirt_clocksource_resume,
@@ -163,7 +168,7 @@ timer_interrupt (int irq, void *dev_id)
 {
 	unsigned long new_itm;
 
-	if (cpu_is_offline(smp_processor_id())) {
+	if (unlikely(cpu_is_offline(smp_processor_id()))) {
 		return IRQ_HANDLED;
 	}
 
@@ -185,10 +190,19 @@ timer_interrupt (int irq, void *dev_id)
 
 		new_itm += local_cpu_data->itm_delta;
 
-		if (smp_processor_id() == time_keeper_id)
-			xtime_update(1);
-
-		local_cpu_data->itm_next = new_itm;
+		if (smp_processor_id() == time_keeper_id) {
+			/*
+			 * Here we are in the timer irq handler. We have irqs locally
+			 * disabled, but we don't know if the timer_bh is running on
+			 * another CPU. We need to avoid to SMP race by acquiring the
+			 * xtime_lock.
+			 */
+			write_seqlock(&xtime_lock);
+			do_timer(1);
+			local_cpu_data->itm_next = new_itm;
+			write_sequnlock(&xtime_lock);
+		} else
+			local_cpu_data->itm_next = new_itm;
 
 		if (time_after(new_itm, ia64_get_itc()))
 			break;
@@ -208,7 +222,7 @@ skip_process_time_accounting:
 		 * comfort, we increase the safety margin by
 		 * intentionally dropping the next tick(s).  We do NOT
 		 * update itm.next because that would force us to call
-		 * xtime_update() which in turn would let our clock run
+		 * do_timer() which in turn would let our clock run
 		 * too fast (with the potentially devastating effect
 		 * of losing monotony of time).
 		 */
@@ -360,8 +374,11 @@ ia64_init_itm (void)
 	ia64_cpu_local_tick();
 
 	if (!itc_clocksource) {
-		clocksource_register_hz(&clocksource_itc,
-						local_cpu_data->itc_freq);
+		/* Sort out mult/shift values: */
+		clocksource_itc.mult =
+			clocksource_hz2mult(local_cpu_data->itc_freq,
+						clocksource_itc.shift);
+		clocksource_register(&clocksource_itc);
 		itc_clocksource = &clocksource_itc;
 	}
 }
@@ -413,16 +430,18 @@ static int __init rtc_init(void)
 }
 module_init(rtc_init);
 
-void read_persistent_clock(struct timespec *ts)
-{
-	efi_gettimeofday(ts);
-}
-
 void __init
 time_init (void)
 {
 	register_percpu_irq(IA64_TIMER_VECTOR, &timer_irqaction);
+	efi_gettimeofday(&xtime);
 	ia64_init_itm();
+
+	/*
+	 * Initialize wall_to_monotonic such that adding it to xtime will yield zero, the
+	 * tv_nsec field must be normalized (i.e., 0 <= nsec < NSEC_PER_SEC).
+	 */
+	set_normalized_timespec(&wall_to_monotonic, -xtime.tv_sec, -xtime.tv_nsec);
 }
 
 /*
@@ -454,24 +473,25 @@ void update_vsyscall_tz(void)
 {
 }
 
-void update_vsyscall(struct timespec *wall, struct timespec *wtm,
-			struct clocksource *c, u32 mult)
+void update_vsyscall(struct timespec *wall, struct clocksource *c, u32 mult)
 {
-	write_seqcount_begin(&fsyscall_gtod_data.seq);
+        unsigned long flags;
+
+        write_seqlock_irqsave(&fsyscall_gtod_data.lock, flags);
 
         /* copy fsyscall clock data */
         fsyscall_gtod_data.clk_mask = c->mask;
         fsyscall_gtod_data.clk_mult = mult;
         fsyscall_gtod_data.clk_shift = c->shift;
-        fsyscall_gtod_data.clk_fsys_mmio = c->archdata.fsys_mmio;
+        fsyscall_gtod_data.clk_fsys_mmio = c->fsys_mmio;
         fsyscall_gtod_data.clk_cycle_last = c->cycle_last;
 
 	/* copy kernel time structures */
         fsyscall_gtod_data.wall_time.tv_sec = wall->tv_sec;
         fsyscall_gtod_data.wall_time.tv_nsec = wall->tv_nsec;
-	fsyscall_gtod_data.monotonic_time.tv_sec = wtm->tv_sec
+        fsyscall_gtod_data.monotonic_time.tv_sec = wall_to_monotonic.tv_sec
 							+ wall->tv_sec;
-	fsyscall_gtod_data.monotonic_time.tv_nsec = wtm->tv_nsec
+        fsyscall_gtod_data.monotonic_time.tv_nsec = wall_to_monotonic.tv_nsec
 							+ wall->tv_nsec;
 
 	/* normalize */
@@ -480,6 +500,6 @@ void update_vsyscall(struct timespec *wall, struct timespec *wtm,
 		fsyscall_gtod_data.monotonic_time.tv_sec++;
 	}
 
-	write_seqcount_end(&fsyscall_gtod_data.seq);
+        write_sequnlock_irqrestore(&fsyscall_gtod_data.lock, flags);
 }
 

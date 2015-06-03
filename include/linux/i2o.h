@@ -24,7 +24,6 @@
 #define I2O_MAX_DRIVERS		8
 
 #include <linux/pci.h>
-#include <linux/bug.h>
 #include <linux/dma-mapping.h>
 #include <linux/string.h>
 #include <linux/slab.h>
@@ -386,7 +385,7 @@
 /* defines for max_sectors and max_phys_segments */
 #define I2O_MAX_SECTORS			1024
 #define I2O_MAX_SECTORS_LIMITED		128
-#define I2O_MAX_PHYS_SEGMENTS		BLK_MAX_SEGMENTS
+#define I2O_MAX_PHYS_SEGMENTS		MAX_PHYS_SEGMENTS
 
 /*
  *	Message structures
@@ -783,6 +782,7 @@ extern int i2o_exec_lct_get(struct i2o_controller *);
 #define to_i2o_driver(drv) container_of(drv,struct i2o_driver, driver)
 #define to_i2o_device(dev) container_of(dev, struct i2o_device, device)
 #define to_i2o_controller(dev) container_of(dev, struct i2o_controller, device)
+#define kobj_to_i2o_device(kobj) to_i2o_device(container_of(kobj, struct device, kobj))
 
 /**
  *	i2o_out_to_virt - Turn an I2O message to a virtual address
@@ -827,7 +827,7 @@ static inline struct i2o_message __iomem *i2o_msg_in_to_virt(struct
  *	@c: I2O controller
  *
  *	This function tries to get a message frame. If no message frame is
- *	available do not wait until one is available (see also i2o_msg_get_wait).
+ *	available do not wait until one is availabe (see also i2o_msg_get_wait).
  *	The returned pointer to the message frame is not in I/O memory, it is
  *	allocated from a mempool. But because a MFA is allocated from the
  *	controller too it is guaranteed that i2o_msg_post() will never fail.

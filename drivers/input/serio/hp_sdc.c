@@ -71,6 +71,7 @@
 #include <linux/slab.h>
 #include <linux/hil.h>
 #include <asm/io.h>
+#include <asm/system.h>
 
 /* Machine-specific abstraction */
 
@@ -104,7 +105,7 @@ EXPORT_SYMBOL(__hp_sdc_enqueue_transaction);
 EXPORT_SYMBOL(hp_sdc_enqueue_transaction);
 EXPORT_SYMBOL(hp_sdc_dequeue_transaction);
 
-static bool hp_sdc_disabled;
+static unsigned int hp_sdc_disabled;
 module_param_named(no_hpsdc, hp_sdc_disabled, bool, 0);
 MODULE_PARM_DESC(no_hpsdc, "Do not enable HP SDC driver.");
 
@@ -794,7 +795,7 @@ int hp_sdc_release_cooked_irq(hp_sdc_irqhook *callback)
 
 /************************* Keepalive timer task *********************/
 
-static void hp_sdc_kicker(unsigned long data)
+void hp_sdc_kicker (unsigned long data)
 {
 	tasklet_schedule(&hp_sdc.task);
 	/* Re-insert the periodic task. */
@@ -904,7 +905,7 @@ static int __init hp_sdc_init(void)
 	ts_sync[1]	= 0x0f;
 	ts_sync[2] = ts_sync[3]	= ts_sync[4] = ts_sync[5] = 0;
 	t_sync.act.semaphore = &s_sync;
-	sema_init(&s_sync, 0);
+	init_MUTEX_LOCKED(&s_sync);
 	hp_sdc_enqueue_transaction(&t_sync);
 	down(&s_sync); /* Wait for t_sync to complete */
 
@@ -954,7 +955,7 @@ static int __init hp_sdc_init_hppa(struct parisc_device *d)
 	INIT_DELAYED_WORK(&moduleloader_work, request_module_delayed);
 
 	ret = hp_sdc_init();
-	/* after successful initialization give SDC some time to settle
+	/* after sucessfull initialization give SDC some time to settle
 	 * and then load the hp_sdc_mlc upper layer driver */
 	if (!ret)
 		schedule_delayed_work(&moduleloader_work,
@@ -1038,7 +1039,7 @@ static int __init hp_sdc_register(void)
 		return hp_sdc.dev_err;
 	}
 
-	sema_init(&tq_init_sem, 0);
+	init_MUTEX_LOCKED(&tq_init_sem);
 
 	tq_init.actidx		= 0;
 	tq_init.idx		= 1;

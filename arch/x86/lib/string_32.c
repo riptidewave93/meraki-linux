@@ -164,13 +164,15 @@ EXPORT_SYMBOL(strchr);
 size_t strlen(const char *s)
 {
 	int d0;
-	size_t res;
+	int res;
 	asm volatile("repne\n\t"
-		"scasb"
+		"scasb\n\t"
+		"notl %0\n\t"
+		"decl %0"
 		: "=c" (res), "=&D" (d0)
 		: "1" (s), "a" (0), "0" (0xffffffffu)
 		: "memory");
-	return ~res - 1;
+	return res;
 }
 EXPORT_SYMBOL(strlen);
 #endif

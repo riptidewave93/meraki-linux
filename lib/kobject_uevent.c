@@ -17,29 +17,20 @@
 #include <linux/spinlock.h>
 #include <linux/string.h>
 #include <linux/kobject.h>
-#include <linux/export.h>
-#include <linux/kmod.h>
-#include <linux/slab.h>
-#include <linux/user_namespace.h>
+#include <linux/module.h>
+
 #include <linux/socket.h>
 #include <linux/skbuff.h>
 #include <linux/netlink.h>
 #include <net/sock.h>
-#include <net/net_namespace.h>
 
 
 u64 uevent_seqnum;
 char uevent_helper[UEVENT_HELPER_PATH_LEN] = CONFIG_UEVENT_HELPER_PATH;
-#ifdef CONFIG_NET
-struct uevent_sock {
-	struct list_head list;
-	struct sock *sk;
-};
-static LIST_HEAD(uevent_sock_list);
+static DEFINE_SPINLOCK(sequence_lock);
+#if defined(CONFIG_NET)
+static struct sock *uevent_sock;
 #endif
-
-/* This lock protects uevent_seqnum and uevent_sock_list */
-static DEFINE_MUTEX(uevent_sock_mutex);
 
 /* the strings here must match the enum in include/linux/kobject.h */
 static const char *kobject_actions[] = {
@@ -85,39 +76,6 @@ out:
 	return ret;
 }
 
-#ifdef CONFIG_NET
-static int kobj_bcast_filter(struct sock *dsk, struct sk_buff *skb, void *data)
-{
-	struct kobject *kobj = data;
-	const struct kobj_ns_type_operations *ops;
-
-	ops = kobj_ns_ops(kobj);
-	if (ops) {
-		const void *sock_ns, *ns;
-		ns = kobj->ktype->namespace(kobj);
-		sock_ns = ops->netlink_ns(dsk);
-		return sock_ns != ns;
-	}
-
-	return 0;
-}
-#endif
-
-static int kobj_usermode_filter(struct kobject *kobj)
-{
-	const struct kobj_ns_type_operations *ops;
-
-	ops = kobj_ns_ops(kobj);
-	if (ops) {
-		const void *init_ns, *ns;
-		ns = kobj->ktype->namespace(kobj);
-		init_ns = ops->initial_ns();
-		return ns != init_ns;
-	}
-
-	return 0;
-}
-
 /**
  * kobject_uevent_env - send an uevent with environmental data
  *
@@ -125,7 +83,7 @@ static int kobj_usermode_filter(struct kobject *kobj)
  * @kobj: struct kobject that the action is happening to
  * @envp_ext: pointer to environmental data
  *
- * Returns 0 if kobject_uevent_env() is completed with success or the
+ * Returns 0 if kobject_uevent() is completed with success or the
  * corresponding error when it fails.
  */
 int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
@@ -137,12 +95,10 @@ int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
 	const char *subsystem;
 	struct kobject *top_kobj;
 	struct kset *kset;
-	const struct kset_uevent_ops *uevent_ops;
+	struct kset_uevent_ops *uevent_ops;
+	u64 seq;
 	int i = 0;
 	int retval = 0;
-#ifdef CONFIG_NET
-	struct uevent_sock *ue_sk;
-#endif
 
 	pr_debug("kobject: '%s' (%p): %s\n",
 		 kobject_name(kobj), kobj, __func__);
@@ -244,23 +200,19 @@ int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
 	else if (action == KOBJ_REMOVE)
 		kobj->state_remove_uevent_sent = 1;
 
-	mutex_lock(&uevent_sock_mutex);
 	/* we will send an event, so request a new sequence number */
-	retval = add_uevent_var(env, "SEQNUM=%llu", (unsigned long long)++uevent_seqnum);
-	if (retval) {
-		mutex_unlock(&uevent_sock_mutex);
+	spin_lock(&sequence_lock);
+	seq = ++uevent_seqnum;
+	spin_unlock(&sequence_lock);
+	retval = add_uevent_var(env, "SEQNUM=%llu", (unsigned long long)seq);
+	if (retval)
 		goto exit;
-	}
 
 #if defined(CONFIG_NET)
 	/* send netlink message */
-	list_for_each_entry(ue_sk, &uevent_sock_list, list) {
-		struct sock *uevent_sock = ue_sk->sk;
+	if (uevent_sock) {
 		struct sk_buff *skb;
 		size_t len;
-
-		if (!netlink_has_listeners(uevent_sock, 1))
-			continue;
 
 		/* allocate message with the maximum possible size */
 		len = strlen(action_string) + strlen(devpath) + 2;
@@ -280,10 +232,8 @@ int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
 			}
 
 			NETLINK_CB(skb).dst_group = 1;
-			retval = netlink_broadcast_filtered(uevent_sock, skb,
-							    0, 1, GFP_KERNEL,
-							    kobj_bcast_filter,
-							    kobj);
+			retval = netlink_broadcast(uevent_sock, skb, 0, 1,
+						   GFP_KERNEL);
 			/* ENOBUFS should be handled in userspace */
 			if (retval == -ENOBUFS || retval == -ESRCH)
 				retval = 0;
@@ -291,10 +241,9 @@ int kobject_uevent_env(struct kobject *kobj, enum kobject_action action,
 			retval = -ENOMEM;
 	}
 #endif
-	mutex_unlock(&uevent_sock_mutex);
 
 	/* call uevent_helper, usually only enabled during early boot */
-	if (uevent_helper[0] && !kobj_usermode_filter(kobj)) {
+	if (uevent_helper[0]) {
 		char *argv [3];
 
 		argv [0] = uevent_helper;
@@ -320,7 +269,7 @@ exit:
 EXPORT_SYMBOL_GPL(kobject_uevent_env);
 
 /**
- * kobject_uevent - notify userspace by sending an uevent
+ * kobject_uevent - notify userspace by ending an uevent
  *
  * @action: action that is happening
  * @kobj: struct kobject that the action is happening to
@@ -370,59 +319,18 @@ int add_uevent_var(struct kobj_uevent_env *env, const char *format, ...)
 EXPORT_SYMBOL_GPL(add_uevent_var);
 
 #if defined(CONFIG_NET)
-static int uevent_net_init(struct net *net)
-{
-	struct uevent_sock *ue_sk;
-
-	ue_sk = kzalloc(sizeof(*ue_sk), GFP_KERNEL);
-	if (!ue_sk)
-		return -ENOMEM;
-
-	ue_sk->sk = netlink_kernel_create(net, NETLINK_KOBJECT_UEVENT,
-					  1, NULL, NULL, THIS_MODULE);
-	if (!ue_sk->sk) {
-		printk(KERN_ERR
-		       "kobject_uevent: unable to create netlink socket!\n");
-		kfree(ue_sk);
-		return -ENODEV;
-	}
-	mutex_lock(&uevent_sock_mutex);
-	list_add_tail(&ue_sk->list, &uevent_sock_list);
-	mutex_unlock(&uevent_sock_mutex);
-	return 0;
-}
-
-static void uevent_net_exit(struct net *net)
-{
-	struct uevent_sock *ue_sk;
-
-	mutex_lock(&uevent_sock_mutex);
-	list_for_each_entry(ue_sk, &uevent_sock_list, list) {
-		if (sock_net(ue_sk->sk) == net)
-			goto found;
-	}
-	mutex_unlock(&uevent_sock_mutex);
-	return;
-
-found:
-	list_del(&ue_sk->list);
-	mutex_unlock(&uevent_sock_mutex);
-
-	netlink_kernel_release(ue_sk->sk);
-	kfree(ue_sk);
-}
-
-static struct pernet_operations uevent_net_ops = {
-	.init	= uevent_net_init,
-	.exit	= uevent_net_exit,
-};
-
 static int __init kobject_uevent_init(void)
 {
+	uevent_sock = netlink_kernel_create(&init_net, NETLINK_KOBJECT_UEVENT,
+					    1, NULL, NULL, THIS_MODULE);
+	if (!uevent_sock) {
+		printk(KERN_ERR
+		       "kobject_uevent: unable to create netlink socket!\n");
+		return -ENODEV;
+	}
 	netlink_set_nonroot(NETLINK_KOBJECT_UEVENT, NL_NONROOT_RECV);
-	return register_pernet_subsys(&uevent_net_ops);
+	return 0;
 }
-
 
 postcore_initcall(kobject_uevent_init);
 #endif

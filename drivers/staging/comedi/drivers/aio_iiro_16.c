@@ -2,7 +2,7 @@
 
     comedi/drivers/aio_iiro_16.c
 
-    Driver for Access I/O Products PC-104 AIO-IIRO-16 Digital I/O board
+    Driver for Acces I/O Products PC-104 AIO-IIRO-16 Digital I/O board
     Copyright (C) 2006 C&C Technologies, Inc.
 
     This program is free software; you can redistribute it and/or modify
@@ -23,10 +23,10 @@
 /*
 
 Driver: aio_iiro_16
-Description: Access I/O Products PC-104 IIRO16 Relay And Isolated Input Board
+Description: Acces I/O Products PC-104 IIRO16 Relay And Isolated Input Board
 Author: Zachary Ware <zach.ware@cctechnol.com>
 Devices:
- [Access I/O] PC-104 AIO12-8
+ [Acces I/O] PC-104 AIO12-8
 Status: experimental
 
 Configuration Options:
@@ -98,7 +98,7 @@ static int aio_iiro_16_attach(struct comedi_device *dev,
 	int iobase;
 	struct comedi_subdevice *s;
 
-	printk(KERN_INFO "comedi%d: aio_iiro_16: ", dev->minor);
+	printk("comedi%d: aio_iiro_16: ", dev->minor);
 
 	dev->board_name = thisboard->name;
 
@@ -140,7 +140,7 @@ static int aio_iiro_16_attach(struct comedi_device *dev,
 
 static int aio_iiro_16_detach(struct comedi_device *dev)
 {
-	printk(KERN_INFO "comedi%d: aio_iiro_16: remove\n", dev->minor);
+	printk("comedi%d: aio_iiro_16: remove\n", dev->minor);
 
 	if (dev->iobase)
 		release_region(dev->iobase, AIO_IIRO_16_SIZE);
@@ -184,19 +184,4 @@ static int aio_iiro_16_dio_insn_bits_read(struct comedi_device *dev,
 	return 2;
 }
 
-static int __init driver_aio_iiro_16_init_module(void)
-{
-	return comedi_driver_register(&driver_aio_iiro_16);
-}
-
-static void __exit driver_aio_iiro_16_cleanup_module(void)
-{
-	comedi_driver_unregister(&driver_aio_iiro_16);
-}
-
-module_init(driver_aio_iiro_16_init_module);
-module_exit(driver_aio_iiro_16_cleanup_module);
-
-MODULE_AUTHOR("Comedi http://www.comedi.org");
-MODULE_DESCRIPTION("Comedi low-level driver");
-MODULE_LICENSE("GPL");
+COMEDI_INITCLEANUP(driver_aio_iiro_16);

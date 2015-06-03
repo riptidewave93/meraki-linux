@@ -2,7 +2,7 @@
 #define _ASM_GENERIC_BITOPS_ATOMIC_H_
 
 #include <asm/types.h>
-#include <linux/irqflags.h>
+#include <asm/system.h>
 
 #ifdef CONFIG_SMP
 #include <asm/spinlock.h>
@@ -15,19 +15,19 @@
 #  define ATOMIC_HASH_SIZE 4
 #  define ATOMIC_HASH(a) (&(__atomic_hash[ (((unsigned long) a)/L1_CACHE_BYTES) & (ATOMIC_HASH_SIZE-1) ]))
 
-extern arch_spinlock_t __atomic_hash[ATOMIC_HASH_SIZE] __lock_aligned;
+extern raw_spinlock_t __atomic_hash[ATOMIC_HASH_SIZE] __lock_aligned;
 
 /* Can't use raw_spin_lock_irq because of #include problems, so
  * this is the substitute */
 #define _atomic_spin_lock_irqsave(l,f) do {	\
-	arch_spinlock_t *s = ATOMIC_HASH(l);	\
+	raw_spinlock_t *s = ATOMIC_HASH(l);	\
 	local_irq_save(f);			\
-	arch_spin_lock(s);			\
+	__raw_spin_lock(s);			\
 } while(0)
 
 #define _atomic_spin_unlock_irqrestore(l,f) do {	\
-	arch_spinlock_t *s = ATOMIC_HASH(l);		\
-	arch_spin_unlock(s);				\
+	raw_spinlock_t *s = ATOMIC_HASH(l);		\
+	__raw_spin_unlock(s);				\
 	local_irq_restore(f);				\
 } while(0)
 

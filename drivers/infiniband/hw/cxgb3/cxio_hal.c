@@ -37,7 +37,6 @@
 #include <linux/spinlock.h>
 #include <linux/pci.h>
 #include <linux/dma-mapping.h>
-#include <linux/slab.h>
 #include <net/net_namespace.h>
 
 #include "cxio_resource.h"
@@ -110,6 +109,7 @@ int cxio_hal_cq_op(struct cxio_rdev *rdev_p, struct t3_cq *cq,
 		while (!CQ_VLD_ENTRY(rptr, cq->size_log2, cqe)) {
 			udelay(1);
 			if (i++ > 1000000) {
+				BUG_ON(1);
 				printk(KERN_ERR "%s: stalled rnic\n",
 				       rdev_p->dev_name);
 				return -EIO;
@@ -155,27 +155,26 @@ static int cxio_hal_clear_qp_ctx(struct cxio_rdev *rdev_p, u32 qpid)
 	return iwch_cxgb3_ofld_send(rdev_p->t3cdev_p, skb);
 }
 
-int cxio_create_cq(struct cxio_rdev *rdev_p, struct t3_cq *cq, int kernel)
+int cxio_create_cq(struct cxio_rdev *rdev_p, struct t3_cq *cq)
 {
 	struct rdma_cq_setup setup;
 	int size = (1UL << (cq->size_log2)) * sizeof(struct t3_cqe);
 
-	size += 1; /* one extra page for storing cq-in-err state */
 	cq->cqid = cxio_hal_get_cqid(rdev_p->rscp);
 	if (!cq->cqid)
 		return -ENOMEM;
-	if (kernel) {
-		cq->sw_queue = kzalloc(size, GFP_KERNEL);
-		if (!cq->sw_queue)
-			return -ENOMEM;
-	}
-	cq->queue = dma_alloc_coherent(&(rdev_p->rnic_info.pdev->dev), size,
+	cq->sw_queue = kzalloc(size, GFP_KERNEL);
+	if (!cq->sw_queue)
+		return -ENOMEM;
+	cq->queue = dma_alloc_coherent(&(rdev_p->rnic_info.pdev->dev),
+					     (1UL << (cq->size_log2)) *
+					     sizeof(struct t3_cqe),
 					     &(cq->dma_addr), GFP_KERNEL);
 	if (!cq->queue) {
 		kfree(cq->sw_queue);
 		return -ENOMEM;
 	}
-	dma_unmap_addr_set(cq, mapping, cq->dma_addr);
+	pci_unmap_addr_set(cq, mapping, cq->dma_addr);
 	memset(cq->queue, 0, size);
 	setup.id = cq->cqid;
 	setup.base_addr = (u64) (cq->dma_addr);
@@ -189,7 +188,6 @@ int cxio_create_cq(struct cxio_rdev *rdev_p, struct t3_cq *cq, int kernel)
 	return (rdev_p->t3cdev_p->ctl(rdev_p->t3cdev_p, RDMA_CQ_SETUP, &setup));
 }
 
-#ifdef notyet
 int cxio_resize_cq(struct cxio_rdev *rdev_p, struct t3_cq *cq)
 {
 	struct rdma_cq_setup setup;
@@ -201,7 +199,6 @@ int cxio_resize_cq(struct cxio_rdev *rdev_p, struct t3_cq *cq)
 	setup.ovfl_mode = 1;
 	return (rdev_p->t3cdev_p->ctl(rdev_p->t3cdev_p, RDMA_CQ_SETUP, &setup));
 }
-#endif
 
 static u32 get_qpid(struct cxio_rdev *rdev_p, struct cxio_ucontext *uctx)
 {
@@ -300,7 +297,7 @@ int cxio_create_qp(struct cxio_rdev *rdev_p, u32 kernel_domain,
 		goto err4;
 
 	memset(wq->queue, 0, depth * sizeof(union t3_wr));
-	dma_unmap_addr_set(wq, mapping, wq->dma_addr);
+	pci_unmap_addr_set(wq, mapping, wq->dma_addr);
 	wq->doorbell = (void __iomem *)rdev_p->rnic_info.kdb_addr;
 	if (!kernel_domain)
 		wq->udb = (u64)rdev_p->rnic_info.udbell_physbase +
@@ -328,7 +325,7 @@ int cxio_destroy_cq(struct cxio_rdev *rdev_p, struct t3_cq *cq)
 	dma_free_coherent(&(rdev_p->rnic_info.pdev->dev),
 			  (1UL << (cq->size_log2))
 			  * sizeof(struct t3_cqe), cq->queue,
-			  dma_unmap_addr(cq, mapping));
+			  pci_unmap_addr(cq, mapping));
 	cxio_hal_put_cqid(rdev_p->rscp, cq->cqid);
 	return err;
 }
@@ -339,7 +336,7 @@ int cxio_destroy_qp(struct cxio_rdev *rdev_p, struct t3_wq *wq,
 	dma_free_coherent(&(rdev_p->rnic_info.pdev->dev),
 			  (1UL << (wq->size_log2))
 			  * sizeof(union t3_wr), wq->queue,
-			  dma_unmap_addr(wq, mapping));
+			  pci_unmap_addr(wq, mapping));
 	kfree(wq->sq);
 	cxio_hal_rqtpool_free(rdev_p, wq->rq_addr, (1UL << wq->rq_size_log2));
 	kfree(wq->rq);
@@ -540,7 +537,7 @@ static int cxio_hal_init_ctrl_qp(struct cxio_rdev *rdev_p)
 		err = -ENOMEM;
 		goto err;
 	}
-	dma_unmap_addr_set(&rdev_p->ctrl_qp, mapping,
+	pci_unmap_addr_set(&rdev_p->ctrl_qp, mapping,
 			   rdev_p->ctrl_qp.dma_addr);
 	rdev_p->ctrl_qp.doorbell = (void __iomem *)rdev_p->rnic_info.kdb_addr;
 	memset(rdev_p->ctrl_qp.workq, 0,
@@ -586,13 +583,13 @@ static int cxio_hal_destroy_ctrl_qp(struct cxio_rdev *rdev_p)
 	dma_free_coherent(&(rdev_p->rnic_info.pdev->dev),
 			  (1UL << T3_CTRL_QP_SIZE_LOG2)
 			  * sizeof(union t3_wr), rdev_p->ctrl_qp.workq,
-			  dma_unmap_addr(&rdev_p->ctrl_qp, mapping));
+			  pci_unmap_addr(&rdev_p->ctrl_qp, mapping));
 	return cxio_hal_clear_qp_ctx(rdev_p, T3_CTRL_QP_ID);
 }
 
 /* write len bytes of data into addr (32B aligned address)
  * If data is NULL, clear len byte of memory to zero.
- * caller acquires the ctrl_qp lock before the call
+ * caller aquires the ctrl_qp lock before the call
  */
 static int cxio_hal_ctrl_qp_write_mem(struct cxio_rdev *rdev_p, u32 addr,
 				      u32 len, void *data)

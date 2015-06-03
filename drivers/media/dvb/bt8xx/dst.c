@@ -386,7 +386,7 @@ static int dst_set_freq(struct dst_state *state, u32 freq)
 	return 0;
 }
 
-static int dst_set_bandwidth(struct dst_state *state, u32 bandwidth)
+static int dst_set_bandwidth(struct dst_state *state, fe_bandwidth_t bandwidth)
 {
 	state->bandwidth = bandwidth;
 
@@ -394,7 +394,7 @@ static int dst_set_bandwidth(struct dst_state *state, u32 bandwidth)
 		return -EOPNOTSUPP;
 
 	switch (bandwidth) {
-	case 6000000:
+	case BANDWIDTH_6_MHZ:
 		if (state->dst_hw_cap & DST_TYPE_HAS_CA)
 			state->tx_tuna[7] = 0x06;
 		else {
@@ -402,7 +402,7 @@ static int dst_set_bandwidth(struct dst_state *state, u32 bandwidth)
 			state->tx_tuna[7] = 0x00;
 		}
 		break;
-	case 7000000:
+	case BANDWIDTH_7_MHZ:
 		if (state->dst_hw_cap & DST_TYPE_HAS_CA)
 			state->tx_tuna[7] = 0x07;
 		else {
@@ -410,7 +410,7 @@ static int dst_set_bandwidth(struct dst_state *state, u32 bandwidth)
 			state->tx_tuna[7] = 0x00;
 		}
 		break;
-	case 8000000:
+	case BANDWIDTH_8_MHZ:
 		if (state->dst_hw_cap & DST_TYPE_HAS_CA)
 			state->tx_tuna[7] = 0x08;
 		else {
@@ -930,6 +930,7 @@ static int dst_fw_ver(struct dst_state *state)
 		dprintk(verbose, DST_INFO, 1, "Unsupported Command");
 		return -1;
 	}
+	memset(&state->fw_version, '\0', 8);
 	memcpy(&state->fw_version, &state->rxbuffer, 8);
 	dprintk(verbose, DST_ERROR, 1, "Firmware Ver = %x.%x Build = %02x, on %x:%x, %x-%x-20%02x",
 		state->fw_version[0] >> 4, state->fw_version[0] & 0x0f,
@@ -1052,6 +1053,7 @@ static int dst_get_tuner_info(struct dst_state *state)
 			goto force;
 		}
 	}
+	memset(&state->board_info, '\0', 8);
 	memcpy(&state->board_info, &state->rxbuffer, 8);
 	if (state->type_flags & DST_TYPE_HAS_MULTI_FE) {
 		dprintk(verbose, DST_ERROR, 1, "DST type has TS=188");
@@ -1350,7 +1352,8 @@ static int dst_get_tuna(struct dst_state *state)
 		return retval;
 	}
 	if ((state->type_flags & DST_TYPE_HAS_VLF) &&
-	   !(state->dst_type == DST_TYPE_IS_ATSC)) {
+		!(state->dst_type == DST_TYPE_IS_CABLE) &&
+		!(state->dst_type == DST_TYPE_IS_ATSC)) {
 
 		if (state->rx_tuna[9] != dst_check_sum(&state->rx_tuna[0], 9)) {
 			dprintk(verbose, DST_INFO, 1, "checksum failure ? ");
@@ -1561,7 +1564,7 @@ static int dst_init(struct dvb_frontend *fe)
 	state->tone = SEC_TONE_OFF;
 	state->diseq_flags = 0;
 	state->k22 = 0x02;
-	state->bandwidth = 7000000;
+	state->bandwidth = BANDWIDTH_7_MHZ;
 	state->cur_jiff = jiffies;
 	if (state->dst_type == DST_TYPE_IS_SAT)
 		memcpy(state->tx_tuna, ((state->type_flags & DST_TYPE_HAS_VLF) ? sat_tuna_188 : sat_tuna_204), sizeof (sat_tuna_204));
@@ -1609,9 +1612,8 @@ static int dst_read_snr(struct dvb_frontend *fe, u16 *snr)
 	return retval;
 }
 
-static int dst_set_frontend(struct dvb_frontend *fe)
+static int dst_set_frontend(struct dvb_frontend *fe, struct dvb_frontend_parameters *p)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	int retval = -EINVAL;
 	struct dst_state *state = fe->demodulator_priv;
 
@@ -1624,17 +1626,17 @@ static int dst_set_frontend(struct dvb_frontend *fe)
 		if (state->dst_type == DST_TYPE_IS_SAT) {
 			if (state->type_flags & DST_TYPE_HAS_OBS_REGS)
 				dst_set_inversion(state, p->inversion);
-			dst_set_fec(state, p->fec_inner);
-			dst_set_symbolrate(state, p->symbol_rate);
+			dst_set_fec(state, p->u.qpsk.fec_inner);
+			dst_set_symbolrate(state, p->u.qpsk.symbol_rate);
 			dst_set_polarization(state);
-			dprintk(verbose, DST_DEBUG, 1, "Set Symbolrate=[%d]", p->symbol_rate);
+			dprintk(verbose, DST_DEBUG, 1, "Set Symbolrate=[%d]", p->u.qpsk.symbol_rate);
 
 		} else if (state->dst_type == DST_TYPE_IS_TERR)
-			dst_set_bandwidth(state, p->bandwidth_hz);
+			dst_set_bandwidth(state, p->u.ofdm.bandwidth);
 		else if (state->dst_type == DST_TYPE_IS_CABLE) {
-			dst_set_fec(state, p->fec_inner);
-			dst_set_symbolrate(state, p->symbol_rate);
-			dst_set_modulation(state, p->modulation);
+			dst_set_fec(state, p->u.qam.fec_inner);
+			dst_set_symbolrate(state, p->u.qam.symbol_rate);
+			dst_set_modulation(state, p->u.qam.modulation);
 		}
 		retval = dst_write_tuna(fe);
 	}
@@ -1643,32 +1645,31 @@ static int dst_set_frontend(struct dvb_frontend *fe)
 }
 
 static int dst_tune_frontend(struct dvb_frontend* fe,
-			    bool re_tune,
+			    struct dvb_frontend_parameters* p,
 			    unsigned int mode_flags,
 			    unsigned int *delay,
 			    fe_status_t *status)
 {
 	struct dst_state *state = fe->demodulator_priv;
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 
-	if (re_tune) {
+	if (p != NULL) {
 		dst_set_freq(state, p->frequency);
 		dprintk(verbose, DST_DEBUG, 1, "Set Frequency=[%d]", p->frequency);
 
 		if (state->dst_type == DST_TYPE_IS_SAT) {
 			if (state->type_flags & DST_TYPE_HAS_OBS_REGS)
 				dst_set_inversion(state, p->inversion);
-			dst_set_fec(state, p->fec_inner);
-			dst_set_symbolrate(state, p->symbol_rate);
+			dst_set_fec(state, p->u.qpsk.fec_inner);
+			dst_set_symbolrate(state, p->u.qpsk.symbol_rate);
 			dst_set_polarization(state);
-			dprintk(verbose, DST_DEBUG, 1, "Set Symbolrate=[%d]", p->symbol_rate);
+			dprintk(verbose, DST_DEBUG, 1, "Set Symbolrate=[%d]", p->u.qpsk.symbol_rate);
 
 		} else if (state->dst_type == DST_TYPE_IS_TERR)
-			dst_set_bandwidth(state, p->bandwidth_hz);
+			dst_set_bandwidth(state, p->u.ofdm.bandwidth);
 		else if (state->dst_type == DST_TYPE_IS_CABLE) {
-			dst_set_fec(state, p->fec_inner);
-			dst_set_symbolrate(state, p->symbol_rate);
-			dst_set_modulation(state, p->modulation);
+			dst_set_fec(state, p->u.qam.fec_inner);
+			dst_set_symbolrate(state, p->u.qam.symbol_rate);
+			dst_set_modulation(state, p->u.qam.modulation);
 		}
 		dst_write_tuna(fe);
 	}
@@ -1685,23 +1686,22 @@ static int dst_get_tuning_algo(struct dvb_frontend *fe)
 	return dst_algo ? DVBFE_ALGO_HW : DVBFE_ALGO_SW;
 }
 
-static int dst_get_frontend(struct dvb_frontend *fe)
+static int dst_get_frontend(struct dvb_frontend *fe, struct dvb_frontend_parameters *p)
 {
-	struct dtv_frontend_properties *p = &fe->dtv_property_cache;
 	struct dst_state *state = fe->demodulator_priv;
 
 	p->frequency = state->decode_freq;
 	if (state->dst_type == DST_TYPE_IS_SAT) {
 		if (state->type_flags & DST_TYPE_HAS_OBS_REGS)
 			p->inversion = state->inversion;
-		p->symbol_rate = state->symbol_rate;
-		p->fec_inner = dst_get_fec(state);
+		p->u.qpsk.symbol_rate = state->symbol_rate;
+		p->u.qpsk.fec_inner = dst_get_fec(state);
 	} else if (state->dst_type == DST_TYPE_IS_TERR) {
-		p->bandwidth_hz = state->bandwidth;
+		p->u.ofdm.bandwidth = state->bandwidth;
 	} else if (state->dst_type == DST_TYPE_IS_CABLE) {
-		p->symbol_rate = state->symbol_rate;
-		p->fec_inner = dst_get_fec(state);
-		p->modulation = dst_get_modulation(state);
+		p->u.qam.symbol_rate = state->symbol_rate;
+		p->u.qam.fec_inner = dst_get_fec(state);
+		p->u.qam.modulation = dst_get_modulation(state);
 	}
 
 	return 0;
@@ -1759,21 +1759,14 @@ struct dst_state *dst_attach(struct dst_state *state, struct dvb_adapter *dvb_ad
 EXPORT_SYMBOL(dst_attach);
 
 static struct dvb_frontend_ops dst_dvbt_ops = {
-	.delsys = { SYS_DVBT },
+
 	.info = {
 		.name = "DST DVB-T",
+		.type = FE_OFDM,
 		.frequency_min = 137000000,
 		.frequency_max = 858000000,
 		.frequency_stepsize = 166667,
-		.caps = FE_CAN_FEC_AUTO			|
-			FE_CAN_QAM_AUTO			|
-			FE_CAN_QAM_16			|
-			FE_CAN_QAM_32			|
-			FE_CAN_QAM_64			|
-			FE_CAN_QAM_128			|
-			FE_CAN_QAM_256			|
-			FE_CAN_TRANSMISSION_MODE_AUTO	|
-			FE_CAN_GUARD_INTERVAL_AUTO
+		.caps = FE_CAN_FEC_AUTO | FE_CAN_QAM_AUTO | FE_CAN_TRANSMISSION_MODE_AUTO | FE_CAN_GUARD_INTERVAL_AUTO
 	},
 
 	.release = dst_release,
@@ -1788,9 +1781,10 @@ static struct dvb_frontend_ops dst_dvbt_ops = {
 };
 
 static struct dvb_frontend_ops dst_dvbs_ops = {
-	.delsys = { SYS_DVBS },
+
 	.info = {
 		.name = "DST DVB-S",
+		.type = FE_QPSK,
 		.frequency_min = 950000,
 		.frequency_max = 2150000,
 		.frequency_stepsize = 1000,	/* kHz for QPSK frontends */
@@ -1817,21 +1811,17 @@ static struct dvb_frontend_ops dst_dvbs_ops = {
 };
 
 static struct dvb_frontend_ops dst_dvbc_ops = {
-	.delsys = { SYS_DVBC_ANNEX_A },
+
 	.info = {
 		.name = "DST DVB-C",
+		.type = FE_QAM,
 		.frequency_stepsize = 62500,
 		.frequency_min = 51000000,
 		.frequency_max = 858000000,
 		.symbol_rate_min = 1000000,
 		.symbol_rate_max = 45000000,
-		.caps = FE_CAN_FEC_AUTO |
-			FE_CAN_QAM_AUTO |
-			FE_CAN_QAM_16	|
-			FE_CAN_QAM_32	|
-			FE_CAN_QAM_64	|
-			FE_CAN_QAM_128	|
-			FE_CAN_QAM_256
+	/*     . symbol_rate_tolerance	=	???,*/
+		.caps = FE_CAN_FEC_AUTO | FE_CAN_QAM_AUTO
 	},
 
 	.release = dst_release,
@@ -1846,9 +1836,9 @@ static struct dvb_frontend_ops dst_dvbc_ops = {
 };
 
 static struct dvb_frontend_ops dst_atsc_ops = {
-	.delsys = { SYS_ATSC },
 	.info = {
 		.name = "DST ATSC",
+		.type = FE_ATSC,
 		.frequency_stepsize = 62500,
 		.frequency_min = 510000000,
 		.frequency_max = 858000000,

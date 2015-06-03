@@ -57,7 +57,7 @@
  * 2. compute new FSCKSize from new LVSize;
  * 3. set new FSSize as MIN(FSSize, LVSize-(LogSize+FSCKSize)) where
  *    assert(new FSSize >= old FSSize),
- *    i.e., file system must not be shrunk;
+ *    i.e., file system must not be shrinked;
  */
 int jfs_extendfs(struct super_block *sb, s64 newLVSize, int newLogSize)
 {
@@ -80,7 +80,7 @@ int jfs_extendfs(struct super_block *sb, s64 newLVSize, int newLogSize)
 	int log_formatted = 0;
 	struct inode *iplist[1];
 	struct jfs_superblock *j_sb, *j_sb2;
-	s64 old_agsize;
+	uint old_agsize;
 	int agsizechanged = 0;
 	struct buffer_head *bh, *bh2;
 
@@ -182,7 +182,7 @@ int jfs_extendfs(struct super_block *sb, s64 newLVSize, int newLogSize)
 	 */
 	newFSSize = newLVSize - newLogSize - newFSCKSize;
 
-	/* file system cannot be shrunk */
+	/* file system cannot be shrinked */
 	if (newFSSize < bmp->db_mapsize) {
 		rc = -EINVAL;
 		goto out;

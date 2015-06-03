@@ -3,6 +3,7 @@
 #ifdef __KERNEL__
 
 #include <linux/irq.h>
+#include <linux/sysdev.h>
 #include <asm/dcr.h>
 #include <asm/msi_bitmap.h>
 
@@ -49,6 +50,7 @@
 #define 	MPIC_GREG_VENDOR_ID_DEVICE_ID_SHIFT	8
 #define 	MPIC_GREG_VENDOR_ID_VENDOR_ID_MASK	0x000000ff
 #define MPIC_GREG_PROCESSOR_INIT	0x00090
+#define MPIC_GREG_PRR			0x00070
 #define MPIC_GREG_IPI_VECTOR_PRI_0	0x000a0
 #define MPIC_GREG_IPI_VECTOR_PRI_1	0x000b0
 #define MPIC_GREG_IPI_VECTOR_PRI_2	0x000c0
@@ -61,13 +63,44 @@
  *
  * Timer registers
  */
-#define MPIC_TIMER_BASE			0x01100
-#define MPIC_TIMER_STRIDE		0x40
+#if defined(CONFIG_MPIC_64BITS_TIMER)
+#define MPIC_TIMER_BASE			0x010f0
+#define MPIC_TIMER_FREQ			0x00000
+#define MPIC_TIMER_CTRL			0x00210
 
+#define MPIC_TIMER_BASE_OFFS		0x00010
+#define MPIC_TIMER_WINDOW		0x1280
+#define MPIC_TIMER_STRIDE		0x60
+#define MPIC_TIMER_GRP_STRIDE		0x01000
+#define MPIC_TIMER_CURRENT_CNT		0x00000
+#define MPIC_TIMER_CURRENT_HI_CNT	0x00010
+#define MPIC_TIMER_BASE_CNT		0x00020
+#define MPIC_TIMER_BASE_HI_CNT		0x00030
+#define MPIC_TIMER_VECTOR_PRI		0x00040
+#	define	MPIC_TIMER_VEC_MASK	0x0000ffff
+#define MPIC_TIMER_DESTINATION		0x00050
+#define MPIC_NUM_GPTS			8
+#else
+#define MPIC_TIMER_BASE			0x01100
+#define MPIC_TIMER_BASE_OFFS		0x00000
+#define MPIC_TIMER_WINDOW		0x1000
+#define MPIC_TIMER_STRIDE		0x40
+#define MPIC_TIMER_GRP_STRIDE		0x00000
 #define MPIC_TIMER_CURRENT_CNT		0x00000
 #define MPIC_TIMER_BASE_CNT		0x00010
 #define MPIC_TIMER_VECTOR_PRI		0x00020
 #define MPIC_TIMER_DESTINATION		0x00030
+#define MPIC_NUM_GPTS			4
+#endif
+#define	MPIC_GPTS_IN_GRP		4
+
+#define MPIC_MSG_REG_STRIDE		0x10
+#define MPIC_MSG_REG_OFFS		0x310
+#define MPIC_MSG_MSTR_OFFS		0x410
+#define MPIC_MSG_INTR			116
+#define MPIC_MSG_NUMS			4
+
+#define MPIC_TIMER_STOP			0x80000000
 
 /*
  * Per-Processor registers
@@ -251,34 +284,35 @@ struct mpic_irq_save {
 /* The instance data of a given MPIC */
 struct mpic
 {
-	/* The OpenFirmware dt node for this MPIC */
-	struct device_node *node;
-
 	/* The remapper for this MPIC */
-	struct irq_domain	*irqhost;
+	struct irq_host		*irqhost;
 
 	/* The "linux" controller struct */
 	struct irq_chip		hc_irq;
 #ifdef CONFIG_MPIC_U3_HT_IRQS
 	struct irq_chip		hc_ht_irq;
 #endif
-#ifdef CONFIG_SMP
 	struct irq_chip		hc_ipi;
-#endif
-	struct irq_chip		hc_tm;
 	const char		*name;
+	struct irq_chip		hc_gpt;
 	/* Flags */
 	unsigned int		flags;
 	/* How many irq sources in a given ISU */
 	unsigned int		isu_size;
 	unsigned int		isu_shift;
 	unsigned int		isu_mask;
+	unsigned int		irq_count;
 	/* Number of sources */
 	unsigned int		num_sources;
+	/* Number of CPUs */
+	unsigned int		num_cpus;
+	/* default senses array */
+	unsigned char		*senses;
+	unsigned int		senses_count;
 
 	/* vector numbers used for internal sources (ipi/timers) */
 	unsigned int		ipi_vecs[4];
-	unsigned int		timer_vecs[8];
+	unsigned int		timer_vecs[MPIC_NUM_GPTS];
 
 	/* Spurious vector to program into unused sources */
 	unsigned int		spurious_vec;
@@ -286,14 +320,11 @@ struct mpic
 #ifdef CONFIG_MPIC_U3_HT_IRQS
 	/* The fixup table */
 	struct mpic_irq_fixup	*fixups;
-	raw_spinlock_t	fixup_lock;
+	spinlock_t		fixup_lock;
 #endif
 
 	/* Register access method */
 	enum mpic_reg_type	reg_type;
-
-	/* The physical base address of the MPIC */
-	phys_addr_t paddr;
 
 	/* The various ioremap'ed bases */
 	struct mpic_reg_bank	gregs;
@@ -320,6 +351,8 @@ struct mpic
 	/* link */
 	struct mpic		*next;
 
+	struct sys_device	sysdev;
+
 #ifdef CONFIG_PM
 	struct mpic_irq_save	*save_data;
 #endif
@@ -333,11 +366,11 @@ struct mpic
  * Note setting any ID (leaving those bits to 0) means standard MPIC
  */
 
-/*
- * This is a secondary ("chained") controller; it only uses the CPU0
- * registers.  Primary controllers have IPIs and affinity control.
+/* This is the primary controller, only that one has IPIs and
+ * has afinity control. A non-primary MPIC always uses CPU0
+ * registers only
  */
-#define MPIC_SECONDARY			0x00000001
+#define MPIC_PRIMARY			0x00000001
 
 /* Set this for a big-endian MPIC */
 #define MPIC_BIG_ENDIAN			0x00000002
@@ -345,6 +378,8 @@ struct mpic
 #define MPIC_U3_HT_IRQS			0x00000004
 /* Broken IPI registers (autodetected) */
 #define MPIC_BROKEN_IPI			0x00000008
+/* MPIC wants a reset */
+#define MPIC_WANTS_RESET		0x00000010
 /* Spurious vector requires EOI */
 #define MPIC_SPV_EOI			0x00000020
 /* No passthrough disable */
@@ -357,14 +392,14 @@ struct mpic
 #define MPIC_ENABLE_MCK			0x00000200
 /* Disable bias among target selection, spread interrupts evenly */
 #define MPIC_NO_BIAS			0x00000400
+/* Ignore NIRQS as reported by FRR */
+#define MPIC_BROKEN_FRR_NIRQS		0x00000800
 /* Destination only supports a single CPU at a time */
 #define MPIC_SINGLE_DEST_CPU		0x00001000
 /* Enable CoreInt delivery of interrupts */
 #define MPIC_ENABLE_COREINT		0x00002000
-/* Do not reset the MPIC during initialization */
-#define MPIC_NO_RESET			0x00004000
-/* Freescale MPIC (compatible includes "fsl,mpic") */
-#define MPIC_FSL			0x00008000
+/* Skip Broken IPI auto detection */
+#define MPIC_SKIP_BROKEN_IPI_DETECT	0x00004000
 
 /* MPIC HW modification ID */
 #define MPIC_REGSET_MASK		0xf0000000
@@ -412,6 +447,21 @@ extern struct mpic *mpic_alloc(struct device_node *node,
 extern void mpic_assign_isu(struct mpic *mpic, unsigned int isu_num,
 			    phys_addr_t phys_addr);
 
+/* Set default sense codes
+ *
+ * @mpic:	controller
+ * @senses:	array of sense codes
+ * @count:	size of above array
+ *
+ * Optionally provide an array (indexed on hardware interrupt numbers
+ * for this MPIC) of default sense codes for the chip. Those are linux
+ * sense codes IRQ_TYPE_*
+ *
+ * The driver gets ownership of the pointer, don't dispose of it or
+ * anything like that. __init only.
+ */
+extern void mpic_set_default_senses(struct mpic *mpic, u8 *senses, int count);
+
 
 /* Initialize the controller. After this has been called, none of the above
  * should be called again for this mpic
@@ -437,6 +487,9 @@ extern void mpic_setup_this_cpu(void);
 /* Clean up for kexec (or cpu offline or ...) */
 extern void mpic_teardown_this_cpu(int secondary);
 
+/* Get the number of known CPUs */
+extern unsigned int mpic_num_cpus(void);
+
 /* Get the current cpu priority for this cpu (0..15) */
 extern int mpic_cpu_get_priority(void);
 
@@ -446,15 +499,21 @@ extern void mpic_cpu_set_priority(int prio);
 /* Request IPIs on primary mpic */
 extern void mpic_request_ipis(void);
 
+/* Send an IPI (non offseted number 0..3) */
+extern void mpic_send_ipi(unsigned int ipi_no, unsigned int cpu_mask);
+extern void mpic_send_trigger(unsigned int msg_idx, unsigned int core_id,
+                        unsigned long core_entry);
+extern unsigned int mpic_read_msg(unsigned int irq);
+
 /* Send a message (IPI) to a given target (cpu number or MSG_*) */
 void smp_mpic_message_pass(int target, int msg);
 
 /* Unmask a specific virq */
-extern void mpic_unmask_irq(struct irq_data *d);
+extern void mpic_unmask_irq(unsigned int irq);
 /* Mask a specific virq */
-extern void mpic_mask_irq(struct irq_data *d);
+extern void mpic_mask_irq(unsigned int irq);
 /* EOI a specific virq */
-extern void mpic_end_irq(struct irq_data *d);
+extern void mpic_end_irq(unsigned int irq);
 
 /* Fetch interrupt from a given mpic */
 extern unsigned int mpic_get_one_irq(struct mpic *mpic);
@@ -470,6 +529,10 @@ void mpic_set_clk_ratio(struct mpic *mpic, u32 clock_ratio);
 
 /* Enable/Disable EPIC serial interrupt mode */
 void mpic_set_serial_int(struct mpic *mpic, int enable);
+
+int mpic_set_affinity(unsigned int irq, const struct cpumask *cpumask);
+
+void mpic_assertcore(unsigned int corenr);
 
 #endif /* __KERNEL__ */
 #endif	/* _ASM_POWERPC_MPIC_H */

@@ -35,7 +35,7 @@ enum cpu_type {
 	CPU_SH7723, CPU_SH7724, CPU_SH7757, CPU_SHX3,
 
 	/* SH4AL-DSP types */
-	CPU_SH7343, CPU_SH7722, CPU_SH7366, CPU_SH7372,
+	CPU_SH7343, CPU_SH7722, CPU_SH7366,
 
 	/* SH-5 types */
         CPU_SH5_101, CPU_SH5_103,
@@ -85,7 +85,6 @@ struct sh_cpuinfo {
 	struct tlb_info itlb;
 	struct tlb_info dtlb;
 
-	unsigned int phys_bits;
 	unsigned long flags;
 } __attribute__ ((aligned(L1_CACHE_BYTES)));
 
@@ -97,41 +96,14 @@ extern struct sh_cpuinfo cpu_data[];
 #define cpu_sleep()	__asm__ __volatile__ ("sleep" : : : "memory")
 #define cpu_relax()	barrier()
 
-void default_idle(void);
-void stop_this_cpu(void *);
-
 /* Forward decl */
 struct seq_operations;
-struct task_struct;
 
 extern struct pt_regs fake_swapper_regs;
-
-extern void cpu_init(void);
-extern void cpu_probe(void);
-
-/* arch/sh/kernel/process.c */
-extern unsigned int xstate_size;
-extern void free_thread_xstate(struct task_struct *);
-extern struct kmem_cache *task_xstate_cachep;
-
-/* arch/sh/mm/alignment.c */
-extern int get_unalign_ctl(struct task_struct *, unsigned long addr);
-extern int set_unalign_ctl(struct task_struct *, unsigned int val);
-
-#define GET_UNALIGN_CTL(tsk, addr)	get_unalign_ctl((tsk), (addr))
-#define SET_UNALIGN_CTL(tsk, val)	set_unalign_ctl((tsk), (val))
-
-/* arch/sh/mm/init.c */
-extern unsigned int mem_init_done;
 
 /* arch/sh/kernel/setup.c */
 const char *get_cpu_subtype(struct sh_cpuinfo *c);
 extern const struct seq_operations cpuinfo_op;
-
-/* thread_struct flags */
-#define SH_THREAD_UAC_NOPRINT	(1 << 0)
-#define SH_THREAD_UAC_SIGBUS	(1 << 1)
-#define SH_THREAD_UAC_MASK	(SH_THREAD_UAC_NOPRINT | SH_THREAD_UAC_SIGBUS)
 
 /* processor boot mode configuration */
 #define MODE_PIN0 (1 << 0)
@@ -158,17 +130,6 @@ int test_mode_pin(int pin);
 int vsyscall_init(void);
 #else
 #define vsyscall_init() do { } while (0)
-#endif
-
-/*
- * SH-2A has both 16 and 32-bit opcodes, do lame encoding checks.
- */
-#ifdef CONFIG_CPU_SH2A
-extern unsigned int instruction_size(unsigned int insn);
-#elif defined(CONFIG_SUPERH32)
-#define instruction_size(insn)	(2)
-#else
-#define instruction_size(insn)	(4)
 #endif
 
 #endif /* __ASSEMBLY__ */

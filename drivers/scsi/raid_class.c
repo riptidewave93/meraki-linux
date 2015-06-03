@@ -63,7 +63,6 @@ static int raid_match(struct attribute_container *cont, struct device *dev)
 	 * emulated RAID devices, so start with SCSI */
 	struct raid_internal *i = ac_to_raid_internal(cont);
 
-#if defined(CONFIG_SCSI) || defined(CONFIG_SCSI_MODULE)
 	if (scsi_is_sdev_device(dev)) {
 		struct scsi_device *sdev = to_scsi_device(dev);
 
@@ -72,7 +71,6 @@ static int raid_match(struct attribute_container *cont, struct device *dev)
 
 		return i->f->is_raid(dev);
 	}
-#endif
 	/* FIXME: look at other subsystems too */
 	return 0;
 }
@@ -151,7 +149,6 @@ static struct {
 	{ RAID_LEVEL_0, "raid0" },
 	{ RAID_LEVEL_1, "raid1" },
 	{ RAID_LEVEL_10, "raid10" },
-	{ RAID_LEVEL_1E, "raid1e" },
 	{ RAID_LEVEL_3, "raid3" },
 	{ RAID_LEVEL_4, "raid4" },
 	{ RAID_LEVEL_5, "raid5" },

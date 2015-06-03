@@ -10,10 +10,10 @@
 #include <linux/fs.h>
 #include <linux/proc_fs.h>
 #include <linux/seq_file.h>
+#include <linux/slab.h>
 #include <linux/kmod.h>
 #include <linux/init.h>
 #include <linux/module.h>
-#include <linux/slab.h>
 #include <asm/uaccess.h>
 
 /*
@@ -74,6 +74,7 @@ int register_filesystem(struct file_system_type * fs)
 	BUG_ON(strchr(fs->name, '.'));
 	if (fs->next)
 		return -EBUSY;
+	INIT_LIST_HEAD(&fs->fs_supers);
 	write_lock(&file_systems_lock);
 	p = find_filesystem(fs->name, strlen(fs->name));
 	if (*p)
@@ -109,13 +110,11 @@ int unregister_filesystem(struct file_system_type * fs)
 			*tmp = fs->next;
 			fs->next = NULL;
 			write_unlock(&file_systems_lock);
-			synchronize_rcu();
 			return 0;
 		}
 		tmp = &(*tmp)->next;
 	}
 	write_unlock(&file_systems_lock);
-
 	return -EINVAL;
 }
 

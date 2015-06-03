@@ -52,8 +52,7 @@ enum ni_660x_constants {
 };
 
 #define NUM_PFI_CHANNELS 40
-/* really there are only up to 3 dma channels, but the register layout allows
-for 4 */
+/* really there are only up to 3 dma channels, but the register layout allows for 4 */
 #define MAX_DMA_CHANNEL 4
 
 /* See Register-Level Programmer Manual page 3.1 */
@@ -199,7 +198,7 @@ struct NI_660xRegisterData {
 	const char *name;	/*  Register Name */
 	int offset;		/*  Offset from base address from GPCT chip */
 	enum ni_660x_register_direction direction;
-	enum ni_660x_register_width size; /* 1 byte, 2 bytes, or 4 bytes */
+	enum ni_660x_register_width size;	/*  1 byte, 2 bytes, or 4 bytes */
 };
 
 static const struct NI_660xRegisterData registerData[NumRegisters] = {
@@ -382,9 +381,9 @@ enum global_interrupt_config_register_bits {
 	Global_Int_Enable_Bit = 0x80000000
 };
 
-/* Offset of the GPCT chips from the base-address of the card */
-/* First chip is at base-address + 0x00, etc. */
-static const unsigned GPCT_OFFSET[2] = { 0x0, 0x800 };
+/* Offset of the GPCT chips from the base-adress of the card */
+static const unsigned GPCT_OFFSET[2] = { 0x0, 0x800 };	/* First chip is at base-address +
+							   0x00, etc. */
 
 /* Board description*/
 struct ni_660x_board {
@@ -420,11 +419,12 @@ static const struct ni_660x_board ni_660x_boards[] = {
 #define NI_660X_MAX_NUM_COUNTERS (NI_660X_MAX_NUM_CHIPS * counters_per_chip)
 
 static DEFINE_PCI_DEVICE_TABLE(ni_660x_pci_table) = {
-	{PCI_DEVICE(PCI_VENDOR_ID_NI, 0x2c60)},
-	{PCI_DEVICE(PCI_VENDOR_ID_NI, 0x1310)},
-	{PCI_DEVICE(PCI_VENDOR_ID_NI, 0x1360)},
-	{PCI_DEVICE(PCI_VENDOR_ID_NI, 0x2cc0)},
-	{0}
+	{
+	PCI_VENDOR_ID_NATINST, 0x2c60, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, {
+	PCI_VENDOR_ID_NATINST, 0x1310, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, {
+	PCI_VENDOR_ID_NATINST, 0x1360, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, {
+	PCI_VENDOR_ID_NATINST, 0x2cc0, PCI_ANY_ID, PCI_ANY_ID, 0, 0, 0}, {
+	0}
 };
 
 MODULE_DEVICE_TABLE(pci, ni_660x_pci_table);
@@ -471,43 +471,7 @@ static struct comedi_driver driver_ni_660x = {
 	.detach = ni_660x_detach,
 };
 
-static int __devinit driver_ni_660x_pci_probe(struct pci_dev *dev,
-					      const struct pci_device_id *ent)
-{
-	return comedi_pci_auto_config(dev, driver_ni_660x.driver_name);
-}
-
-static void __devexit driver_ni_660x_pci_remove(struct pci_dev *dev)
-{
-	comedi_pci_auto_unconfig(dev);
-}
-
-static struct pci_driver driver_ni_660x_pci_driver = {
-	.id_table = ni_660x_pci_table,
-	.probe = &driver_ni_660x_pci_probe,
-	.remove = __devexit_p(&driver_ni_660x_pci_remove)
-};
-
-static int __init driver_ni_660x_init_module(void)
-{
-	int retval;
-
-	retval = comedi_driver_register(&driver_ni_660x);
-	if (retval < 0)
-		return retval;
-
-	driver_ni_660x_pci_driver.name = (char *)driver_ni_660x.driver_name;
-	return pci_register_driver(&driver_ni_660x_pci_driver);
-}
-
-static void __exit driver_ni_660x_cleanup_module(void)
-{
-	pci_unregister_driver(&driver_ni_660x_pci_driver);
-	comedi_driver_unregister(&driver_ni_660x);
-}
-
-module_init(driver_ni_660x_init_module);
-module_exit(driver_ni_660x_cleanup_module);
+COMEDI_PCI_INITCLEANUP(driver_ni_660x, ni_660x_pci_table);
 
 static int ni_660x_find_device(struct comedi_device *dev, int bus, int slot);
 static int ni_660x_set_pfi_routing(struct comedi_device *dev, unsigned chan,
@@ -727,13 +691,13 @@ static enum NI_660x_Register ni_gpct_to_660x_register(enum ni_gpct_register reg)
 		ni_660x_register = G0StatusRegister;
 		break;
 	case NITIO_G1_Status_Reg:
-		ni_660x_register = G1StatusRegister;
+		ni_660x_register = G0StatusRegister;
 		break;
 	case NITIO_G2_Status_Reg:
-		ni_660x_register = G2StatusRegister;
+		ni_660x_register = G0StatusRegister;
 		break;
 	case NITIO_G3_Status_Reg:
-		ni_660x_register = G3StatusRegister;
+		ni_660x_register = G0StatusRegister;
 		break;
 	case NITIO_G0_Interrupt_Enable_Reg:
 		ni_660x_register = G0InterruptEnable;
@@ -748,7 +712,7 @@ static enum NI_660x_Register ni_gpct_to_660x_register(enum ni_gpct_register reg)
 		ni_660x_register = G3InterruptEnable;
 		break;
 	default:
-		printk(KERN_WARNING "%s: unhandled register 0x%x in switch.\n",
+		printk("%s: unhandled register 0x%x in switch.\n",
 		       __func__, reg);
 		BUG();
 		return 0;
@@ -773,7 +737,7 @@ static inline void ni_660x_write_register(struct comedi_device *dev,
 		writel(bits, write_address);
 		break;
 	default:
-		printk(KERN_WARNING "%s: %s: bug! unhandled case (reg=0x%x) in switch.\n",
+		printk("%s: %s: bug! unhandled case (reg=0x%x) in switch.\n",
 		       __FILE__, __func__, reg);
 		BUG();
 		break;
@@ -796,7 +760,7 @@ static inline unsigned ni_660x_read_register(struct comedi_device *dev,
 		return readl(read_address);
 		break;
 	default:
-		printk(KERN_WARNING "%s: %s: bug! unhandled case (reg=0x%x) in switch.\n",
+		printk("%s: %s: bug! unhandled case (reg=0x%x) in switch.\n",
 		       __FILE__, __func__, reg);
 		BUG();
 		break;
@@ -1029,9 +993,9 @@ static int ni_660x_allocate_private(struct comedi_device *dev)
 	spin_lock_init(&private(dev)->mite_channel_lock);
 	spin_lock_init(&private(dev)->interrupt_lock);
 	spin_lock_init(&private(dev)->soft_reg_copy_lock);
-	for (i = 0; i < NUM_PFI_CHANNELS; ++i)
+	for (i = 0; i < NUM_PFI_CHANNELS; ++i) {
 		private(dev)->pfi_output_selects[i] = pfi_output_select_counter;
-
+	}
 	return 0;
 }
 
@@ -1044,8 +1008,9 @@ static int ni_660x_alloc_mite_rings(struct comedi_device *dev)
 		for (j = 0; j < counters_per_chip; ++j) {
 			private(dev)->mite_rings[i][j] =
 			    mite_alloc_ring(private(dev)->mite);
-			if (private(dev)->mite_rings[i][j] == NULL)
+			if (private(dev)->mite_rings[i][j] == NULL) {
 				return -ENOMEM;
+			}
 		}
 	}
 	return 0;
@@ -1057,8 +1022,9 @@ static void ni_660x_free_mite_rings(struct comedi_device *dev)
 	unsigned j;
 
 	for (i = 0; i < board(dev)->n_chips; ++i) {
-		for (j = 0; j < counters_per_chip; ++j)
+		for (j = 0; j < counters_per_chip; ++j) {
 			mite_free_ring(private(dev)->mite_rings[i][j]);
+		}
 	}
 }
 
@@ -1070,7 +1036,7 @@ static int ni_660x_attach(struct comedi_device *dev,
 	unsigned i;
 	unsigned global_interrupt_config_bits;
 
-	printk(KERN_INFO "comedi%d: ni_660x: ", dev->minor);
+	printk("comedi%d: ni_660x: ", dev->minor);
 
 	ret = ni_660x_allocate_private(dev);
 	if (ret < 0)
@@ -1083,7 +1049,7 @@ static int ni_660x_attach(struct comedi_device *dev,
 
 	ret = mite_setup2(private(dev)->mite, 1);
 	if (ret < 0) {
-		printk(KERN_WARNING "error setting up mite\n");
+		printk("error setting up mite\n");
 		return ret;
 	}
 	comedi_set_hw_dev(dev, &private(dev)->mite->pcidev->dev);
@@ -1091,7 +1057,7 @@ static int ni_660x_attach(struct comedi_device *dev,
 	if (ret < 0)
 		return ret;
 
-	printk(KERN_INFO " %s ", dev->board_name);
+	printk(" %s ", dev->board_name);
 
 	dev->n_subdevices = 2 + NI_660X_MAX_NUM_COUNTERS;
 
@@ -1112,16 +1078,15 @@ static int ni_660x_attach(struct comedi_device *dev,
 	s->insn_bits = ni_660x_dio_insn_bits;
 	s->insn_config = ni_660x_dio_insn_config;
 	s->io_bits = 0;		/* all bits default to input */
-	/*  we use the ioconfig registers to control dio direction, so zero
-	output enables in stc dio control reg */
+	/*  we use the ioconfig registers to control dio direction, so zero output enables in stc dio control reg */
 	ni_660x_write_register(dev, 0, 0, STCDIOControl);
 
 	private(dev)->counter_dev = ni_gpct_device_construct(dev,
-						     &ni_gpct_write_register,
-						     &ni_gpct_read_register,
-						     ni_gpct_variant_660x,
-						     ni_660x_num_counters
-						     (dev));
+							     &ni_gpct_write_register,
+							     &ni_gpct_read_register,
+							     ni_gpct_variant_660x,
+							     ni_660x_num_counters
+							     (dev));
 	if (private(dev)->counter_dev == NULL)
 		return -ENOMEM;
 	for (i = 0; i < NI_660X_MAX_NUM_COUNTERS; ++i) {
@@ -1153,12 +1118,12 @@ static int ni_660x_attach(struct comedi_device *dev,
 			s->type = COMEDI_SUBD_UNUSED;
 		}
 	}
-	for (i = 0; i < board(dev)->n_chips; ++i)
+	for (i = 0; i < board(dev)->n_chips; ++i) {
 		init_tio_chip(dev, i);
-
-	for (i = 0; i < ni_660x_num_counters(dev); ++i)
+	}
+	for (i = 0; i < ni_660x_num_counters(dev); ++i) {
 		ni_tio_init_counter(&private(dev)->counter_dev->counters[i]);
-
+	}
 	for (i = 0; i < NUM_PFI_CHANNELS; ++i) {
 		if (i < min_counter_pfi_chan)
 			ni_660x_set_pfi_routing(dev, i, pfi_output_select_do);
@@ -1169,13 +1134,13 @@ static int ni_660x_attach(struct comedi_device *dev,
 	}
 	/* to be safe, set counterswap bits on tio chips after all the counter
 	   outputs have been set to high impedance mode */
-	for (i = 0; i < board(dev)->n_chips; ++i)
+	for (i = 0; i < board(dev)->n_chips; ++i) {
 		set_tio_counterswap(dev, i);
-
+	}
 	ret = request_irq(mite_irq(private(dev)->mite), ni_660x_interrupt,
 			  IRQF_SHARED, "ni_660x", dev);
 	if (ret < 0) {
-		printk(KERN_WARNING " irq not available\n");
+		printk(" irq not available\n");
 		return ret;
 	}
 	dev->irq = mite_irq(private(dev)->mite);
@@ -1184,13 +1149,13 @@ static int ni_660x_attach(struct comedi_device *dev,
 		global_interrupt_config_bits |= Cascade_Int_Enable_Bit;
 	ni_660x_write_register(dev, 0, global_interrupt_config_bits,
 			       GlobalInterruptConfigRegister);
-	printk(KERN_INFO "attached\n");
+	printk("attached\n");
 	return 0;
 }
 
 static int ni_660x_detach(struct comedi_device *dev)
 {
-	printk(KERN_INFO "comedi%d: ni_660x: remove\n", dev->minor);
+	printk("comedi%d: ni_660x: remove\n", dev->minor);
 
 	/* Free irq */
 	if (dev->irq)
@@ -1228,8 +1193,9 @@ static void init_tio_chip(struct comedi_device *dev, int chipset)
 			       private(dev)->
 			       dma_configuration_soft_copies[chipset],
 			       DMAConfigRegister);
-	for (i = 0; i < NUM_PFI_CHANNELS; ++i)
+	for (i = 0; i < NUM_PFI_CHANNELS; ++i) {
 		ni_660x_write_register(dev, chipset, 0, IOConfigReg(i));
+	}
 }
 
 static int
@@ -1268,7 +1234,7 @@ static int ni_660x_find_device(struct comedi_device *dev, int bus, int slot)
 			}
 		}
 	}
-	printk(KERN_WARNING "no device found\n");
+	printk("no device found\n");
 	mite_list_devices();
 	return -EIO;
 }
@@ -1418,10 +1384,6 @@ static int ni_660x_dio_insn_config(struct comedi_device *dev,
 	default:
 		return -EINVAL;
 		break;
-	}
+	};
 	return 0;
 }
-
-MODULE_AUTHOR("Comedi http://www.comedi.org");
-MODULE_DESCRIPTION("Comedi low-level driver");
-MODULE_LICENSE("GPL");

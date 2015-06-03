@@ -34,7 +34,6 @@
 #include <linux/highmem.h>
 #include <linux/mmc/host.h>
 #include <linux/scatterlist.h>
-#include <linux/slab.h>
 
 #include <asm/io.h>
 #include <asm/dma.h>
@@ -194,7 +193,7 @@ static void wbsd_reset(struct wbsd_host *host)
 {
 	u8 setup;
 
-	pr_err("%s: Resetting chip\n", mmc_hostname(host->mmc));
+	printk(KERN_ERR "%s: Resetting chip\n", mmc_hostname(host->mmc));
 
 	/*
 	 * Soft reset of chip (SD/MMC part).
@@ -484,7 +483,7 @@ static void wbsd_fill_fifo(struct wbsd_host *host)
 
 	/*
 	 * Check that we aren't being called after the
-	 * entire buffer has been transferred.
+	 * entire buffer has been transfered.
 	 */
 	if (host->num_sg == 0)
 		return;
@@ -721,7 +720,7 @@ static void wbsd_finish_data(struct wbsd_host *host, struct mmc_data *data)
 		 * Any leftover data?
 		 */
 		if (count) {
-			pr_err("%s: Incomplete DMA transfer. "
+			printk(KERN_ERR "%s: Incomplete DMA transfer. "
 				"%d bytes left.\n",
 				mmc_hostname(host->mmc), count);
 
@@ -803,7 +802,7 @@ static void wbsd_request(struct mmc_host *mmc, struct mmc_request *mrq)
 
 		default:
 #ifdef CONFIG_MMC_DEBUG
-			pr_warning("%s: Data command %d is not "
+			printk(KERN_WARNING "%s: Data command %d is not "
 				"supported by this controller.\n",
 				mmc_hostname(host->mmc), cmd->opcode);
 #endif
@@ -828,7 +827,7 @@ static void wbsd_request(struct mmc_host *mmc, struct mmc_request *mrq)
 	/*
 	 * If this is a data transfer the request
 	 * will be finished after the data has
-	 * transferred.
+	 * transfered.
 	 */
 	if (cmd->data && !cmd->error) {
 		/*
@@ -904,7 +903,7 @@ static void wbsd_set_ios(struct mmc_host *mmc, struct mmc_ios *ios)
 			setup &= ~WBSD_DAT3_H;
 
 			/*
-			 * We cannot resume card detection immediately
+			 * We cannot resume card detection immediatly
 			 * because of capacitance and delays in the chip.
 			 */
 			mod_timer(&host->ignore_timer, jiffies + HZ / 100);
@@ -1029,7 +1028,7 @@ static void wbsd_tasklet_card(unsigned long param)
 		host->flags &= ~WBSD_FCARD_PRESENT;
 
 		if (host->mrq) {
-			pr_err("%s: Card removed during transfer!\n",
+			printk(KERN_ERR "%s: Card removed during transfer!\n",
 				mmc_hostname(host->mmc));
 			wbsd_reset(host);
 
@@ -1235,7 +1234,8 @@ static int __devinit wbsd_alloc_mmc(struct device *dev)
 	 * Maximum number of segments. Worst case is one sector per segment
 	 * so this will be 64kB/512.
 	 */
-	mmc->max_segs = 128;
+	mmc->max_hw_segs = 128;
+	mmc->max_phys_segs = 128;
 
 	/*
 	 * Maximum request size. Also limited by 64KiB buffer.
@@ -1429,7 +1429,7 @@ free:
 	free_dma(dma);
 
 err:
-	pr_warning(DRIVER_NAME ": Unable to allocate DMA %d. "
+	printk(KERN_WARNING DRIVER_NAME ": Unable to allocate DMA %d. "
 		"Falling back on FIFO.\n", dma);
 }
 
@@ -1664,7 +1664,7 @@ static int __devinit wbsd_init(struct device *dev, int base, int irq, int dma,
 	ret = wbsd_scan(host);
 	if (ret) {
 		if (pnp && (ret == -ENODEV)) {
-			pr_warning(DRIVER_NAME
+			printk(KERN_WARNING DRIVER_NAME
 				": Unable to confirm device presence. You may "
 				"experience lock-ups.\n");
 		} else {
@@ -1688,7 +1688,7 @@ static int __devinit wbsd_init(struct device *dev, int base, int irq, int dma,
 	 */
 	if (pnp) {
 		if ((host->config != 0) && !wbsd_chip_validate(host)) {
-			pr_warning(DRIVER_NAME
+			printk(KERN_WARNING DRIVER_NAME
 				": PnP active but chip not configured! "
 				"You probably have a buggy BIOS. "
 				"Configuring chip manually.\n");
@@ -1720,7 +1720,7 @@ static int __devinit wbsd_init(struct device *dev, int base, int irq, int dma,
 
 	mmc_add_host(mmc);
 
-	pr_info("%s: W83L51xD", mmc_hostname(mmc));
+	printk(KERN_INFO "%s: W83L51xD", mmc_hostname(mmc));
 	if (host->chip_id != 0)
 		printk(" id %x", (int)host->chip_id);
 	printk(" at 0x%x irq %d", (int)host->base, (int)host->irq);
@@ -1818,7 +1818,7 @@ static int wbsd_suspend(struct wbsd_host *host, pm_message_t state)
 {
 	BUG_ON(host == NULL);
 
-	return mmc_suspend_host(host->mmc);
+	return mmc_suspend_host(host->mmc, state);
 }
 
 static int wbsd_resume(struct wbsd_host *host)
@@ -1909,7 +1909,7 @@ static int wbsd_pnp_resume(struct pnp_dev *pnp_dev)
 	 */
 	if (host->config != 0) {
 		if (!wbsd_chip_validate(host)) {
-			pr_warning(DRIVER_NAME
+			printk(KERN_WARNING DRIVER_NAME
 				": PnP active but chip not configured! "
 				"You probably have a buggy BIOS. "
 				"Configuring chip manually.\n");
@@ -1973,9 +1973,9 @@ static int __init wbsd_drv_init(void)
 {
 	int result;
 
-	pr_info(DRIVER_NAME
+	printk(KERN_INFO DRIVER_NAME
 		": Winbond W83L51xD SD/MMC card interface driver\n");
-	pr_info(DRIVER_NAME ": Copyright(c) Pierre Ossman\n");
+	printk(KERN_INFO DRIVER_NAME ": Copyright(c) Pierre Ossman\n");
 
 #ifdef CONFIG_PNP
 

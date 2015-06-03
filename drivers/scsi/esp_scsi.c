@@ -530,7 +530,7 @@ static int esp_need_to_nego_sync(struct esp_target_data *tp)
 static int esp_alloc_lun_tag(struct esp_cmd_entry *ent,
 			     struct esp_lun_data *lp)
 {
-	if (!ent->orig_tag[0]) {
+	if (!ent->tag[0]) {
 		/* Non-tagged, slot already taken?  */
 		if (lp->non_tagged_cmd)
 			return -EBUSY;
@@ -564,9 +564,9 @@ static int esp_alloc_lun_tag(struct esp_cmd_entry *ent,
 			return -EBUSY;
 	}
 
-	BUG_ON(lp->tagged_cmds[ent->orig_tag[1]]);
+	BUG_ON(lp->tagged_cmds[ent->tag[1]]);
 
-	lp->tagged_cmds[ent->orig_tag[1]] = ent;
+	lp->tagged_cmds[ent->tag[1]] = ent;
 	lp->num_tagged++;
 
 	return 0;
@@ -575,9 +575,9 @@ static int esp_alloc_lun_tag(struct esp_cmd_entry *ent,
 static void esp_free_lun_tag(struct esp_cmd_entry *ent,
 			     struct esp_lun_data *lp)
 {
-	if (ent->orig_tag[0]) {
-		BUG_ON(lp->tagged_cmds[ent->orig_tag[1]] != ent);
-		lp->tagged_cmds[ent->orig_tag[1]] = NULL;
+	if (ent->tag[0]) {
+		BUG_ON(lp->tagged_cmds[ent->tag[1]] != ent);
+		lp->tagged_cmds[ent->tag[1]] = NULL;
 		lp->num_tagged--;
 	} else {
 		BUG_ON(lp->non_tagged_cmd != ent);
@@ -667,8 +667,6 @@ static struct esp_cmd_entry *find_and_prep_issuable_command(struct esp *esp)
 			ent->tag[0] = 0;
 			ent->tag[1] = 0;
 		}
-		ent->orig_tag[0] = ent->tag[0];
-		ent->orig_tag[1] = ent->tag[1];
 
 		if (esp_alloc_lun_tag(ent, lp) < 0)
 			continue;
@@ -710,7 +708,8 @@ static void esp_maybe_execute_command(struct esp *esp)
 	tp = &esp->target[tgt];
 	lp = dev->hostdata;
 
-	list_move(&ent->list, &esp->active_cmds);
+	list_del(&ent->list);
+	list_add(&ent->list, &esp->active_cmds);
 
 	esp->active_cmd = ent;
 
@@ -917,7 +916,7 @@ static void esp_event_queue_full(struct esp *esp, struct esp_cmd_entry *ent)
 	scsi_track_queue_full(dev, lp->num_tagged - 1);
 }
 
-static int esp_queuecommand_lck(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
+static int esp_queuecommand(struct scsi_cmnd *cmd, void (*done)(struct scsi_cmnd *))
 {
 	struct scsi_device *dev = cmd->device;
 	struct esp *esp = shost_priv(dev->host);
@@ -941,8 +940,6 @@ static int esp_queuecommand_lck(struct scsi_cmnd *cmd, void (*done)(struct scsi_
 
 	return 0;
 }
-
-static DEF_SCSI_QCMD(esp_queuecommand)
 
 static int esp_check_gross_error(struct esp *esp)
 {
@@ -1060,7 +1057,7 @@ static struct esp_cmd_entry *esp_reconnect_with_tag(struct esp *esp,
 	esp->ops->send_dma_cmd(esp, esp->command_block_dma,
 			       2, 2, 1, ESP_CMD_DMA | ESP_CMD_TI);
 
-	/* ACK the message.  */
+	/* ACK the msssage.  */
 	scsi_esp_cmd(esp, ESP_CMD_MOK);
 
 	for (i = 0; i < ESP_RESELECT_TAG_LIMIT; i++) {
@@ -1245,7 +1242,8 @@ static int esp_finish_select(struct esp *esp)
 		/* Now that the state is unwound properly, put back onto
 		 * the issue queue.  This command is no longer active.
 		 */
-		list_move(&ent->list, &esp->queued_cmds);
+		list_del(&ent->list);
+		list_add(&ent->list, &esp->queued_cmds);
 		esp->active_cmd = NULL;
 
 		/* Return value ignored by caller, it directly invokes
@@ -1450,6 +1448,9 @@ static void esp_msgin_sdtr(struct esp *esp, struct esp_target_data *tp)
 
 	if (offset > 15)
 		goto do_reject;
+
+	if (esp->flags & ESP_FLAG_DISABLE_SYNC)
+		offset = 0;
 
 	if (offset) {
 		int one_clock;
@@ -2404,6 +2405,12 @@ static int esp_slave_configure(struct scsi_device *dev)
 	struct esp_target_data *tp = &esp->target[dev->id];
 	int goal_tags, queue_depth;
 
+	if (esp->flags & ESP_FLAG_DISABLE_SYNC) {
+		/* Bypass async domain validation */
+		dev->ppr  = 0;
+		dev->sdtr = 0;
+	}
+
 	goal_tags = 0;
 
 	if (dev->tagged_supported) {
@@ -2653,10 +2660,7 @@ static void esp_set_offset(struct scsi_target *target, int offset)
 	struct esp *esp = shost_priv(host);
 	struct esp_target_data *tp = &esp->target[target->id];
 
-	if (esp->flags & ESP_FLAG_DISABLE_SYNC)
-		tp->nego_goal_offset = 0;
-	else
-		tp->nego_goal_offset = offset;
+	tp->nego_goal_offset = offset;
 	tp->flags |= ESP_TGT_CHECK_NEGO;
 }
 

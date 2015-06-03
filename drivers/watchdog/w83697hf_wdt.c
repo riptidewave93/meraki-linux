@@ -25,8 +25,6 @@
  *	"AS-IS" and at no charge.
  */
 
-#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
-
 #include <linux/module.h>
 #include <linux/moduleparam.h>
 #include <linux/types.h>
@@ -41,8 +39,10 @@
 #include <linux/io.h>
 #include <linux/uaccess.h>
 
+#include <asm/system.h>
 
 #define WATCHDOG_NAME "w83697hf/hg WDT"
+#define PFX WATCHDOG_NAME ": "
 #define WATCHDOG_TIMEOUT 60		/* 60 sec default timeout */
 #define WATCHDOG_EARLY_DISABLE 1	/* Disable until userland kicks in */
 
@@ -62,8 +62,8 @@ MODULE_PARM_DESC(timeout,
 	"Watchdog timeout in seconds. 1<= timeout <=255 (default="
 				__MODULE_STRING(WATCHDOG_TIMEOUT) ")");
 
-static bool nowayout = WATCHDOG_NOWAYOUT;
-module_param(nowayout, bool, 0);
+static int nowayout = WATCHDOG_NOWAYOUT;
+module_param(nowayout, int, 0);
 MODULE_PARM_DESC(nowayout,
 	"Watchdog cannot be stopped once started (default="
 				__MODULE_STRING(WATCHDOG_NOWAYOUT) ")");
@@ -309,7 +309,8 @@ static int wdt_close(struct inode *inode, struct file *file)
 	if (expect_close == 42)
 		wdt_disable();
 	else {
-		pr_crit("Unexpected close, not stopping watchdog!\n");
+		printk(KERN_CRIT PFX
+			"Unexpected close, not stopping watchdog!\n");
 		wdt_ping();
 	}
 	expect_close = 0;
@@ -361,21 +362,24 @@ static struct notifier_block wdt_notifier = {
 static int w83697hf_check_wdt(void)
 {
 	if (!request_region(wdt_io, 2, WATCHDOG_NAME)) {
-		pr_err("I/O address 0x%x already in use\n", wdt_io);
+		printk(KERN_ERR PFX
+			"I/O address 0x%x already in use\n", wdt_io);
 		return -EIO;
 	}
 
-	pr_debug("Looking for watchdog at address 0x%x\n", wdt_io);
+	printk(KERN_DEBUG PFX
+			"Looking for watchdog at address 0x%x\n", wdt_io);
 	w83697hf_unlock();
 	if (w83697hf_get_reg(0x20) == 0x60) {
-		pr_info("watchdog found at address 0x%x\n", wdt_io);
+		printk(KERN_INFO PFX
+			"watchdog found at address 0x%x\n", wdt_io);
 		w83697hf_lock();
 		return 0;
 	}
 	/* Reprotect in case it was a compatible device */
 	w83697hf_lock();
 
-	pr_info("watchdog not found at address 0x%x\n", wdt_io);
+	printk(KERN_INFO PFX "watchdog not found at address 0x%x\n", wdt_io);
 	release_region(wdt_io, 2);
 	return -EIO;
 }
@@ -386,7 +390,7 @@ static int __init wdt_init(void)
 {
 	int ret, i, found = 0;
 
-	pr_info("WDT driver for W83697HF/HG initializing\n");
+	printk(KERN_INFO PFX "WDT driver for W83697HF/HG initializing\n");
 
 	if (wdt_io == 0) {
 		/* we will autodetect the W83697HF/HG watchdog */
@@ -401,7 +405,7 @@ static int __init wdt_init(void)
 	}
 
 	if (!found) {
-		pr_err("No W83697HF/HG could be found\n");
+		printk(KERN_ERR PFX "No W83697HF/HG could be found\n");
 		ret = -EIO;
 		goto out;
 	}
@@ -409,30 +413,34 @@ static int __init wdt_init(void)
 	w83697hf_init();
 	if (early_disable) {
 		if (wdt_running())
-			pr_warn("Stopping previously enabled watchdog until userland kicks in\n");
+			printk(KERN_WARNING PFX "Stopping previously enabled "
+					"watchdog until userland kicks in\n");
 		wdt_disable();
 	}
 
 	if (wdt_set_heartbeat(timeout)) {
 		wdt_set_heartbeat(WATCHDOG_TIMEOUT);
-		pr_info("timeout value must be 1 <= timeout <= 255, using %d\n",
-			WATCHDOG_TIMEOUT);
+		printk(KERN_INFO PFX
+		     "timeout value must be 1 <= timeout <= 255, using %d\n",
+							WATCHDOG_TIMEOUT);
 	}
 
 	ret = register_reboot_notifier(&wdt_notifier);
 	if (ret != 0) {
-		pr_err("cannot register reboot notifier (err=%d)\n", ret);
+		printk(KERN_ERR PFX
+			"cannot register reboot notifier (err=%d)\n", ret);
 		goto unreg_regions;
 	}
 
 	ret = misc_register(&wdt_miscdev);
 	if (ret != 0) {
-		pr_err("cannot register miscdev on minor=%d (err=%d)\n",
-		       WATCHDOG_MINOR, ret);
+		printk(KERN_ERR PFX
+			"cannot register miscdev on minor=%d (err=%d)\n",
+						WATCHDOG_MINOR, ret);
 		goto unreg_reboot;
 	}
 
-	pr_info("initialized. timeout=%d sec (nowayout=%d)\n",
+	printk(KERN_INFO PFX "initialized. timeout=%d sec (nowayout=%d)\n",
 		timeout, nowayout);
 
 out:

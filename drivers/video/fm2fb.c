@@ -45,7 +45,7 @@
  *	buffer needs an amount of memory of 1.769.472 bytes which
  *	is near to 2 MByte (the allocated address space of Zorro2).
  *	The memory is channel interleaved. That means every channel
- *	owns four VRAMs. Unfortunately most FrameMasters II are
+ *	owns four VRAMs. Unfortunatly most FrameMasters II are
  *	not assembled with memory for the alpha channel. In this
  *	case it could be possible to add the frame buffer into the
  *	normal memory pool.
@@ -219,7 +219,6 @@ static struct zorro_device_id fm2fb_devices[] __devinitdata = {
 	{ ZORRO_PROD_HELFRICH_RAINBOW_II },
 	{ 0 }
 };
-MODULE_DEVICE_TABLE(zorro, fm2fb_devices);
 
 static struct zorro_driver fm2fb_driver = {
 	.name		= "fm2fb",

@@ -10,7 +10,7 @@
  */
 
 #include <linux/sched.h>
-#include <linux/gfp.h>
+#include <linux/slab.h>
 #include <linux/mm.h>
 #include <linux/highmem.h>
 #include <linux/quicklist.h>
@@ -133,7 +133,13 @@ void pgd_dtor(void *pgd)
 
 pgd_t *pgd_alloc(struct mm_struct *mm)
 {
-	return quicklist_alloc(0, GFP_KERNEL, pgd_ctor);
+	pgd_t *pgd;
+
+	pgd = quicklist_alloc(0, GFP_KERNEL, pgd_ctor);
+	if (!pgd)
+		return pgd;
+
+	return pgd;
 }
 
 void pgd_free(struct mm_struct *mm, pgd_t *pgd)

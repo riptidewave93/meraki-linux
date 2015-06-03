@@ -17,7 +17,6 @@
 #include "matroxfb_DAC1064.h"
 #include <linux/i2c.h>
 #include <linux/matroxfb.h>
-#include <linux/slab.h>
 #include <asm/div64.h>
 
 #define MGATVO_B	1
@@ -280,7 +279,7 @@ static int matroxfb_PLL_mavenclock(const struct matrox_pll_features2* pll,
 	return fxtal * (*feed) / (*in) * ctl->den;
 }
 
-static int matroxfb_mavenclock(const struct matrox_pll_ctl *ctl,
+static unsigned int matroxfb_mavenclock(const struct matrox_pll_ctl* ctl,
 		unsigned int htotal, unsigned int vtotal,
 		unsigned int* in, unsigned int* feed, unsigned int* post,
 		unsigned int* htotal2) {

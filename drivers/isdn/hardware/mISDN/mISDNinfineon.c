@@ -38,12 +38,10 @@
  *
  */
 
-#include <linux/interrupt.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/mISDNhw.h>
-#include <linux/slab.h>
 #include "ipac.h"
 
 #define INFINEON_REV	"1.0"
@@ -126,25 +124,36 @@ struct inf_hw {
 #define PCI_SUB_ID_SEDLBAUER            0x01
 
 static struct pci_device_id infineon_ids[] __devinitdata = {
-	{ PCI_VDEVICE(EICON, PCI_DEVICE_ID_EICON_DIVA20), INF_DIVA20 },
-	{ PCI_VDEVICE(EICON, PCI_DEVICE_ID_EICON_DIVA20_U), INF_DIVA20U },
-	{ PCI_VDEVICE(EICON, PCI_DEVICE_ID_EICON_DIVA201), INF_DIVA201 },
-	{ PCI_VDEVICE(EICON, PCI_DEVICE_ID_EICON_DIVA202), INF_DIVA202 },
+	{ PCI_VENDOR_ID_EICON, PCI_DEVICE_ID_EICON_DIVA20,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, INF_DIVA20},
+	{ PCI_VENDOR_ID_EICON, PCI_DEVICE_ID_EICON_DIVA20_U,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, INF_DIVA20U},
+	{ PCI_VENDOR_ID_EICON, PCI_DEVICE_ID_EICON_DIVA201,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, INF_DIVA201},
+	{ PCI_VENDOR_ID_EICON, PCI_DEVICE_ID_EICON_DIVA202,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, INF_DIVA202},
 	{ PCI_VENDOR_ID_TIGERJET, PCI_DEVICE_ID_TIGERJET_100,
 	  PCI_SUBVENDOR_SEDLBAUER_PCI, PCI_SUB_ID_SEDLBAUER, 0, 0,
-	  INF_SPEEDWIN },
+	  INF_SPEEDWIN},
 	{ PCI_VENDOR_ID_TIGERJET, PCI_DEVICE_ID_TIGERJET_100,
-	  PCI_SUBVENDOR_HST_SAPHIR3, PCI_SUB_ID_SEDLBAUER, 0, 0, INF_SAPHIR3 },
-	{ PCI_VDEVICE(ELSA, PCI_DEVICE_ID_ELSA_MICROLINK), INF_QS1000 },
-	{ PCI_VDEVICE(ELSA, PCI_DEVICE_ID_ELSA_QS3000), INF_QS3000 },
-	{ PCI_VDEVICE(SATSAGEM, PCI_DEVICE_ID_SATSAGEM_NICCY), INF_NICCY },
+	  PCI_SUBVENDOR_HST_SAPHIR3, PCI_SUB_ID_SEDLBAUER, 0, 0, INF_SAPHIR3},
+	{ PCI_VENDOR_ID_ELSA, PCI_DEVICE_ID_ELSA_MICROLINK,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, INF_QS1000},
+	{ PCI_VENDOR_ID_ELSA, PCI_DEVICE_ID_ELSA_QS3000,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, INF_QS3000},
+	{ PCI_VENDOR_ID_SATSAGEM, PCI_DEVICE_ID_SATSAGEM_NICCY,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, INF_NICCY},
 	{ PCI_VENDOR_ID_PLX, PCI_DEVICE_ID_PLX_9050,
 	  PCI_VENDOR_ID_BERKOM, PCI_DEVICE_ID_BERKOM_SCITEL_QUADRO, 0, 0,
-	  INF_SCT_1 },
-	{ PCI_VDEVICE(PLX, PCI_DEVICE_ID_PLX_R685), INF_GAZEL_R685 },
-	{ PCI_VDEVICE(PLX, PCI_DEVICE_ID_PLX_R753), INF_GAZEL_R753 },
-	{ PCI_VDEVICE(PLX, PCI_DEVICE_ID_PLX_DJINN_ITOO), INF_GAZEL_R753 },
-	{ PCI_VDEVICE(PLX, PCI_DEVICE_ID_PLX_OLITEC), INF_GAZEL_R753 },
+	  INF_SCT_1},
+	{ PCI_VENDOR_ID_PLX, PCI_DEVICE_ID_PLX_R685,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, INF_GAZEL_R685},
+	{ PCI_VENDOR_ID_PLX, PCI_DEVICE_ID_PLX_R753,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, INF_GAZEL_R753},
+	{ PCI_VENDOR_ID_PLX, PCI_DEVICE_ID_PLX_DJINN_ITOO,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, INF_GAZEL_R753},
+	{ PCI_VENDOR_ID_PLX, PCI_DEVICE_ID_PLX_OLITEC,
+	  PCI_ANY_ID, PCI_ANY_ID, 0, 0, INF_GAZEL_R753},
 	{ }
 };
 MODULE_DEVICE_TABLE(pci, infineon_ids);
@@ -421,7 +430,7 @@ enable_hwirq(struct inf_hw *hw)
 		break;
 	case INF_NICCY:
 		val = inl((u32)hw->cfg.start + NICCY_IRQ_CTRL_REG);
-		val |= NICCY_IRQ_ENABLE;
+		val |= NICCY_IRQ_ENABLE;;
 		outl(val, (u32)hw->cfg.start + NICCY_IRQ_CTRL_REG);
 		break;
 	case INF_SCT_1:
@@ -431,11 +440,11 @@ enable_hwirq(struct inf_hw *hw)
 		break;
 	case INF_GAZEL_R685:
 		outb(GAZEL_ISAC_EN + GAZEL_HSCX_EN + GAZEL_PCI_EN,
-		     (u32)hw->cfg.start + GAZEL_INCSR);
+			(u32)hw->cfg.start + GAZEL_INCSR);
 		break;
 	case INF_GAZEL_R753:
 		outb(GAZEL_IPAC_EN + GAZEL_PCI_EN,
-		     (u32)hw->cfg.start + GAZEL_INCSR);
+			(u32)hw->cfg.start + GAZEL_INCSR);
 		break;
 	default:
 		break;
@@ -511,21 +520,21 @@ reset_inf(struct inf_hw *hw)
 		/* Workaround PCI9060 */
 		outb(9, (u32)hw->cfg.start + 0x69);
 		outb(DIVA_RESET_BIT | DIVA_LED_A,
-		     (u32)hw->cfg.start + DIVA_PCI_CTRL);
+			(u32)hw->cfg.start + DIVA_PCI_CTRL);
 		break;
 	case INF_DIVA201:
 		writel(PITA_PARA_SOFTRESET | PITA_PARA_MPX_MODE,
-		       hw->cfg.p + PITA_MISC_REG);
+			hw->cfg.p + PITA_MISC_REG);
 		mdelay(1);
 		writel(PITA_PARA_MPX_MODE, hw->cfg.p + PITA_MISC_REG);
 		mdelay(10);
 		break;
 	case INF_DIVA202:
 		writel(PITA_PARA_SOFTRESET | PITA_PARA_MPX_MODE,
-		       hw->cfg.p + PITA_MISC_REG);
+			hw->cfg.p + PITA_MISC_REG);
 		mdelay(1);
 		writel(PITA_PARA_MPX_MODE | PITA_SER_SOFTRESET,
-		       hw->cfg.p + PITA_MISC_REG);
+			hw->cfg.p + PITA_MISC_REG);
 		mdelay(10);
 		break;
 	case INF_SPEEDWIN:
@@ -564,7 +573,7 @@ reset_inf(struct inf_hw *hw)
 		mdelay(10);
 		hw->ipac.isac.adf2 = 0x87;
 		hw->ipac.hscx[0].slot = 0x1f;
-		hw->ipac.hscx[1].slot = 0x23;
+		hw->ipac.hscx[0].slot = 0x23;
 		break;
 	case INF_GAZEL_R753:
 		val = inl((u32)hw->cfg.start + GAZEL_CNTRL);
@@ -630,7 +639,7 @@ init_irq(struct inf_hw *hw)
 		msleep_interruptible(10);
 		if (debug & DEBUG_HW)
 			pr_notice("%s: IRQ %d count %d\n", hw->name,
-				  hw->irq, hw->irqcnt);
+				hw->irq, hw->irqcnt);
 		if (!hw->irqcnt) {
 			pr_info("%s: IRQ(%d) got no requests during init %d\n",
 				hw->name, hw->irq, 3 - cnt);
@@ -672,11 +681,11 @@ setup_io(struct inf_hw *hw)
 		hw->cfg.size = pci_resource_len(hw->pdev, hw->ci->cfg_bar);
 		if (hw->ci->cfg_mode == AM_MEMIO) {
 			if (!request_mem_region(hw->cfg.start, hw->cfg.size,
-						hw->name))
+			    hw->name))
 				err = -EBUSY;
 		} else {
 			if (!request_region(hw->cfg.start, hw->cfg.size,
-					    hw->name))
+			    hw->name))
 				err = -EBUSY;
 		}
 		if (err) {
@@ -690,8 +699,8 @@ setup_io(struct inf_hw *hw)
 		hw->cfg.mode = hw->ci->cfg_mode;
 		if (debug & DEBUG_HW)
 			pr_notice("%s: IO cfg %lx (%lu bytes) mode%d\n",
-				  hw->name, (ulong)hw->cfg.start,
-				  (ulong)hw->cfg.size, hw->ci->cfg_mode);
+				hw->name, (ulong)hw->cfg.start,
+				(ulong)hw->cfg.size, hw->ci->cfg_mode);
 
 	}
 	if (hw->ci->addr_mode) {
@@ -699,11 +708,11 @@ setup_io(struct inf_hw *hw)
 		hw->addr.size = pci_resource_len(hw->pdev, hw->ci->addr_bar);
 		if (hw->ci->addr_mode == AM_MEMIO) {
 			if (!request_mem_region(hw->addr.start, hw->addr.size,
-						hw->name))
+			    hw->name))
 				err = -EBUSY;
 		} else {
 			if (!request_region(hw->addr.start, hw->addr.size,
-					    hw->name))
+			    hw->name))
 				err = -EBUSY;
 		}
 		if (err) {
@@ -717,8 +726,8 @@ setup_io(struct inf_hw *hw)
 		hw->addr.mode = hw->ci->addr_mode;
 		if (debug & DEBUG_HW)
 			pr_notice("%s: IO addr %lx (%lu bytes) mode%d\n",
-				  hw->name, (ulong)hw->addr.start,
-				  (ulong)hw->addr.size, hw->ci->addr_mode);
+				hw->name, (ulong)hw->addr.start,
+				(ulong)hw->addr.size, hw->ci->addr_mode);
 
 	}
 
@@ -903,7 +912,7 @@ setup_instance(struct inf_hw *card)
 	ulong flags;
 
 	snprintf(card->name, MISDN_MAX_IDLEN - 1, "%s.%d", card->ci->name,
-		 inf_cnt + 1);
+		inf_cnt + 1);
 	write_lock_irqsave(&card_lock, flags);
 	list_add_tail(&card->list, &Cards);
 	write_unlock_irqrestore(&card_lock, flags);
@@ -925,10 +934,10 @@ setup_instance(struct inf_hw *card)
 		mISDNipac_init(&card->ipac, card);
 
 	if (card->ipac.isac.dch.dev.Bprotocols == 0)
-		goto error_setup;
+		goto error_setup;;
 
 	err = mISDN_register_device(&card->ipac.isac.dch.dev,
-				    &card->pdev->dev, card->name);
+		&card->pdev->dev, card->name);
 	if (err)
 		goto error;
 
@@ -1095,17 +1104,16 @@ inf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 		pr_info("mISDN: do not have informations about adapter at %s\n",
 			pci_name(pdev));
 		kfree(card);
-		pci_disable_device(pdev);
 		return -EINVAL;
 	} else
 		pr_notice("mISDN: found adapter %s at %s\n",
-			  card->ci->full, pci_name(pdev));
+			card->ci->full, pci_name(pdev));
 
 	card->irq = pdev->irq;
 	pci_set_drvdata(pdev, card);
 	err = setup_instance(card);
 	if (err) {
-		pci_disable_device(pdev);
+		pci_disable_device(card->pdev);
 		kfree(card);
 		pci_set_drvdata(pdev, NULL);
 	} else if (ent->driver_data == INF_SCT_1) {
@@ -1116,7 +1124,6 @@ inf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 			sc = kzalloc(sizeof(struct inf_hw), GFP_KERNEL);
 			if (!sc) {
 				release_card(card);
-				pci_disable_device(pdev);
 				return -ENOMEM;
 			}
 			sc->irq = card->irq;
@@ -1124,10 +1131,8 @@ inf_probe(struct pci_dev *pdev, const struct pci_device_id *ent)
 			sc->ci = card->ci + i;
 			err = setup_instance(sc);
 			if (err) {
-				pci_disable_device(pdev);
 				kfree(sc);
 				release_card(card);
-				break;
 			} else
 				card->sc[i - 1] = sc;
 		}
@@ -1143,7 +1148,7 @@ inf_remove(struct pci_dev *pdev)
 	if (card)
 		release_card(card);
 	else
-		pr_debug("%s: drvdata already removed\n", __func__);
+		pr_debug("%s: drvdata allready removed\n", __func__);
 }
 
 static struct pci_driver infineon_driver = {

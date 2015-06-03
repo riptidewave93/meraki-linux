@@ -35,7 +35,7 @@
  *   +------------------+
  *
  * The block header is followed by multiple entry descriptors. These entry
- * descriptors are variable in size, and aligned to EXT2_XATTR_PAD
+ * descriptors are variable in size, and alligned to EXT2_XATTR_PAD
  * byte boundaries. The entry descriptors are sorted by attribute name,
  * so that two extended attribute blocks can be compared efficiently.
  *
@@ -54,12 +54,12 @@
  */
 
 #include <linux/buffer_head.h>
+#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/slab.h>
 #include <linux/mbcache.h>
 #include <linux/quotaops.h>
 #include <linux/rwsem.h>
-#include <linux/security.h>
 #include "ext2.h"
 #include "xattr.h"
 #include "acl.h"
@@ -100,7 +100,7 @@ static void ext2_xattr_rehash(struct ext2_xattr_header *,
 
 static struct mb_cache *ext2_xattr_cache;
 
-static const struct xattr_handler *ext2_xattr_handler_map[] = {
+static struct xattr_handler *ext2_xattr_handler_map[] = {
 	[EXT2_XATTR_INDEX_USER]		     = &ext2_xattr_user_handler,
 #ifdef CONFIG_EXT2_FS_POSIX_ACL
 	[EXT2_XATTR_INDEX_POSIX_ACL_ACCESS]  = &ext2_xattr_acl_access_handler,
@@ -112,7 +112,7 @@ static const struct xattr_handler *ext2_xattr_handler_map[] = {
 #endif
 };
 
-const struct xattr_handler *ext2_xattr_handlers[] = {
+struct xattr_handler *ext2_xattr_handlers[] = {
 	&ext2_xattr_user_handler,
 	&ext2_xattr_trusted_handler,
 #ifdef CONFIG_EXT2_FS_POSIX_ACL
@@ -125,10 +125,10 @@ const struct xattr_handler *ext2_xattr_handlers[] = {
 	NULL
 };
 
-static inline const struct xattr_handler *
+static inline struct xattr_handler *
 ext2_xattr_handler(int name_index)
 {
-	const struct xattr_handler *handler = NULL;
+	struct xattr_handler *handler = NULL;
 
 	if (name_index > 0 && name_index < ARRAY_SIZE(ext2_xattr_handler_map))
 		handler = ext2_xattr_handler_map[name_index];
@@ -160,10 +160,6 @@ ext2_xattr_get(struct inode *inode, int name_index, const char *name,
 
 	if (name == NULL)
 		return -EINVAL;
-	name_len = strlen(name);
-	if (name_len > 255)
-		return -ERANGE;
-
 	down_read(&EXT2_I(inode)->xattr_sem);
 	error = -ENODATA;
 	if (!EXT2_I(inode)->i_file_acl)
@@ -184,8 +180,12 @@ bad_block:	ext2_error(inode->i_sb, "ext2_xattr_get",
 		error = -EIO;
 		goto cleanup;
 	}
-
 	/* find named attribute */
+	name_len = strlen(name);
+
+	error = -ERANGE;
+	if (name_len > 255)
+		goto cleanup;
 	entry = FIRST_ENTRY(bh);
 	while (!IS_LAST_ENTRY(entry)) {
 		struct ext2_xattr_entry *next =
@@ -196,6 +196,14 @@ bad_block:	ext2_error(inode->i_sb, "ext2_xattr_get",
 		    name_len == entry->e_name_len &&
 		    memcmp(name, entry->e_name, name_len) == 0)
 			goto found;
+		entry = next;
+	}
+	/* Check the remaining name entries */
+	while (!IS_LAST_ENTRY(entry)) {
+		struct ext2_xattr_entry *next =
+			EXT2_XATTR_NEXT(entry);
+		if ((char *)next >= end)
+			goto bad_block;
 		entry = next;
 	}
 	if (ext2_xattr_cache_insert(bh))
@@ -241,9 +249,8 @@ cleanup:
  * used / required on success.
  */
 static int
-ext2_xattr_list(struct dentry *dentry, char *buffer, size_t buffer_size)
+ext2_xattr_list(struct inode *inode, char *buffer, size_t buffer_size)
 {
-	struct inode *inode = dentry->d_inode;
 	struct buffer_head *bh = NULL;
 	struct ext2_xattr_entry *entry;
 	char *end;
@@ -289,14 +296,13 @@ bad_block:	ext2_error(inode->i_sb, "ext2_xattr_list",
 	/* list the attribute names */
 	for (entry = FIRST_ENTRY(bh); !IS_LAST_ENTRY(entry);
 	     entry = EXT2_XATTR_NEXT(entry)) {
-		const struct xattr_handler *handler =
+		struct xattr_handler *handler =
 			ext2_xattr_handler(entry->e_name_index);
 
 		if (handler) {
-			size_t size = handler->list(dentry, buffer, rest,
+			size_t size = handler->list(inode, buffer, rest,
 						    entry->e_name,
-						    entry->e_name_len,
-						    handler->flags);
+						    entry->e_name_len);
 			if (buffer) {
 				if (size > rest) {
 					error = -ERANGE;
@@ -324,7 +330,7 @@ cleanup:
 ssize_t
 ext2_listxattr(struct dentry *dentry, char *buffer, size_t size)
 {
-	return ext2_xattr_list(dentry, buffer, size);
+	return ext2_xattr_list(dentry->d_inode, buffer, size);
 }
 
 /*
@@ -336,9 +342,7 @@ static void ext2_xattr_update_super_block(struct super_block *sb)
 	if (EXT2_HAS_COMPAT_FEATURE(sb, EXT2_FEATURE_COMPAT_EXT_ATTR))
 		return;
 
-	spin_lock(&EXT2_SB(sb)->s_lock);
 	EXT2_SET_COMPAT_FEATURE(sb, EXT2_FEATURE_COMPAT_EXT_ATTR);
-	spin_unlock(&EXT2_SB(sb)->s_lock);
 	sb->s_dirt = 1;
 	mark_buffer_dirty(EXT2_SB(sb)->s_sbh);
 }
@@ -346,7 +350,7 @@ static void ext2_xattr_update_super_block(struct super_block *sb)
 /*
  * ext2_xattr_set()
  *
- * Create, replace or remove an extended attribute for this inode.  Value
+ * Create, replace or remove an extended attribute for this inode. Buffer
  * is NULL to remove an existing extended attribute, and non-NULL to
  * either replace an existing extended attribute, or create a new extended
  * attribute. The flags XATTR_REPLACE and XATTR_CREATE
@@ -637,8 +641,8 @@ ext2_xattr_set2(struct inode *inode, struct buffer_head *old_bh,
 				   the inode.  */
 				ea_bdebug(new_bh, "reusing block");
 
-				error = dquot_alloc_block(inode, 1);
-				if (error) {
+				error = -EDQUOT;
+				if (vfs_dq_alloc_block(inode, 1)) {
 					unlock_buffer(new_bh);
 					goto cleanup;
 				}
@@ -665,7 +669,6 @@ ext2_xattr_set2(struct inode *inode, struct buffer_head *old_bh,
 			new_bh = sb_getblk(sb, block);
 			if (!new_bh) {
 				ext2_free_blocks(inode, block, 1);
-				mark_inode_dirty(inode);
 				error = -EIO;
 				goto cleanup;
 			}
@@ -690,15 +693,13 @@ ext2_xattr_set2(struct inode *inode, struct buffer_head *old_bh,
 	EXT2_I(inode)->i_file_acl = new_bh ? new_bh->b_blocknr : 0;
 	inode->i_ctime = CURRENT_TIME_SEC;
 	if (IS_SYNC(inode)) {
-		error = sync_inode_metadata(inode, 1);
+		error = ext2_sync_inode (inode);
 		/* In case sync failed due to ENOSPC the inode was actually
 		 * written (only some dirty data were not) so we just proceed
 		 * as if nothing happened and cleanup the unused block */
 		if (error && error != -ENOSPC) {
-			if (new_bh && new_bh != old_bh) {
-				dquot_free_block_nodirty(inode, 1);
-				mark_inode_dirty(inode);
-			}
+			if (new_bh && new_bh != old_bh)
+				vfs_dq_free_block(inode, 1);
 			goto cleanup;
 		}
 	} else
@@ -721,7 +722,6 @@ ext2_xattr_set2(struct inode *inode, struct buffer_head *old_bh,
 				mb_cache_entry_free(ce);
 			ea_bdebug(old_bh, "freeing");
 			ext2_free_blocks(inode, old_bh->b_blocknr, 1);
-			mark_inode_dirty(inode);
 			/* We let our caller release old_bh, so we
 			 * need to duplicate the buffer before. */
 			get_bh(old_bh);
@@ -731,8 +731,7 @@ ext2_xattr_set2(struct inode *inode, struct buffer_head *old_bh,
 			le32_add_cpu(&HDR(old_bh)->h_refcount, -1);
 			if (ce)
 				mb_cache_entry_release(ce);
-			dquot_free_block_nodirty(inode, 1);
-			mark_inode_dirty(inode);
+			vfs_dq_free_block(inode, 1);
 			mark_buffer_dirty(old_bh);
 			ea_bdebug(old_bh, "refcount now=%d",
 				le32_to_cpu(HDR(old_bh)->h_refcount));
@@ -795,7 +794,7 @@ ext2_xattr_delete_inode(struct inode *inode)
 		mark_buffer_dirty(bh);
 		if (IS_SYNC(inode))
 			sync_dirty_buffer(bh);
-		dquot_free_block_nodirty(inode, 1);
+		vfs_dq_free_block(inode, 1);
 	}
 	EXT2_I(inode)->i_file_acl = 0;
 
@@ -834,7 +833,7 @@ ext2_xattr_cache_insert(struct buffer_head *bh)
 	ce = mb_cache_entry_alloc(ext2_xattr_cache, GFP_NOFS);
 	if (!ce)
 		return -ENOMEM;
-	error = mb_cache_entry_insert(ce, bh->b_bdev, bh->b_blocknr, hash);
+	error = mb_cache_entry_insert(ce, bh->b_bdev, bh->b_blocknr, &hash);
 	if (error) {
 		mb_cache_entry_free(ce);
 		if (error == -EBUSY) {
@@ -908,8 +907,8 @@ ext2_xattr_cache_find(struct inode *inode, struct ext2_xattr_header *header)
 		return NULL;  /* never share */
 	ea_idebug(inode, "looking for cached blocks [%x]", (int)hash);
 again:
-	ce = mb_cache_entry_find_first(ext2_xattr_cache, inode->i_sb->s_bdev,
-				       hash);
+	ce = mb_cache_entry_find_first(ext2_xattr_cache, 0,
+				       inode->i_sb->s_bdev, hash);
 	while (ce) {
 		struct buffer_head *bh;
 
@@ -941,7 +940,7 @@ again:
 			unlock_buffer(bh);
 			brelse(bh);
 		}
-		ce = mb_cache_entry_find_next(ce, inode->i_sb->s_bdev, hash);
+		ce = mb_cache_entry_find_next(ce, 0, inode->i_sb->s_bdev, hash);
 	}
 	return NULL;
 }
@@ -1017,7 +1016,9 @@ static void ext2_xattr_rehash(struct ext2_xattr_header *header,
 int __init
 init_ext2_xattr(void)
 {
-	ext2_xattr_cache = mb_cache_create("ext2_xattr", 6);
+	ext2_xattr_cache = mb_cache_create("ext2_xattr", NULL,
+		sizeof(struct mb_cache_entry) +
+		sizeof(((struct mb_cache_entry *) 0)->e_indexes[0]), 1, 6);
 	if (!ext2_xattr_cache)
 		return -ENOMEM;
 	return 0;

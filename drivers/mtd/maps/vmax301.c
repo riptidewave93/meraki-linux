@@ -16,6 +16,7 @@
    ##################################################################### */
 
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/ioport.h>
 #include <linux/init.h>
 #include <linux/spinlock.h>

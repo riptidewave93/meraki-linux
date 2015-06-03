@@ -9,9 +9,8 @@
 #include <linux/atmdev.h>
 #include <linux/sonet.h>
 #include <linux/init.h>
-#include <linux/slab.h>
 #include <asm/uaccess.h>
-#include <linux/atomic.h>
+#include <asm/atomic.h>
 
 #include "uPD98402.h"
 

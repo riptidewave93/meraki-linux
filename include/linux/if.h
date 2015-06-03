@@ -70,18 +70,6 @@
 #define IFF_XMIT_DST_RELEASE 0x400	/* dev_hard_start_xmit() is allowed to
 					 * release skb->dst
 					 */
-#define IFF_DONT_BRIDGE 0x800		/* disallow bridging this ether dev */
-#define IFF_DISABLE_NETPOLL	0x1000	/* disable netpoll at run-time */
-#define IFF_MACVLAN_PORT	0x2000	/* device used as macvlan port */
-#define IFF_BRIDGE_PORT	0x4000		/* device used as bridge port */
-#define IFF_OVS_DATAPATH	0x8000	/* device used as Open vSwitch
-					 * datapath port */
-#define IFF_TX_SKB_SHARING	0x10000	/* The interface supports sharing
-					 * skbs on transmit */
-#define IFF_UNICAST_FLT	0x20000		/* Supports unicast filtering	*/
-#define IFF_TEAM_PORT	0x40000		/* device used as team port */
-#define IFF_SUPP_NOFCS	0x80000		/* device supports sending custom FCS */
-
 
 #define IF_GET_IFACE	0x0001		/* for querying only */
 #define IF_GET_PROTO	0x0002
@@ -137,7 +125,8 @@ enum {
  *	being very small might be worth keeping for clean configuration.
  */
 
-struct ifmap {
+struct ifmap 
+{
 	unsigned long mem_start;
 	unsigned long mem_end;
 	unsigned short base_addr; 
@@ -147,7 +136,8 @@ struct ifmap {
 	/* 3 bytes spare */
 };
 
-struct if_settings {
+struct if_settings
+{
 	unsigned int type;	/* Type of physical device or protocol */
 	unsigned int size;	/* Size of the data allocated by the caller */
 	union {
@@ -171,7 +161,8 @@ struct if_settings {
  * remainder may be interface specific.
  */
 
-struct ifreq {
+struct ifreq 
+{
 #define IFHWADDRLEN	6
 	union
 	{
@@ -220,9 +211,11 @@ struct ifreq {
  * must know all networks accessible).
  */
 
-struct ifconf  {
+struct ifconf 
+{
 	int	ifc_len;			/* size of buffer	*/
-	union {
+	union 
+	{
 		char __user *ifcu_buf;
 		struct ifreq __user *ifcu_req;
 	} ifc_ifcu;

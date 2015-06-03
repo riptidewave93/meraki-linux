@@ -21,58 +21,66 @@ MODULE_ALIAS("ipt_state");
 MODULE_ALIAS("ip6t_state");
 
 static bool
-state_mt(const struct sk_buff *skb, struct xt_action_param *par)
+state_mt(const struct sk_buff *skb, const struct xt_match_param *par)
 {
 	const struct xt_state_info *sinfo = par->matchinfo;
 	enum ip_conntrack_info ctinfo;
 	unsigned int statebit;
-	struct nf_conn *ct = nf_ct_get(skb, &ctinfo);
 
-	if (!ct)
+	if (nf_ct_is_untracked(skb))
+		statebit = XT_STATE_UNTRACKED;
+	else if (!nf_ct_get(skb, &ctinfo))
 		statebit = XT_STATE_INVALID;
-	else {
-		if (nf_ct_is_untracked(ct))
-			statebit = XT_STATE_UNTRACKED;
-		else
-			statebit = XT_STATE_BIT(ctinfo);
-	}
+	else
+		statebit = XT_STATE_BIT(ctinfo);
+
 	return (sinfo->statemask & statebit);
 }
 
-static int state_mt_check(const struct xt_mtchk_param *par)
+static bool state_mt_check(const struct xt_mtchk_param *par)
 {
-	int ret;
-
-	ret = nf_ct_l3proto_try_module_get(par->family);
-	if (ret < 0)
-		pr_info("cannot load conntrack support for proto=%u\n",
-			par->family);
-	return ret;
+	if (nf_ct_l3proto_try_module_get(par->match->family) < 0) {
+		printk(KERN_WARNING "can't load conntrack support for "
+				    "proto=%u\n", par->match->family);
+		return false;
+	}
+	return true;
 }
 
 static void state_mt_destroy(const struct xt_mtdtor_param *par)
 {
-	nf_ct_l3proto_module_put(par->family);
+	nf_ct_l3proto_module_put(par->match->family);
 }
 
-static struct xt_match state_mt_reg __read_mostly = {
-	.name       = "state",
-	.family     = NFPROTO_UNSPEC,
-	.checkentry = state_mt_check,
-	.match      = state_mt,
-	.destroy    = state_mt_destroy,
-	.matchsize  = sizeof(struct xt_state_info),
-	.me         = THIS_MODULE,
+static struct xt_match state_mt_reg[] __read_mostly = {
+	{
+		.name		= "state",
+		.family		= NFPROTO_IPV4,
+		.checkentry	= state_mt_check,
+		.match		= state_mt,
+		.destroy	= state_mt_destroy,
+		.matchsize	= sizeof(struct xt_state_info),
+		.me		= THIS_MODULE,
+	},
+	{
+		.name		= "state",
+		.family		= NFPROTO_IPV6,
+		.checkentry	= state_mt_check,
+		.match		= state_mt,
+		.destroy	= state_mt_destroy,
+		.matchsize	= sizeof(struct xt_state_info),
+		.me		= THIS_MODULE,
+	},
 };
 
 static int __init state_mt_init(void)
 {
-	return xt_register_match(&state_mt_reg);
+	return xt_register_matches(state_mt_reg, ARRAY_SIZE(state_mt_reg));
 }
 
 static void __exit state_mt_exit(void)
 {
-	xt_unregister_match(&state_mt_reg);
+	xt_unregister_matches(state_mt_reg, ARRAY_SIZE(state_mt_reg));
 }
 
 module_init(state_mt_init);

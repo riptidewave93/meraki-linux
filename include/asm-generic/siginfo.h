@@ -35,14 +35,6 @@ typedef union sigval {
 #define __ARCH_SI_BAND_T long
 #endif
 
-#ifndef __ARCH_SI_CLOCK_T
-#define __ARCH_SI_CLOCK_T __kernel_clock_t
-#endif
-
-#ifndef __ARCH_SI_ATTRIBUTES
-#define __ARCH_SI_ATTRIBUTES
-#endif
-
 #ifndef HAVE_ARCH_SIGINFO_T
 
 typedef struct siginfo {
@@ -80,8 +72,8 @@ typedef struct siginfo {
 			__kernel_pid_t _pid;	/* which child */
 			__ARCH_SI_UID_T _uid;	/* sender's uid */
 			int _status;		/* exit code */
-			__ARCH_SI_CLOCK_T _utime;
-			__ARCH_SI_CLOCK_T _stime;
+			__kernel_clock_t _utime;
+			__kernel_clock_t _stime;
 		} _sigchld;
 
 		/* SIGILL, SIGFPE, SIGSEGV, SIGBUS */
@@ -99,7 +91,7 @@ typedef struct siginfo {
 			int _fd;
 		} _sigpoll;
 	} _sifields;
-} __ARCH_SI_ATTRIBUTES siginfo_t;
+} siginfo_t;
 
 #endif
 
@@ -200,7 +192,7 @@ typedef struct siginfo {
  * SIGBUS si_codes
  */
 #define BUS_ADRALN	(__SI_FAULT|1)	/* invalid address alignment */
-#define BUS_ADRERR	(__SI_FAULT|2)	/* non-existent physical address */
+#define BUS_ADRERR	(__SI_FAULT|2)	/* non-existant physical address */
 #define BUS_OBJERR	(__SI_FAULT|3)	/* object specific hardware error */
 /* hardware memory error consumed on a machine check: action required */
 #define BUS_MCEERR_AR	(__SI_FAULT|4)

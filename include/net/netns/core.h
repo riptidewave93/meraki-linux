@@ -10,7 +10,7 @@ struct netns_core {
 
 	int	sysctl_somaxconn;
 
-	struct prot_inuse __percpu *inuse;
+	struct prot_inuse	*inuse;
 };
 
 #endif

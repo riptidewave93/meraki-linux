@@ -19,6 +19,7 @@
 #include <linux/interrupt.h>
 #include <linux/ioport.h>
 #include <linux/module.h>
+#include <linux/slab.h>
 #include <linux/types.h>
 
 #include <asm/hardware.h>
@@ -86,7 +87,7 @@ irqreturn_t gsc_asic_intr(int gsc_asic_irq, void *dev)
 	do {
 		int local_irq = __ffs(irr);
 		unsigned int irq = gsc_asic->global_irq[local_irq];
-		generic_handle_irq(irq);
+		__do_IRQ(irq);
 		irr &= ~(1 << local_irq);
 	} while (irr);
 
@@ -105,13 +106,14 @@ int gsc_find_local_irq(unsigned int irq, int *global_irqs, int limit)
 	return NO_IRQ;
 }
 
-static void gsc_asic_mask_irq(struct irq_data *d)
+static void gsc_asic_disable_irq(unsigned int irq)
 {
-	struct gsc_asic *irq_dev = irq_data_get_irq_chip_data(d);
-	int local_irq = gsc_find_local_irq(d->irq, irq_dev->global_irq, 32);
+	struct irq_desc *desc = irq_to_desc(irq);
+	struct gsc_asic *irq_dev = desc->chip_data;
+	int local_irq = gsc_find_local_irq(irq, irq_dev->global_irq, 32);
 	u32 imr;
 
-	DEBPRINTK(KERN_DEBUG "%s(%d) %s: IMR 0x%x\n", __func__, d->irq,
+	DEBPRINTK(KERN_DEBUG "%s(%d) %s: IMR 0x%x\n", __func__, irq,
 			irq_dev->name, imr);
 
 	/* Disable the IRQ line by clearing the bit in the IMR */
@@ -120,13 +122,14 @@ static void gsc_asic_mask_irq(struct irq_data *d)
 	gsc_writel(imr, irq_dev->hpa + OFFSET_IMR);
 }
 
-static void gsc_asic_unmask_irq(struct irq_data *d)
+static void gsc_asic_enable_irq(unsigned int irq)
 {
-	struct gsc_asic *irq_dev = irq_data_get_irq_chip_data(d);
-	int local_irq = gsc_find_local_irq(d->irq, irq_dev->global_irq, 32);
+	struct irq_desc *desc = irq_to_desc(irq);
+	struct gsc_asic *irq_dev = desc->chip_data;
+	int local_irq = gsc_find_local_irq(irq, irq_dev->global_irq, 32);
 	u32 imr;
 
-	DEBPRINTK(KERN_DEBUG "%s(%d) %s: IMR 0x%x\n", __func__, d->irq,
+	DEBPRINTK(KERN_DEBUG "%s(%d) %s: IMR 0x%x\n", __func__, irq,
 			irq_dev->name, imr);
 
 	/* Enable the IRQ line by setting the bit in the IMR */
@@ -139,22 +142,33 @@ static void gsc_asic_unmask_irq(struct irq_data *d)
 	 */
 }
 
+static unsigned int gsc_asic_startup_irq(unsigned int irq)
+{
+	gsc_asic_enable_irq(irq);
+	return 0;
+}
+
 static struct irq_chip gsc_asic_interrupt_type = {
-	.name		=	"GSC-ASIC",
-	.irq_unmask	=	gsc_asic_unmask_irq,
-	.irq_mask	=	gsc_asic_mask_irq,
+	.typename =	"GSC-ASIC",
+	.startup =	gsc_asic_startup_irq,
+	.shutdown =	gsc_asic_disable_irq,
+	.enable =	gsc_asic_enable_irq,
+	.disable =	gsc_asic_disable_irq,
+	.ack =		no_ack_irq,
+	.end =		no_end_irq,
 };
 
 int gsc_assign_irq(struct irq_chip *type, void *data)
 {
 	static int irq = GSC_IRQ_BASE;
+	struct irq_desc *desc;
 
 	if (irq > GSC_IRQ_MAX)
 		return NO_IRQ;
 
-	irq_set_chip_and_handler(irq, type, handle_simple_irq);
-	irq_set_chip_data(irq, data);
-
+	desc = irq_to_desc(irq);
+	desc->chip = type;
+	desc->chip_data = data;
 	return irq++;
 }
 

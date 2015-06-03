@@ -10,6 +10,7 @@
 
 #include <linux/cache.h>
 #include <asm/percpu.h>
+#include <asm/system.h>
 
 
 /*

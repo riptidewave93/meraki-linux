@@ -40,10 +40,6 @@ struct rand_pool_info {
 	__u32	buf[0];
 };
 
-struct rnd_state {
-	__u32 s1, s2, s3;
-};
-
 /* Exported functions */
 
 #ifdef __KERNEL__
@@ -56,7 +52,6 @@ extern void add_interrupt_randomness(int irq, int irq_flags);
 extern void get_random_bytes(void *buf, int nbytes);
 extern void get_random_bytes_arch(void *buf, int nbytes);
 void generate_random_uuid(unsigned char uuid_out[16]);
-extern int random_int_secret_init(void);
 
 #ifndef MODULE
 extern const struct file_operations random_fops, urandom_fops;
@@ -67,30 +62,6 @@ unsigned long randomize_range(unsigned long start, unsigned long end, unsigned l
 
 u32 random32(void);
 void srandom32(u32 seed);
-
-u32 prandom32(struct rnd_state *);
-
-/*
- * Handle minimum values for seeds
- */
-static inline u32 __seed(u32 x, u32 m)
-{
-	return (x < m) ? x + m : x;
-}
-
-/**
- * prandom32_seed - set seed for prandom32().
- * @state: pointer to state structure to receive the seed.
- * @seed: arbitrary 64-bit value to use as a seed.
- */
-static inline void prandom32_seed(struct rnd_state *state, u64 seed)
-{
-	u32 i = (seed >> 32) ^ (seed << 10) ^ seed;
-
-	state->s1 = __seed(i, 2);
-	state->s2 = __seed(i, 8);
-	state->s3 = __seed(i, 16);
-}
 
 #ifdef CONFIG_ARCH_RANDOM
 # include <asm/archrandom.h>

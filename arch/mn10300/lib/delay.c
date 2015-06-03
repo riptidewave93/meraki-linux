@@ -28,8 +28,7 @@ void __delay(unsigned long loops)
 		"2:	add	-1,%0	\n"
 		"	bne	2b	\n"
 		: "=&d" (d0)
-		: "0" (loops)
-		: "cc");
+		: "0" (loops));
 }
 EXPORT_SYMBOL(__delay);
 
@@ -38,14 +37,14 @@ EXPORT_SYMBOL(__delay);
  */
 void __udelay(unsigned long usecs)
 {
-	unsigned long start, stop, cnt;
+	signed long ioclk, stop;
 
 	/* usecs * CLK / 1E6 */
 	stop = __muldiv64u(usecs, MN10300_TSCCLK, 1000000);
-	start = TMTSCBC;
+	stop = TMTSCBC - stop;
 
 	do {
-		cnt = start - TMTSCBC;
-	} while (cnt < stop);
+		ioclk = TMTSCBC;
+	} while (stop < ioclk);
 }
 EXPORT_SYMBOL(__udelay);

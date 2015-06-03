@@ -13,10 +13,12 @@
 
 #include <asm/setup.h>
 #include <asm/traps.h>
+#include <asm/system.h>
 #include <asm/uaccess.h>
 #include <asm/pgalloc.h>
 
 extern void die_if_kernel(char *, struct pt_regs *, long);
+extern const int frame_extra_sizes[]; /* in m68k/kernel/signal.c */
 
 int send_fault_sig(struct pt_regs *regs)
 {
@@ -33,8 +35,21 @@ int send_fault_sig(struct pt_regs *regs)
 		force_sig_info(siginfo.si_signo,
 			       &siginfo, current);
 	} else {
-		if (handle_kernel_fault(regs))
+		const struct exception_table_entry *fixup;
+
+		/* Are we prepared to handle this kernel fault? */
+		if ((fixup = search_exception_tables(regs->pc))) {
+			struct pt_regs *tregs;
+			/* Create a new four word stack frame, discarding the old
+			   one.  */
+			regs->stkadj = frame_extra_sizes[regs->format];
+			tregs =	(struct pt_regs *)((ulong)regs + regs->stkadj);
+			tregs->vector = regs->vector;
+			tregs->format = 0;
+			tregs->pc = fixup->fixup;
+			tregs->sr = regs->sr;
 			return -1;
+		}
 
 		//if (siginfo.si_signo == SIGBUS)
 		//	force_sig_info(siginfo.si_signo,
@@ -139,6 +154,7 @@ good_area:
 	 * the fault.
 	 */
 
+ survive:
 	fault = handle_mm_fault(mm, vma, address, write ? FAULT_FLAG_WRITE : 0);
 #ifdef DEBUG
 	printk("handle_mm_fault returns %d\n",fault);
@@ -164,10 +180,15 @@ good_area:
  */
 out_of_memory:
 	up_read(&mm->mmap_sem);
-	if (!user_mode(regs))
-		goto no_context;
-	pagefault_out_of_memory();
-	return 0;
+	if (is_global_init(current)) {
+		yield();
+		down_read(&mm->mmap_sem);
+		goto survive;
+	}
+
+	printk("VM: killing process %s\n", current->comm);
+	if (user_mode(regs))
+		do_group_exit(SIGKILL);
 
 no_context:
 	current->thread.signo = SIGBUS;

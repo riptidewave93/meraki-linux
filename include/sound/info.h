@@ -51,18 +51,18 @@ struct snd_info_entry_ops {
 		    unsigned short mode, void **file_private_data);
 	int (*release)(struct snd_info_entry *entry,
 		       unsigned short mode, void *file_private_data);
-	ssize_t (*read)(struct snd_info_entry *entry, void *file_private_data,
-			struct file *file, char __user *buf,
-			size_t count, loff_t pos);
-	ssize_t (*write)(struct snd_info_entry *entry, void *file_private_data,
-			 struct file *file, const char __user *buf,
-			 size_t count, loff_t pos);
-	loff_t (*llseek)(struct snd_info_entry *entry,
-			 void *file_private_data, struct file *file,
-			 loff_t offset, int orig);
-	unsigned int (*poll)(struct snd_info_entry *entry,
-			     void *file_private_data, struct file *file,
-			     poll_table *wait);
+	long (*read)(struct snd_info_entry *entry, void *file_private_data,
+		     struct file *file, char __user *buf,
+		     unsigned long count, unsigned long pos);
+	long (*write)(struct snd_info_entry *entry, void *file_private_data,
+		      struct file *file, const char __user *buf,
+		      unsigned long count, unsigned long pos);
+	long long (*llseek)(struct snd_info_entry *entry,
+			    void *file_private_data, struct file *file,
+			    long long offset, int orig);
+	unsigned int(*poll)(struct snd_info_entry *entry,
+			    void *file_private_data, struct file *file,
+			    poll_table *wait);
 	int (*ioctl)(struct snd_info_entry *entry, void *file_private_data,
 		     struct file *file, unsigned int cmd, unsigned long arg);
 	int (*mmap)(struct snd_info_entry *entry, void *file_private_data,
@@ -72,7 +72,7 @@ struct snd_info_entry_ops {
 
 struct snd_info_entry {
 	const char *name;
-	umode_t mode;
+	mode_t mode;
 	long size;
 	unsigned short content;
 	union {
@@ -110,8 +110,8 @@ void snd_card_info_read_oss(struct snd_info_buffer *buffer);
 static inline void snd_card_info_read_oss(struct snd_info_buffer *buffer) {}
 #endif
 
-__printf(2, 3)
-int snd_iprintf(struct snd_info_buffer *buffer, const char *fmt, ...);
+int snd_iprintf(struct snd_info_buffer *buffer, const char *fmt, ...) \
+				__attribute__ ((format (printf, 2, 3)));
 int snd_info_init(void);
 int snd_info_done(void);
 

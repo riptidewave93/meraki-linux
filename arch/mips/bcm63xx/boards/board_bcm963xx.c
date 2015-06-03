@@ -18,7 +18,6 @@
 #include <asm/addrspace.h>
 #include <bcm63xx_board.h>
 #include <bcm63xx_cpu.h>
-#include <bcm63xx_dev_uart.h>
 #include <bcm63xx_regs.h>
 #include <bcm63xx_io.h>
 #include <bcm63xx_dev_pci.h>
@@ -41,7 +40,6 @@ static struct board_info __initdata board_96338gw = {
 	.name				= "96338GW",
 	.expected_cpu_id		= 0x6338,
 
-	.has_uart0			= 1,
 	.has_enet0			= 1,
 	.enet0 = {
 		.force_speed_100	= 1,
@@ -84,7 +82,6 @@ static struct board_info __initdata board_96338w = {
 	.name				= "96338W",
 	.expected_cpu_id		= 0x6338,
 
-	.has_uart0			= 1,
 	.has_enet0			= 1,
 	.enet0 = {
 		.force_speed_100	= 1,
@@ -129,8 +126,6 @@ static struct board_info __initdata board_96338w = {
 static struct board_info __initdata board_96345gw2 = {
 	.name				= "96345GW2",
 	.expected_cpu_id		= 0x6345,
-
-	.has_uart0			= 1,
 };
 #endif
 
@@ -142,7 +137,6 @@ static struct board_info __initdata board_96348r = {
 	.name				= "96348R",
 	.expected_cpu_id		= 0x6348,
 
-	.has_uart0			= 1,
 	.has_enet0			= 1,
 	.has_pci			= 1,
 
@@ -186,7 +180,6 @@ static struct board_info __initdata board_96348gw_10 = {
 	.name				= "96348GW-10",
 	.expected_cpu_id		= 0x6348,
 
-	.has_uart0			= 1,
 	.has_enet0			= 1,
 	.has_enet1			= 1,
 	.has_pci			= 1,
@@ -246,7 +239,6 @@ static struct board_info __initdata board_96348gw_11 = {
 	.name				= "96348GW-11",
 	.expected_cpu_id		= 0x6348,
 
-	.has_uart0			= 1,
 	.has_enet0			= 1,
 	.has_enet1			= 1,
 	.has_pci			= 1,
@@ -300,7 +292,6 @@ static struct board_info __initdata board_96348gw = {
 	.name				= "96348GW",
 	.expected_cpu_id		= 0x6348,
 
-	.has_uart0			= 1,
 	.has_enet0			= 1,
 	.has_enet1			= 1,
 	.has_pci			= 1,
@@ -355,53 +346,33 @@ static struct board_info __initdata board_96348gw = {
 };
 
 static struct board_info __initdata board_FAST2404 = {
-	.name				= "F@ST2404",
-	.expected_cpu_id		= 0x6348,
+        .name                           = "F@ST2404",
+        .expected_cpu_id                = 0x6348,
 
-	.has_uart0			= 1,
-        .has_enet0			= 1,
-        .has_enet1			= 1,
-        .has_pci			= 1,
+        .has_enet0                      = 1,
+        .has_enet1                      = 1,
+        .has_pci                        = 1,
 
-	.enet0 = {
-		.has_phy		= 1,
-		.use_internal_phy	= 1,
-	},
+        .enet0 = {
+                .has_phy                = 1,
+                .use_internal_phy       = 1,
+        },
 
-	.enet1 = {
-		.force_speed_100	= 1,
-		.force_duplex_full	= 1,
-	},
+        .enet1 = {
+                .force_speed_100        = 1,
+                .force_duplex_full      = 1,
+        },
 
-	.has_ohci0			= 1,
-	.has_pccard			= 1,
-	.has_ehci0			= 1,
+
+        .has_ohci0 = 1,
+        .has_pccard = 1,
+        .has_ehci0 = 1,
 };
-
-static struct board_info __initdata board_rta1025w_16 = {
-	.name				= "RTA1025W_16",
-	.expected_cpu_id		= 0x6348,
-
-	.has_enet0			= 1,
-	.has_enet1			= 1,
-	.has_pci			= 1,
-
-	.enet0 = {
-		.has_phy		= 1,
-		.use_internal_phy	= 1,
-	},
-	.enet1 = {
-		.force_speed_100	= 1,
-		.force_duplex_full	= 1,
-	},
-};
-
 
 static struct board_info __initdata board_DV201AMR = {
 	.name				= "DV201AMR",
 	.expected_cpu_id		= 0x6348,
 
-	.has_uart0			= 1,
 	.has_pci			= 1,
 	.has_ohci0			= 1,
 
@@ -421,7 +392,6 @@ static struct board_info __initdata board_96348gw_a = {
 	.name				= "96348GW-A",
 	.expected_cpu_id		= 0x6348,
 
-	.has_uart0			= 1,
 	.has_enet0			= 1,
 	.has_enet1			= 1,
 	.has_pci			= 1,
@@ -447,7 +417,6 @@ static struct board_info __initdata board_96358vw = {
 	.name				= "96358VW",
 	.expected_cpu_id		= 0x6358,
 
-	.has_uart0			= 1,
 	.has_enet0			= 1,
 	.has_enet1			= 1,
 	.has_pci			= 1,
@@ -499,7 +468,6 @@ static struct board_info __initdata board_96358vw2 = {
 	.name				= "96358VW2",
 	.expected_cpu_id		= 0x6358,
 
-	.has_uart0			= 1,
 	.has_enet0			= 1,
 	.has_enet1			= 1,
 	.has_pci			= 1,
@@ -547,7 +515,6 @@ static struct board_info __initdata board_AGPFS0 = {
 	.name                           = "AGPF-S0",
 	.expected_cpu_id                = 0x6358,
 
-	.has_uart0			= 1,
 	.has_enet0                      = 1,
 	.has_enet1                      = 1,
 	.has_pci                        = 1,
@@ -564,27 +531,6 @@ static struct board_info __initdata board_AGPFS0 = {
 
 	.has_ohci0 = 1,
 	.has_ehci0 = 1,
-};
-
-static struct board_info __initdata board_DWVS0 = {
-	.name				= "DWV-S0",
-	.expected_cpu_id		= 0x6358,
-
-	.has_enet0			= 1,
-	.has_enet1			= 1,
-	.has_pci			= 1,
-
-	.enet0 = {
-		.has_phy		= 1,
-		.use_internal_phy	= 1,
-	},
-
-	.enet1 = {
-		.force_speed_100	= 1,
-		.force_duplex_full	= 1,
-	},
-
-	.has_ohci0			= 1,
 };
 #endif
 
@@ -607,97 +553,14 @@ static const struct board_info __initdata *bcm963xx_boards[] = {
 	&board_FAST2404,
 	&board_DV201AMR,
 	&board_96348gw_a,
-	&board_rta1025w_16,
 #endif
 
 #ifdef CONFIG_BCM63XX_CPU_6358
 	&board_96358vw,
 	&board_96358vw2,
 	&board_AGPFS0,
-	&board_DWVS0,
 #endif
 };
-
-/*
- * Register a sane SPROMv2 to make the on-board
- * bcm4318 WLAN work
- */
-#ifdef CONFIG_SSB_PCIHOST
-static struct ssb_sprom bcm63xx_sprom = {
-	.revision		= 0x02,
-	.board_rev		= 0x17,
-	.country_code		= 0x0,
-	.ant_available_bg 	= 0x3,
-	.pa0b0			= 0x15ae,
-	.pa0b1			= 0xfa85,
-	.pa0b2			= 0xfe8d,
-	.pa1b0			= 0xffff,
-	.pa1b1			= 0xffff,
-	.pa1b2			= 0xffff,
-	.gpio0			= 0xff,
-	.gpio1			= 0xff,
-	.gpio2			= 0xff,
-	.gpio3			= 0xff,
-	.maxpwr_bg		= 0x004c,
-	.itssi_bg		= 0x00,
-	.boardflags_lo		= 0x2848,
-	.boardflags_hi		= 0x0000,
-};
-
-int bcm63xx_get_fallback_sprom(struct ssb_bus *bus, struct ssb_sprom *out)
-{
-	if (bus->bustype == SSB_BUSTYPE_PCI) {
-		memcpy(out, &bcm63xx_sprom, sizeof(struct ssb_sprom));
-		return 0;
-	} else {
-		printk(KERN_ERR PFX "unable to fill SPROM for given bustype.\n");
-		return -EINVAL;
-	}
-}
-#endif
-
-/*
- * return board name for /proc/cpuinfo
- */
-const char *board_get_name(void)
-{
-	return board.name;
-}
-
-/*
- * register & return a new board mac address
- */
-static int board_get_mac_address(u8 *mac)
-{
-	u8 *p;
-	int count;
-
-	if (mac_addr_used >= nvram.mac_addr_count) {
-		printk(KERN_ERR PFX "not enough mac address\n");
-		return -ENODEV;
-	}
-
-	memcpy(mac, nvram.mac_addr_base, ETH_ALEN);
-	p = mac + ETH_ALEN - 1;
-	count = mac_addr_used;
-
-	while (count--) {
-		do {
-			(*p)++;
-			if (*p != 0)
-				break;
-			p--;
-		} while (p != mac);
-	}
-
-	if (p == mac) {
-		printk(KERN_ERR PFX "unable to fetch mac address\n");
-		return -ENODEV;
-	}
-
-	mac_addr_used++;
-	return 0;
-}
 
 /*
  * early init callback, read nvram data from flash and checksum it
@@ -709,9 +572,15 @@ void __init board_prom_init(void)
 	char cfe_version[32];
 	u32 val;
 
-	/* read base address of boot chip select (0) */
-	val = bcm_mpi_readl(MPI_CSBASE_REG(0));
-	val &= MPI_CSBASE_BASE_MASK;
+	/* read base address of boot chip select (0)
+	 * 6345 does not have MPI but boots from standard
+	 * MIPS Flash address */
+	if (BCMCPU_IS_6345())
+		val = 0x1fc00000;
+	else {
+		val = bcm_mpi_readl(MPI_CSBASE_REG(0));
+		val &= MPI_CSBASE_BASE_MASK;
+	}
 	boot_addr = (u8 *)KSEG1ADDR(val);
 
 	/* dump cfe version */
@@ -808,6 +677,49 @@ void __init board_setup(void)
 		panic("unexpected CPU for bcm963xx board");
 }
 
+/*
+ * return board name for /proc/cpuinfo
+ */
+const char *board_get_name(void)
+{
+	return board.name;
+}
+
+/*
+ * register & return a new board mac address
+ */
+static int board_get_mac_address(u8 *mac)
+{
+	u8 *p;
+	int count;
+
+	if (mac_addr_used >= nvram.mac_addr_count) {
+		printk(KERN_ERR PFX "not enough mac address\n");
+		return -ENODEV;
+	}
+
+	memcpy(mac, nvram.mac_addr_base, ETH_ALEN);
+	p = mac + ETH_ALEN - 1;
+	count = mac_addr_used;
+
+	while (count--) {
+		do {
+			(*p)++;
+			if (*p != 0)
+				break;
+			p--;
+		} while (p != mac);
+	}
+
+	if (p == mac) {
+		printk(KERN_ERR PFX "unable to fetch mac address\n");
+		return -ENODEV;
+	}
+
+	mac_addr_used++;
+	return 0;
+}
+
 static struct mtd_partition mtd_partitions[] = {
 	{
 		.name		= "cfe",
@@ -816,13 +728,10 @@ static struct mtd_partition mtd_partitions[] = {
 	}
 };
 
-static const char *bcm63xx_part_types[] = { "bcm63xxpart", NULL };
-
 static struct physmap_flash_data flash_data = {
 	.width			= 2,
 	.nr_parts		= ARRAY_SIZE(mtd_partitions),
 	.parts			= mtd_partitions,
-	.part_probe_types	= bcm63xx_part_types,
 };
 
 static struct resource mtd_resources[] = {
@@ -842,6 +751,33 @@ static struct platform_device mtd_dev = {
 	},
 };
 
+/*
+ * Register a sane SPROMv2 to make the on-board
+ * bcm4318 WLAN work
+ */
+#ifdef CONFIG_SSB_PCIHOST
+static struct ssb_sprom bcm63xx_sprom = {
+	.revision		= 0x02,
+	.board_rev		= 0x17,
+	.country_code		= 0x0,
+	.ant_available_bg 	= 0x3,
+	.pa0b0			= 0x15ae,
+	.pa0b1			= 0xfa85,
+	.pa0b2			= 0xfe8d,
+	.pa1b0			= 0xffff,
+	.pa1b1			= 0xffff,
+	.pa1b2			= 0xffff,
+	.gpio0			= 0xff,
+	.gpio1			= 0xff,
+	.gpio2			= 0xff,
+	.gpio3			= 0xff,
+	.maxpwr_bg		= 0x004c,
+	.itssi_bg		= 0x00,
+	.boardflags_lo		= 0x2848,
+	.boardflags_hi		= 0x0000,
+};
+#endif
+
 static struct gpio_led_platform_data bcm63xx_led_data;
 
 static struct platform_device bcm63xx_gpio_leds = {
@@ -857,12 +793,6 @@ int __init board_register_devices(void)
 {
 	u32 val;
 
-	if (board.has_uart0)
-		bcm63xx_uart_register(0);
-
-	if (board.has_uart1)
-		bcm63xx_uart_register(1);
-
 	if (board.has_pccard)
 		bcm63xx_pcmcia_register();
 
@@ -877,23 +807,24 @@ int __init board_register_devices(void)
 	if (board.has_dsp)
 		bcm63xx_dsp_register(&board.dsp);
 
-	/* Generate MAC address for WLAN and register our SPROM,
-	 * do this after registering enet devices
-	 */
+	/* Generate MAC address for WLAN and
+	 * register our SPROM */
 #ifdef CONFIG_SSB_PCIHOST
 	if (!board_get_mac_address(bcm63xx_sprom.il0mac)) {
 		memcpy(bcm63xx_sprom.et0mac, bcm63xx_sprom.il0mac, ETH_ALEN);
 		memcpy(bcm63xx_sprom.et1mac, bcm63xx_sprom.il0mac, ETH_ALEN);
-		if (ssb_arch_register_fallback_sprom(
-				&bcm63xx_get_fallback_sprom) < 0)
-			pr_err(PFX "failed to register fallback SPROM\n");
+		if (ssb_arch_set_fallback_sprom(&bcm63xx_sprom) < 0)
+			printk(KERN_ERR "failed to register fallback SPROM\n");
 	}
 #endif
 
 	/* read base address of boot chip select (0) */
-	val = bcm_mpi_readl(MPI_CSBASE_REG(0));
-	val &= MPI_CSBASE_BASE_MASK;
-
+	if (BCMCPU_IS_6345())
+		val = 0x1fc00000;
+	else {
+		val = bcm_mpi_readl(MPI_CSBASE_REG(0));
+		val &= MPI_CSBASE_BASE_MASK;
+	}
 	mtd_resources[0].start = val;
 	mtd_resources[0].end = 0x1FFFFFFF;
 
@@ -906,3 +837,4 @@ int __init board_register_devices(void)
 
 	return 0;
 }
+

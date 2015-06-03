@@ -59,16 +59,16 @@ MODULE_AUTHOR("Christoph Raisch <raisch@de.ibm.com>");
 MODULE_DESCRIPTION("IBM eServer HCA InfiniBand Device Driver");
 MODULE_VERSION(HCAD_VERSION);
 
-static bool ehca_open_aqp1    = 0;
+static int ehca_open_aqp1     = 0;
 static int ehca_hw_level      = 0;
-static bool ehca_poll_all_eqs = 1;
+static int ehca_poll_all_eqs  = 1;
 
 int ehca_debug_level   = 0;
 int ehca_nr_ports      = -1;
-bool ehca_use_hp_mr    = 0;
+int ehca_use_hp_mr     = 0;
 int ehca_port_act_time = 30;
 int ehca_static_rate   = -1;
-bool ehca_scaling_code = 0;
+int ehca_scaling_code  = 0;
 int ehca_lock_hcalls   = -1;
 int ehca_max_cq        = -1;
 int ehca_max_qp        = -1;
@@ -82,7 +82,7 @@ module_param_named(port_act_time, ehca_port_act_time, int,  S_IRUGO);
 module_param_named(poll_all_eqs,  ehca_poll_all_eqs,  bool, S_IRUGO);
 module_param_named(static_rate,   ehca_static_rate,   int,  S_IRUGO);
 module_param_named(scaling_code,  ehca_scaling_code,  bool, S_IRUGO);
-module_param_named(lock_hcalls,   ehca_lock_hcalls,   bint, S_IRUGO);
+module_param_named(lock_hcalls,   ehca_lock_hcalls,   bool, S_IRUGO);
 module_param_named(number_of_cqs, ehca_max_cq,        int,  S_IRUGO);
 module_param_named(number_of_qps, ehca_max_qp,        int,  S_IRUGO);
 
@@ -123,7 +123,7 @@ DEFINE_IDR(ehca_qp_idr);
 DEFINE_IDR(ehca_cq_idr);
 
 static LIST_HEAD(shca_list); /* list of all registered ehcas */
-DEFINE_SPINLOCK(shca_list_lock);
+static DEFINE_SPINLOCK(shca_list_lock);
 
 static struct timer_list poll_eqs_timer;
 
@@ -291,9 +291,8 @@ static int ehca_sense_attributes(struct ehca_shca *shca)
 	};
 
 	ehca_gen_dbg("Probing adapter %s...",
-		     shca->ofdev->dev.of_node->full_name);
-	loc_code = of_get_property(shca->ofdev->dev.of_node, "ibm,loc-code",
-				   NULL);
+		     shca->ofdev->node->full_name);
+	loc_code = of_get_property(shca->ofdev->node, "ibm,loc-code", NULL);
 	if (loc_code)
 		ehca_gen_dbg(" ... location lode=%s", loc_code);
 
@@ -360,8 +359,7 @@ static int ehca_sense_attributes(struct ehca_shca *shca)
 	 * a firmware property, so it's valid across all adapters
 	 */
 	if (ehca_lock_hcalls == -1)
-		ehca_lock_hcalls = !EHCA_BMASK_GET(HCA_CAP_H_ALLOC_RES_SYNC,
-					shca->hca_cap);
+		ehca_lock_hcalls = !(shca->hca_cap & HCA_CAP_H_ALLOC_RES_SYNC);
 
 	/* translate supported MR page sizes; always support 4K */
 	shca->hca_cap_mr_pgsize = EHCA_PAGESIZE;
@@ -713,7 +711,7 @@ static struct attribute_group ehca_dev_attr_grp = {
 	.attrs = ehca_dev_attrs
 };
 
-static int __devinit ehca_probe(struct platform_device *dev,
+static int __devinit ehca_probe(struct of_device *dev,
 				const struct of_device_id *id)
 {
 	struct ehca_shca *shca;
@@ -722,16 +720,16 @@ static int __devinit ehca_probe(struct platform_device *dev,
 	int ret, i, eq_size;
 	unsigned long flags;
 
-	handle = of_get_property(dev->dev.of_node, "ibm,hca-handle", NULL);
+	handle = of_get_property(dev->node, "ibm,hca-handle", NULL);
 	if (!handle) {
 		ehca_gen_err("Cannot get eHCA handle for adapter: %s.",
-			     dev->dev.of_node->full_name);
+			     dev->node->full_name);
 		return -ENODEV;
 	}
 
 	if (!(*handle)) {
 		ehca_gen_err("Wrong eHCA handle for adapter: %s.",
-			     dev->dev.of_node->full_name);
+			     dev->node->full_name);
 		return -ENODEV;
 	}
 
@@ -800,7 +798,7 @@ static int __devinit ehca_probe(struct platform_device *dev,
 		goto probe5;
 	}
 
-	ret = ib_register_device(&shca->ib_device, NULL);
+	ret = ib_register_device(&shca->ib_device);
 	if (ret) {
 		ehca_err(&shca->ib_device,
 			 "ib_register_device() failed ret=%i", ret);
@@ -879,7 +877,7 @@ probe1:
 	return -EINVAL;
 }
 
-static int __devexit ehca_remove(struct platform_device *dev)
+static int __devexit ehca_remove(struct of_device *dev)
 {
 	struct ehca_shca *shca = dev_get_drvdata(&dev->dev);
 	unsigned long flags;
@@ -938,13 +936,12 @@ static struct of_device_id ehca_device_table[] =
 MODULE_DEVICE_TABLE(of, ehca_device_table);
 
 static struct of_platform_driver ehca_driver = {
+	.name        = "ehca",
+	.match_table = ehca_device_table,
 	.probe       = ehca_probe,
 	.remove      = ehca_remove,
-	.driver = {
-		.name = "ehca",
-		.owner = THIS_MODULE,
+	.driver	     = {
 		.groups = ehca_drv_attr_groups,
-		.of_match_table = ehca_device_table,
 	},
 };
 

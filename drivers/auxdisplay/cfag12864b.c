@@ -27,7 +27,6 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/fs.h>
-#include <linux/slab.h>
 #include <linux/cdev.h>
 #include <linux/delay.h>
 #include <linux/device.h>
@@ -49,7 +48,7 @@
 static unsigned int cfag12864b_rate = CONFIG_CFAG12864B_RATE;
 module_param(cfag12864b_rate, uint, S_IRUGO);
 MODULE_PARM_DESC(cfag12864b_rate,
-	"Refresh rate (hertz)");
+	"Refresh rate (hertzs)");
 
 unsigned int cfag12864b_getrate(void)
 {
@@ -60,7 +59,7 @@ unsigned int cfag12864b_getrate(void)
  * cfag12864b Commands
  *
  *	E = Enable signal
- *		Every time E switch from low to high,
+ *		Everytime E switch from low to high,
  *		cfag12864b/ks0108 reads the command/data.
  *
  *	CS1 = First ks0108controller.

@@ -33,6 +33,7 @@
 #include <linux/types.h>
 
 #include <asm/io.h>
+#include <asm/system.h>
 
 #include <video/pmag-ba-fb.h>
 
@@ -43,7 +44,7 @@ struct pmagbafb_par {
 };
 
 
-static struct fb_var_screeninfo pmagbafb_defined __devinitdata = {
+static struct fb_var_screeninfo pmagbafb_defined __initdata = {
 	.xres		= 1024,
 	.yres		= 864,
 	.xres_virtual	= 1024,
@@ -67,7 +68,7 @@ static struct fb_var_screeninfo pmagbafb_defined __devinitdata = {
 	.vmode		= FB_VMODE_NONINTERLACED,
 };
 
-static struct fb_fix_screeninfo pmagbafb_fix __devinitdata = {
+static struct fb_fix_screeninfo pmagbafb_fix __initdata = {
 	.id		= "PMAG-BA",
 	.smem_len	= (1024 * 1024),
 	.type		= FB_TYPE_PACKED_PIXELS,
@@ -97,8 +98,7 @@ static int pmagbafb_setcolreg(unsigned int regno, unsigned int red,
 {
 	struct pmagbafb_par *par = info->par;
 
-	if (regno >= info->cmap.len)
-		return 1;
+	BUG_ON(regno >= info->cmap.len);
 
 	red   >>= 8;	/* The cmap fields are 16 bits    */
 	green >>= 8;	/* wide, but the hardware colormap */
@@ -141,7 +141,7 @@ static void __init pmagbafb_erase_cursor(struct fb_info *info)
 }
 
 
-static int __devinit pmagbafb_probe(struct device *dev)
+static int __init pmagbafb_probe(struct device *dev)
 {
 	struct tc_dev *tdev = to_tc_dev(dev);
 	resource_size_t start, len;

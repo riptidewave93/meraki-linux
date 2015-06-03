@@ -29,8 +29,6 @@
 #include <linux/clk.h>
 #include <linux/delay.h>
 #include <linux/timer.h>
-#include <linux/slab.h>
-#include <linux/prefetch.h>
 
 #include <linux/usb/ch9.h>
 #include <linux/usb/gadget.h>
@@ -689,7 +687,7 @@ static int imx_ep_enable(struct usb_ep *usb_ep,
 		return -EINVAL;
 	}
 
-	if (imx_ep->fifosize < usb_endpoint_maxp(desc)) {
+	if (imx_ep->fifosize < le16_to_cpu(desc->wMaxPacketSize)) {
 		D_ERR(imx_usb->dev,
 			"<%s> bad %s maxpacket\n", __func__, usb_ep->name);
 		return -ERANGE;
@@ -1192,17 +1190,13 @@ static irqreturn_t imx_udc_ctrl_irq(int irq, void *dev)
 	return IRQ_HANDLED;
 }
 
-#ifndef MX1_INT_USBD0
-#define MX1_INT_USBD0 MX1_USBD_INT0
-#endif
-
 static irqreturn_t imx_udc_bulk_irq(int irq, void *dev)
 {
 	struct imx_udc_struct *imx_usb = dev;
-	struct imx_ep_struct *imx_ep = &imx_usb->imx_ep[irq - MX1_INT_USBD0];
+	struct imx_ep_struct *imx_ep = &imx_usb->imx_ep[irq - USBD_INT0];
 	int intr = __raw_readl(imx_usb->base + USB_EP_INTR(EP_NO(imx_ep)));
 
-	dump_ep_intr(__func__, irq - MX1_INT_USBD0, intr, imx_usb->dev);
+	dump_ep_intr(__func__, irq - USBD_INT0, intr, imx_usb->dev);
 
 	if (!imx_usb->driver) {
 		__raw_writel(intr, imx_usb->base + USB_EP_INTR(EP_NO(imx_ep)));
@@ -1237,14 +1231,9 @@ irq_handler_t intr_handler(int i)
  *******************************************************************************
  */
 
-static int imx_udc_start(struct usb_gadget_driver *driver,
-		int (*bind)(struct usb_gadget *));
-static int imx_udc_stop(struct usb_gadget_driver *driver);
 static const struct usb_gadget_ops imx_udc_ops = {
 	.get_frame	 = imx_udc_get_frame,
 	.wakeup		 = imx_udc_wakeup,
-	.start		= imx_udc_start,
-	.stop		= imx_udc_stop,
 };
 
 static struct imx_udc_struct controller = {
@@ -1326,18 +1315,17 @@ static struct imx_udc_struct controller = {
 };
 
 /*******************************************************************************
- * USB gadget driver functions
+ * USB gadged driver functions
  *******************************************************************************
  */
-static int imx_udc_start(struct usb_gadget_driver *driver,
-		int (*bind)(struct usb_gadget *))
+int usb_gadget_register_driver(struct usb_gadget_driver *driver)
 {
 	struct imx_udc_struct *imx_usb = &controller;
 	int retval;
 
 	if (!driver
-		|| driver->max_speed < USB_SPEED_FULL
-		|| !bind
+		|| driver->speed < USB_SPEED_FULL
+		|| !driver->bind
 		|| !driver->disconnect
 		|| !driver->setup)
 			return -EINVAL;
@@ -1353,7 +1341,7 @@ static int imx_udc_start(struct usb_gadget_driver *driver,
 	retval = device_add(&imx_usb->gadget.dev);
 	if (retval)
 		goto fail;
-	retval = bind(&imx_usb->gadget);
+	retval = driver->bind(&imx_usb->gadget);
 	if (retval) {
 		D_ERR(imx_usb->dev, "<%s> bind to driver %s --> error %d\n",
 			__func__, driver->driver.name, retval);
@@ -1373,8 +1361,9 @@ fail:
 	imx_usb->gadget.dev.driver = NULL;
 	return retval;
 }
+EXPORT_SYMBOL(usb_gadget_register_driver);
 
-static int imx_udc_stop(struct usb_gadget_driver *driver)
+int usb_gadget_unregister_driver(struct usb_gadget_driver *driver)
 {
 	struct imx_udc_struct *imx_usb = &controller;
 
@@ -1398,6 +1387,7 @@ static int imx_udc_stop(struct usb_gadget_driver *driver)
 
 	return 0;
 }
+EXPORT_SYMBOL(usb_gadget_unregister_driver);
 
 /*******************************************************************************
  * Module functions
@@ -1478,7 +1468,7 @@ static int __init imx_udc_probe(struct platform_device *pdev)
 
 	for (i = 0; i < IMX_USB_NB_EP + 1; i++) {
 		ret = request_irq(imx_usb->usbd_int[i], intr_handler(i),
-				     0, driver_name, imx_usb);
+				     IRQF_DISABLED, driver_name, imx_usb);
 		if (ret) {
 			dev_err(&pdev->dev, "can't get irq %i, err %d\n",
 				imx_usb->usbd_int[i], ret);
@@ -1507,14 +1497,8 @@ static int __init imx_udc_probe(struct platform_device *pdev)
 	imx_usb->timer.function = handle_config;
 	imx_usb->timer.data = (unsigned long)imx_usb;
 
-	ret = usb_add_gadget_udc(&pdev->dev, &imx_usb->gadget);
-	if (ret)
-		goto fail4;
-
 	return 0;
-fail4:
-	for (i = 0; i < IMX_USB_NB_EP + 1; i++)
-		free_irq(imx_usb->usbd_int[i], imx_usb);
+
 fail3:
 	clk_put(clk);
 	clk_disable(clk);
@@ -1534,7 +1518,6 @@ static int __exit imx_udc_remove(struct platform_device *pdev)
 	struct imxusb_platform_data *pdata = pdev->dev.platform_data;
 	int i;
 
-	usb_del_gadget_udc(&imx_usb->gadget);
 	imx_udc_disable(imx_usb);
 	del_timer(&imx_usb->timer);
 

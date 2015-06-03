@@ -24,21 +24,6 @@
 #endif /* SMTC */
 #include <asm-generic/mm_hooks.h>
 
-#ifdef CONFIG_MIPS_PGD_C0_CONTEXT
-
-#define TLBMISS_HANDLER_SETUP_PGD(pgd)				\
-	tlbmiss_handler_setup_pgd((unsigned long)(pgd))
-
-extern void tlbmiss_handler_setup_pgd(unsigned long pgd);
-
-#define TLBMISS_HANDLER_SETUP()						\
-	do {								\
-		TLBMISS_HANDLER_SETUP_PGD(swapper_pg_dir);		\
-		write_c0_xcontext((unsigned long) smp_processor_id() << 51); \
-	} while (0)
-
-#else /* CONFIG_MIPS_PGD_C0_CONTEXT: using  pgd_current*/
-
 /*
  * For the fast tlb miss handlers, we keep a per cpu array of pointers
  * to the current pgd for each processor. Also, the proc. id is stuffed
@@ -61,7 +46,7 @@ extern unsigned long pgd_current[];
 	back_to_back_c0_hazard();					\
 	TLBMISS_HANDLER_SETUP_PGD(swapper_pg_dir)
 #endif
-#endif /* CONFIG_MIPS_PGD_C0_CONTEXT*/
+
 #if defined(CONFIG_CPU_R3000) || defined(CONFIG_CPU_TX39XX)
 
 #define ASID_INC	0x40
@@ -92,7 +77,7 @@ extern unsigned long smtc_asid_mask;
 
 #endif
 
-#define cpu_context(cpu, mm)	((mm)->context.asid[cpu])
+#define cpu_context(cpu, mm)	((mm)->context[cpu])
 #define cpu_asid(cpu, mm)	(cpu_context((cpu), (mm)) & ASID_MASK)
 #define asid_cache(cpu)		(cpu_data[cpu].asid_cache)
 

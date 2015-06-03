@@ -13,6 +13,8 @@
 #define BITMAP_MAJOR_HI 4
 #define	BITMAP_MAJOR_HOSTENDIAN 3
 
+#define BITMAP_MINOR 39
+
 /*
  * in-memory bitmap:
  *
@@ -43,7 +45,7 @@
  *
  * The counter counts pending write requests, plus the on-disk bit.
  * When the counter is '1' and the resync bits are clear, the on-disk
- * bit can be cleared as well, thus setting the counter to 0.
+ * bit can be cleared aswell, thus setting the counter to 0.
  * When we set a bit, or in the counter (to start a write), if the fields is
  * 0, we first set the disk bit and set the counter to 1.
  *
@@ -83,6 +85,7 @@
 typedef __u16 bitmap_counter_t;
 #define COUNTER_BITS 16
 #define COUNTER_BIT_SHIFT 4
+#define COUNTER_BYTE_RATIO (COUNTER_BITS / 8)
 #define COUNTER_BYTE_SHIFT (COUNTER_BIT_SHIFT - 3)
 
 #define NEEDED_MASK ((bitmap_counter_t) (1 << (COUNTER_BITS - 1)))
@@ -99,7 +102,31 @@ typedef __u16 bitmap_counter_t;
 /* same, except a mask value for more efficient bitops */
 #define PAGE_COUNTER_MASK  (PAGE_COUNTER_RATIO - 1)
 
+#define BITMAP_BLOCK_SIZE 512
 #define BITMAP_BLOCK_SHIFT 9
+
+/* how many blocks per chunk? (this is variable) */
+#define CHUNK_BLOCK_RATIO(bitmap) ((bitmap)->chunksize >> BITMAP_BLOCK_SHIFT)
+#define CHUNK_BLOCK_SHIFT(bitmap) ((bitmap)->chunkshift - BITMAP_BLOCK_SHIFT)
+#define CHUNK_BLOCK_MASK(bitmap) (CHUNK_BLOCK_RATIO(bitmap) - 1)
+
+/* when hijacked, the counters and bits represent even larger "chunks" */
+/* there will be 1024 chunks represented by each counter in the page pointers */
+#define PAGEPTR_BLOCK_RATIO(bitmap) \
+			(CHUNK_BLOCK_RATIO(bitmap) << PAGE_COUNTER_SHIFT >> 1)
+#define PAGEPTR_BLOCK_SHIFT(bitmap) \
+			(CHUNK_BLOCK_SHIFT(bitmap) + PAGE_COUNTER_SHIFT - 1)
+#define PAGEPTR_BLOCK_MASK(bitmap) (PAGEPTR_BLOCK_RATIO(bitmap) - 1)
+
+/*
+ * on-disk bitmap:
+ *
+ * Use one bit per "chunk" (block set). We do the disk I/O on the bitmap
+ * file a page at a time. There's a superblock at the start of the file.
+ */
+
+/* map chunks (bits) to file pages - offset by the size of the superblock */
+#define CHUNK_BIT_OFFSET(chunk) ((chunk) + (sizeof(bitmap_super_t) << 3))
 
 #endif
 
@@ -165,17 +192,33 @@ struct bitmap_page {
 	unsigned int  count:31;
 };
 
+/* keep track of bitmap file pages that have pending writes on them */
+struct page_list {
+	struct list_head list;
+	struct page *page;
+};
+
 /* the main bitmap structure - one per mddev */
 struct bitmap {
 	struct bitmap_page *bp;
 	unsigned long pages; /* total number of pages in the bitmap */
 	unsigned long missing_pages; /* number of pages not yet allocated */
 
-	struct mddev *mddev; /* the md device that the bitmap is for */
+	mddev_t *mddev; /* the md device that the bitmap is for */
+
+	int counter_bits; /* how many bits per block counter */
 
 	/* bitmap chunksize -- how much data does each bit represent? */
-	unsigned long chunkshift; /* chunksize = 2^(chunkshift+9) (for bitops) */
+	unsigned long chunksize;
+	unsigned long chunkshift; /* chunksize = 2^chunkshift (for bitops) */
 	unsigned long chunks; /* total number of data chunks for the array */
+
+	/* We hold a count on the chunk currently being synced, and drop
+	 * it when the last block is started.  If the resync is aborted
+	 * midway, we need to be able to drop that count, so we remember
+	 * the counted chunk..
+	 */
+	unsigned long syncchunk;
 
 	__u64	events_cleared;
 	int need_sync;
@@ -183,6 +226,7 @@ struct bitmap {
 	/* bitmap spinlock */
 	spinlock_t lock;
 
+	long offset; /* offset from superblock if file is NULL */
 	struct file *file; /* backing disk file */
 	struct page *sb_page; /* cached copy of the bitmap file superblock */
 	struct page **filemap; /* list of cache pages for the file */
@@ -194,36 +238,36 @@ struct bitmap {
 
 	int allclean;
 
+	unsigned long max_write_behind; /* write-behind mode */
 	atomic_t behind_writes;
-	unsigned long behind_writes_used; /* highest actual value at runtime */
 
 	/*
 	 * the bitmap daemon - periodically wakes up and sweeps the bitmap
 	 * file, cleaning up bits and flushing out pages to disk as necessary
 	 */
 	unsigned long daemon_lastrun; /* jiffies of last run */
+	unsigned long daemon_sleep; /* how many seconds between updates? */
 	unsigned long last_end_sync; /* when we lasted called end_sync to
 				      * update bitmap with resync progress */
 
 	atomic_t pending_writes; /* pending writes to the bitmap file */
 	wait_queue_head_t write_wait;
 	wait_queue_head_t overflow_wait;
-	wait_queue_head_t behind_wait;
 
-	struct sysfs_dirent *sysfs_can_clear;
+#ifndef __GENKSYMS__
+	wait_queue_head_t behind_wait;
+#endif
 };
 
 /* the bitmap API */
 
 /* these are used only by md/bitmap */
-int  bitmap_create(struct mddev *mddev);
-int bitmap_load(struct mddev *mddev);
-void bitmap_flush(struct mddev *mddev);
-void bitmap_destroy(struct mddev *mddev);
+int  bitmap_create(mddev_t *mddev);
+void bitmap_flush(mddev_t *mddev);
+void bitmap_destroy(mddev_t *mddev);
 
 void bitmap_print_sb(struct bitmap *bitmap);
 void bitmap_update_sb(struct bitmap *bitmap);
-void bitmap_status(struct seq_file *seq, struct bitmap *bitmap);
 
 int  bitmap_setallbits(struct bitmap *bitmap);
 void bitmap_write_all(struct bitmap *bitmap);
@@ -235,13 +279,13 @@ int bitmap_startwrite(struct bitmap *bitmap, sector_t offset,
 			unsigned long sectors, int behind);
 void bitmap_endwrite(struct bitmap *bitmap, sector_t offset,
 			unsigned long sectors, int success, int behind);
-int bitmap_start_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks, int degraded);
-void bitmap_end_sync(struct bitmap *bitmap, sector_t offset, sector_t *blocks, int aborted);
+int bitmap_start_sync(struct bitmap *bitmap, sector_t offset, int *blocks, int degraded);
+void bitmap_end_sync(struct bitmap *bitmap, sector_t offset, int *blocks, int aborted);
 void bitmap_close_sync(struct bitmap *bitmap);
 void bitmap_cond_end_sync(struct bitmap *bitmap, sector_t sector);
 
 void bitmap_unplug(struct bitmap *bitmap);
-void bitmap_daemon_work(struct mddev *mddev);
+void bitmap_daemon_work(mddev_t *mddev);
 #endif
 
 #endif

@@ -12,6 +12,7 @@
 #include <asm/cache.h>
 #include <asm/errno.h>
 #include <asm/ppc_asm.h>
+#include <asm/page.h>
 
 #define COPY_16_BYTES		\
 	lwz	r7,4(r4);	\
@@ -62,7 +63,7 @@
 
 	.text
 	.stabs	"arch/powerpc/lib/",N_SO,0,0,0f
-	.stabs	"copy_32.S",N_SO,0,0,0f
+	.stabs	"copy32.S",N_SO,0,0,0f
 0:
 
 CACHELINE_BYTES = L1_CACHE_BYTES
@@ -98,7 +99,21 @@ _GLOBAL(cacheable_memzero)
 	bdnz	4b
 3:	mtctr	r9
 	li	r7,4
+#if defined(CONFIG_8xx) || (defined(CONFIG_APM86xxx) && defined(CONFIG_SMP))
+10:	stw	r4, 4(r6)
+	stw	r4, 8(r6)
+	stw	r4, 12(r6)
+	stw	r4, 16(r6)
+#if CACHE_LINE_SIZE >= 32
+	stw	r4, 20(r6)
+	stw	r4, 24(r6)
+	stw	r4, 28(r6)
+	stw	r4, 32(r6)
+#endif /* CACHE_LINE_SIZE */
+#else
 10:	dcbz	r7,r6
+#endif
+
 	addi	r6,r6,CACHELINE_BYTES
 	bdnz	10b
 	clrlwi	r5,r8,32-LG_CACHELINE_BYTES
@@ -117,6 +132,92 @@ _GLOBAL(cacheable_memzero)
 	bdnz	8b
 	blr
 
+#if defined(CONFIG_FAST_MEMSET)
+CACHE_INHIBIT_MASK = 0x00000400
+PAGE_SIZE_256MB_MASK = 0xf0000000
+_GLOBAL(memset)
+	rlwimi	r4,r4,8,16,23
+	rlwimi	r4,r4,16,0,15
+	addi	r6,r3,-4
+	cmplwi	0,r5,4
+	blt	7f
+	stwu	r4,4(r6)
+	beqlr
+	andi.	r0,r6,3
+	add	r5,r0,r5
+	subf	r6,r0,r6
+/* Check if region being memset is pinned/cacheable */
+        mr      r10,r3  /* stash away r3 in r10 */
+        lis     r3,PAGE_SIZE_256MB_MASK@h
+        ori     r3,r3,PAGE_SIZE_256MB_MASK@l
+        and     r3,r3,r10       /* base addr of 256MB page */
+        mflr    r7
+        bl      check_if_ram_page
+        mtlr    r7
+        mr      r12,r3  /* move return value to r12 */
+        mr      r3,r10  /* restore initial args */
+        cmplwi  r12,1   /* check return value */
+        beq     11f
+/* Check if memory region in PAGE_SIZE is cacheable */
+        lis     r9,PAGE_MASK@h
+        ori     r9,r9,PAGE_MASK@l
+        and     r8,r3,r9
+        tlbsx.  r7,0,r8
+        bf      2,2f
+        tlbre   r8,r7,2
+        andi.   r7,r8,CACHE_INHIBIT_MASK
+        cmpwi   0,r7,CACHE_INHIBIT_MASK
+        beq     2f
+
+11:	cmplwi  0,r4,0
+	beq	9f
+2:	srwi	r0,r5,2
+	mtctr	r0
+	bdz	6f
+1:	stwu	r4,4(r6)
+	bdnz	1b
+6:	andi.	r5,r5,3
+7:	cmpwi	0,r5,0
+	beqlr
+	mtctr	r5
+	addi	r6,r6,3
+8:	stbu	r4,1(r6)
+	bdnz	8b
+	blr
+
+9:      clrlwi r7,r6, 32-LG_CACHELINE_BYTES
+	add    r8,r7,r5
+	srwi   r9,r8,LG_CACHELINE_BYTES
+	addic. r9,r9,-1
+	ble    2b
+	xori   r0,r7,CACHELINE_MASK & ~3
+	srwi.  r0,r0,2
+	beq    3f
+	mtctr  r0
+4:	stwu   r4,4(r6)
+	bdnz   4b
+3:      mtctr  r9
+        li    r7,4
+#if !defined(CONFIG_8xx)
+10:    dcbz	r7,r6
+#else
+10:	stw	r4, 4(r6)
+	stw	r4, 8(r6)
+	stw	r4, 12(r6)
+	stw	r4, 16(r6)
+#if CACHE_LINE_SIZE >= 32
+	stw	r4, 20(r6)
+	stw	r4, 24(r6)
+	stw	r4, 28(r6)
+	stw	r4, 32(r6)
+#endif /* CACHE_LINE_SIZE */
+#endif    
+	addi	r6,r6,CACHELINE_BYTES
+	bdnz	10b
+	clrlwi	r5,r8,32-LG_CACHELINE_BYTES
+	addi	r5,r5,4
+	b	2b 
+#else
 _GLOBAL(memset)
 	rlwimi	r4,r4,8,16,23
 	rlwimi	r4,r4,16,0,15
@@ -141,6 +242,7 @@ _GLOBAL(memset)
 8:	stbu	r4,1(r6)
 	bdnz	8b
 	blr
+#endif
 
 /*
  * This version uses dcbz on the complete cache lines in the
@@ -187,7 +289,9 @@ _GLOBAL(cacheable_memcpy)
 	mtctr	r0
 	beq	63f
 53:
+#if !defined(CONFIG_8xx) && !(defined(CONFIG_APM86xxx) && defined(CONFIG_SMP))
 	dcbz	r11,r6
+#endif
 	COPY_16_BYTES
 #if L1_CACHE_BYTES >= 32
 	COPY_16_BYTES
@@ -341,6 +445,17 @@ _GLOBAL(__copy_tofrom_user)
 	li	r11,4
 	beq	63f
 
+#if defined(CONFIG_8xx) || (defined(CONFIG_APM86xxx) && defined(CONFIG_SMP))
+	/* Don't use prefetch on 8xx */
+	mtctr	r0
+	li	r0,0
+53:	COPY_16_BYTES_WITHEX(0)
+#if  L1_CACHE_BYTES >= 32
+	COPY_16_BYTES_WITHEX(1)
+#endif
+	bdnz	53b
+
+#else /* not CONFIG_8xx */
 	/* Here we decide how far ahead to prefetch the source */
 	li	r3,4
 	cmpwi	r0,1
@@ -393,6 +508,7 @@ _GLOBAL(__copy_tofrom_user)
 	li	r3,4
 	li	r7,0
 	bne	114b
+#endif /* CONFIG_8xx */
 
 63:	srwi.	r0,r5,2
 	mtctr	r0

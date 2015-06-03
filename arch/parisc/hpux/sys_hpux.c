@@ -28,6 +28,7 @@
 #include <linux/namei.h>
 #include <linux/sched.h>
 #include <linux/slab.h>
+#include <linux/smp_lock.h>
 #include <linux/syscalls.h>
 #include <linux/utsname.h>
 #include <linux/vfs.h>
@@ -136,9 +137,16 @@ struct hpux_ustat {
  */
 static int hpux_ustat(dev_t dev, struct hpux_ustat __user *ubuf)
 {
+	struct super_block *s;
 	struct hpux_ustat tmp;  /* Changed to hpux_ustat */
 	struct kstatfs sbuf;
-	int err = vfs_ustat(dev, &sbuf);
+	int err = -EINVAL;
+
+	s = user_get_super(dev);
+	if (s == NULL)
+		goto out;
+	err = vfs_statfs(s->s_root, &sbuf);
+	drop_super(s);
 	if (err)
 		goto out;
 
@@ -178,21 +186,26 @@ struct hpux_statfs {
      int16_t f_pad;
 };
 
-static int do_statfs_hpux(struct kstatfs *st, struct hpux_statfs __user *p)
+static int vfs_statfs_hpux(struct dentry *dentry, struct hpux_statfs *buf)
 {
-	struct hpux_statfs buf;
-	memset(&buf, 0, sizeof(buf));
-	buf.f_type = st->f_type;
-	buf.f_bsize = st->f_bsize;
-	buf.f_blocks = st->f_blocks;
-	buf.f_bfree = st->f_bfree;
-	buf.f_bavail = st->f_bavail;
-	buf.f_files = st->f_files;
-	buf.f_ffree = st->f_ffree;
-	buf.f_fsid[0] = st->f_fsid.val[0];
-	buf.f_fsid[1] = st->f_fsid.val[1];
-	if (copy_to_user(p, &buf, sizeof(buf)))
-		return -EFAULT;
+	struct kstatfs st;
+	int retval;
+	
+	retval = vfs_statfs(dentry, &st);
+	if (retval)
+		return retval;
+
+	memset(buf, 0, sizeof(*buf));
+	buf->f_type = st.f_type;
+	buf->f_bsize = st.f_bsize;
+	buf->f_blocks = st.f_blocks;
+	buf->f_bfree = st.f_bfree;
+	buf->f_bavail = st.f_bavail;
+	buf->f_files = st.f_files;
+	buf->f_ffree = st.f_ffree;
+	buf->f_fsid[0] = st.f_fsid.val[0];
+	buf->f_fsid[1] = st.f_fsid.val[1];
+
 	return 0;
 }
 
@@ -200,19 +213,35 @@ static int do_statfs_hpux(struct kstatfs *st, struct hpux_statfs __user *p)
 asmlinkage long hpux_statfs(const char __user *pathname,
 						struct hpux_statfs __user *buf)
 {
-	struct kstatfs st;
-	int error = user_statfs(pathname, &st);
-	if (!error)
-		error = do_statfs_hpux(&st, buf);
+	struct path path;
+	int error;
+
+	error = user_path(pathname, &path);
+	if (!error) {
+		struct hpux_statfs tmp;
+		error = vfs_statfs_hpux(path.dentry, &tmp);
+		if (!error && copy_to_user(buf, &tmp, sizeof(tmp)))
+			error = -EFAULT;
+		path_put(&path);
+	}
 	return error;
 }
 
 asmlinkage long hpux_fstatfs(unsigned int fd, struct hpux_statfs __user * buf)
 {
-	struct kstatfs st;
-	int error = fd_statfs(fd, &st);
-	if (!error)
-		error = do_statfs_hpux(&st, buf);
+	struct file *file;
+	struct hpux_statfs tmp;
+	int error;
+
+	error = -EBADF;
+	file = fget(fd);
+	if (!file)
+		goto out;
+	error = vfs_statfs_hpux(file->f_path.dentry, &tmp);
+	if (!error && copy_to_user(buf, &tmp, sizeof(tmp)))
+		error = -EFAULT;
+	fput(file);
+ out:
 	return error;
 }
 
@@ -416,7 +445,12 @@ done:
 
 int hpux_pipe(int *kstack_fildes)
 {
-	return do_pipe_flags(kstack_fildes, 0);
+	int error;
+
+	lock_kernel();
+	error = do_pipe_flags(kstack_fildes, 0);
+	unlock_kernel();
+	return error;
 }
 
 /* lies - says it works, but it really didn't lock anything */

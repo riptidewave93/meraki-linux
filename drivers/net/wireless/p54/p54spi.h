@@ -96,7 +96,7 @@ struct p54s_dma_regs {
 	__le16 cmd;
 	__le16 len;
 	__le32 addr;
-} __packed;
+} __attribute__ ((packed));
 
 struct p54s_tx_info {
 	struct list_head tx_list;

@@ -1,3 +1,4 @@
+#define VMLINUX_SYMBOL(_sym_) _##_sym_
 #include <asm-generic/vmlinux.lds.h>
 #include <asm/page.h>
 

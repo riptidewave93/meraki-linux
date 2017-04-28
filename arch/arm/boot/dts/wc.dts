@@ -1,0 +1,22 @@
+/*
+ * Meraki Wolfcastle support, on the Meraki switch-arm platform
+ * on the BCM56547/8 SoC
+ *
+ * Copyright 2015 Cisco Systems
+ * Dean Thomas <dean.thomas@meraki.com>
+ *
+ * Licensed under the GNU/GPL. See COPYING for details.
+ */
+
+/dts-v1/;
+
+#include "switch-arm.dtsi"
+
+/ {
+	compatible = "meraki,mswa","brcm";
+	model = "Meraki Wolfcastle";
+
+	memory {
+		reg = <0x60000000 0x7fff0000>;
+	};
+};

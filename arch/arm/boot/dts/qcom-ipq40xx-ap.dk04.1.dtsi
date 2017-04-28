@@ -1,0 +1,391 @@
+/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ *
+ */
+
+#include "qcom-ipq40xx.dtsi"
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/gpio/gpio.h>
+
+/ {
+	model = "Qualcomm Technologies, Inc. IPQ40xx/AP-DK04.1";
+	compatible = "qcom,ipq40xx-apdk04.1", "qcom,ipq40xx";
+
+	memory {
+		device_type = "memory";
+		reg = <0x80000000 0x10000000>; /* 256MB */
+		linux,usable-memory = <0x80000000 0xFF00000>;
+	};
+
+	reserved-memory {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		ranges;
+		tz_mem@87B00000 {
+			/* Reserved for TZ, SMEM, TZAPPS */
+			reg = <0x87B00000 0x500000>;
+			no-map;
+		};
+		wifi_dump@87500000 {
+			reg = <0x87500000 0x600000>;
+			no-map;
+		};
+	};
+
+	chosen {
+		bootargs-append = " clk_ignore_unused";
+	};
+
+};
+	&soc {
+		pinctrl@0x01000000 {
+			serial_0_pins: serial0_pinmux {
+				mux {
+					pins = "gpio16", "gpio17";
+					function = "blsp_uart0";
+					bias-disable;
+				};
+			};
+
+			led_0_pins: led0_pinmux {
+				mux_1 {
+					pins = "gpio36";
+					function = "led0";
+					bias-pull-down;
+				};
+				mux_2 {
+					pins = "gpio40";
+					function = "led4";
+					bias-pull-down;
+				};
+			};
+
+			serial_1_pins: serial1_pinmux {
+				mux {
+					pins = "gpio8", "gpio9", "gpio10", "gpio11";
+					function = "blsp_uart1";
+					bias-disable;
+				};
+			};
+
+			spi_0_pins: spi_0_pinmux {
+				mux {
+					pins = "gpio12", "gpio13", "gpio14", "gpio15";
+					function = "blsp_spi0";
+					bias-disable;
+				};
+			};
+
+			i2c_0_pins: i2c_0_pinmux {
+				mux {
+					pins = "gpio20", "gpio21";
+					function = "blsp_i2c0";
+					bias-disable;
+				};
+			};
+
+			ts_0_pins: ts_0_pinmux {
+				mux_1 {
+					pins = "gpio34";
+					output-high;
+				};
+				mux_2 {
+					pins= "gpio35";
+					input-enable;
+					bias-pull-up;
+				};
+			};
+
+			i2c_1_pins: i2c_1_pinmux {
+				mux {
+					pins = "gpio34", "gpio35";
+					function = "blsp_i2c1";
+					bias-disable;
+				};
+			};
+		};
+
+		serial@78af000 {
+			pinctrl-0 = <&serial_0_pins>;
+			pinctrl-names = "default";
+			status = "ok";
+		};
+
+		serial@78b0000 {
+			pinctrl-0 = <&serial_1_pins>;
+			pinctrl-names = "default";
+			status = "ok";
+		};
+
+		spi_0: spi@78b5000 { /* BLSP1 QUP1 */
+			pinctrl-0 = <&spi_0_pins>;
+			pinctrl-names = "default";
+			status = "ok";
+
+			m25p80@0 {
+				#address-cells = <1>;
+				#size-cells = <1>;
+				reg = <0>;
+				compatible = "n25q128a11";
+				linux,modalias = "m25p80", "n25q128a11";
+				spi-max-frequency = <24000000>;
+				use-default-sizes;
+			};
+		};
+
+		tcsr: tcsr@194b000 {
+			status = "ok";
+		};
+
+		usb3_ss_phy: ssphy@0 {
+			status = "ok";
+		};
+
+		dummy_ss_phy: ssphy@1 {
+			status = "ok";
+		};
+
+		usb3_hs_phy: hsphy@a6000 {
+			status = "ok";
+		};
+
+		usb2_hs_phy: hsphy@a8000 {
+			status = "ok";
+		};
+
+		usb3: usb3@8a00000 {
+			status = "ok";
+		};
+
+		usb2: usb2@6000000 {
+			status = "ok";
+		};
+
+		qcom_crypto: qcrypto@8e20000 {
+			status = "ok";
+		};
+
+		qcom_cedev: qcedev@8e20000 {
+			status = "ok";
+		};
+
+		pcie0: qcom,pcie@80000 {
+			status = "ok";
+			perst-gpio = <&tlmm 38 0>;
+			wake-gpio = <&tlmm 40 0>;
+			clkreq-gpio = <&tlmm 39 0>;
+		};
+
+		qcom: ledc@1937000  {
+			status = "ok";
+			pinctrl-0 = <&led_0_pins>;
+			pinctrl-names = "default";
+		};
+
+		ess-switch@c000000 {
+			switch_initvlas = <
+				0x0007c 0x54 /* PORT0_STATUS */
+			>;
+			led_source@0 {
+				source = <0x1>;  /*source id 1 */
+				mode = "normal"; /*on,off,blink,normal */
+				speed = "all";   /*10M,100M,1000M,all */
+				freq = "auto";   /*2Hz,4Hz,8Hz,auto*/
+			};
+			led_source@1 {
+				source = <0x4>;  /*source id 4 */
+				mode = "normal"; /*on,off,blink,normal */
+				speed = "all";   /*10M,100M,1000M,all */
+				freq = "auto";   /*2Hz,4Hz,8Hz,auto*/
+			};
+			led_source@2 {
+				source = <0x7>;  /*source id 7 */
+				mode = "normal"; /*on,off,blink,normal */
+				speed = "all";   /*10M,100M,1000M,all */
+				freq = "auto";   /*2Hz,4Hz,8Hz,auto*/
+			};
+			led_source@3 {
+				source = <0xa>;  /*source id 10 */
+				mode = "normal"; /*on,off,blink,normal */
+				speed = "all";   /*10M,100M,1000M,all */
+				freq = "auto";   /*2Hz,4Hz,8Hz,auto*/
+			};
+			led_source@4 {
+				source = <0xd>;  /*source id 13 */
+				mode = "normal"; /*on,off,blink,normal */
+				speed = "all";   /*10M,100M,1000M,all */
+				freq = "auto";   /*2Hz,4Hz,8Hz,auto*/
+			};
+		};
+
+		vccq_sd0: regulator@0 {
+			compatible = "qcom,regulator-ipq40xx";
+			regulator-name = "SD0 VccQ";
+			regulator-min-microvolt = <1800000>;
+			regulator-max-microvolt = <3000000>;
+			states = <3000000 0x3
+				1800000 0x1>;
+			reg = <0x01948000 0x4>;
+			mask = <0x3>;
+		};
+
+		qcom,nand@7980000 {
+			status = "disabled";
+
+			/*
+			 * QCA Partitions
+			 */
+
+			partition@0 {
+				label = "sbl1";
+				reg = <0x00000000 0x100000>;
+			};
+
+			partition@1 {
+				label = "mibib";
+				reg = <0x00100000 0x100000>;
+			};
+
+			partition@2 {
+				label = "bootconfig";
+				reg = <0x00200000 0x100000>;
+			};
+
+			partition@3 {
+				label = "qsee";
+				reg = <0x00300000 0x100000>;
+			};
+
+			partition@5 {
+				label = "qsee_alt";
+				reg = <0x00400000 0x100000>;
+			};
+
+			partition@6 {
+				label = "cdt";
+				reg = <0x00500000 0x80000>;
+			};
+
+			partition@7 {
+				label = "cdt_alt";
+				reg = <0x00580000 0x80000>;
+			};
+
+			partition@8 {
+				label = "ddrparams";
+				reg = <0x00600000 0x80000>;
+			};
+
+			partition@9 {
+				label = "u-boot";
+				reg = <0x00700000 0x200000>;
+			};
+
+			partition@10 {
+				label = "u-boot-backup";
+				reg = <0x00900000 0x200000>;
+			};
+
+			partition@11 {
+				label = "ART";
+				reg = <0x00B00000 0x80000>;
+			};
+
+			/*
+			 * Meraki Partitions
+			 */
+
+			partition@12 {
+				label = "ubi";
+				reg = <0x00C00000 0x7000000>;
+			};
+		};
+
+		gpio_keys {
+			compatible = "gpio-keys-polled";
+			poll-interval = <20>;
+
+			button@1 {
+				label = "soft_reset";
+				linux,code = <KEY_RESTART>;
+				linux,input-type = <0>;
+				debounce-interval = <60>;
+			};
+		};
+
+		leds {
+			compatible = "gpio-leds";
+			orange {
+				label = "power:orange";
+				gpios = <&tlmm 49 GPIO_ACTIVE_LOW>;
+				default-state = "on";
+			};
+		};
+
+		i2c_1: i2c@78b8000 {
+			pinctrl-0 = <&i2c_1_pins>;
+			pinctrl-1 = <&i2c_1_pins>;
+			pinctrl-names = "i2c_active","i2c_sleep";
+			status = "ok";
+
+			lp5562 {
+				compatible = "ti,lp5562";
+				clock-mode = /bits/8 <2>;
+				reg = <0x30>;
+
+				chan0 {
+					 chan-name = "tricolor0:red";
+					 led-cur = /bits/ 8 <0x20>;
+					 max-cur = /bits/ 8 <0x60>;
+				};
+
+				chan1 {
+					 chan-name = "tricolor0:green";
+					 led-cur = /bits/ 8 <0x20>;
+					 max-cur = /bits/ 8 <0x60>;
+				};
+
+				chan2 {
+					 chan-name = "tricolor0:blue";
+					 led-cur = /bits/ 8 <0x20>;
+					 max-cur = /bits/ 8 <0x60>;
+				};
+
+				chan3 {
+					 chan-name = "power:white";
+					 led-cur = /bits/ 8 <0x20>;
+					 max-cur = /bits/ 8 <0x60>;
+				};
+			};
+		};
+
+		i2c_0: i2c@78b7000 { /* BLSP1 QUP2 */
+			pinctrl-0 = <&i2c_0_pins>;
+			pinctrl-1 = <&i2c_0_pins>;
+			pinctrl-names = "i2c_active", "i2c_sleep";
+			status = "ok";
+
+			config_eeprom: at24@50 {
+				compatible = "atmel,24c64";
+				pagesize = <32>;
+				reg = <0x50>;
+			};
+		};
+
+		board-data {
+			compatible = "meraki,meraki-config";
+			i2c-eeprom = <&config_eeprom>;
+			gpios = <>;
+		};
+	};

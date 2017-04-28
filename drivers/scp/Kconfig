@@ -1,0 +1,12 @@
+#
+# Character device configuration
+#
+
+menu "SCP support"
+config SCP
+   tristate "SCP device interface"
+   depends on (440EPX || 440GRX || 405EX || 405EXr || APM82181)
+   default n
+   help
+     When selected the SCP device driver is provided.
+endmenu

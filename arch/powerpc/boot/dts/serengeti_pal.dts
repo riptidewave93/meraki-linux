@@ -1,0 +1,174 @@
+/*
+ * Device Tree Source for AMCC Serengeti(AM862xx)
+ *
+ * Copyright 2010 Applied Micro 
+ * Author Feng Kan <fkan@amcc.com>
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2.  This program is licensed "as is" without
+ * any warranty of any kind, whether express or implied.
+ */
+
+/dts-v1/;
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <1>;
+	model = "amcc,am862xx";
+	compatible = "amcc,am862xx";
+	dcr-parent = <&{/cpus/cpu@0}>;
+
+	aliases {
+		serial0 = &UART0;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu@0 {
+			device_type = "cpu";
+			model = "PowerPC,AM862XX";
+			reg = <0>;
+			clock-frequency = <0>; /* Filled in by U-Boot */
+			plb-frequency = <0>; /* Filled in by U-Boot */
+			timebase-frequency = <0>; /* Filled in by U-Boot */
+			i-cache-line-size = <32>;
+			d-cache-line-size = <32>;
+			i-cache-size = <32768>;
+			d-cache-size = <32768>;
+			dcr-controller;
+			dcr-access-method = "native";
+			next-level-cache = <&L2C0>;
+
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			L2C0: l2-cache@400000000 {
+				compatible = "amcc,l2-cache";
+				status = "enabled";
+				dcr-reg = <0x000 0x002>;
+				cache-line-size = <0x20>;	/* 32 bytes */
+				cache-size = <0x40000>;		/* 256KB */
+				reg = <0x4 0x00000000 0x00000>;	/* FAM */
+			};
+		};
+		cpu@1 {
+			device_type = "cpu";
+			model = "PowerPC,AM862XX";
+			reg = <1>;
+			clock-frequency = <0>; /* Filled in by U-Boot */
+			plb-frequency = <0>; /* Filled in by U-Boot */
+			timebase-frequency = <0>; /* Filled in by U-Boot */
+			i-cache-line-size = <32>;
+			d-cache-line-size = <32>;
+			i-cache-size = <32768>;
+			d-cache-size = <32768>;
+			dcr-controller;
+			dcr-access-method = "native";
+			next-level-cache = <&L2C1>;
+
+			#address-cells = <1>;
+			#size-cells = <0>;
+
+			L2C1: l2-cache@400040000 {
+				compatible = "amcc,l2-cache";
+				status = "enabled";
+				dcr-reg = <0x000 0x002>;
+				cache-line-size = <0x20>;	/* 32 bytes */
+				cache-size = <0x40000>;		/* 256KB */
+				reg = <0x4 0x00040000 0x00000>;	/* FAM */
+			};
+		};
+	};
+
+	memory {
+		device_type = "memory";
+		reg = <0x00000000 0x00000000 0x00000000>; /* Filled in by U-Boot */
+	};
+
+	SDR0: sdr {
+		compatible = "ibm,sdr-am862xx";
+		dcr-reg = <0x00e 0x002>;
+	};
+
+	CPR0: cpr {
+		compatible = "ibm,cpr-am862xx";
+		dcr-reg = <0x00c 0x002>;
+	};
+
+	hbf {
+		compatible = "apm,hbf-am862xx", "apm,hbf";
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+		clock-frequency = <0>; /* Filled in by U-Boot */
+
+                mpic: pic@df400000 {
+                        clock-frequency = <0>;
+                        interrupt-controller;
+                        reg = <0xd 0xdf400000 0x40000>;
+			#address-cells = <0>;
+                        #interrupt-cells = <2>;
+                        compatible = "chrp,open-pic";
+                        device_type = "open-pic";
+                        big-endian;
+                };
+
+		ipp: ipp@ddd8b0000 {
+			compatible = "apm,ipp";
+			reg = <0xd 0xdd8b0000 0x1000>;
+			interrupt-parent = <&mpic>; 
+			interrupts = <  /*iPP Core0 */ 0x9 2  
+					/*iPP Core1 */ 0xa 2 >;
+		};
+
+		SRAM0: sram@0x010000000 {
+			compatible = "mtd-ram";
+			reg = <0x0 0x10000000 0x1000000>; 
+			bank-width = <2>;
+			#size-cells = <1>;
+			#address-cells = <1>;
+			partition@0 {
+				label = "MTD-RAM Root FS 0";
+				reg = <0x00000000 0x01000000>;
+			};
+		};
+
+		AHB0: ahb {
+			device_type = "ahb";
+			compatible = "apm,ahb";
+			#address-cells = <2>;
+			#size-cells = <1>;
+			ranges;
+			clock-frequency = <0>; /* Filled in by U-Boot */
+
+
+			APB0: apb {
+				compatible = "apm,apb";
+				device_type = "apb";
+				#address-cells = <2>;
+				#size-cells = <1>;
+				ranges;
+				clock-frequency = <0>; /* Filled in by U-Boot */
+
+				UART0: serial@fa0000000 {
+					device_type = "serial";
+					compatible = "ns16550";
+					reg = <0xf 0xa0000000 0x1000>;
+					reg-shift = <2>;
+					clock-frequency = <0>; /* Filled in by U-Boot */
+					current-speed = <0x1c200>;
+					interrupt-parent = <&mpic>;
+					interrupts = <0xb 2>;
+				};
+
+			};
+
+		};
+	};
+	chosen {
+		linux,stdout-path = "/hbf/ahb/apb/serial@fa0000000";
+	};
+
+};

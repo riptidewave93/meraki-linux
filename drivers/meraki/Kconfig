@@ -1,0 +1,39 @@
+# drivers/meraki/Kconfig
+
+menu "Meraki Devices"
+
+config MERAKI_CONFIG
+	bool "Meraki Board Data support"
+	depends on I2C
+	---help---
+          This option enables support for the meraki-config device, which
+	  proxies the content of the board ID EEPROM to a known location.
+
+	  It also provides kernel access to the Meraki product type.
+
+	  If your board has a board ID EEPROM on it, say Y here.
+
+config CISCO_MPS_SUPPORT
+       bool "Cisco Archimedes-family modular power supply support"
+       depends on I2C
+       default n
+       ---help---
+         This option enables driver support for interfacing with up to
+         two external Archimedes-family Cisco power supplies over I2C
+         and GPIOs.
+
+         Say N here if you don't know whether or not your device has
+         these power supplies.
+
+config CISCO_RPS_SUPPORT
+       bool "Cisco RPS 2300 driver support"
+       depends on I2C
+       default n
+       ---help---
+         This option enables support for interfacing with an external
+         Cisco RPS 2300 over I2C and GPIOs.
+
+         Say N here if you don't know whether or not your device
+         supports the Cisco RPS 2300.
+
+endmenu

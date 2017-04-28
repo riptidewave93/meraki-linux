@@ -1,0 +1,13 @@
+/*
+* Automatically generated make config: don't edit
+*/
+#define CONFIG_ATHRS17_PHY 1
+#define CONFIG_ATHR_RX_TASK 1
+#define CONFIG_ATHR_RX_PKTS_CNT 100
+#define CONFIG_GMAC0_RXFCTL 1
+#define CONFIG_GMAC0_TXFCTL 1
+#define CONFIG_GMAC1_RXFCTL 1
+#define CONFIG_GMAC1_TXFCTL 1
+#define CONFIG_AG7240_GE0_IS_CONNECTED 1
+#define CONFIG_AG7240_GE0_RGMII 1
+#define ATH_GMAC_TXQUEUELEN 1000

@@ -1,0 +1,57 @@
+/dts-v1/;
+
+/include/ "wired-arm-nsp.dtsi"
+
+/ {
+        model = "Meraki wired-arm-nsp";
+        compatible = "meraki,mx6p", "meraki,wired-arm-nsp",
+			"broadcom,iproc", "bcm,iproc";
+        memory {
+                device_type = "memory";
+                reg = <0x60000000 0x3fff0000>;
+        };
+
+        leds {
+                compatible = "gpio-leds";
+                white {
+                        label = "power:white";
+                        gpios = <&gpiochip 31 0>;
+                        default-state = "off";
+                };
+        };
+
+        gpio-cfg {
+                compatible = "iproc-gpio-cfg";
+                gpios-general = <2 3 4 5 6 8 12 13 14 15 18 19 20 21 22 23 24 25 26 27 28 29 30 31>;
+                gpios-aux = <7 33 34 35>;
+        };
+
+        gpio-buttons {
+                compatible = "gpio-keys-polled";
+                autorepeat;
+                poll-interval = <20>;
+                button@1 {
+                        label = "alamo_soft_reset";
+                        linux,code = <0x198>;     // EV_RESTART
+                        linux,input-type = <1>;   // EV_KEY
+                        debounce-interval = <60>;
+                        gpios = <&gpiochip 8 1>;
+                };
+        };
+
+        i2c-gpio {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            compatible = "i2c-gpio";
+            gpios = <&gpiochip 5 0 /* sda  */
+                 &gpiochip 4 0>; /* scl  */
+            i2c-gpio,delay-us = <10>;   /* ~100 kHz  */
+
+            config_eeprom: at24@50 {
+                compatible = "atmel,24c64";
+                pagesize = <32>;
+                reg = <0x50>;
+            };
+
+        };
+};

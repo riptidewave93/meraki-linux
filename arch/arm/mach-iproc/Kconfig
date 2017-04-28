@@ -1,0 +1,93 @@
+menu	"iProc SoC based Machine types"
+	depends on MACH_IPROC
+
+choice
+	prompt "iProc SoC based board type"
+	default MACH_IPROC_NS	
+
+config MACH_NS_BU
+	bool "Support Broadcom Northstar bring-up board"
+	select MACH_NS
+	help
+	  Support for the Broadcom Northstar bring-up board.
+
+config MACH_HX4
+	bool "Support Broadcom Helix4 bring-up board"
+	help
+	  Support for the Broadcom Helix4 bring-up board.
+
+config MACH_HR2
+	bool "Support Broadcom Hurricane2 bring-up board"
+	help
+	  Support for the Broadcom Hurricane2 bring-up board.
+
+config MACH_NSP_BU
+	bool "Support Broadcom Northstar Plus bring-up board"
+	select MACH_NSP
+	help
+	  Support for the Broadcom Northstar Plus bring-up board.
+
+config MACH_KT2
+	bool "Support Broadcom Katana2 bring-up board"
+	help
+	  Support for the Broadcom Katana2 bring-up board.
+
+config MACH_MERAKI_MR26
+	bool "Support Meraki MR26 access point"
+	select MACH_NS
+	select MACH_MERAKI_GMAC_USE_PORT
+	help
+	  Support for the Meraki Venom access point.
+
+config MACH_MERAKI_KINGPIN
+	bool "Support Meraki MX64 (Kingpin) Security Device"
+	select MACH_NSP
+	help
+	  Support for the Meraki Kingpin security device (MX)
+
+endchoice
+
+config MACH_MERAKI_PASS_BRCM_HDR
+	bool "Pass Broadcom Header through (disable on bootkernel)"
+    depends on MACH_MERAKI_KINGPIN
+    help
+      Pass the Broadcom Network Header through. This
+      is required for the production kernel (click elements
+      will strip process the header) but it must be
+      disabled for the bootkernel
+
+config MACH_IPROC_EMULATION
+	bool "Support  iProc emulation"
+	help
+	  Support for the iProc emulation.
+
+config MACH_MERAKI_GMAC_USE_PORT_NUM
+	int "Use this port to represent the state of the GMAC switch"
+	default 0 if MACH_MERAKI_MR26
+	depends on MACH_MERAKI_GMAC_USE_PORT
+	help
+	  Meraki Access Points only use one port of the switch. Therefore, we
+	  declare which port that is, so we can properly pass link status
+	  to the user. Note the Meraki MX devices must NOT have this set.
+
+endmenu
+
+config MACH_NS
+        bool
+
+config MACH_NSP
+        bool
+
+config MACH_MERAKI_GMAC_USE_PORT
+	bool
+
+config IPROC_PCIE
+	tristate "PCIE support"
+	select PCI
+	select PCI_DOMAINS
+	depends on ARCH_IPROC
+	default n
+	help
+	  Add PCIe support
+
+	  If unsure, say N.

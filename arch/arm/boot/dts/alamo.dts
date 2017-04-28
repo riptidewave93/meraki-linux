@@ -1,0 +1,20 @@
+/*
+ * Copyright (C) 2014 Meraki, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+/dts-v1/;
+
+/include/ "alamo.dtsi"
+
+/ {
+        model = "Meraki MX65";
+        compatible = "meraki,mx6p", "meraki,alamo", "meraki,wired-arm-nsp", "broadcom,iproc", "bcm,iproc";
+
+        memory {
+                device_type = "memory";
+                reg = <0x60000000 0x7fff0000>;
+        };
+};

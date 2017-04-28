@@ -1,0 +1,97 @@
+/*
+ * Copyright (C) 2014 Meraki, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+
+/include/ "wired-arm-nsp.dtsi"
+
+/ {
+        mdio-cfg {
+            compatible = "bcm-mdio-ctrl";
+        };
+
+        i2c-gpio {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            compatible = "i2c-gpio";
+            gpios = <&gpiochip 5 0 /* sda  */
+                 &gpiochip 4 0>; /* scl  */
+            i2c-gpio,delay-us = <10>;   /* ~100 kHz  */
+
+            config_eeprom: at24@50 {
+                compatible = "atmel,24c64";
+                pagesize = <32>;
+                reg = <0x50>;
+            };
+
+            config_poe: bcm59111@21 {
+                compatible = "bcm59111";
+                reg = <0x21>;
+                ports = <2>;
+                port_base = <11>;
+                max_power_mw = <240000>;
+            };
+        };
+
+        gpio-cfg {
+                compatible = "iproc-gpio-cfg";
+                gpios-general = <1 3 4 5 8 12 13 14 15 18 19 20 24 25 26 27 28 29 30 31>;
+                gpios-aux = <6 7 33 34 35>;
+                gpios-export = <1 1>;
+                gpio-reset = <14 1>;
+        };
+
+        leds {
+                compatible = "gpio-leds";
+                white {
+                        label = "power:white";
+                        gpios = <&gpiochip 31 0>;
+                        default-state = "off";
+                };
+
+                port0right {
+                        label = "port0:right";
+                        gpios = <&gpiochip 24 1>;
+                        default-state = "off";
+                };
+                port0left {
+                        label = "port0:left";
+                        gpios = <&gpiochip 25 1>;
+                        default-state = "off";
+                };
+                port1right {
+                        label = "port1:right";
+                        gpios = <&gpiochip 26 1>;
+                        default-state = "off";
+                };
+                port1left {
+                        label = "port1:left";
+                        gpios = <&gpiochip 27 1>;
+                        default-state = "off";
+                };
+        };
+
+        gpio-buttons {
+                compatible = "gpio-keys-polled";
+                autorepeat;
+                poll-interval = <20>;
+                button@1 {
+                        label = "soft_reset";
+                        linux,code = <0x198>;     // EV_RESTART
+                        linux,input-type = <1>;   // EV_KEY
+                        debounce-interval = <60>;
+                        gpios = <&gpiochip 8 1>;
+                };
+        };
+
+        power_led {
+                compatible = "gpio-leds";
+                orange {
+                        label = "power:orange";
+                        gpios = <&gpiochip 3 0>;
+                };
+        };
+};

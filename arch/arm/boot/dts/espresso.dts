@@ -1,0 +1,191 @@
+/*
+ * Copyright (C) 2014 Meraki, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+/dts-v1/;
+
+/include/ "iproc.dtsi"
+
+/ {
+	model = "Meraki Espresso";
+	compatible = "meraki,espresso", "broadcom,iproc", "bcm,iproc";
+
+	gpiochip: gpio-controller@0000 {
+		#gpio-cells = <2>;
+		compatible = "iproc,iproc-gpio";
+		gpio-controller;
+	};
+
+	gpio-buttons {
+		compatible = "gpio-keys-polled";
+		autorepeat;
+		poll-interval = <20>;
+		button@1 {
+			label = "soft_reset";
+			linux,code = <0x198>;     // EV_RESTART
+			linux,input-type = <1>;   // EV_KEY
+			debounce-interval = <60>;
+			gpios = <&gpiochip 21 1>;
+		};
+	};
+
+	/* Subtract 32 from all IRQ numbers in device tree */
+	intc: interrupt-controller@19021000 {
+		interrupt-controller;
+		compatible = "arm,cortex-a9-gic";
+		#interrupt-cells = <3>;
+		#address-cells = <1>;
+		reg = <0x19021000 0x1000>,
+			<0x19020100 0x100>;
+	};
+
+	uart0: uart@18000300 {
+		// Required
+		compatible = "ns16550A";
+		reg = <0x18000300 0x08>;
+		clock-frequency = <62500000>;	// uartclkdiv = 2. Espresso has a higher clock rate.
+		interrupts = <0 85 1>; 			// non-PPI, 117 - 32, active high edge-triggered
+		interrupt-parent = <&intc>;
+
+		// Optional
+		reg-shift = <0>;
+		reg-offset = <0>;
+		reg-io-width = <1>;
+	};
+
+	uart1: uart@18008000 {
+		// Required
+		compatible = "ns16550A";
+		reg = <0x18008000 0x20>;
+		clock-frequency = <125000000>;
+		interrupts = <0 86 1>;
+		interrupt-parent = <&intc>;
+
+		// Optional
+		reg-shift = <2>;
+		reg-offset = <0>;
+		reg-io-width = <1>;
+	};
+
+	i2c-gpio {
+		compatible = "i2c-gpio";
+		gpios = <&gpiochip 5 0 /* sda */
+			 &gpiochip 4 0>; /* scl */
+		i2c-gpio,delay-us = <10>;   /* ~100 kHz */
+
+		config_eeprom: at24@50 {
+			compatible = "atmel,24c64";
+			pagesize = <32>;
+			reg = <0x50>;
+		};
+
+		current_mon: ina2xx@45 {
+			compatible = "ina219";
+			config = <0x219F>;
+			calibration = <0x0250>;
+			power_lsb = <23000>;
+			reg = <0x45>;
+		};
+	};
+
+	board-data {
+		compatible = "meraki,meraki-config";
+		i2c-eeprom = <&config_eeprom>;
+	};
+
+	nand {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "iproc,nand-iproc";
+
+		partition@0 {
+			label = "U-boot";
+			reg = <0x00000000 0x100000>;
+		};
+
+		partition@1 {
+			label = "bootkernel1";
+			reg = <0x100000 0x300000>;
+		};
+
+		partition@2 {
+			label = "senao_nvram";
+			reg = <0x400000 0x100000>;
+		};
+
+		partition@3 {
+			label = "bootkernel2";
+			reg = <0x500000 0x300000>;
+		};
+
+		partition@4 {
+			label = "ubi";
+			reg = <0x800000 0x7780000>;
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		orange {
+			label = "power:orange";
+			gpios = <&gpiochip 18 1>;
+			default-state = "on";
+		};
+		white {
+			label = "power:white";
+			gpios = <&gpiochip 19 0>;
+		};
+	};
+
+	gpio-cfg {
+		compatible = "iproc-gpio-cfg";
+		gpios-general = <0 1 2 4 5 11 18 19 21>;
+		gpios-aux = <16 17 24 25 26>;
+		gpios-export = <11 6>,<20 0>,<23 1>;
+	};
+
+	pwm: pwm {
+		compatible = "iproc-pwm";
+		reg = <0x18002000 0x28>;
+		#pwm-cells = <2>;
+		chan0 {
+			channel = <0>;
+			active_low = <1>;
+			gpios = <&gpiochip 24 0>;
+		};
+		chan1 {
+			channel = <1>;
+			active_low = <1>;
+			gpios = <&gpiochip 25 0>;
+		};
+		chan2 {
+			channel = <2>;
+			active_low = <1>;
+			gpios = <&gpiochip 26 0>;
+		};
+	};
+
+	pwm-leds {
+		compatible = "pwm-leds";
+		red {
+			label = "tricolor0:red";
+			pwms = <&pwm 0 50000>;
+		};
+		green {
+			label = "tricolor0:green";
+			pwms = <&pwm 1 50000>;
+		};
+		blue {
+			label = "tricolor0:blue";
+			pwms = <&pwm 2 50000>;
+		};
+	};
+
+	wdt {
+		compatible = "iproc-wdt";
+		reg = <0x18000000 0x100>;
+	};
+};

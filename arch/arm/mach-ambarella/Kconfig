@@ -1,0 +1,195 @@
+#
+# arch/arm/mach-ambarella/Kconfig
+#
+# History:
+#	2006/12/18 - [Charles Chiou] created file
+#
+# Copyright (C) 2004-2009, Ambarella, Inc.
+#
+# This program is free software; you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation; either version 2 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program; if not, write to the Free Software
+# Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
+#
+
+if PLAT_AMBARELLA
+
+comment "Ambarella Board"
+
+config MACH_AMBARELLA
+	bool "Generic"
+	default y
+	select AMBARELLA_VIN
+	select AMBARELLA_VOUT
+	help
+	  Say Y here if you can't find suitable Board Name.
+
+config MACH_COCONUT
+	bool "Coconut"
+	depends on PLAT_AMBARELLA_A5S
+	default n
+	select AMBARELLA_VIN
+	select AMBARELLA_VOUT
+	help
+	  Say Y here if you are using A5S Coconut.
+
+config MACH_DURIAN
+	bool "Durian"
+	depends on PLAT_AMBARELLA_A7L
+	default n
+	select AMBARELLA_VIN
+	select AMBARELLA_VOUT
+	help
+	  Say Y here if you are using A7L Durian.
+
+config MACH_ELEPHANT
+	bool "Elephant"
+	depends on PLAT_AMBARELLA_I1
+	default n
+	select AMBARELLA_VIN
+	select AMBARELLA_VOUT
+	select CPUFREQ_AMBARELLA_DEVICE
+	help
+	  Say Y here if you are using iOne Elephant.
+
+config MACH_FILBERT
+	bool "Filbert"
+	depends on PLAT_AMBARELLA_A7
+	default n
+	select AMBARELLA_VIN
+	select AMBARELLA_VOUT
+	help
+	  Say Y here if you are using A7 Filbert.
+
+config MACH_GINKGO
+	bool "Ginkgo"
+	depends on PLAT_AMBARELLA_S2
+	default n
+	select AMBARELLA_VIN
+	select AMBARELLA_VOUT
+	help
+	  Say Y here if you are using S2 ginkgo.
+
+config MACH_HYACINTH_0
+	bool "Hyacinth_0"
+	depends on PLAT_AMBARELLA_A8
+	default n
+	help
+	  Say Y here if you can't find suitable Board Name.
+
+config MACH_HYACINTH_1
+	bool "Hyacinth_1"
+	depends on PLAT_AMBARELLA_A8
+	default n
+	help
+	  Say Y here if you can't find suitable Board Name.
+
+menu "Misc on Board Devices"
+
+comment "Ambarella"
+
+config AMBARELLA_VIN
+	bool "Suport Vin"
+	default y
+
+config AMBARELLA_VOUT
+	bool "Suport Vout"
+	default y
+
+comment "Touch"
+
+config TOUCH_AMBARELLA_AK4183
+	bool "ak4183"
+	default n
+
+config TOUCH_AMBARELLA_CHACHA_MT4D
+	bool "chacha_mt4d"
+	default n
+
+config TOUCH_AMBARELLA_TM1510
+	bool "tm1510"
+	default n
+
+config TOUCH_AMBARELLA_TM1726
+	bool "tm1726"
+	default n
+
+config TOUCH_AMBARELLA_TM1927
+        bool "tm1927"
+        default n
+
+config TOUCH_AMBARELLA_FT540
+        bool "ft540"
+        default n
+
+config TOUCH_AMBARELLA_NT11001
+	bool "nt11001"
+	default n
+
+comment "LCD"
+
+config LCD_AMBARELLA_1P3831
+	bool "1p3831"
+	default n
+
+comment "RTC"
+
+config RTC_AMBARELLA_IS112022M
+	bool "is112022m"
+	default n
+
+comment "Audio Codec"
+
+config CODEC_AMBARELLA_WM8974
+	bool "wm8974"
+	default n
+
+config CODEC_AMBARELLA_WM8940
+	bool "wm8940"
+	default n
+
+config CODEC_AMBARELLA_WM8737
+	bool "wm8737"
+	default n
+
+config CODEC_AMBARELLA_WM8994
+	bool "wm8994"
+	default n
+
+config CODEC_AMBARELLA_ES8328
+	bool "es8328"
+	default n
+
+config CODEC_AMBARELLA_AK4642
+	bool "ak4642"
+	default n
+
+config CODEC_AMBARELLA_ALC5633
+	bool "alc5633"
+	default n
+
+comment "PMIC"
+
+config PMIC_AMBARELLA_WM831X
+	bool "wm831x"
+	default n
+
+comment "cpufreq-dev"
+
+config CPUFREQ_AMBARELLA_DEVICE
+	bool "cpufreq-dev"
+	default n
+
+endmenu
+
+endif
+

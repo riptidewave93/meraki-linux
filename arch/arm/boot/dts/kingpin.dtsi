@@ -1,0 +1,121 @@
+/*
+ * Copyright (C) 2014 Meraki, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+
+/include/ "wired-arm-nsp.dtsi"
+
+/ {
+        model = "Meraki MX64";
+        compatible = "meraki,mx6p", "meraki,kingpin", "meraki,wired-arm-nsp","broadcom,iproc", "bcm,iproc";
+
+        leds {
+                compatible = "gpio-leds";
+                white {
+                        label = "power:white";
+                        gpios = <&gpiochip 31 0>;
+                        default-state = "off";
+                };
+
+
+                port0right {
+                        label = "port0:right";
+                        gpios = <&gpiochip 18 1>;
+                        default-state = "off";
+                };
+                port0left {
+                        label = "port0:left";
+                        gpios = <&gpiochip 19 1>;
+                        default-state = "off";
+                };
+                port1right {
+                        label = "port1:right";
+                        gpios = <&gpiochip 20 1>;
+                        default-state = "off";
+                };
+                port1left {
+                        label = "port1:left";
+                        gpios = <&gpiochip 24 1>;
+                        default-state = "off";
+                };
+                port2right {
+                        label = "port2:right";
+                        gpios = <&gpiochip 25 1>;
+                        default-state = "off";
+                };
+                port2left {
+                        label = "port2:left";
+                        gpios = <&gpiochip 26 1>;
+                        default-state = "off";
+                };
+                port3right {
+                        label = "port3:right";
+                        gpios = <&gpiochip 27 1>;
+                        default-state = "off";
+                };
+                port3left {
+                        label = "port3:left";
+                        gpios = <&gpiochip 28 1>;
+                        default-state = "off";
+                };
+                port4right {
+                        label = "port4:right";
+                        gpios = <&gpiochip 29 1>;
+                        default-state = "off";
+                };
+                port4left {
+                        label = "port4:left";
+                        gpios = <&gpiochip 30 1>;
+                        default-state = "off";
+                };
+        };
+
+        gpio-cfg {
+                compatible = "iproc-gpio-cfg";
+                gpios-general = <0 1 2 3 4 5 6 7 16 17 21 22 23 24 25 26 27 28 29 30 31>;
+                gpios-aux = <32 33 34 35>;
+                gpios-export = <1 0>, <16 1>, <17 1>;
+                gpio-reset = <7 1>;
+        };
+
+        i2c-gpio {
+            #address-cells = <1>;
+            #size-cells = <0>;
+            compatible = "i2c-gpio";
+            gpios = <&gpiochip 5 0 /* sda  */
+                 &gpiochip 4 0>; /* scl  */
+            i2c-gpio,delay-us = <10>;   /* ~100 kHz  */
+
+            config_eeprom: at24@50 {
+                compatible = "atmel,24c64";
+                pagesize = <32>;
+                reg = <0x50>;
+            };
+
+        };
+
+        gpio-buttons {
+                compatible = "gpio-keys-polled";
+                autorepeat;
+                poll-interval = <20>;
+                button@1 {
+                        label = "soft_reset";
+                        linux,code = <0x198>;     // EV_RESTART
+                        linux,input-type = <1>;   // EV_KEY
+                        debounce-interval = <60>;
+                        gpios = <&gpiochip 6 1>;
+                };
+        };
+
+        power_led {
+                compatible = "gpio-leds";
+                orange {
+                        label = "power:orange";
+                        gpios = <&gpiochip 0 1>;
+                        default-state = "on";
+                };
+        };
+};

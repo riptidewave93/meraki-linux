@@ -1,0 +1,39 @@
+menu "Meraki devices"
+
+config MERAKI_CONFIG
+	tristate "Meraki Board Data support"
+	depends on I2C
+	help
+	  This option enables support for the meraki-config device, which
+	  proxies the content of the board ID EEPROM to a known location.
+
+	  It also provides kernel access to the Meraki product type.
+
+	  If your board has a board ID EEPROM on it, say Y here.
+
+config MERAKI_SFP
+	bool "Meraki SFP/SFP+ Socket Support"
+	depends on I2C && GPIOLIB
+	help
+	  This is a driver for an I2C-connected SFP/SFP+ socket.
+
+config MERAKI_SFP_USER
+	bool "Meraki SFP/SFP+ Socket Support (user-mode)"
+	depends on I2C && GPIOLIB
+	help
+	  This is a proxy driver for an I2C-connected SFP/SFP+/QSFP socket.
+          The actual driving of the socket will be performed in userspace.
+
+config MERAKI_MS420_PSU
+	tristate "Cisco Meraki MS420 field-replaceable power supply"
+	depends on I2C && SENSORS_PMBUS
+        default n
+	help
+	  If you say yes here you get hardware monitoring support for the
+	  field-replaceable power supplies provided with the Cisco Meraki
+	  MS420 series switches.
+
+	  This driver can also be built as a module. If so, the module will
+	  be called ms420_psu.
+
+endmenu

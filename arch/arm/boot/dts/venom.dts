@@ -1,0 +1,149 @@
+/*
+ * Copyright (C) 2014 Meraki, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+/dts-v1/;
+
+/include/ "iproc.dtsi"
+
+/ {
+	model = "Meraki MR26";
+	compatible = "meraki,mr26", "meraki,venom", "broadcom,iproc", "bcm,iproc";
+
+	gpiochip: gpio-controller@0000 {
+		#gpio-cells = <2>;
+		compatible = "iproc,iproc-gpio";
+		gpio-controller;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		orange {
+			label = "power:orange";
+			gpios = <&gpiochip 13 0>;
+		};
+		white {
+			label = "power:white";
+			gpios = <&gpiochip 12 0>;
+		};
+	};
+
+	tricolor-led {
+		compatible = "numen,leds-nu801";
+		controller1 {
+			label = "tricolor";
+			cki = <&gpiochip 0 0>;
+			sdi = <&gpiochip 2 0>;
+			lei = <&gpiochip 1 0>;
+			ndelay  = <50>;
+			num_leds = <1>;
+			led_color0 {
+				label = "blue";
+				state = "off";
+			};
+			led_color1 {
+				label = "green";
+				state = "off";
+			};
+			led_color2 {
+				label = "red";
+				state = "off";
+			};
+		};
+	};
+
+	gpio-buttons {
+		compatible = "gpio-keys-polled";
+		autorepeat;
+		poll-interval = <20>;
+		button@1 {
+			label = "soft_reset";
+			linux,code = <0x198>;     // EV_RESTART
+			linux,input-type = <1>;   // EV_KEY
+			debounce-interval = <60>;
+			gpios = <&gpiochip 11 1>;
+		};
+	};
+
+	/* Subtract 32 from all IRQ numbers in device tree */
+	intc: interrupt-controller@19021000 {
+		interrupt-controller;
+		compatible = "arm,cortex-a9-gic";
+		#interrupt-cells = <3>;
+		#address-cells = <1>;
+		reg = <0x19021000 0x1000>,
+			<0x19020100 0x100>;
+	};
+
+	uart0: uart@18000300 {
+		// Required
+		compatible = "ns16550A";
+		reg = <0x18000300 0x08>;
+		clock-frequency = <50000000>;	// uartclkdiv = 2 for 25 MHz reference
+		interrupts = <0 85 1>; 			// non-PPI, 117 - 32, active high edge-triggered
+		interrupt-parent = <&intc>;
+
+		// Optional
+		reg-shift = <0>;
+		reg-offset = <0>;
+		reg-io-width = <1>;
+	};
+
+	i2c-gpio {
+		compatible = "i2c-gpio";
+		gpios = <&gpiochip 5 0 /* sda */
+			 &gpiochip 4 0>; /* scl */
+		i2c-gpio,delay-us = <10>;   /* ~100 kHz */
+
+		current_mon: ina2xx@40 {
+			compatible = "ina219";
+			config = <0x219F>;
+			calibration = <0x0250>;
+			reg = <0x40>;
+		};
+	};
+
+	nand {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "iproc,nand-iproc";
+
+		partition@0 {
+			label = "U-boot";
+			reg = <0x00000000 0x200000>;
+		};
+
+		partition@1 {
+			label = "U-boot-env";
+			reg = <0x200000 0x200000>;
+		};
+
+		partition@2 {
+			label = "U-boot-backup";
+			reg = <0x400000 0x200000>;
+		};
+
+		partition@3 {
+			label = "U-boot-env-backup";
+			reg = <0x600000 0x200000>;
+		};
+
+		partition@4 {
+			label = "ubi";
+			reg = <0x800000 0x7780000>;
+		};
+   };
+
+	gpio-cfg {
+		compatible = "iproc-gpio-cfg";
+		gpios-general = <0 1 2 4 5 11 12 13>;
+	};
+
+	wdt {
+		compatible = "iproc-wdt";
+		reg = <0x18000000 0x100>;
+	};
+};

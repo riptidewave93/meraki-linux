@@ -1,0 +1,83 @@
+/*
+ * Copyright (C) 2014 Meraki, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+
+/include/ "iproc.dtsi"
+
+/ {
+        gpiochip: gpio-controller@0000 {
+            #gpio-cells = <2>;
+            compatible = "iproc,iproc-gpio";
+            gpio-controller;
+        };
+
+        /* Subtract 32 from all IRQ numbers in device tree */
+        intc: interrupt-controller@19021000 {
+                interrupt-controller;
+                compatible = "arm,cortex-a9-gic";
+                #interrupt-cells = <3>;
+                #address-cells = <1>;
+                reg = <0x19021000 0x1000>,
+                <0x19020100 0x100>;
+        };
+
+        uart0: uart@18000300 {
+                // Required
+                compatible = "ns16550A";
+                reg = <0x18000300 0x08>;
+                clock-frequency = <62500000>;   // uartclkdiv = 2. Kingpin has a higher clock rate.
+                interrupts = <0 85 1>;          // non-PPI, 117 - 32, active high edge-triggered
+                interrupt-parent = <&intc>;
+
+                // Optional
+                reg-shift = <0>;
+                reg-offset = <0>;
+                reg-io-width = <1>;
+        };
+
+        pwm: pwm {
+                compatible = "iproc-pwm";
+                reg = <0x18031000 0x28>;
+                #pwm-cells = <2>;
+                chan0 {
+                        channel = <1>;
+                        active_low = <1>;
+                };
+                chan1 {
+                        channel = <2>;
+                        active_low = <1>;
+                };
+                chan2 {
+                        channel = <3>;
+                        active_low = <1>;
+                };
+        };
+
+        pwm-leds {
+                compatible = "pwm-leds";
+                red {
+                        label = "tricolor0:red";
+                        pwms = <&pwm 1 50000>;
+                        default-state = "off";
+                };
+                green {
+                        label = "tricolor0:green";
+                        pwms = <&pwm 2 50000>;
+                        default-state = "off";
+                };
+                blue {
+                        label = "tricolor0:blue";
+                        pwms = <&pwm 3 50000>;
+                        default-state = "off";
+                };
+        };
+
+        board-data {
+            compatible = "meraki,meraki-config";
+            i2c-eeprom = <&config_eeprom>;
+        };
+};

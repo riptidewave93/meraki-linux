@@ -1,0 +1,6 @@
+source "drivers/video/ti81xx/vpss/Kconfig"
+source "drivers/video/ti81xx/ti81xxfb/Kconfig"
+source "drivers/video/ti81xx/ti81xxhdmi/Kconfig"
+source "drivers/video/ti81xx/sii9022a/Kconfig"
+source "drivers/video/ti81xx/tlc59108/Kconfig"
+

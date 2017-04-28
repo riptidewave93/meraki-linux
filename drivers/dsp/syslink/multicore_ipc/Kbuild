@@ -1,0 +1,9 @@
+libsyslink_multiproc = multiproc.o
+
+obj-$(CONFIG_SYSLINK_MULTIPROC)        += syslink_multiproc.o
+syslink_multiproc-objs = $(libsyslink_multiproc)
+ccflags-y += -Wno-strict-prototypes
+
+#Header files
+ccflags-y += -Iarch/arm/plat-omap/include
+ccflags-y += -Iarch/arm/plat-omap/include/syslink

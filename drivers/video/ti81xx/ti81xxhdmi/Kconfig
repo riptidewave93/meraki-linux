@@ -1,0 +1,15 @@
+menuconfig TI81XX_HDMI
+	tristate "TI81XX HDMI Driver"
+	select TI81XX_VPSS
+	help
+		This option builds driver required for booting TI81XX HDMI
+		Use 'M' to build as module.
+
+config TI81XX_HDMI_HDCP
+	bool "Include HDCP support"
+	default n
+	depends on TI81XX_HDMI
+	---help---
+		Support for HDCP block of HDMI to be included. Ensure a device
+		capable of HDCP is being used, failing which the behaviour of
+		the driver is un-defined.

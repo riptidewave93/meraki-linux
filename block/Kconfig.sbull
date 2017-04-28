@@ -1,0 +1,10 @@
+
+menu "sbull Driver"
+
+config SBULL
+	tristate "Sbull Device Support"
+	---help---
+	This enables support for accessing all type of sbull
+	  devices.
+
+endmenu

@@ -1,0 +1,29 @@
+menuconfig Sys_Link
+	bool "Sys_Link"
+	depends on ARCH_OMAP4 || ARCH_OMAP3 ||ARCH_TI81XX
+	default y
+
+if Sys_Link
+
+config  SYSLINK_MULTIPROC
+        bool
+		depends on ARCH_OMAP3430 || ARCH_OMAP4 ||ARCH_TI81XX
+		default n
+
+config SYSLINK_NOTIFY
+		tristate "SysLink Notify"
+		depends on ARCH_OMAP3430 || ARCH_OMAP4 ||ARCH_TI81XX
+		default y
+		select OMAP_MBOX_FWK
+		select SYSLINK_MULTIPROC
+		select OMAP_IOMMU
+		select OMAP_USER_DMM
+		select OMAP_IOMMU_IVA2 if ARCH_OMAP3430
+		help
+		 Syslink multi core notify Implementation
+
+endif
+
+
+
+

@@ -1,0 +1,5 @@
+config SII9022a
+	tristate "SII9022a HDMI Transmitter"
+	help
+		This option builds driver for SII9022a HDMI Transmitter
+		Use 'M' to build as module.

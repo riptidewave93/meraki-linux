@@ -1,0 +1,19 @@
+config VIDEO_TI81XX_VIDOUT
+	tristate "TI81XX V4L2-Display driver"
+	depends on ARCH_TI81XX
+	select TI81XX_VPSS
+	select VIDEOBUF_GEN
+	select VIDEOBUF_DMA_CONTIG
+	default n
+	---help---
+	  V4L2 Display driver support for TI81XX based boards.
+config VIDEO_TI81XX_VIDIN
+	tristate "TI81XX V4L2-Capture driver"
+	depends on ARCH_TI81XX
+	select TI81XX_VPSS
+	select VIDEOBUF_GEN
+	select VIDEOBUF_DMA_CONTIG
+	select VIDEO_TVP7002
+	default n
+	---help---
+	  V4L2 Capture driver support for TI81XX based boards.

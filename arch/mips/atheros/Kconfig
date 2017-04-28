@@ -1,0 +1,9 @@
+config BOOT_NAND_LOADER
+       bool "Generate a second stage single-block NAND loader"
+       depends on SOC_AR934x
+       help
+          Create an image suitable for the Atheros ROM loader to read off
+          of NAND flash and continue bootstrapping.
+
+config BOOT_NAND_LOADER
+       bool

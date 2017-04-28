@@ -1,0 +1,17 @@
+obj-$(CONFIG_DMA_ENGINE) += dmaengine.o
+obj-$(CONFIG_NET_DMA) += iovlock.o
+obj-$(CONFIG_DMATEST) += dmatest.o
+obj-$(CONFIG_INTEL_IOATDMA) += ioat/
+obj-$(CONFIG_INTEL_IOP_ADMA) += iop-adma.o
+obj-$(CONFIG_AMCC_PPC460EX_460GT_ADMA) += ppc460ex-adma.o
+obj-$(CONFIG_APM82181_ADMA) += apm82181-adma.o
+obj-$(CONFIG_FSL_DMA) += fsldma.o
+obj-$(CONFIG_APM_PKTDMA) += apm_pktdma_access.o apm_pktdma_core.o 
+obj-$(CONFIG_APM_PKTDMA_TEST) += apm_pktdma_test.o
+obj-$(CONFIG_MV_XOR) += mv_xor.o
+obj-$(CONFIG_DW_DMAC) += dw_dmac.o
+obj-$(CONFIG_AT_HDMAC) += at_hdmac.o
+obj-$(CONFIG_MX3_IPU) += ipu/
+obj-$(CONFIG_TXX9_DMAC) += txx9dmac.o
+obj-$(CONFIG_SH_DMAE) += shdma.o
+#amcc_ppc460ex_4chan_dma-objs := ppc460ex_4chan_dma.o ppc460ex_4chan_sgdma.o

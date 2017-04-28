@@ -1,0 +1,378 @@
+/*
+ * CPU1 Device Tree Source for APM Serengeti (AM86xxx) Eval Board 
+ *
+ * Copyright (c) 2010 Applied Micro Circuits Corporation.
+ * All rights reserved. Feng Kan <fkan@apm.com>.
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2.  This program is licensed "as is" without
+ * any warranty of any kind, whether express or implied.
+ */
+
+/dts-v1/;
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <1>;
+	model = "apm,apm862xx";
+	compatible = "apm,apm862xx";
+	dcr-parent = <&{/cpus/cpu@0}>;
+
+	aliases {
+		serial0 = &UART0;
+		ethernet1 = &enet1;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu@0 {
+			device_type = "cpu";
+			model = "PowerPC,APM86xxx";
+			reg = <1>;
+			clock-frequency = <0>; /* Filled in by U-Boot */
+			plb-frequency = <0>; /* Filled in by U-Boot */
+			timebase-frequency = <0>; /* Filled in by U-Boot */
+			i-cache-line-size = <32>;
+			d-cache-line-size = <32>;
+			i-cache-size = <32768>;
+			d-cache-size = <32768>;
+			dcr-controller;
+			dcr-access-method = "native";
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+	};
+
+	memory {
+		device_type = "memory";
+		reg = <0x00000000 0x00000000 0x00000000>; /* Filled in by U-Boot */
+	};
+
+	OCM0: ocm@effff8000 {
+		compatible = "apm,ocm";
+		cell-index = <0>;
+		reg = <0xe 0xffff8000 0x8000>;
+		#size-cells = <1>;
+		#address-cells = <1>;
+		partition@0 {
+			type = "ipp";
+			reg = <0x7F00 0x0100>;
+		};
+	};
+
+	shm: shm@3f000000{
+		compatible = "apm,apm86xxx-shm";
+	        reg = <0x0 0x00000000 0x000000>; /* Fill in by U-Boot */
+	};
+
+	hbf {
+		compatible = "apm,hbf-am862xx", "apm,hbf";
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+		clock-frequency = <0>; /* Filled in by U-Boot */
+
+                mpic: pic@df400000 {
+                        clock-frequency = <0>;
+                        interrupt-controller;
+                        reg = <0xd 0xdf400000 0x40000>;
+			#address-cells = <0>;
+                        #interrupt-cells = <2>;
+                        compatible = "chrp,open-pic";
+                        device_type = "open-pic";
+                        big-endian;
+			protected-sources = < 
+			0x00 0x01 0x02 0x03 0x04 0x05 0x06 0x07 
+			0x08 0x09      0x0b      0x0d 0x0e 0x0f
+			0x10 0x11 0x12 0x13 0x14 0x15 0x16 0x17 
+			0x18 
+			0x21 0x22 0x23 0x24 0x25  
+			          0x2a 0x2b 0x2c 0x2d  
+			0x30 0x31 0x32 0x33 0x34 0x35 0x36  
+			               0x3b 0x3c 0x3d 0x3e 0x3f
+			0x40 0x41 0x42 0x43 0x44 0x45 0x46 0x47 
+			0x48 0x49 0x4a 0x4b 0x4c 0x4d 0x4e 0x4f
+			0x50 0x51 0x52 0x53 0x54 0x55 0x56 0x57 
+			0x58 0x59 0x5a 0x5b 0x5c 0x5d 0x5e 0x5f
+			0x60 0x61 0x62 0x63 0x64 0x65 0x66 0x67 
+			0x68 0x69 0x6a 0x6b 0x6c 0x6d 0x6e 0x6f
+			0x70 0x71 0x72 0x73 0x74      0x76 0x77 
+			0x78 0x79 0x7a 0x7b 0x7c 0x7d 0x7e 0x7f
+			0xf3 0xf4 0xf5 0xf6	/* Timer */
+			0xfb      0xfd 0xfe	/* IPI */
+                       	>; /* For another OS */
+                };
+
+		ipp: ipp@ddd8b0000 {
+			compatible = "apm,ipp";
+			reg = <0xd 0xdd8b0000 0x1000>;
+			interrupt-parent = <&mpic>; 
+			interrupts = <  /*iPP Core0 */ 0x9 2  
+					/*iPP Core1 */ 0xa 2 >;
+		};
+
+		shm_icc {
+			compatible = "apm,apm86xxx-shm-icc";
+			interrupt-parent = <&mpic>;
+			interrupts = <0xfc 0>;
+		};
+
+		rtc:	rtc@d00410000 {
+			device_type = "rtc";
+			compatible = "apm-apm86xxx-rtc";
+			reg = <0xd 0x00410000 0x400>;
+			interrupt-parent = <&mpic>;
+			interrupts = <0x30 2>;
+		};
+
+		PCIE1: pciex@700000000 {
+			device_type = "pci";
+			compatible = "apm862xx-pciex", "apm,apm-pciex";
+			#interrupt-cells = <1>;
+			#size-cells = <2>;
+			#address-cells = <3>;
+			primary;
+			port = <1>; /* port number */
+			status = "ok";
+                        reg = < 0x7 0xd1000000 0x01000000 /* Cfg registers */
+                                0xd 0xdd890000 0x00008000>;   /* CSR registers */
+
+                        /* Outbound ranges, one memory and one IO,
+                         * <type> <pci> <cpu> <size>
+                         */
+                        ranges = <0x02000000 0x0 0x00000000 0x7 0x00000000 0x0 0x10000000
+                                  0x02000000 0x0 0x80000000 0x7 0x80000000 0x0 0x10000000
+                                  0x01000000 0x0 0x10000000 0x7 0x10000000 0x0 0x00010000>;
+
+
+                        /* Inbound 2GB range starting at 0
+                         * <type> <pci> <cpu> <size>
+                         */
+                        dma-ranges = <0x42000000 0x0 0x00000000 0x0 0x00000000 0 0x80000000>;
+
+                        /* This drives busses 0x20 to 0x3f */
+                        bus-range = <0x20 0x3f>;
+			/* Legacy interrupts (note the weird polarity, the bridge seems
+			* to invert PCIe legacy interrupts).
+			* We are de-swizzling here because the numbers are actually for
+			* port of the root complex virtual P2P bridge. But I want
+			* to avoid putting a node for it in the tree, so the numbers
+			* below are basically de-swizzled numbers.
+			* The real slot is on idsel 0, so the swizzling is 1:1
+			*/
+                        interrupt-map-mask = <0x0 0x0 0x0 0x7>;
+                        interrupt-map = <
+                                0x0 0x0 0x0 0x1 &mpic 0x37 0x2 /* swizzled int A */
+                                0x0 0x0 0x0 0x2 &mpic 0x38 0x2 /* swizzled int B */
+                                0x0 0x0 0x0 0x3 &mpic 0x39 0x2 /* swizzled int C */
+                                0x0 0x0 0x0 0x4 &mpic 0x3a 0x2 /* swizzled int D */>;
+		};
+		
+		PCIE2: pciex@A00000000 {
+			device_type = "pci";
+			compatible = "apm862xx-pciex", "apm,apm-pciex";
+			#interrupt-cells = <1>;
+			#size-cells = <2>;
+			#address-cells = <3>;
+			primary;
+			port = <2>; /* port number */
+			status = "ok";
+                        reg = < 0xA 0xd1000000 0x01000000 /* Cfg registers */
+				0xd 0xdd8F0000 0x00008000>;   /* CSR registers */
+
+                        /* Outbound ranges, one memory and one IO,
+                         * <type> <pci> <cpu> <size>
+                         */
+                        ranges = <0x02000000 0x0 0x00000000 0xA 0x00000000 0x0 0x10000000
+                                  0x02000000 0x0 0x80000000 0xA 0x80000000 0x0 0x10000000
+                                  0x01000000 0x0 0x10000000 0xA 0x10000000 0x0 0x00010000>;
+
+
+                        /* Inbound 2GB range starting at 0
+                         * <type> <pci> <cpu> <size>
+                         */
+                        dma-ranges = <0x42000000 0x0 0x00000000 0x0 0x00000000 0 0x80000000>;
+
+                        /* This drives busses 0x20 to 0x3f */
+                        bus-range = <0x20 0x3f>;
+			/* Legacy interrupts (note the weird polarity, the bridge seems
+			* to invert PCIe legacy interrupts).
+			* We are de-swizzling here because the numbers are actually for
+			* port of the root complex virtual P2P bridge. But I want
+			* to avoid putting a node for it in the tree, so the numbers
+			* below are basically de-swizzled numbers.
+			* The real slot is on idsel 0, so the swizzling is 1:1
+			*/
+                        interrupt-map-mask = <0x0 0x0 0x0 0x7>;
+                        interrupt-map = <
+                                0x0 0x0 0x0 0x1 &mpic 0x26 0x2 /* swizzled int A */
+                                0x0 0x0 0x0 0x2 &mpic 0x27 0x2 /* swizzled int B */
+                                0x0 0x0 0x0 0x3 &mpic 0x28 0x2 /* swizzled int C */
+                                0x0 0x0 0x0 0x4 &mpic 0x29 0x2 /* swizzled int D */>;
+		};		
+/*
+		vnet0 {
+			device_type = "network";
+			compatible = "apm,apm86xxx-vnet";
+			local-mac-address = [2a3a4a5a6a61];
+			max-frame-size = <0x233a>;
+			devid = <0>;
+			interrupt-parent = <&mpic>;
+			interrupts = <0x75 0x2>;
+			remote-core-id = <0x00>;
+			remote-qm-id = <0x00>;
+			remote-msg-idx = <0x00>;
+		};
+*/
+		gpt: timer@df4020f0 {
+			compatible = "apm,apm86xxx-gpt";
+			reg = <0xd 0xdf4020f0 0x220>;
+			interrupts = <247 0 248 0 249 0 250 0>;
+			interrupt-parent = <&mpic>;
+		};
+
+		qmtm: qmtm@dd800000 {
+			device_type = "qmtm";
+			compatible = "mb-qmtm", "apm,mb-qmtm";
+			#interrupt-cells = <2>;
+			reg =  <0xd 0xdd800000 0x10000   
+			        0xd 0xdf000000 0x400000  
+			        0x3 0xffffd000 0x3fff	
+				0xd 0x00000000 0x400000  /* QM lite Fabric */
+				0xd 0xdd8d0000 0x10000	/* QM lite CSR */
+				0xd 0xdd8b1000 0x240>;	/* iPP QM lite CSR */
+			maxmboxes = <8>;
+			interrupt-parent = <&mpic>;
+			interrupts = < 0x19 2 0x1a 2 0x1b 2 0x1c 2 0x1d 2 0x1e 2 0x1f 2
+					0x20 2>;
+			maxqid = <250>;
+			qstart = <126>;
+			dma-reg = <0x0 0x0 0x0>;			 
+		};		
+/*
+		SLIMPROOFFLOAD { 
+			compatible = "apm,slimpro-offload";
+			queue = <2 2>;
+		}; 
+*/		
+		enet1: ethernet@dd8a0030 {
+			device_type = "network";
+			compatible = "apm, apm86xxx-enet";
+			reg = <0xd 0xdd8a0030 0x200     /* enet CSR */
+			       0xd 0xdd8e0000 0x10000   /* classifier CSR */
+			       0xd 0xdd8a0800 0xF800    /* enet gbl CSR */
+			       0xd 0xdd8a0000 0x20>;    /* enet mii access CSR */
+			local-mac-address = [1a2a3a4a5a61]; 
+			max-frame-size = <0x233a>;
+			devid = <1>;
+			phyid = <2>;
+			hw-cfg = <1>;
+			master-cfg = <0>;
+                 };
+/*
+		lac: lac@ddd8e0000 {
+			device_type = "classifier";
+			compatible = "apm,apm86xxx-lac";
+			reg = < 0xd 0xdd8e0000 0x10000>;
+			sharemode = <1>;
+		};
+*/
+		pktdma: pktdma@dd820000 {
+			device_type = "dma";
+			compatible = "apm-pktdma", "apm,apm86xxx-pktdma";
+			#interrupt-cells = <1>;
+			reg = <0xd 0xdd820000 0x10000>;
+			interrupt-parent = <&mpic>;
+			ch-info = <2 3>;
+		};
+/*
+                crypto: crypto@ddd830000 {
+			device_type = "crypto";
+			compatible = "apm,apm86xxx-crypto";
+			#interrupt-cells = <1>;
+			reg = <0xd 0xdd830000 0x8000>; 
+			interrupt-parent = <&mpic>;
+			sharemode = <1>;
+			dma-reg = <0x0 0x0 0x0>;		 
+		};
+*/
+		AHB0: ahb {
+			device_type = "ahb";
+			compatible = "apm,ahb";
+			#address-cells = <2>;
+			#size-cells = <1>;
+			reg = <0xd 0xdd862000 0x6000>;
+			ranges;
+			clock-frequency = <0>; /* Filled in by U-Boot */
+
+			ahbc@ddd860000 {
+				device_tpye = "ahbc";
+				compatible = "apm,apm86xxx-ahbc";
+				reg = <0xd 0xdd860000 0x10000>;
+			};
+
+			USB3: ehci@fa0010c00 {
+				compatible = "apm,usb-ehci-460ex", "usb-ehci";
+				reg = <0xf 0xa0010c00 0x90 0xf 0xa0010c90 0x70>;
+				interrupt-parent = <&mpic>;
+				interrupts = <0x2e 2>;
+				devid = <2>;
+				dma-reg = <0x0 0x0 0x0>;			 
+			};
+
+			USB4: usb@fa0010800 {
+				compatible = "apm,usb-ohci-460ex", "usb-ohci","ohci-le";
+				reg = <0xf 0xa0010800 0x60>;
+				interrupt-parent = <&mpic>;
+				interrupts = <0x2f 2>;
+				devid = <2>;
+				dma-reg = <0x0 0x0 0x0>;			 
+			};
+
+	                APB0: apb {
+				compatible = "apm,apb";
+				device_type = "apb";
+				#address-cells = <2>;
+				#size-cells = <1>;
+				ranges;
+				clock-frequency = <0>; /* Filled in by U-Boot */
+
+				UART0: serial@fa0001000 {
+					device_type = "serial";
+					compatible = "ns16550";
+					reg = <0xf 0xa0001000 0x1000>;
+					reg-shift = <2>;
+					clock-frequency = <0>; /* Filled in by U-Boot */
+					current-speed = <0xe100>;
+					interrupt-parent = <&mpic>;
+					interrupts = <0xc 2>;
+				};
+/*
+				I2C0:	i2c@fa0002000 {
+					device_type = "i2c";
+					compatible = "apm,apm86xxx-i2c";
+					reg = <0xf 0xa0002000 0x1000>;
+					clock-frequency = <100000000>;
+					interrupt-parent = <&mpic>;
+					interrupts = <0xf 2>;
+					bus_num = <0>;
+				};
+				SPI0:	spi@fa0006000 {
+				 	device_type = "spi";
+					compatible = "apm,spi";
+					reg = <0xf 0xa0006000 0x1000>;
+					interrupt-parent = <&mpic>;
+					interrupts = <0x6 2>;
+					sysclk = <62000000>;
+					bus_num = <0x1>;
+				};
+*/
+			};
+		};
+	};
+	chosen {
+		linux,stdout-path = "/hbf/ahb/apb/serial@fa0001000";
+	};
+};

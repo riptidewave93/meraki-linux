@@ -1,0 +1,533 @@
+/*
+ * Device Tree Source for AMCC Acer
+ *
+ * Copyright (c) 2008 AMCC Applied Micro Circuits Corporation 
+ * TinHuynh  <tnhuynh@amcc.com>
+ *
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2.  This program is licensed "as is" without
+ * any warranty of any kind, whether express or implied.
+ *
+ */
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <1>;
+	model = "amcc,acer";
+	compatible = "amcc,acer";
+	dcr-parent = <&/cpus/cpu@0>;
+
+	aliases{
+		ethernet0 = &EMAC0;
+		ethernet1 = &EMAC1;
+		serial0 = &UART0;
+		serial1 = &UART1;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu@0 {
+			device_type = "cpu";
+			model = "PowerPC,460EXr";
+			reg = <0>;
+			clock-frequency = <0>; /* Filled in by U-Boot */
+			timebase-frequency = <0>; /* Filled in by U-Boot */
+			i-cache-line-size = <20>; /* 32 bit each line */
+			d-cache-line-size = <20>; /* 32 bit each line */
+			i-cache-size = <8000>; /* 32KB I-cache */
+			d-cache-size = <8000>; /* 32KB D-cache */
+			dcr-controller;
+			dcr-access-method = "native";
+		};
+	};
+
+	memory {
+		device_type = "memory";
+		reg = <0 0 0>; /* Filled in by U-Boot */
+	};
+
+	UIC0: interrupt-controller0 {
+		compatible = "ibm,uic-460ex","ibm,uic";
+		interrupt-controller;
+		cell-index = <0>;
+		dcr-reg = <0c0 009>;
+		#address-cells = <0>;
+		#size-cells = <0>;
+		#interrupt-cells = <2>;
+	};
+
+	UIC1: interrupt-controller1 {
+		compatible = "ibm,uic-460ex","ibm,uic";
+		interrupt-controller;
+		cell-index = <1>;
+		dcr-reg = <0d0 009>;
+		#address-cells = <0>;
+		#size-cells = <0>;
+		#interrupt-cells = <2>;
+		interrupts = <1e 4 1f 4>; /* cascade */
+		interrupt-parent = <&UIC0>;
+	};
+
+	UIC2: interrupt-controller2 {
+		compatible = "ibm,uic-460ex","ibm,uic";
+		interrupt-controller;
+		cell-index = <2>;
+		dcr-reg = <0e0 009>;
+		#address-cells = <0>;
+		#size-cells = <0>;
+		#interrupt-cells = <2>;
+		interrupts = <a 4 b 4>; /* cascade */
+		interrupt-parent = <&UIC0>;
+	};
+
+	UIC3: interrupt-controller3 {
+		compatible = "ibm,uic-460ex","ibm,uic";
+		interrupt-controller;
+		cell-index = <3>;
+		dcr-reg = <0f0 009>;
+		#address-cells = <0>;
+		#size-cells = <0>;
+		#interrupt-cells = <2>;
+		interrupts = <10 4 11 4>; /* cascade */
+		interrupt-parent = <&UIC0>;
+	};
+
+	SDR0: sdr {
+		compatible = "ibm,sdr-460ex";
+		dcr-reg = <00e 002>;
+	};
+
+	CPR0: cpr {
+		compatible = "ibm,cpr-460ex";
+		dcr-reg = <00c 002>;
+	};
+
+	L2C0: l2c {
+		compatible = "ibm,l2-cache-460ex", "ibm,l2-cache";
+		dcr-reg = <20 8			/* Internal SRAM DCR's */
+			   30 8>;		/* L2 cache DCR's */
+		cache-line-size = <20>;
+		cache-size = <40000>;
+		interrupt-parent = <&UIC1>;
+		interrupts = <b 1>;
+	};
+
+	plb {
+		compatible = "ibm,plb-460ex","ibm,plb4";
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+		clock-frequency = <0>; /* Filled in by U-Boot */
+
+		SDRAM0: sdram {
+			compatible = "ibm,sdram-460ex","ibm,sdram-405gp";
+			dcr-reg = <010 002>;
+		};
+
+		DMA0: dma {
+			compatible = "ibm,dma-460ex", "ibm,dma-460ex";
+			dcr-reg = <200 027>;
+			interrupt-parent = <&UIC0>;
+			interrupts = <  c 4
+					d 4
+					e 4
+					f 4>;
+
+		};
+
+                ADMA: adma {
+                        compatible = "amcc,adma";
+                        device_type = "dma";
+                        reg = <4 00100200 80>;
+                        interrupt-parent = <&ADMA>;
+                        interrupts =<0 1 2>;
+                        #interrupt-cells = <1>;
+                        #address-cells = <0>;
+                        #size-cells = <0>;
+                        interrupt-map = </*FIFO need service */ 0 &UIC0 16 4
+                                         /*FIFO FULL */         1 &UIC0 15 4
+                                         /*FIFO HSDMA err */    2 &UIC1 36 4>;
+                };
+
+		HSDMA0: hsdma {
+			compatible = "amcc,hsdma-460gt";
+			interrupt-parent = <&HSDMA0>;
+			interrupts = <0 1 2 3>;
+			#interrupt-cells = <1>;
+			#address-cells = <0>;
+			#size-cells = <0>;
+			interrupt-map = </* HSDMA FIFO Full */ 0 &UIC0 15 4
+					/* HSDMA FIFO Need Service */ 1 &UIC0 16 4
+					/* HSDMA Error */ 2 &UIC1 16 4
+					/* I2O Error */ 3 &UIC1 17 4>;
+
+			};
+	
+		/*For Full Speed*/
+		USB0: ehci@bffd0400 {
+			compatible = "ibm,usb-ehci-460ex", "usb-ehci";
+			interrupt-parent = <&UIC2>;
+			interrupts = <1d 4>;
+			reg = <4 bffd0400 90 4 bffd0490 70>;
+		};
+		/*For High Speed*/
+		USB1: ohci@bffd0000 {
+			compatible = "ibm,usb-ohci-460ex", "usb-ohci","ohci-le";
+			reg = <4 bffd0000 60>;
+			interrupt-parent = <&UIC2>;
+			interrupts = <1e 4>;
+		};
+
+		USBOTG0: usbotg@bff80000 {
+			compatible = "amcc,usb-otg-460ex";
+			reg = <4 bff80000 10000>;
+			interrupt-parent = <&USBOTG0>;
+			interrupts = <0 1 2>;
+			#interrupt-cells = <1>;
+			#address-cells = <0>;
+			#size-cells = <0>;
+			interrupt-map = </* USB-OTG */ 0 &UIC2 1c 4
+					 /* HIGH-POWER */ 1 &UIC1 1a 8
+					 /* DMA */ 2 &UIC0 c 4>;
+			interrupt-map-mask = <ffffffff>;
+		};
+
+		SATA0: sata@bffd1000 {
+			compatible = "amcc,sata-460ex";
+			reg = <4 bffd1000 800	/* SATA */
+			       4 bffd0800 400>;	/* AHBDMA */
+			interrupt-parent = <&UIC3>;
+			interrupts = <0 4	/* SATA */
+				      5 4>;	/* AHBDMA */
+		};
+		AHB: ahb@bffd2000 {
+			compatible = "amcc,ahb_arbiter-460ex";
+			reg = <4 bffd2000 400>; /* AHB Arbiter */
+		};
+
+		MAL0: mcmal {
+			compatible = "ibm,mcmal-460ex","ibm,mcmal2";
+			dcr-reg = <180 62>;
+			num-tx-chans = <2>;
+			num-rx-chans = <16>;
+			#address-cells = <0>;
+			#size-cells = <0>;
+			interrupt-parent = <&UIC2>;
+			interrupts = <	/*TXEOB*/ 6 4
+							/*RXEOB*/ 7 4
+							/*SERR*/ 3 4
+							/*TXDE*/ 4 4
+							/*RXDE*/ 5 4
+							/*COAL TX0*/ 8 2
+							/*COAL TX1*/ 9 2
+							/*COAL RX0*/ c 2
+							/*COAL RX1*/ d 2 >;
+		};
+		TRNG: trng@00000000 {
+			device_type = "trng";
+			compatible = "ppc4xx-trng", "amcc,ppc4xx-trng";
+			reg = <4 00110000 10000>;   
+			interrupt-parent = <&TRNG>;
+			interrupts = <0 1>;
+			#interrupt-cells = <1>;
+			#address-cells = <0>;
+			#size-cells = <0>;
+			interrupt-map = <0 &UIC1 3 4  /*TRNG ALARM */
+					 1 &UIC0 13 4 /*TRNG Available*/>;
+		};
+		/* this location fpr PKA works! do not change */
+		PKA:   pka@0004000 {
+			device_type = "pka";
+			compatible = "ppc4xx-pka", "amcc,ppc4xx-pka";
+			reg = <4 00114000 4000>;
+			interrupt-parent = <&UIC0>;
+			interrupts = <14 1>; 
+		};
+
+                CRYPTO: crypto@180000 {
+                        compatible = "amcc,ppc460ex-crypto", "amcc,ppc4xx-crypto";
+                        reg = <4 00180000 84000>;
+                        interrupt-parent = <&UIC0>;
+                        interrupts = <1d 4>;
+                };
+
+		POB0: opb {
+			compatible = "ibm,opb-460ex","ibm,opb";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			ranges = <b0000000 4 b0000000 50000000>;
+			clock-frequency = <0>; /* Filled in by U-Boot */
+
+			EBC0: ebc {
+				compatible = "ibm,ebc-460ex","ibm,ebc";
+				dcr-reg = <012 2>;
+				#address-cells = <2>;
+				#size-cells = <1>;
+				clock-frequency = <0>; /* Filled in by U-Boot */
+				/* ranges property is supplied by U-Boot */
+				interrupts = <6 4>;
+				interrupt-parent = <&UIC1>;
+
+				nor_flash@0,0 {
+					compatible = "amd,s29g1512n","cfi-flash";
+					bank-width = <2>;
+					reg = <0 000000 4000000>;
+					#address-cells = <1>;
+					#size-cells = <1>;
+					partition@0 {
+						label = "kernel";
+						reg = <0 1e0000>;
+					};
+					partition@1e0000 {
+						label = "dtb";
+						reg = <1e0000 20000>;
+					};
+					partition@200000 {
+						label = "ramdisk";
+						reg = <200000 1400000>;
+					};
+					partition@1600000 {
+						label = "jffs2";
+						reg = <1600000 400000>;
+					};
+					partition@1a00000 {
+						label = "user";
+						reg = <1a00000 2560000>;
+					};
+					partition@3f60000 {
+						label = "env";
+						reg = <3f60000 40000>;
+					};
+					partition@3fa0000 {
+						label = "u-boot";
+						reg = <3fa0000 60000>;
+					};
+				};
+			};
+
+			UART0: serial@ef600300 {
+				device_type = "serial";
+				compatible = "ns16550";
+				reg = <ef600300 8>;
+				virtual-reg = <ef600300>;
+				clock-frequency = <0>; /* Filled in by U-Boot */
+				current-speed = <0>; /* Filled in by U-Boot */
+				interrupt-parent = <&UIC1>;
+				interrupts = <1 4>;
+			};
+
+			UART1: serial@ef600400 {
+				device_type = "serial";
+				compatible = "ns16550";
+				reg = <ef600400 8>;
+				virtual-reg = <ef600400>;
+				clock-frequency = <0>; /* Filled in by U-Boot */
+				current-speed = <0>; /* Filled in by U-Boot */
+				interrupt-parent = <&UIC0>;
+				interrupts = <1 4>;
+			};
+
+			IIC0: i2c@ef600700 {
+				compatible = "ibm,iic-460ex","ibm,iic";
+				reg = <ef600700 20>;
+				index = <0>;
+				interrupt-parent = <&UIC0>;
+				interrupts = <2 4>;
+			};
+
+			IIC1: i2c@ef600800 {
+				compatible = "ibm,iic-460ex","ibm,iic";
+				reg = <ef600800 20>;
+				index = <1>;
+				interrupt-parent = <&UIC0>;
+				interrupts = <3 4>;
+			};
+
+			SPI0: spi@ef600900 {
+				compatible = "amcc,spi-460ex";
+				reg = <ef600900 6>;
+				interrupts = <2 4>;
+				interrupt-parent = <&UIC1>;
+			};
+
+			ZMII0: emac-zmii@ef600d00 {
+				compatible = "ibm,zmii-460ex","ibm,zmii";
+				reg = <ef600d00 c>;
+			};
+
+			RGMII0: emac-rgmii@ef601500{
+				compatible = "ibm,rgmii-460ex","ibm,rgmii";
+				reg = <ef601500 8>;
+				has-mdio;
+			};
+
+			GPT0: gpt@ef600000 {
+				reg = <ef600000 d4>;
+				interrupt-parent = <&UIC1>;
+				interrupts = <c 1	d 1	e 1	f 1	 10 1	11 1	12 1>;
+			};
+
+			TAH0: emac-tah@ef601350 {
+				compatible = "ibm,tah-460ex","ibm,tah";
+				reg = <ef601350 30>;
+			};
+
+			TAH1: emac-tah@ef601450 {
+				compatible = "ibm,tah-460ex","ibm,tah";
+				reg = <ef601450 30>;
+			};
+			GPIO0: gpio0@ef600b00 {
+				compatible = "amcc,gpio0-460ex","amcc,gpio0-460gt";
+				reg = <ef600b00 48>;
+			};
+			EMAC0: ethernet@ef600e00 {
+				device_type = "network";
+				compatible = "ibm,emac-460ex","ibm,emac4";
+				interrupt-parent = <&EMAC0>;
+				interrupts = <0 1>;
+				#interrupt-cells = <1>;
+				#address-cells = <0>;
+				#size-cells = <0>;
+				interrupt-map = < 0 &UIC2 10 4		/*Status*/
+								1 &UIC2 14 4>; /*Wake*/
+				reg = <ef600e00 c4>;
+				local-mac-address = [000000000000]; /* Filled in by U-Boot */
+				mal-device = <&MAL0>;
+				mal-tx-channel = <0>;
+				mal-rx-channel = <0>;
+				cell-index = <0>;
+				max-frame-size = <2328>;
+				rx-fifo-size = <4000>;
+				tx-fifo-size = <800>;
+				phy-mode = "rgmii";
+				phy-map = <00000000>;
+				rgmii-device = <&RGMII0>;
+				rgmii-channel = <0>;
+				tah-device = <&TAH0>;
+				tah-channel = <0>;
+				has-inverted-stacr-oc;
+				has-new-stacr-staopc;
+			};
+
+			EMAC1: ethernet@ef600f00{
+				device_type = "network";
+				compatible = "ibm,emac-460ex","ibm,emac4";
+				interrupt-parent = <&EMAC1>;
+				interrupts = <0 1>;
+				#interrupt-cells = <1>;
+				#address-cells = <0>;
+				#size-cells = <0>;
+				interrupt-map = <0 &UIC2 11 4	/*Status*/
+								1 &UIC2 15 4>;	/*Wake*/
+				reg = <ef600f00 c4>;
+				local-mac-address = [000000000000]; /* Filled in by U-Boot */
+				mal-device = <&MAL0>;
+				mal-tx-channel = <1>;
+				mal-rx-channel = <8>;
+				cell-index = <1>;
+				max-frame-size = <2328>;
+				rx-fifo-size = <4000>;
+				tx-fifo-size = <800>;
+				phy-mode = "rgmii";
+				phy-map = <00000001>;
+				rgmii-device = <&RGMII0>;
+				rgmii-channel = <1>;
+                                tah-device = <&TAH1>;
+                                tah-channel = <1>;
+				has-inverted-stacr-oc;
+				has-new-stacr-staopc;
+				mdio-device = <&EMAC0>;
+			};
+		};
+
+
+		PCIE0: pciex@d00000000 {
+			device_type = "pci";
+			#interrupt-cells = <1>;
+			#size-cells = <2>;
+			#address-cells = <3>;
+			compatible = "ibm,plb-pciex-460ex","ibm,plb-pciex";
+			primary;
+			port = <0>; /* port number */
+			reg = <d 00000000 20000000	/* Config space access */
+				   c 08010000 00001000>;	/* Registers */
+			dcr-reg = <100 020>;
+			sdr-base = <300>;
+
+			/* Outbound ranges, one memory and one IO,
+			 * later cannot be changed
+			 */
+			ranges = <02000000 0 80000000 0000000e 00000000 0 80000000
+				  01000000 0 00000000 0000000f 80000000 0 00010000>;
+
+			/* Inbound 2GB range starting at 0 */
+			dma-ranges = <42000000 0 0 0 0 0 80000000>;
+
+			/* This drives busses 40 to 0x7f */
+			bus-range = <40 7f>;
+
+			/* Legacy interrupts (note the weird polarity, the bridge seems
+			 * to invert PCIe legacy interrupts).
+			 * We are de-swizzling here because the numbers are actually for
+			 * port of the root complex virtual P2P bridge. But I want
+			 * to avoid putting a node for it in the tree, so the numbers
+			 * below are basically de-swizzled numbers.
+			 * The real slot is on idsel 0, so the swizzling is 1:1
+			 */
+			interrupt-map-mask = <0000 0 0 7>;
+			interrupt-map = <
+				0000 0 0 1 &UIC3 c 4 /* swizzled int A */
+				0000 0 0 2 &UIC3 d 4 /* swizzled int B */
+				0000 0 0 3 &UIC3 e 4 /* swizzled int C */
+				0000 0 0 4 &UIC3 f 4 /* swizzled int D */>;
+		};
+
+		PCIE1: pciex@d20000000 {
+			device_type = "pci";
+			#interrupt-cells = <1>;
+			#size-cells = <2>;
+			#address-cells = <3>;
+			compatible = "ibm,plb-pciex-460ex","ibm,plb-pciex";
+			primary;
+			port = <1>; /* port number */
+			reg = <d 20000000 20000000	/* Config space access */
+				   c 08011000 00001000>;	/* Registers */
+			dcr-reg = <120 020>;
+			sdr-base = <340>;
+
+			/* Outbound ranges, one memory and one IO,
+			 * later cannot be changed
+			 */
+			ranges = <02000000 0 80000000 0000000e 80000000 0 80000000
+				  01000000 0 00000000 0000000f 80010000 0 00010000>;
+
+			/* Inbound 2GB range starting at 0 */
+			dma-ranges = <42000000 0 0 0 0 0 80000000>;
+
+			/* This drives busses 80 to 0xbf */
+			bus-range = <80 bf>;
+
+			/* Legacy interrupts (note the weird polarity, the bridge seems
+			 * to invert PCIe legacy interrupts).
+			 * We are de-swizzling here because the numbers are actually for
+			 * port of the root complex virtual P2P bridge. But I want
+			 * to avoid putting a node for it in the tree, so the numbers
+			 * below are basically de-swizzled numbers.
+			 * The real slot is on idsel 0, so the swizzling is 1:1
+			 */
+			interrupt-map-mask = <0000 0 0 7>;
+			interrupt-map = <
+				0000 0 0 1 &UIC3 10 4 /* swizzled int A */
+				0000 0 0 2 &UIC3 11 4 /* swizzled int B */
+				0000 0 0 3 &UIC3 12 4 /* swizzled int C */
+				0000 0 0 4 &UIC3 13 4 /* swizzled int D */>;
+		};
+	};
+
+	chosen {
+		linux,stdout-path = "/plb/opb/serial@ef600300";		
+	};
+ };

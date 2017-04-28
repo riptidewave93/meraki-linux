@@ -1,0 +1,20 @@
+menu "PPC4xx Self Test support"
+
+config PPC4xx_TEST
+	tristate "PowerPC 4xx Self Test support"
+	help
+	  PPC4xx self tests are kernel drivers which can be built into the
+	  kernel, or can be built as seperate driver modules.  If these
+	  drivers are built into the kernel, then they are run when the
+	  kernel loads the test drivers.  If these test drivers are built
+	  as modules, then use insmod to load and execute the test drivers.
+
+config PPC4xx_L2CACHE_TEST
+	tristate "PowerPC 4xx L2 Cache Self Test support"
+	depends on PPC4xx_TEST
+	help
+	  If you say Y here, you will get support for
+	  the L2 Cache self test interface. See driver for
+	  more information.
+
+endmenu

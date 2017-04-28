@@ -1,0 +1,30 @@
+# For a description of the syntax of this configuration file,
+# see Documentation/kbuild/kconfig-language.txt.
+#
+
+config PPC4xx_PCI_EXPRESS
+	bool
+	depends on PCI && 4xx
+	default n
+
+config APM86xxx_PCI_EXPRESS
+	bool
+	depends on PCI && APM86xxx
+	default n
+
+config PPC_MSI_BITMAP
+	bool
+	depends on PCI_MSI
+	default y if MPIC
+	default y if FSL_PCI || APM86xxx_PCI_EXPRESS
+	default y if 4xx
+
+config DCU_ENABLE
+	bool "Enable L2 Data Cache"
+	depends on 460EX || 460SX || 440GX || APM82181
+	help
+	 Enable L-2 D-Cache
+	default n if 460EX
+	default y if 460SX
+	default y if 440GX
+	default y if APM82181

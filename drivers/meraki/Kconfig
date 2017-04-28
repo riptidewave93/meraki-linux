@@ -1,0 +1,25 @@
+menu "Meraki devices"
+
+config MERAKI_CONFIG
+	tristate "Meraki Board Data support"
+	depends on I2C
+	help
+	  This option enables support for the meraki-config device, which
+	  proxies the content of the board ID EEPROM to a known location.
+
+	  It also provides kernel access to the Meraki product type.
+
+	  If your board has a board ID EEPROM on it, say Y here.
+
+config MERAKI_SFP
+	bool "Meraki SFP/SFP+ Socket Support"
+	depends on I2C && GPIOLIB
+	help
+	  This is a driver for an I2C-connected SFP/SFP+ socket.
+
+config CISCO_MPS
+    bool "Cisco MPS Support"
+    help
+      This is a driver for an I2C-connected MPS device
+
+endmenu

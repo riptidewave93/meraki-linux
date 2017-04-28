@@ -1,0 +1,53 @@
+/*
+* Copyright (C) 2015 Meraki, Inc.
+*
+* This program is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License version 2 as
+* published by the Free Software Foundation.
+*/
+/dts-v1/;
+
+/include/ "cryptid-aq105.dtsi"
+
+/ {
+	model = "Meraki MR53 (Sasquatch)";
+	compatible = "meraki,sasquatch", "meraki,cryptid-aq105", "meraki,cryptid", "qcom,ipq806x";
+
+	gpiomux@1 {
+			compatible = "ipq806x,gpiomux";
+			pin@23 {
+					//wired1 green LED
+					pin = <23>;
+					active = <0 5 1 2>;
+					suspended = <0 5 1 2>;
+			};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		wired0_green {
+			label = "wired0:green";
+			gpios = <&gpiochip 24 0>;
+			default-state = "off";
+		};
+
+		wired1_green {
+			label = "wired1:green";
+			gpios = <&gpiochip 23 0>;
+			default-state = "off";
+		};
+
+		wired0_orange {
+			label = "wired0:orange";
+			gpios = <&gpiochip 62 0>;
+			default-state = "off";
+		};
+
+		wired1_orange {
+			label = "wired1:orange";
+			gpios = <&gpiochip 60 0>;
+			default-state = "off";
+		};
+	};
+};

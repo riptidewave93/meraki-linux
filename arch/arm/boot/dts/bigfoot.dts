@@ -1,0 +1,459 @@
+/*
+* Copyright (C) 2015 Meraki, Inc.
+*
+* This program is free software; you can redistribute it and/or modify
+* it under the terms of the GNU General Public License version 2 as
+* published by the Free Software Foundation.
+*/
+/dts-v1/;
+
+/include/ "skeleton.dtsi"
+
+/ {
+	model = "Meraki MR52 (Bigfoot)";
+	compatible = "meraki,bigfoot", "meraki,cryptid", "qcom,ipq806x";
+	#address-cells = <1>;
+	#size-cells = <1>;
+
+	memory {
+		device_type = "memory";
+		linux,usable-memory = <0x41500000 0x1EA00000>;
+	};
+
+	gpiomux@1 {
+		compatible = "ipq806x,gpiomux";
+
+		pin@0 {
+			//MDIO 0
+			pin = <0>;
+			active = <0 3 0 0>;
+			suspended = <0 3 0 0>;
+		};
+
+		pin@1 {
+			//MDC 0
+			pin = <1>;
+			active = <0 3 0 0>;
+			suspended = <0 3 0 0>;
+		};
+
+		pin@2 {
+			//MDIO 1
+			pin = <2>;
+			active = <0 3 0 0>;
+			suspended = <0 3 0 0>;
+		};
+
+		pin@6 {
+			//AR8033 RESET L
+			pin = <6>;
+			active = <0 0 1 2>;
+			suspended = <0 0 1 2>;
+		};
+
+		pin@7 {
+			//AQR105 RESET L
+			pin = <7>;
+			active = <0 0 1 2>;
+			suspended = <0 0 1 2>;
+		};
+
+		pin@8 {
+			//I2C SDA
+			pin = <8>;
+			active = <0 0 3 0>;
+			suspended = <0 0 3 0>;
+		};
+
+		pin@9 {
+			//I2C SCL
+			pin = <9>;
+			active = <0 0 3 0>;
+			suspended = <0 0 3 0>;
+		};
+
+		pin@12 {
+			//I2C SDA
+			pin = <12>;
+			active = <1 0 3 0>;
+			suspended = <1 0 3 0>;
+		};
+
+		pin@13 {
+			//I2C SCL
+			pin = <13>;
+			active = <1 0 3 0>;
+			suspended = <1 0 3 0>;
+		};
+
+		pin@15 {
+			//BLE DATA
+			pin = <15>;
+			active = <0 0 3 0>;
+			suspended = <0 0 3 0>;
+		};
+
+		pin@17 {
+			//BLE CLK
+			pin = <17>;
+			active = <0 0 3 0>;
+			suspended = <0 0 3 0>;
+		};
+
+		pin@18 {
+			//DC power detection
+			pin = <18>;
+			active = <0 0 0 0>;
+			suspended = <0 0 0 0>;
+		};
+
+		pin@19 {
+			//ORANGE LED
+			pin = <19>;
+			active = <0 5 1 1>;
+			suspended = <0 5 1 1>;
+		};
+
+		pin@21 {
+			//BLE RESET
+			pin = <21>;
+			active = <0 0 1 0>;
+			suspended = <0 0 1 0>;
+		};
+
+		pin@22 {
+			//SYS RESET
+			pin = <22>;
+			active = <0 0 3 1>;
+			suspended = <0 0 3 1>;
+		};
+
+		pin@23 {
+			//wired1 green LED
+			pin = <23>;
+			active = <0 5 1 2>;
+			suspended = <0 5 1 2>;
+		};
+
+		pin@24 {
+			//wired0 green LED
+			pin = <24>;
+			active = <0 5 1 2>;
+			suspended = <0 5 1 2>;
+		};
+
+		pin@25 {
+			//RESET BTN
+			pin = <25>;
+			active = <0 0 3 0>;
+			suspended = <0 0 3 0>;
+		};
+
+		pin@26 {
+			//WHITE LED
+			pin = <26>;
+			active = <0 5 3 1>;
+			suspended = <0 5 3 1>;
+		};
+
+		pin@27 {
+			//SW RESET
+			pin = <27>;
+			active = <0 0 1 0>;
+			suspended = <0 0 1 0>;
+		};
+
+		pin@51 {
+			//uart 2 TX BLE
+			pin = <51>;
+			active = <1 5 0 1>;
+			suspended = <1 5 0 1>;
+		};
+
+		pin@52 {
+			//uart 2 RX BLE
+			pin = <52>;
+			active = <1 5 0 0>;
+			suspended = <1 5 0 0>;
+		};
+
+		pin@53 {
+			//uart 2 CTS BLE
+			pin = <53>;
+			active = <1 5 0 0>;
+			suspended = <1 5 0 0>;
+		};
+
+		pin@54 {
+			//uart 2 RTS BLE
+			pin = <54>;
+			active = <1 5 0 1>;
+			suspended = <1 5 0 1>;
+		};
+
+		pin@59 {
+			//wired1 LED
+			pin = <59>;
+			active = <0 5 1 2>;
+			suspended = <0 5 1 2>;
+		};
+
+		pin@60 {
+			//wired1 orange LED
+			pin = <60>;
+			active = <0 5 1 2>;
+			suspended = <0 5 1 2>;
+		};
+
+		pin@61 {
+			//wired0 LED
+			pin = <61>;
+			active = <0 5 1 2>;
+			suspended = <0 5 1 2>;
+		};
+
+		pin@62 {
+			//wired0 orange LED
+			pin = <62>;
+			active = <0 5 1 2>;
+			suspended = <0 5 1 2>;
+		};
+
+		pin@66 {
+			//MDC 1
+			pin = <66>;
+			active = <0 3 0 0>;
+			suspended = <0 3 0 0>;
+		};
+
+		pin@67 {
+			//POE AT
+			pin = <67>;
+			active = <0 0 0 0>;
+			suspended = <0 0 0 0>;
+		};
+
+		pin@68 {
+			//LED RST
+			pin = <68>;
+			active = <0 0 3 1>;
+			suspended = <0 0 3 1>;
+		};
+	};
+
+	gmac@2 {
+		compatible = "ipq806x,nss-gmac";
+		gmac = <2>;
+		phy-addr = <0>;
+		poll_required = <1>;
+		phy_mii_type = <3>; //PHY_INTERFACE_MODE_SGMII
+		mmds_mask = <0>;
+	};
+
+	gmac@3 {
+		compatible = "ipq806x,nss-gmac";
+		gmac = <3>;
+		phy-addr = <4>;
+		poll_required = <1>;
+		phy_mii_type = <3>; //PHY_INTERFACE_MODE_SGMII
+		mmds_mask = <0>;
+	};
+
+	gpiochip: gpio-controller@0000 {
+		#gpio-cells = <2>;
+		compatible = "qcom,msm-gpio";
+		gpio-controller;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		white {
+			label = "power:white";
+			gpios = <&gpiochip 26 1>;
+			default-state = "off";
+		};
+
+		orange {
+			label = "power:orange";
+			gpios = <&gpiochip 19 0>;
+			default-state = "on";
+		};
+
+		wired0_green {
+			label = "wired0:green";
+			gpios = <&gpiochip 24 0>;
+			default-state = "off";
+		};
+
+		wired1_green {
+			label = "wired1:green";
+			gpios = <&gpiochip 23 0>;
+			default-state = "off";
+		};
+
+		wired0_orange {
+			label = "wired0:orange";
+			gpios = <&gpiochip 62 0>;
+			default-state = "off";
+		};
+
+		wired1_orange {
+			label = "wired1:orange";
+			gpios = <&gpiochip 60 0>;
+			default-state = "off";
+		};
+	};
+
+	gpio-buttons {
+		compatible = "gpio-keys-polled";
+		autorepeat;
+		poll-interval = <20>;
+		button@1 {
+			label = "soft_reset";
+			linux,code = <0x198>;     // EV_RESTART
+			linux,input-type = <0>;   // EV_KEY
+			debounce-interval = <60>;
+			gpios = <&gpiochip 25 1>;
+		};
+	};
+
+	i2c@1 {
+		compatible = "i2c-gpio";
+		gpios = <&gpiochip 8 0>, <&gpiochip 9 0>;
+		i2c-gpio,sda-open-drain;
+		i2c-gpio,scl-open-drain;
+		i2c-gpio,delay-us = <10>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <0x1>;
+
+		current_mon: ina2xx@45 {
+			compatible = "ina219";
+			config = <0x219F>;
+			calibration = <0xA106>;
+			power_lsb = <1987>;
+			reg = <0x45>;
+		};
+
+		config_eeprom: at24@52 {
+			compatible = "atmel,24c64";
+			pagesize = <32>;
+			reg = <0x52>;
+		};
+
+		tricolor: tricolor@49 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			compatible = "ti,tlc59108";
+			reg = <0x49>;
+
+			red@0 {
+				label = "tricolor0:red";
+				reg = <0x0>;
+				max-poe-val = <0xEF>;
+				max-dc-val  = <0xFF>;
+			};
+
+			green@1 {
+				label = "tricolor0:green";
+				reg = <0x1>;
+				max-poe-val = <0xFF>;
+				max-dc-val  = <0xFF>;
+			};
+
+			blue@2 {
+				label = "tricolor0:blue";
+				reg = <0x2>;
+				max-poe-val = <0xFF>;
+				max-dc-val  = <0xFF>;
+			};
+		};
+	};
+
+	i2c@2 {
+		compatible = "i2c-gpio";
+		gpios = <&gpiochip 12 0>, <&gpiochip 13 0>;
+		i2c-gpio,sda-open-drain;
+		i2c-gpio,scl-open-drain;
+		i2c-gpio,delay-us = <10>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <0x2>;
+
+	};
+
+	ble {
+		compatible = "ti,cc2540";
+		gpios = <&gpiochip 21 1>, //reset
+			<&gpiochip 17 0>, //clk
+			<&gpiochip 15 0>; //data
+	};
+
+	board-data {
+		compatible = "meraki,meraki-config";
+		i2c-eeprom = <&config_eeprom>;
+	};
+
+	nand {
+		compatible = "qcom,msm-nand";
+		#address-cells = <1>;
+		#size-cells = <1>;
+
+		partition@0 {
+			label = "mibib";
+			reg = <0x00040000 0x00140000>;
+		};
+		partition@1 {
+			label = "sbl1";
+			reg = <0x00000000 0x00040000>;
+		};
+		partition@2 {
+			label = "sbl2";
+			reg = <0x00180000 0x00140000>;
+		};
+		partition@3 {
+			label = "sbl3";
+			reg = <0x002c0000 0x00280000>;
+		};
+		partition@4 {
+			label = "ddrconfig";
+			reg = <0x00540000 0x00120000>;
+		};
+		partition@5 {
+			label = "ssd";
+			reg = <0x00660000 0x00120000>;
+		};
+		partition@6 {
+			label = "tz";
+			reg = <0x00780000 0x00280000>;
+		};
+		partition@7 {
+			label = "rpm";
+			reg = <0x00a00000 0x00280000>;
+		};
+		partition@8 {
+			label = "u-boot";
+			reg = <0x01fc0000 0x00180000>;
+		};
+		partition@9 {
+			label = "bootkernel1";
+			reg = <0x021c0000 0x00a80000>;
+		};
+		partition@10 {
+			label = "bootkernel2";
+			reg = <0x02c40000 0x00a80000>;
+		};
+		partition@11 {
+			label = "ubi";
+			reg = <0x036c0000 0x046c0000>;
+		};
+		partition@12 {
+			label = "art";
+			reg = <0x07d80000 0x00200000>;
+		};
+		partition@13 {
+			label = "all";
+			reg = <0x00000000 0x08000000>;
+		};
+	};
+};

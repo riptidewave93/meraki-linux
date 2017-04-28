@@ -1,0 +1,73 @@
+# For a description of the syntax of this configuration file,
+# see Documentation/kbuild/kconfig-language.txt.
+#
+
+config APM_NET
+        tristate "APM86xxx Network Driver"
+        select APMQM
+        default n
+        ---help---
+          This is the Network driver for APM86xxx Ethernet device.
+	  
+	  To compile this driver as a module, choose M here. This module will
+	  be called apm_enet.
+	  
+config APM_NET_SKB_HEADROOM
+	int "Additional skb headroom (bytes)"
+	depends on APM_NET
+	default "0"
+	help
+	  Additional receive skb headroom. Change this if requires a bigger 
+	  SKB Headroom than the default for optimized performance (ie IPSEC in
+	  offline security). Note, the driver will always reserve at least 
+	  2 bytes to make IP header aligned.
+
+	  If unsure, set to 0.
+
+config APM_ENET_LRO
+	bool "Large Receive offload via SlimPRO"
+	select SLIMPRO_OFFLOAD
+	select INET_LRO
+	depends on APM_NET
+        default n
+	help
+	  Support for large receive offload via SlimPRO for IPv4
+
+config INET_OFFLOAD
+	bool "IPv4 forwarding offload support"
+	depends on APM_NET
+        default n
+	help
+	  Add support for IPv4 forwarding offload support using the Inline
+	  Classifier. Once enabled offload can be turned on and off via sysfs
+	  on a per port bases.
+	    echo ipv4_forward > /sys/class/net/eth0/offload
+	    echo default > /sys/class/net/eth0/offload
+	
+config APM_ENET_SLIMPRO_IPFW
+	bool "IPv4 forwarding using SlimPRO"
+	select SLIMPRO_OFFLOAD
+	depends on APM_NET
+        default n
+	help
+	  Add support to performance IPv4 forwarding via SlimPRO. Packets 
+	  are routed from ETHx to SlimPRO. SlimPRO forwards the packet back 
+	  out with header changed accordingly.
+
+config CLE_BRIDGE
+	bool "Classifier Bridge"
+	depends on APM_NET && BRIDGE && APM862xx
+	default n
+	help
+	 Using classifier for bridging purpose. 
+
+	
+config APM_VNET
+	tristate "APM86xxx Virtual Network Driver for ICC"
+	select APM_NET
+	default n
+	help
+	  This is the virtual network driver for Inter Core Communication.
+
+	  To compile this driver as a module, choose M here. This module will
+	  be called apm_vnet.

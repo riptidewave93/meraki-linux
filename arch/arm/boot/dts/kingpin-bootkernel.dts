@@ -1,0 +1,37 @@
+/*
+ * Copyright (C) 2014 Meraki, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+/dts-v1/;
+
+/include/ "kingpin-base.dtsi"
+
+/ {
+        power_led {
+                compatible = "gpio-leds";
+                orange {
+                        label = "power:orange";
+                        gpios = <&gpiochip 0 1>;
+                        default-state = "on";
+                };
+        };
+
+        pwm-leds {
+                compatible = "pwm-leds";
+                red {
+                        label = "tricolor0:red";
+                        pwms = <&pwm 1 50000>;
+                };
+                green {
+                        label = "tricolor0:green";
+                        pwms = <&pwm 2 50000>;
+                };
+                blue {
+                        label = "tricolor0:blue";
+                        pwms = <&pwm 3 50000>;
+                };
+        };
+};

@@ -1,0 +1,47 @@
+MSM GPIO Pin Controller:
+
+Required properties:
+- compatible = "ipq806x,gpiomux";
+
+The pins are sub nodes
+
+FUNC
+GPIOMUX_FUNC_GPIO = 0,
+GPIOMUX_FUNC_1    = 1,
+GPIOMUX_FUNC_2    = 2,
+
+DRV
+GPIOMUX_DRV_2MA  = 0,
+GPIOMUX_DRV_4MA  = 1,
+GPIOMUX_DRV_6MA  = 2,
+GPIOMUX_DRV_8MA  = 3,
+GPIOMUX_DRV_10MA = 4,
+GPIOMUX_DRV_12MA = 5,
+GPIOMUX_DRV_14MA = 6,
+GPIOMUX_DRV_16MA = 7,
+
+PULL
+GPIOMUX_PULL_NONE   = 0,
+GPIOMUX_PULL_DOWN   = 1,
+GPIOMUX_PULL_KEEPER = 2,
+GPIOMUX_PULL_UP     = 3,
+
+DIR
+GPIOMUX_IN = 0,
+GPIOMUX_OUT_HIGH = 1,
+GPIOMUX_OUT_LOW = 2,
+
+- active: An array of ints specifying the state of the gpio pin when active.
+  <FUNC DRV PULL DIR>
+- suspended: An array of ints specifying the state of the gpio pin when not active.
+  <FUNC DRV PULL DIR>
+
+Example
+
+gpiomux@1 {
+  compatible = "ipq806x,gpiomux";
+  pin@xxx {
+	pin = <xxx>;
+	active = <0 3 0 0>;
+	suspended = <0 3 0 0>;
+};

@@ -1,0 +1,674 @@
+/*
+ * Device Tree Source for APM Serengeti (AM86xxx) Eval Board 
+ *
+ * Copyright (c) 2010 Applied Micro Circuits Corporation.
+ * All rights reserved. Feng Kan <fkan@apm.com>.
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2.  This program is licensed "as is" without
+ * any warranty of any kind, whether express or implied.
+ */
+
+/dts-v1/;
+
+/ {
+	#address-cells = <2>;
+	#size-cells = <1>;
+	model = "apm,apm862xx";
+	compatible = "apm,apm862xx";
+	dcr-parent = <&{/cpus/cpu@0}>;
+
+	aliases {
+		serial0 = &UART0;
+ 
+		ethernet0 = &enet0;
+                ethernet1 = &enet1;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu@0 {
+			device_type = "cpu";
+			model = "PowerPC,APM86xxx";
+			reg = <0>;
+			clock-frequency = <0>; /* Filled in by U-Boot */
+			plb-frequency = <0>; /* Filled in by U-Boot */
+			timebase-frequency = <0>; /* Filled in by U-Boot */
+			i-cache-line-size = <32>;
+			d-cache-line-size = <32>;
+			i-cache-size = <32768>;
+			d-cache-size = <32768>;
+			dcr-controller;
+			dcr-access-method = "native";
+/*			next-level-cache = <&L2C0>;
+*/
+			#address-cells = <1>;
+			#size-cells = <0>;
+/*
+			L2C0: l2-cache@400000000 {
+				compatible = "apm,l2-cache";
+				status = "enabled";
+				dcr-reg = <0x000 0x002>;
+				cache-line-size = <0x20>;	
+				cache-size = <0x40000>;		
+				reg = <0x4 0x00000000 0x00000>;	
+			};
+*/		
+		};
+
+                cpu@1 {
+                        device_type = "cpu";
+                        model = "PowerPC,APM86xxx";
+                        reg = <1>;
+			status = "disabled";
+		};
+	};
+
+	memory {
+		device_type = "memory";
+		reg = <0x00000000 0x00000000 0x00000000>; /* Filled in by U-Boot */
+	};
+
+	MEMC: memc@3fffff800 {
+		compatible = "apm,memc";
+		reg = <0x3 0xfffff800 0x1000>;
+	};
+
+	OCM0: ocm@effff8000 {
+		compatible = "apm,ocm";
+		cell-index = <0>;
+		reg = <0xe 0xffff8000 0x8000>;
+		#size-cells = <1>;
+		#address-cells = <1>;
+		partition@0 {
+			type = "non-cached";
+			reg = <0x0000 0x7F00>;
+		};
+		partition@1 {
+			type = "ipp";
+			reg = <0x7F00 0x0100>;
+		};
+	};
+
+	SDU0: sdu@ddd810000 {
+		compatible = "apm,apm86xxx-sdu";
+		reg = <0xd 0xdd810000 0x10000>;
+		interrupt-parent = <&mpic>;
+		interrupts = <0 2>;
+	};	
+
+	hbf {
+		compatible = "apm,hbf-am862xx", "apm,hbf";
+		#address-cells = <2>;
+		#size-cells = <1>;
+		ranges;
+		clock-frequency = <0>; /* Filled in by U-Boot */
+
+                mpic: pic@df400000 {
+                        clock-frequency = <0>;
+                        interrupt-controller;
+                        reg = <0xd 0xdf400000 0x40000>;
+			#address-cells = <0>;
+                        #interrupt-cells = <2>;
+                        compatible = "chrp,open-pic";
+                        device_type = "open-pic";
+                        big-endian;
+                };                
+
+		ipp: ipp@ddd8b0000 {
+			compatible = "apm,ipp";
+			gpio_wakeup = <13>;
+			reg = <0xd 0xdd8b0000 0x1000>;
+                        is-gpio;
+                        gpio-avail-mask = <0xc144>;
+                        gpio-count = <16>;
+                        interrupt-parent = <&mpic>;
+                        interrupts = <  /* iPP Core0 */   0x09 2
+                                        /* iPP Core1 */   0x0a 2
+                                        /* GPIO_DS[13] */ 0x65 8 >;
+                        #gpio-cells = <2>;
+                        gpio-controller;
+		};
+/*		
+		msi@ddf407000 {
+			compatible = "apm,apm86xxx-msi", "apm,mpic-msi";
+			reg = <0xd 0xdf407000 0x200>;
+			msi-available-ranges = <0x0 0x100>;
+			interrupts = <
+				0x3b 0
+				0x3c 0
+				0x3d 0
+				0x3e 0
+				0x3f 0
+				0x40 0
+				0x41 0
+				0x42 0
+				0x43 0
+				0x44 0
+				0x45 0
+				0x46 0
+				0x47 0
+				0x48 0
+				0x49 0
+				0x4a 0>;
+			interrupt-parent = <&mpic>;
+		};
+
+		msi_cascade@ddf407000 {
+			compatible = "apm,apm86xxx-msi", "apm,mpic-msi-cascade";
+			reg = <0xd 0xdf407000 0x200>;
+			msi-available-ranges = <0x0 0x100>;
+			num_irqs_per_reg = <32>;
+			interrupts = <
+				0x4b 0
+				0x4c 0
+				0x4d 0>;
+			interrupt-parent = <&mpic>;
+		};
+*/
+
+		gpt0: timer@df4010f0 {
+			compatible = "apm,apm86xxx-gpt";
+			reg = <0xd 0xdf4010f0 0x220>;
+			interrupts = <243 0 244 0 245 0 246 0>;
+			interrupt-parent = <&mpic>;
+		};
+
+		gpt1: timer@df4020f0 {
+			compatible = "apm,apm86xxx-gpt";
+			reg = <0xd 0xdf4020f0 0x220>;
+			interrupts = <247 0 248 0 249 0 250 0>;
+			interrupt-parent = <&mpic>;
+		};
+
+                qmtm: qmtm@dd800000 {
+                        device_type = "qmtm";
+                        compatible = "mb-qmtm", "apm,mb-qmtm";
+                        #interrupt-cells = <2>;
+                        reg = <0xd 0xdd800000 0x10000   
+                               0xd 0xdf000000 0x400000  
+                               0x3 0xffffd000 0x3fff	
+                               0xd 0x00000000 0x400000  
+                               0xd 0xdd8d0000 0x10000	
+                               0xd 0xdd8b1000 0x240>;	
+                        interrupt-parent = <&mpic>;
+                        interrupts = <  0x21 2  0x5 2 0x11 2 0x12 2 0x13 2 0x14 2 0x15 2 0x16 2 0x17 2
+                                        0x18 2 0x19 2 0x1a 2 0x1b 2 0x1c 2 0x1d 2 0x1e 2 0x1f 2
+                                        0x20 2>;
+			maxqid = <255>;
+			qstart = <1>;
+			dma-reg = <0x0 0x7f000000 0x1000000>;
+                };
+
+/* 		Should be initialized after ipp & qmtm 
+		ipp_offload { 
+			compatible = "apm,ipp-offload";
+		}; 
+*/
+
+/*
+		SRAM0: sram@0x020000000 {
+			compatible = "mtd-ram";
+			reg = <0x0 0x20000000 0x2000000>; 
+			bank-width = <2>;
+			#size-cells = <1>;
+			#address-cells = <1>;
+			partition@0 {
+				label = "MTD-RAM Root FS 0";
+				reg = <0x00000000 0x01000000>;
+			};
+			partition@1 {
+				label = "MTD-RAM Root FS 1";
+				reg = <0x01000000 0x01000000>;
+			};
+		};
+*/
+		enet0: ethernet@dd8a0000 {
+			device_type = "network";
+			compatible = "apm, apm86xxx-enet";
+			interrupt-parent = <&mpic>;
+			interrupts = <0x22 2      
+                                      0x23 2      
+                                      0x2B 2 >;  
+			reg = <0xd 0xdd8a0000 0x200     
+			       0xd 0xdd8e0000 0x10000   
+			       0xd 0xdd8a0800 0xF800
+			       0xd 0xdd8a0000 0x20>;
+			local-mac-address = [1a2a3a4a5a60]; 
+			max-frame-size = <0x233a>;
+			devid = <0>;
+			phyid = <1>;
+			hw-cfg = <1>;
+                };
+                
+	        enet1: ethernet@dd8a0030 {
+			device_type = "network";
+			compatible = "apm, apm86xxx-enet";
+			interrupt-parent = <&mpic>;
+			interrupts = <0x22 2      
+                                      0x23 2      
+                                      0x2B 2 >;  
+			reg = <0xd 0xdd8a0030 0x200     
+			       0xd 0xdd8e0000 0x10000   
+			       0xd 0xdd8a0800 0xF800
+			       0xd 0xdd8a0000 0x20>;
+			local-mac-address = [1a2a3a4a5a61]; 
+			max-frame-size = <0x233a>;
+			devid = <1>;
+			phyid = <2>;
+			hw-cfg = <1>;
+                };
+/* 
+		lac: lac@ddd8e0000 {
+			device_type = "classifier";
+			compatible = "apm,apm86xxx-lac";
+			reg = < 0xd 0xdd8e0000 0x10000>;
+		};
+*/
+		pktdma: pktdma@dd820000 {
+			device_type = "dma";
+			compatible = "apm-pktdma", "apm,apm86xxx-pktdma";
+			#interrupt-cells = <1>;
+			reg = <0xd 0xdd820000 0x10000 >;
+			interrupt-parent = <&mpic>;
+			ch-info = <0 1 2 3>;
+			fp-info = <6>;
+		};
+
+		crypto: crypto@ddd830000 {
+			device_type = "crypto";
+			compatible = "apm,apm86xxx-crypto";
+			#interrupt-cells = <1>;
+			reg = <0xd 0xdd830000 0x8000>; 
+			interrupt-parent = <&mpic>;
+			interrupts = <0x5d 2>;
+			dma-reg = <0x0 0x7e000000 0x1000000>;
+		};
+
+		rtc:	rtc@d00410000 {
+			device_type = "rtc";
+			compatible = "apm-apm86xxx-rtc";
+			reg = <0xd 0x00410000 0x400>;
+			interrupt-parent = <&mpic>;
+			interrupts = <0x30 2>;
+		};
+
+		PKA: pka@d00420000 {
+			device_type = "pka";
+			compatible = "apm-apm86xxx-pka";
+			reg = <0xd 0x00420000 0x8000>;
+			interrupt-parent = <&mpic>;
+			interrupts = <0x5c 0x2>;
+		};
+
+		TRNG: trng@d00428000 {
+			device_type = "trng";
+			compatible = "apm-apm86xxx-trng";
+			reg = <0xd 0x00428000 0x8000>;
+			interrupt-parent = <&mpic>;
+			interrupts = <0x5a 0x2 0x5b 0x2>;
+		};
+
+		SATA:	sata@500000000 {
+			device_type = "sata";
+			compatible = "sata-ahci", "apm,sata-ahci";
+			phy = <1>;
+			reg = <0x5 0x00000000 0x4000
+                               0xd 0xdd877000 0x3000
+                               0xd 0xdd870000 0x7000
+                               0xd 0xdd880000 0x10000>;
+
+			interrupt-parent = <&mpic>;
+			interrupts = <0x2c 2>;
+		};
+/*
+		lcd: lcd@ddf440000 {
+			device_type = "lcd";
+			compatible = "apm,apm-lcd";
+			reg = <0xd 0xdf440000 0x2000
+			       0xd 0xdd817000 0x100>;
+			interrupt-parent = <&mpic>;
+			interrupts = <0x01 2>;
+			overlay = <3>;
+			frame = <2>;
+		};
+*/
+		AHB0: ahb {
+			device_type = "ahb";
+			compatible = "apm,ahb";
+			#address-cells = <2>;
+			#size-cells = <1>;
+			ranges;
+			clock-frequency = <0>; /* Filled in by U-Boot */
+
+	                ahbc@ddd860000 {
+	                        device_tpye = "ahbc";
+                        	compatible = "apm,apm86xxx-ahbc";
+				reg = <0xd 0xdd860000 0x10000>;
+		        };
+
+			ufc@0xfa0140000 {
+				compatible = "ibm,ufc";
+				reg = <0xf 0xa0140000  0x00010000>;
+				#address-cells = <1>;
+				#size-cells = <1>;
+				bootmode = "nand";
+
+				nand {
+                                        #address-cells = <1>;
+                                        #size-cells = <1>;
+                                        partition@0 {
+                                                label = "firmware";
+                                                reg   = <0x00000000 0x00100000>;
+                                        };
+                                        partition@100000 {
+                                                label = "environment";
+                                                reg   = <0x00100000 0x00100000>;
+                                        };
+                                        partition@200000 {
+                                                label = "oops-old";
+                                                reg   = <0x00200000 0x00040000>;
+                                        };
+                                        partition@240000 {
+                                                label = "ubi";
+                                                reg   = <0x00240000 0x3fdc0000>;
+                                        };
+					all {
+						label = "all";
+						reg   = <0x00000000 0x40000000>;
+					};
+				};
+			};
+
+			USB0: usb@fa0100000 {
+				device_type = "usb";
+				compatible = "apm,usb-otg";
+				reg = <0xf 0xa0100000 0x40000>;
+				interrupt-parent = <&mpic>;
+				interrupts = <0x4f 2>;
+				devid = <0>;
+				/* To force mode, add
+				 * mode = "host"; OR
+				 * mode = "device";
+				 */
+			};
+
+/*
+			USB1: ehci@fa0010400 {
+				compatible = "apm,usb-ehci-460ex", "usb-ehci";
+				reg = <0xf 0xa0010400 0x90 0xf 0xa0010490 0x70>;
+				interrupt-parent = <&mpic>;
+				interrupts = <0x5f 2>;
+				devid = <1>;
+				dma-reg = <0x0 0x0 0x0>;			 
+			};
+*/
+
+			APB0: apb {
+				compatible = "apm,apb";
+				device_type = "apb";
+				#address-cells = <2>;
+				#size-cells = <1>;
+				ranges;
+				clock-frequency = <0>; /* Filled in by U-Boot */
+
+				UART0: serial@fa0000000 {
+					device_type = "serial";
+					compatible = "ns16550";
+					reg = <0xf 0xa0000000 0x1000>;
+					reg-shift = <2>;
+					reg-io-width = <4>;
+					clock-frequency = <0>; /* Filled in by U-Boot */
+					current-speed = <0xe100>;
+					interrupt-parent = <&mpic>;
+					interrupts = <0xb 2>;
+				};
+				
+				UART1: serial@fa0001000 {
+					device_type = "serial";
+					compatible = "ns16550";
+					reg = <0xf 0xa0001000 0x1000>;
+					reg-shift = <2>;
+					clock-frequency = <0>; /* Filled in by U-Boot */
+					current-speed = <0xe100>;
+					interrupt-parent = <&mpic>;
+					interrupts = <0xc 2>;
+				};
+				
+				UART2: serial@fa0007000 {
+					device_type = "serial";
+					compatible = "ns16550";
+					reg = <0xf 0xa0007000 0x1000>;
+					reg-shift = <2>;
+					clock-frequency = <0>; 
+					current-speed = <0x1c200>;
+					interrupt-parent = <&mpic>;
+					interrupts = <0xd 2>;
+				};
+				
+				UART3: serial@fa0008000 {
+					device_type = "serial";
+					compatible = "ns16550";
+					reg = <0xf 0xa0008000 0x1000>;
+					reg-shift = <2>;
+					clock-frequency = <0>; 
+					current-speed = <0x1c200>;
+					interrupt-parent = <&mpic>;
+					interrupts = <0xe 2>;
+				};
+				
+
+				I2C0:	i2c@fa0002000 {
+					device_type = "i2c";
+					compatible = "apm,apm86xxx-i2c";
+					reg = <0xf 0xa0002000 0x1000>;
+					clock-frequency = <100000000>;
+					interrupt-parent = <&mpic>;
+					interrupts = <0xf 2>;
+					bus_num = <0>; /* Big Endian*/
+
+                                        TCAGPIO: tca@22 {
+                                               compatible = "ti,tca6424";
+                                               reg = <0x22>;
+                                               gpio-count = <24>;
+                                               #gpio-cells = <2>;
+                                               gpio-controller;
+                                        };
+				};
+				GPIO:	gpio@fa0004000 {
+					device_type = "gpio";
+					compatible = "apm,apm86xxx-gpio";
+					reg = <0xf 0xa0004000 0x1000>;
+					gpio-count = <0x1a>;
+					#gpio-cells = <2>;
+					gpio-controller;
+
+				};
+/*
+				SPI0:	spi@fa0005000 {
+				 	device_type = "spi";
+					compatible = "apm,spi";
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <0xf 0xa0005000 0x1000>;
+					interrupt-parent = <&mpic>;
+					interrupts = <0x52 2>;
+					sysclk = <62000000>;
+					bus_num = <0x0>;
+
+					SFLASH: m25p80@0 {
+						compatible = "stm,m25p80","jedec-flash";
+						reg = <0>;
+						spi-max-frequency = <3100000>;
+						spi-cpha;
+						spi-cpol;
+					};
+				};
+
+				SPI1:	spi@fa0006000 {
+				 	device_type = "spi";
+					compatible = "apm,spi";
+					reg = <0xf 0xa0006000 0x1000>;
+					interrupt-parent = <&mpic>;
+					interrupts = <0x6 2>;
+					sysclk = <62000000>;
+					bus_num = <0x1>;
+				};
+
+				GPIO:	gpio@fa0004000 {
+					device_type = "gpio";
+					compatible = "apm,apm86xxx-gpio";
+					reg = <0xf 0xa0004000 0x1000>;
+					#gpio-cells = <2>;
+					gpio-controller;
+				};
+*/
+			};
+
+		};
+				
+		I2C1:	i2c@d00411000 {
+			device_type = "i2c";
+			compatible = "apm,apm86xxx-i2c";
+			reg = <0xd 0x00411000 0x1000>;
+			clock-frequency = <100000000>;
+			interrupt-parent = <&mpic>;
+			interrupts = <0x10 2>;
+			bus_num = <1>; /* Litlle Endian*/
+			#address-cells = <1>;
+			#size-cells = <0>;
+			rtc@68 {
+                        	compatible = "dal,ds1672";
+                        	reg = <0x68>;
+			};
+			
+			hwm@19 {
+                        	compatible = "nat,lm95241";
+                        	reg = <0x19>;
+			};
+		};
+
+		gpio-leds {
+			compatible = "gpio-leds";
+			power-green {
+				label = "power:green";
+				gpios = <&TCAGPIO 0 1>;
+			};
+			power-orange {
+				label = "power:orange";
+				gpios = <&TCAGPIO 1 1>;
+			};
+			usb-green {
+				label = "usb:green";
+				gpios = <&TCAGPIO 2 1>;
+			};
+			usb-orange {
+				label = "usb:orange";
+				gpios = <&TCAGPIO 3 1>;
+			};
+			ha-green {
+				label = "ha:green";
+				gpios = <&TCAGPIO 4 1>;
+			};
+			ha-orange {
+				label = "ha:orange";
+				gpios = <&TCAGPIO 5 1>;
+			};
+			inet1 {
+				label = "inet1";
+				gpios = <&TCAGPIO 6 1>;
+			};
+			inet2 {
+				label = "inet2";
+				gpios = <&TCAGPIO 8 1>;
+			};
+			inet3 {
+				label = "inet3";
+				gpios = <&TCAGPIO 10 1>;
+			};
+			inet4 {
+				label = "inet4";
+				gpios = <&TCAGPIO 12 1>;
+			};
+			inet5 {
+				label = "inet5";
+				gpios = <&TCAGPIO 14 1>;
+			};
+			inet6 {
+				label = "inet6";
+				gpios = <&TCAGPIO 16 1>;
+			};
+			inet7 {
+				label = "inet7";
+				gpios = <&TCAGPIO 18 1>;
+			};
+			inet8 {
+				label = "inet8";
+				gpios = <&TCAGPIO 20 1>;
+			};
+			inet9 {
+				label = "inet9";
+				gpios = <&TCAGPIO 22 1>;
+			};
+			lan2 {
+				label = "lan2";
+				gpios = <&TCAGPIO 9 1>;
+			};
+			lan3 {
+				label = "lan3";
+				gpios = <&TCAGPIO 11 1>;
+			};
+			lan4 {
+				label = "lan4";
+				gpios = <&TCAGPIO 13 1>;
+			};
+			lan5 {
+				label = "lan5";
+				gpios = <&TCAGPIO 15 1>;
+			};
+			lan6 {
+				label = "lan6";
+				gpios = <&TCAGPIO 17 1>;
+			};
+			lan7 {
+				label = "lan7";
+				gpios = <&TCAGPIO 19 1>;
+			};
+			lan8 {
+				label = "lan8";
+				gpios = <&TCAGPIO 21 1>;
+			};
+			lan9 {
+				label = "lan9";
+				gpios = <&TCAGPIO 23 1>;
+			};
+			8f {
+				label = "8f";
+				gpios = <&ipp 6 0>;
+			};
+			9f {
+				label = "9f";
+				gpios = <&ipp 8 0>;
+			};
+		};
+
+		gpio_keys_polled {
+			compatible = "gpio-keys-polled";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			poll-interval = <60>;       /* 3 * 20 = 60ms */
+			autorepeat;
+			button@1 {
+				label = "soft_reset";
+				linux,code = <0x198>;     /* EV_RESTART    */
+				linux,input-type = <1>;   /* EV_KEY        */
+				gpios = <&ipp 15 1>;
+			};
+		};
+	};
+	chosen {
+		linux,stdout-path = "/hbf/ahb/apb/serial@fa0000000";
+	};
+};

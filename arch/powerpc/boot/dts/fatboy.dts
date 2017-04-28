@@ -1,0 +1,1768 @@
+/*
+ * Meraki MS420 Series Device Tree Source
+ *
+ * Copyright 2009-2012 Freescale Semiconductor Inc.
+ * Copyright 2013 Cisco Systems, Inc.
+ *
+ * This program is free software; you can redistribute	it and/or modify it
+ * under  the terms of	the GNU General	 Public License as published by the
+ * Free Software Foundation;  either version 2 of the  License, or (at your
+ * option) any later version.
+ */
+
+// Prevent the C preprocessor from expanding the pre-defined "linux" macro.
+#ifdef linux
+#undef linux
+#endif
+
+/dts-v1/;
+
+/ {
+	compatible = "meraki,fatboy";
+	#address-cells = <2>;
+	#size-cells = <2>;
+	interrupt-parent = <&mpic>;
+	model = "meraki,fatboy";
+
+	aliases {
+		serial1 = &serial1;  // U-Boot currently expects this to be aliased as serial1.
+		ethernet0 = &enet0;
+		pci0 = &pci0;
+		pci1 = &pci1;
+		mpic-msgr-block0 = &msg0;
+		mpic-msgr-block1 = &msg1;
+	};
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		PowerPC,P2020@0 {
+			device_type = "cpu";
+			reg = <0x0>;
+			next-level-cache = <&L2>;
+		};
+
+		PowerPC,P2020@1 {
+			device_type = "cpu";
+			reg = <0x1>;
+			next-level-cache = <&L2>;
+		};
+	};
+
+	memory {
+		device_type = "memory";
+	};
+
+	localbus@ff705000 {
+		#address-cells = <2>;
+		#size-cells = <1>;
+		interrupts = <19 2 0 0>;
+		reg = <0 0xff705000 0 0x1000>;
+		compatible = "fsl,p2020-elbc", "fsl,elbc", "simple-bus";
+
+		ranges = <0x0 0x0 0x0 0xffa00000 0x40000
+			  0x1 0x0 0x0 0xea000000 0x01100>;
+
+		nand@0,0 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			compatible = "fsl,p2020-fcm-nand", "fsl,elbc-fcm-nand";
+			reg = <0x0 0x0 0x40000>;
+                        disable-subpage-writes;
+
+			partition@0 {
+				label = "u-boot";
+				reg = <0x00000000 0x00200000>;
+			};
+
+			partition@200000 {
+				label = "system";
+				reg = <0x00200000 0x07E00000>;
+			};
+                };
+
+		fatboy_cpld: cpld@1,0 {
+			compatible = "meraki,fatboy-cpld";
+			reg = <0x01 0x0 0x1100>;
+
+                        led-names = "fanstatus:orange", "fanstatus:green", "psu:orange", "psu:green";
+		};
+	};
+
+	soc: soc@ff700000 {
+		ranges = <0x0 0x0 0xff700000 0x100000>;
+		#address-cells = <1>;
+		#size-cells = <1>;
+		device_type = "soc";
+		compatible = "fsl,p2020-immr", "simple-bus";
+		bus-frequency = <0>;
+
+		i2c@3000 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			cell-index = <0>;
+			compatible = "fsl-i2c";
+			reg = <0x3000 0x100>;
+			interrupts = <43 2 0 0>;
+			dfsrr;
+
+			mux@70 {
+				compatible = "nxp,pca9548";
+				reg = <0x70>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				i2c@0 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <0>;
+					deselect-on-exit;
+
+					rtc@51 {
+						compatible = "epson,rtc8564";
+						reg = <0x51>;
+					};
+				};
+
+				i2c@1 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <1>;
+
+					psu@3a {
+						compatible = "ms420-psu";
+						reg = <0x3a>;
+						index = <2>;
+					};
+				};
+
+				i2c@2 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <2>;
+
+					psu@39 {
+						compatible = "ms420-psu";
+						reg = <0x39>;
+						index = <1>;
+					};
+				};
+
+				i2c@3 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <3>;
+					deselect-on-exit;
+
+					fan_led_gpios: gpio-controller@72 {
+						#gpio-cells = <2>;
+						compatible = "nxp,pca9538";
+						reg = <0x72>;
+						gpio-controller;
+					};
+
+					fan_dir_gpios: gpio-controller@73 {
+						#gpio-cells = <2>;
+						compatible = "nxp,pca9538";
+						reg = <0x73>;
+						gpio-controller;
+					};
+				};
+
+				i2c@4 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <4>;
+					deselect-on-exit;
+
+					config_eeprom: at24@50 {
+						compatible = "atmel,24c64";
+						pagesize = <32>;
+						reg = <0x52>;
+					};
+				};
+
+				i2c@7 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <7>;
+					deselect-on-exit;
+
+					hwmon@2e {
+						compatible = "adi,adt7473";
+						reg = <0x2e>;
+					};
+
+					temp-sensor@4d {
+						compatible = "maxim,max6581";
+						alert-bit-mask = <0xFF>;
+						over-temperature-mask = <0xFF>;
+						reg = <0x4d>;
+					};
+				};
+			};
+		};
+
+		i2c@3100 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			cell-index = <1>;
+			compatible = "fsl-i2c";
+			reg = <0x3100 0x100>;
+			interrupts = <43 2 0 0>;
+			dfsrr;
+
+			mux@75 {
+				compatible = "nxp,pca9546";
+				reg = <0x75>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+#ifdef BOARD_MS420_48
+				i2c@0 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <0>;
+					deselect-on-exit;
+
+					mux@74 {
+						compatible = "nxp,pca9548";
+						reg = <0x74>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						i2c_sfp1: i2c@0 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <0>;
+							deselect-on-exit;
+							cell-index = <101>;
+						};
+
+						i2c_sfp2: i2c@1 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <1>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp3: i2c@2 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <2>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp4: i2c@3 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <3>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp5: i2c@4 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <4>;
+							deselect-on-exit;
+
+						};
+
+						i2c_sfp6: i2c@5 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <5>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp7: i2c@6 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <6>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp8: i2c@7 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <7>;
+							deselect-on-exit;
+						};
+					};
+				};
+
+				i2c@1 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <1>;
+					deselect-on-exit;
+
+					mux@74 {
+						compatible = "nxp,pca9548";
+						reg = <0x74>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						i2c_sfp9: i2c@0 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <0>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp10: i2c@1 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <1>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp11: i2c@2 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <2>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp12: i2c@3 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <3>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp13: i2c@4 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <4>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp14: i2c@5 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <5>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp15: i2c@6 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <6>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp16: i2c@7 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <7>;
+							deselect-on-exit;
+						};
+					};
+				};
+
+				i2c@2 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <2>;
+					deselect-on-exit;
+
+					mux@74 {
+						compatible = "nxp,pca9548";
+						reg = <0x74>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						i2c_sfp17: i2c@0 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <0>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp18: i2c@1 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <1>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp19: i2c@2 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <2>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp20: i2c@3 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <3>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp21: i2c@4 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <4>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp22: i2c@5 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <5>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp23: i2c@6 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <6>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp24: i2c@7 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <7>;
+							deselect-on-exit;
+						};
+					};
+				};
+#endif
+				i2c@3 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <3>;
+					deselect-on-exit;
+
+					mux@74 {
+						compatible = "nxp,pca9548";
+						reg = <0x74>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						i2c_sfp25: i2c@0 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <0>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp26: i2c@1 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <1>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp27: i2c@2 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <2>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp28: i2c@3 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <3>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp29: i2c@4 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <4>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp30: i2c@5 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <5>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp31: i2c@6 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <6>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp32: i2c@7 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <7>;
+							deselect-on-exit;
+						};
+					};
+				};
+			};
+
+
+			mux@76 {
+				compatible = "nxp,pca9546";
+				reg = <0x76>;
+				#address-cells = <1>;
+				#size-cells = <0>;
+
+				i2c@0 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <0>;
+					deselect-on-exit;
+
+					mux@75 {
+						compatible = "nxp,pca9548";
+						reg = <0x74>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						i2c_sfp33: i2c@0 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <0>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp34: i2c@1 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <1>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp35: i2c@2 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <2>;
+							deselect-on-exit;
+ 						};
+
+						i2c_sfp36: i2c@3 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <3>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp37: i2c@4 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <4>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp38: i2c@5 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <5>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp39: i2c@6 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <6>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp40: i2c@7 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <7>;
+							deselect-on-exit;
+						};
+					};
+				};
+
+				i2c@1 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <1>;
+					deselect-on-exit;
+
+					mux@75 {
+						compatible = "nxp,pca9548";
+						reg = <0x74>;
+						#address-cells = <1>;
+						#size-cells = <0>;
+
+						i2c_sfp41: i2c@0 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <0>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp42: i2c@1 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <1>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp43: i2c@2 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <2>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp44: i2c@3 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <3>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp45: i2c@4 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <4>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp46: i2c@5 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <5>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp47: i2c@6 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <6>;
+							deselect-on-exit;
+						};
+
+						i2c_sfp48: i2c@7 {
+							#address-cells = <1>;
+							#size-cells = <0>;
+							reg = <7>;
+							deselect-on-exit;
+ 						};
+					};
+				};
+
+				i2c@2 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <2>;
+					deselect-on-exit;
+
+#ifdef BOARD_MS420_48
+					// SFP RS0/RS1 ports 1-20
+					gpio1: gpio-controller@20 {
+						#gpio-cells = <2>;
+						compatible = "nxp,pca9505";
+						reg = <0x20>;
+						gpio-controller;
+					};
+#endif
+					// SFP RS0/RS1 ports 21-40
+					gpio2: gpio-controller@21 {
+						#gpio-cells = <2>;
+						compatible = "nxp,pca9505";
+						reg = <0x21>;
+						gpio-controller;
+					};
+
+					// SFP RS0 ports 41-48
+					gpio3: gpio-controller@72 {
+						#gpio-cells = <2>;
+						compatible = "nxp,pca9538";
+						reg = <0x72>;
+						gpio-controller;
+					};
+
+					// SFP RS1 ports 41-48
+					gpio4: gpio-controller@73 {
+						#gpio-cells = <2>;
+						compatible = "nxp,pca9538";
+						reg = <0x73>;
+						gpio-controller;
+					};
+
+				};
+
+				i2c@3 {
+					#address-cells = <1>;
+					#size-cells = <0>;
+					reg = <3>;
+					deselect-on-exit;
+
+					// SFP_ABS ports 1-40
+					gpio5: gpio-controller@20 {
+						#gpio-cells = <2>;
+						compatible = "nxp,pca9505";
+						reg = <0x20>;
+						interrupts = <6 1 0 0>;
+						gpio-controller;
+						interrupt-controller;
+						#interrupt-cells = <1>;
+					};
+
+					// SFP_ABS ports 41-48
+					gpio6: gpio-controller@71 {
+						#gpio-cells = <2>;
+						compatible = "nxp,pca9538";
+						reg = <0x71>;
+						gpio-controller;
+						interrupts = <6 1 0 0>;
+						interrupt-controller;
+						#interrupt-cells = <1>;
+					};
+
+					// SFP_LOS ports 1-40
+					// We're not using the LOS interrupt now, so
+					// I'm leaving the interrupt config out.  This
+					// should cause the interrupts to be masked.
+					gpio7: gpio-controller@22 {
+						#gpio-cells = <2>;
+						compatible = "nxp,pca9505";
+						reg = <0x22>;
+						gpio-controller;
+					};
+
+					// SFP_LOS ports 41-48
+					// Unlike the PCA9506, the PCA9538 does not
+					// have an interrupt mask. So we'll have to
+					// service the interrupt even though we're not
+					// using it.
+					gpio8: gpio-controller@73 {
+						#gpio-cells = <2>;
+						compatible = "nxp,pca9538";
+						reg = <0x73>;
+						gpio-controller;
+						interrupts = <6 1 0 0>;
+						interrupt-controller;
+						#interrupt-cells = <1>;
+					};
+				};
+			};
+		};
+
+		ptp_timer: ptp_clock@24e00 {
+			fsl,tclk-period = <5>;
+			fsl,tmr-prsc = <200>;
+			fsl,tmr-add = <0xcccccccd>;
+			fsl,tmr-fiper1 = <0x3b9ac9fb>;
+			fsl,tmr-fiper2 = <0x1869b>;
+			fsl,max-adj = <0xee6b27f>;
+			compatible = "fsl,etsec-ptp";
+			reg = <0x24e00 0xb0>;
+			interrupts = <
+				68 2 0 0
+ 				69 2 0 0
+				70 2 0 0>;
+		};
+
+		enet0: ethernet@24000 {
+			fixed-link = <1 1 1000 0 0>;
+			phy-connection-type = "rgmii-id";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			cell-index = <0>;
+			device_type = "network";
+			model = "eTSEC";
+			compatible = "gianfar";
+			reg = <0x24000 0x1000>;
+			ranges = <0 0x24000 0x1000>;
+			fsl,magic-packet;
+			local-mac-address = [00 00 00 00 00 00];
+			ptimer-handle = <&ptp_timer>;
+			interrupts = <
+				29 2 0 0
+				30 2 0 0
+				34 2 0 0>;
+
+			mdio@520 {
+				#address-cells = <1>;
+				#size-cells = <0>;
+				compatible = "fsl,gianfar-mdio";
+				reg = <0x520 0x20>;
+
+				phy0: ethernet-phy@0 {
+					interrupts = <3 1 0 0>;
+					reg = <0x0>;
+				};
+
+				phy1: ethernet-phy@1 {
+					interrupts = <3 1 0 0>;
+					reg = <0x1>;
+				};
+
+				tbi-phy@2 {
+					device_type = "tbi-phy";
+					reg = <0x2>;
+				};
+			};
+		};
+
+		ecm-law@0 {
+			compatible = "fsl,ecm-law";
+			reg = <0x0 0x1000>;
+			fsl,num-laws = <12>;
+		};
+
+		wdt@0 {
+			compatible = "meraki,fatboy-wdt";
+		};
+
+		ecm@1000 {
+			compatible = "fsl,p2020-ecm", "fsl,ecm";
+			reg = <0x1000 0x1000>;
+			interrupts = <17 2 0 0>;
+		};
+
+		memory-controller@2000 {
+			compatible = "fsl,p2020-memory-controller";
+			reg = <0x2000 0x1000>;
+			interrupts = <18 2 0 0>;
+		};
+
+		serial1: serial@4600 {
+			cell-index = <1>;
+			device_type = "serial";
+			compatible = "fsl,ns16550", "ns16550";
+			reg = <0x4600 0x100>;
+			clock-frequency = <0>;
+			interrupts = <42 2 0 0>;
+		};
+
+		spi0: spi@7000 {
+			#address-cells = <1>;
+			#size-cells = <0>;
+			compatible = "fsl,mpc8536-espi";
+			reg = <0x7000 0x1000>;
+			interrupts = <59 2 0 0>;
+			fsl,espi-num-chipselects = <4>;
+		};
+
+		dma@c300 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			compatible = "fsl,eloplus-dma";
+			reg = <0xc300 0x4>;
+			ranges = <0x0 0xc100 0x200>;
+			cell-index = <1>;
+
+			dma-channel@0 {
+				compatible = "fsl,eloplus-dma-channel";
+				reg = <0x0 0x80>;
+				cell-index = <0>;
+				interrupts = <76 2 0 0>;
+			};
+
+			dma-channel@80 {
+				compatible = "fsl,eloplus-dma-channel";
+				reg = <0x80 0x80>;
+				cell-index = <1>;
+				interrupts = <77 2 0 0>;
+			};
+
+			dma-channel@100 {
+				compatible = "fsl,eloplus-dma-channel";
+				reg = <0x100 0x80>;
+				cell-index = <2>;
+				interrupts = <78 2 0 0>;
+			};
+
+			dma-channel@180 {
+				compatible = "fsl,eloplus-dma-channel";
+				reg = <0x180 0x80>;
+				cell-index = <3>;
+				interrupts = <79 2 0 0>;
+			};
+		};
+
+		fsl_gpios: gpio-controller@f000 {
+			#gpio-cells = <2>;
+			compatible = "fsl,pq3-gpio";
+			reg = <0xf000 0x100>;
+			interrupts = <47 2 0 0>;
+			gpio-controller;
+		};
+
+		L2: l2-cache-controller@20000 {
+			compatible = "fsl,p2020-l2-cache-controller";
+			reg = <0x20000 0x1000>;
+			cache-line-size = <32>;
+			cache-size = <0x80000>;
+			interrupts = <16 2 0 0>;
+		};
+
+		dma@21300 {
+			#address-cells = <1>;
+			#size-cells = <1>;
+			compatible = "fsl,eloplus-dma";
+			reg = <0x21300 0x4>;
+			ranges = <0x0 0x21100 0x200>;
+			cell-index = <0>;
+
+			dma-channel@0 {
+				compatible = "fsl,eloplus-dma-channel";
+				reg = <0x0 0x80>;
+				cell-index = <0>;
+				interrupts = <20 2 0 0>;
+			};
+
+			dma-channel@80 {
+				compatible = "fsl,eloplus-dma-channel";
+				reg = <0x80 0x80>;
+				cell-index = <1>;
+				interrupts = <21 2 0 0>;
+			};
+
+			dma-channel@100 {
+				compatible = "fsl,eloplus-dma-channel";
+				reg = <0x100 0x80>;
+				cell-index = <2>;
+				interrupts = <22 2 0 0>;
+			};
+
+			dma-channel@180 {
+				compatible = "fsl,eloplus-dma-channel";
+				reg = <0x180 0x80>;
+				cell-index = <3>;
+				interrupts = <23 2 0 0>;
+			};
+		};
+
+		crypto@30000 {
+			compatible = "fsl,sec3.1", "fsl,sec3.0", "fsl,sec2.4",
+				     "fsl,sec2.2", "fsl,sec2.1", "fsl,sec2.0";
+			reg = <0x30000 0x10000>;
+			interrupts = <
+				45 2 0 0
+				58 2 0 0>;
+			fsl,num-channels = <4>;
+			fsl,channel-fifo-len = <24>;
+			fsl,exec-units-mask = <0xbfe>;
+			fsl,descriptor-types-mask = <0x3ab0ebf>;
+			fsl,multi-host-mode = "dual";
+			fsl,channel-remap = <3>;
+		};
+
+		mpic: pic@40000 {
+			interrupt-controller;
+			#address-cells = <0>;
+			#interrupt-cells = <4>;
+			reg = <0x40000 0x40000>;
+			compatible = "fsl,mpic";
+			device_type = "open-pic";
+			big-endian;
+			single-cpu-affinity;
+			last-interrupt-source = <0xff>;
+		};
+
+		msg0: message@41400 {
+			compatible = "fsl,mpic-v3.1-msgr";
+			reg = <0x41400 0x200>;
+			interrupts = <
+				0xb0 2 0 0
+				0xb1 2 0 0
+				0xb2 2 0 0
+				0xb3 2 0 0>;
+		};
+		msg1: message@42400 {
+			compatible = "fsl,mpic-v3.1-msgr";
+			reg = <0x42400 0x200>;
+			interrupts = <
+				0xb4 2 0 0
+				0xb5 2 0 0
+				0xb6 2 0 0
+				0xb7 2 0 0>;
+		};
+
+		msi@41600 {
+			compatible = "fsl,mpic-msi";
+			reg = <0x41600 0x80>;
+			msi-available-ranges = <0x0 0x100>;
+			interrupts = <
+				0xe0 0 0 0
+				0xe1 0 0 0
+				0xe2 0 0 0
+				0xe3 0 0 0
+				0xe4 0 0 0
+				0xe5 0 0 0
+				0xe6 0 0 0
+				0xe7 0 0 0>;
+		};
+
+		timer@41100 {
+			compatible = "fsl,mpic-global-timer";
+			reg = <0x41100 0x100 0x41300 0x4>;
+			interrupts = <
+				0 0 3 0
+				1 0 3 0
+				2 0 3 0
+				3 0 3 0>;
+		};
+
+		timer@42100 {
+			compatible = "fsl,mpic-global-timer";
+			reg = <0x42100 0x100 0x42300 0x4>;
+			interrupts = <
+				4 0 3 0
+				5 0 3 0
+				6 0 3 0
+				7 0 3 0>;
+		};
+
+		global-utilities@e0000 {
+			compatible = "fsl,p2020-guts";
+			reg = <0xe0000 0x1000>;
+			fsl,has-rstcr;
+		};
+
+		board-data {
+			compatible = "meraki,meraki-config";
+			i2c-eeprom = <&config_eeprom>;
+			gpios = <&fsl_gpios 8 1>;
+		};
+
+		gpio-buttons {
+			compatible = "gpio-keys";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			autorepeat;
+			button@1 {
+				label = "soft_reset";
+				linux,code = <0x198>;     // EV_RESTART
+                                linux,input-type = <1>;   // EV_KEY
+				gpios = <&fsl_gpios 0 1>;
+			};
+		};
+	};
+
+	sfp-bus {
+		compatible = "simple-bus";
+
+#ifdef BOARD_MS420_48
+		sfp@1 {
+			compatible = "meraki,sfp-user";
+			id = <1>;
+                        rs0 = <&gpio1 0 0>;
+                        rs1 = <&gpio1 20 0>;
+                        mod-abs = <&gpio5 0 0>;
+			rx-los = <&gpio7 0 0>;
+			i2c = <&i2c_sfp1>;
+		};
+
+		sfp@2 {
+			compatible = "meraki,sfp-user";
+			id = <2>;
+                        rs0 = <&gpio1 1 0>;
+                        rs1 = <&gpio1 21 0>;
+                        mod-abs = <&gpio5 1 0>;
+			rx-los = <&gpio7 1 0>;
+			i2c = <&i2c_sfp2>;
+		};
+
+		sfp@3 {
+			compatible = "meraki,sfp-user";
+			id = <3>;
+                        rs0 = <&gpio1 2 0>;
+                        rs1 = <&gpio1 22 0>;
+                        mod-abs = <&gpio5 2 0>;
+			rx-los = <&gpio7 2 0>;
+			i2c = <&i2c_sfp3>;
+		};
+
+		sfp@4 {
+			compatible = "meraki,sfp-user";
+			id = <4>;
+                        rs0 = <&gpio1 3 0>;
+                        rs1 = <&gpio1 23 0>;
+                        mod-abs = <&gpio5 3 0>;
+			rx-los = <&gpio7 3 0>;
+			i2c = <&i2c_sfp4>;
+		};
+                                
+		sfp@5 {
+			compatible = "meraki,sfp-user";
+			id = <5>;
+                        rs0 = <&gpio1 4 0>;
+                        rs1 = <&gpio1 24 0>;
+                        mod-abs = <&gpio5 4 0>;
+			rx-los = <&gpio7 4 0>;
+			i2c = <&i2c_sfp5>;
+		};
+
+		sfp@6 {
+			compatible = "meraki,sfp-user";
+			id = <6>;
+                        rs0 = <&gpio1 5 0>;
+                        rs1 = <&gpio1 25 0>;
+                        mod-abs = <&gpio5 5 0>;
+			rx-los = <&gpio7 5 0>;
+			i2c = <&i2c_sfp6>;
+                };
+
+		sfp@7 {
+			compatible = "meraki,sfp-user";
+			id = <7>;
+                        rs0 = <&gpio1 6 0>;
+                        rs1 = <&gpio1 26 0>;
+                        mod-abs = <&gpio5 6 0>;
+			rx-los = <&gpio7 6 0>;
+			i2c = <&i2c_sfp7>;
+                };
+
+		sfp@8 {
+			compatible = "meraki,sfp-user";
+			id = <8>;
+                        rs0 = <&gpio1 7 0>;
+                        rs1 = <&gpio1 27 0>;
+                        mod-abs = <&gpio5 7 0>;
+			rx-los = <&gpio7 7 0>;
+			i2c = <&i2c_sfp8>;
+                };
+
+		sfp@9 {
+			compatible = "meraki,sfp-user";
+			id = <9>;
+                        rs0 = <&gpio1 8 0>;
+                        rs1 = <&gpio1 28 0>;
+                        mod-abs = <&gpio5 8 0>;
+			rx-los = <&gpio7 8 0>;
+			i2c = <&i2c_sfp9>;
+                };
+
+		sfp@10 {
+			compatible = "meraki,sfp-user";
+			id = <10>;
+                        rs0 = <&gpio1 9 0>;
+                        rs1 = <&gpio1 29 0>;
+                        mod-abs = <&gpio5 9 0>;
+			rx-los = <&gpio7 9 0>;
+			i2c = <&i2c_sfp10>;
+                };
+
+		sfp@11 {
+			compatible = "meraki,sfp-user";
+			id = <11>;
+                        rs0 = <&gpio1 10 0>;
+                        rs1 = <&gpio1 30 0>;
+                        mod-abs = <&gpio5 10 0>;
+			rx-los = <&gpio7 10 0>;
+			i2c = <&i2c_sfp11>;
+                };
+
+		sfp@12 {
+			compatible = "meraki,sfp-user";
+			id = <12>;
+                        rs0 = <&gpio1 11 0>;
+                        rs1 = <&gpio1 31 0>;
+                        mod-abs = <&gpio5 11 0>;
+			rx-los = <&gpio7 11 0>;
+			i2c = <&i2c_sfp12>;
+                };
+
+		sfp@13 {
+			compatible = "meraki,sfp-user";
+			id = <13>;
+                        rs0 = <&gpio1 12 0>;
+                        rs1 = <&gpio1 32 0>;
+                        mod-abs = <&gpio5 12 0>;
+			rx-los = <&gpio7 12 0>;
+			i2c = <&i2c_sfp13>;
+                };
+
+		sfp@14 {
+			compatible = "meraki,sfp-user";
+			id = <14>;
+                        rs0 = <&gpio1 13 0>;
+                        rs1 = <&gpio1 33 0>;
+                        mod-abs = <&gpio5 13 0>;
+			rx-los = <&gpio7 13 0>;
+			i2c = <&i2c_sfp14>;
+                };
+
+		sfp@15 {
+			compatible = "meraki,sfp-user";
+			id = <15>;
+                        rs0 = <&gpio1 14 0>;
+                        rs1 = <&gpio1 34 0>;
+                        mod-abs = <&gpio5 14 0>;
+			rx-los = <&gpio7 14 0>;
+			i2c = <&i2c_sfp15>;
+                };
+
+		sfp@16 {
+			compatible = "meraki,sfp-user";
+			id = <16>;
+                        rs0 = <&gpio1 15 0>;
+                        rs1 = <&gpio1 35 0>;
+                        mod-abs = <&gpio5 15 0>;
+			rx-los = <&gpio7 15 0>;
+			i2c = <&i2c_sfp16>;
+                };
+
+		sfp@17 {
+			compatible = "meraki,sfp-user";
+			id = <17>;
+                        rs0 = <&gpio1 16 0>;
+                        rs1 = <&gpio1 36 0>;
+                        mod-abs = <&gpio5 16 0>;
+			rx-los = <&gpio7 16 0>;
+			i2c = <&i2c_sfp17>;
+                };
+
+		sfp@18 {
+			compatible = "meraki,sfp-user";
+			id = <18>;
+                        rs0 = <&gpio1 17 0>;
+                        rs1 = <&gpio1 37 0>;
+                        mod-abs = <&gpio5 17 0>;
+			rx-los = <&gpio7 17 0>;
+			i2c = <&i2c_sfp18>;
+                };
+
+		sfp@19 {
+			compatible = "meraki,sfp-user";
+			id = <19>;
+                        rs0 = <&gpio1 18 0>;
+                        rs1 = <&gpio1 38 0>;
+                        mod-abs = <&gpio5 18 0>;
+			rx-los = <&gpio7 18 0>;
+			i2c = <&i2c_sfp19>;
+                };
+
+		sfp@20 {
+			compatible = "meraki,sfp-user";
+			id = <20>;
+                        rs0 = <&gpio1 19 0>;
+                        rs1 = <&gpio1 39 0>;
+                        mod-abs = <&gpio5 19 0>;
+			rx-los = <&gpio7 19 0>;
+			i2c = <&i2c_sfp20>;
+                };
+
+		sfp@21 {
+			compatible = "meraki,sfp-user";
+			id = <21>;
+                        rs0 = <&gpio2 0 0>;
+                        rs1 = <&gpio2 20 0>;
+                        mod-abs = <&gpio5 20 0>;
+			rx-los = <&gpio7 20 0>;
+			i2c = <&i2c_sfp21>;
+                };
+
+		sfp@22 {
+			compatible = "meraki,sfp-user";
+			id = <22>;
+                        rs0 = <&gpio2 1 0>;
+                        rs1 = <&gpio2 21 0>;
+                        mod-abs = <&gpio5 21 0>;
+			rx-los = <&gpio7 21 0>;
+			i2c = <&i2c_sfp22>;
+                };
+
+		sfp@23 {
+			compatible = "meraki,sfp-user";
+			id = <23>;
+                        rs0 = <&gpio2 2 0>;
+                        rs1 = <&gpio2 22 0>;
+                        mod-abs = <&gpio5 22 0>;
+			rx-los = <&gpio7 22 0>;
+			i2c = <&i2c_sfp23>;
+                };
+
+		sfp@24 {
+			compatible = "meraki,sfp-user";
+			id = <24>;
+                        rs0 = <&gpio2 3 0>;
+                        rs1 = <&gpio2 23 0>;
+                        mod-abs = <&gpio5 23 0>;
+			rx-los = <&gpio7 23 0>;
+			i2c = <&i2c_sfp24>;
+                };
+#endif
+
+		sfp@25 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <25>;
+#else
+			id = <1>;
+#endif
+                        rs0 = <&gpio2 4 0>;
+                        rs1 = <&gpio2 24 0>;
+                        mod-abs = <&gpio5 24 0>;
+			rx-los = <&gpio7 24 0>;
+			i2c = <&i2c_sfp25>;
+                };
+
+		sfp@26 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <26>;
+#else
+			id = <2>;
+#endif
+                        rs0 = <&gpio2 5 0>;
+                        rs1 = <&gpio2 25 0>;
+                        mod-abs = <&gpio5 25 0>;
+			rx-los = <&gpio7 25 0>;
+			i2c = <&i2c_sfp26>;
+                };
+
+		sfp@27 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <27>;
+#else
+			id = <3>;
+#endif
+                        rs0 = <&gpio2 6 0>;
+                        rs1 = <&gpio2 26 0>;
+                        mod-abs = <&gpio5 26 0>;
+			rx-los = <&gpio7 26 0>;
+			i2c = <&i2c_sfp27>;
+                };
+
+		sfp@28 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <28>;
+#else
+			id = <4>;
+#endif
+                        rs0 = <&gpio2 7 0>;
+                        rs1 = <&gpio2 27 0>;
+                        mod-abs = <&gpio5 27 0>;
+			rx-los = <&gpio7 27 0>;
+			i2c = <&i2c_sfp28>;
+                };
+
+		sfp@29 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <29>;
+#else
+			id = <5>;
+#endif
+                        rs0 = <&gpio2 8 0>;
+                        rs1 = <&gpio2 28 0>;
+                        mod-abs = <&gpio5 28 0>;
+			rx-los = <&gpio7 28 0>;
+			i2c = <&i2c_sfp29>;
+                };
+
+		sfp@30 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <30>;
+#else
+			id = <6>;
+#endif
+                        rs0 = <&gpio2 9 0>;
+                        rs1 = <&gpio2 29 0>;
+                        mod-abs = <&gpio5 29 0>;
+			rx-los = <&gpio7 29 0>;
+			i2c = <&i2c_sfp30>;
+                };
+
+		sfp@31 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <31>;
+#else
+			id = <7>;
+#endif
+                        rs0 = <&gpio2 10 0>;
+                        rs1 = <&gpio2 30 0>;
+                        mod-abs = <&gpio5 30 0>;
+			rx-los = <&gpio7 30 0>;
+			i2c = <&i2c_sfp31>;
+                };
+
+		sfp@32 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <32>;
+#else
+			id = <8>;
+#endif
+                        rs0 = <&gpio2 11 0>;
+                        rs1 = <&gpio2 31 0>;
+                        mod-abs = <&gpio5 31 0>;
+			rx-los = <&gpio7 31 0>;
+			i2c = <&i2c_sfp32>;
+                };
+
+		sfp@33 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <33>;
+#else
+			id = <9>;
+#endif
+                        rs0 = <&gpio2 12 0>;
+                        rs1 = <&gpio2 32 0>;
+                        mod-abs = <&gpio5 32 0>;
+			rx-los = <&gpio7 32 0>;
+			i2c = <&i2c_sfp33>;
+                };
+
+		sfp@34 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <34>;
+#else
+			id = <10>;
+#endif
+                        rs0 = <&gpio2 13 0>;
+                        rs1 = <&gpio2 33 0>;
+                        mod-abs = <&gpio5 33 0>;
+			rx-los = <&gpio7 33 0>;
+			i2c = <&i2c_sfp34>;
+                };
+
+		sfp@35 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <35>;
+#else
+			id = <11>;
+#endif
+                        rs0 = <&gpio2 14 0>;
+                        rs1 = <&gpio2 34 0>;
+                        mod-abs = <&gpio5 34 0>;
+			rx-los = <&gpio7 34 0>;
+			i2c = <&i2c_sfp35>;
+                };
+
+		sfp@36 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <36>;
+#else
+			id = <12>;
+#endif
+                        rs0 = <&gpio2 15 0>;
+                        rs1 = <&gpio2 35 0>;
+                        mod-abs = <&gpio5 35 0>;
+			rx-los = <&gpio7 35 0>;
+			i2c = <&i2c_sfp36>;
+                };
+
+		sfp@37 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <37>;
+#else
+			id = <13>;
+#endif
+                        rs0 = <&gpio2 16 0>;
+                        rs1 = <&gpio2 36 0>;
+                        mod-abs = <&gpio5 36 0>;
+			rx-los = <&gpio7 36 0>;
+			i2c = <&i2c_sfp37>;
+                };
+
+		sfp@38 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <38>;
+#else
+			id = <14>;
+#endif
+                        rs0 = <&gpio2 17 0>;
+                        rs1 = <&gpio2 37 0>;
+                        mod-abs = <&gpio5 37 0>;
+			rx-los = <&gpio7 37 0>;
+			i2c = <&i2c_sfp38>;
+                };
+
+		sfp@39 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <39>;
+#else
+			id = <15>;
+#endif
+                        rs0 = <&gpio2 18 0>;
+                        rs1 = <&gpio2 38 0>;
+                        mod-abs = <&gpio5 38 0>;
+			rx-los = <&gpio7 38 0>;
+			i2c = <&i2c_sfp39>;
+                };
+
+		sfp@40 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <40>;
+#else
+			id = <16>;
+#endif
+                        rs0 = <&gpio2 19 0>;
+                        rs1 = <&gpio2 39 0>;
+                        mod-abs = <&gpio5 39 0>;
+			rx-los = <&gpio7 39 0>;
+			i2c = <&i2c_sfp40>;
+                };
+
+		sfp@41 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <41>;
+#else
+			id = <17>;
+#endif
+                        rs0 = <&gpio3 0 0>;
+                        rs1 = <&gpio4 0 0>;
+                        mod-abs = <&gpio6 0 0>;
+			rx-los = <&gpio8 0 0>;
+			i2c = <&i2c_sfp41>;
+                };
+
+		sfp@42 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <42>;
+#else
+			id = <18>;
+#endif
+                        rs0 = <&gpio3 1 0>;
+                        rs1 = <&gpio4 1 0>;
+                        mod-abs = <&gpio6 1 0>;
+			rx-los = <&gpio8 1 0>;
+			i2c = <&i2c_sfp42>;
+                };
+
+		sfp@43 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <43>;
+#else
+			id = <19>;
+#endif
+                        rs0 = <&gpio3 2 0>;
+                        rs1 = <&gpio4 2 0>;
+                        mod-abs = <&gpio6 2 0>;
+			rx-los = <&gpio8 2 0>;
+			i2c = <&i2c_sfp43>;
+                };
+
+		sfp@44 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <44>;
+#else
+			id = <20>;
+#endif
+                        rs0 = <&gpio3 3 0>;
+                        rs1 = <&gpio4 3 0>;
+                        mod-abs = <&gpio6 3 0>;
+			rx-los = <&gpio8 3 0>;
+			i2c = <&i2c_sfp44>;
+                };
+
+		sfp@45 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <45>;
+#else
+			id = <21>;
+#endif
+                        rs0 = <&gpio3 4 0>;
+                        rs1 = <&gpio4 4 0>;
+                        mod-abs = <&gpio6 4 0>;
+			rx-los = <&gpio8 4 0>;
+			i2c = <&i2c_sfp45>;
+                };
+
+
+		sfp@46 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <46>;
+#else
+			id = <22>;
+#endif
+                        rs0 = <&gpio3 5 0>;
+                        rs1 = <&gpio4 5 0>;
+                        mod-abs = <&gpio6 5 0>;
+			rx-los = <&gpio8 5 0>;
+			i2c = <&i2c_sfp46>;
+                };
+
+		sfp@47 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <47>;
+#else
+			id = <23>;
+#endif
+                        rs0 = <&gpio3 6 0>;
+                        rs1 = <&gpio4 6 0>;
+                        mod-abs = <&gpio6 6 0>;
+			rx-los = <&gpio8 6 0>;
+			i2c = <&i2c_sfp47>;
+                };
+
+		sfp@48 {
+			compatible = "meraki,sfp-user";
+#ifdef BOARD_MS420_48
+			id = <48>;
+#else
+			id = <24>;
+#endif
+                        rs0 = <&gpio3 7 0>;
+                        rs1 = <&gpio4 7 0>;
+                        mod-abs = <&gpio6 7 0>;
+			rx-los = <&gpio8 7 0>;
+			i2c = <&i2c_sfp48>;
+                };
+	};
+
+	tricolor-led {
+		compatible = "numen,nu801";
+		gpios = <&fsl_gpios 3 0	   // CKI
+			 &fsl_gpios 2 0	   // SDI
+			 &fsl_gpios 1 0>;  // LEI
+	};
+
+	gpio-leds {
+		compatible = "gpio-leds";
+		power-orange {
+			label = "power:orange";
+			gpios = <&fsl_gpios 5 0>;
+			default-state = "on";
+		};
+
+		power-white {
+			label = "power:white";
+			gpios = <&fsl_gpios 4 0>;
+			default-state = "off";
+		};
+
+		fan1-green {
+			label = "fan1:green";
+			gpios = <&fan_led_gpios 0 1>;
+			default-state = "off";
+		};
+
+		fan1-orange {
+			label = "fan1:orange";
+			gpios = <&fan_led_gpios 1 1>;
+			default-state = "off";
+		};
+
+		fan2-green {
+			label = "fan2:green";
+			gpios = <&fan_led_gpios 2 1>;
+			default-state = "off";
+		};
+
+		fan2-orange {
+			label = "fan2:orange";
+			gpios = <&fan_led_gpios 3 1>;
+			default-state = "off";
+		};
+
+		fan3-green {
+			label = "fan3:green";
+			gpios = <&fan_led_gpios 4 1>;
+			default-state = "off";
+		};
+
+		fan3-orange {
+			label = "fan3:orange";
+			gpios = <&fan_led_gpios 5 1>;
+			default-state = "off";
+		};
+
+		fan4-green {
+			label = "fan4:green";
+			gpios = <&fan_led_gpios 6 1>;
+			default-state = "off";
+		};
+
+		fan4-orange {
+			label = "fan4:orange";
+			gpios = <&fan_led_gpios 7 1>;
+			default-state = "off";
+		};
+	};
+
+	pci0: pcie@ff709000 {
+		reg = <0 0xff709000 0 0x1000>;
+		ranges = <0x2000000 0x0 0xc0000000 0 0xc0000000 0x0 0x20000000
+			  0x1000000 0x0 0x00000000 0 0xffc30000 0x0 0x10000>;
+		compatible = "fsl,mpc8548-pcie";
+		device_type = "pci";
+		#size-cells = <2>;
+		#address-cells = <3>;
+		bus-range = <0 255>;
+		clock-frequency = <33333333>;
+		interrupts = <25 2 0 0>;
+
+		pcie@0 {
+			ranges = <0x2000000 0x0 0xc0000000
+				  0x2000000 0x0 0xc0000000
+				  0x0 0x20000000
+
+				  0x1000000 0x0 0x0
+				  0x1000000 0x0 0x0
+				  0x0 0x100000>;
+			reg = <0x0 0x0 0x0 0x0 0x0>;
+			#interrupt-cells = <1>;
+			#size-cells = <2>;
+			#address-cells = <3>;
+			device_type = "pci";
+			interrupts = <25 2 0 0>;
+			interrupt-map-mask = <0xf800 0x0 0x0 0x7>;
+			interrupt-map = <
+				0000 0x0 0x0 0x1 &mpic 0x4 0x1 0x0 0x0
+				0000 0x0 0x0 0x2 &mpic 0x5 0x1 0x0 0x0
+				0000 0x0 0x0 0x3 &mpic 0x6 0x1 0x0 0x0
+				0000 0x0 0x0 0x4 &mpic 0x7 0x1 0x0 0x0>;
+		};
+	};
+
+	pci1: pcie@ff70a000 {
+		reg = <0x0 0xff70a000 0x0 0x1000>;
+		ranges = <0x2000000 0x0 0xa0000000 0x0 0xa0000000 0x0 0x20000000
+			  0x1000000 0x0 0x00000000 0x0 0xffc20000 0x0 0x10000>;
+		compatible = "fsl,mpc8548-pcie";
+		device_type = "pci";
+		#size-cells = <2>;
+		#address-cells = <3>;
+		bus-range = <0 255>;
+		clock-frequency = <33333333>;
+		interrupts = <26 2 0 0>;
+		max-payload-size = <256>;
+
+		pcie@0 {
+			ranges = <0x2000000 0x0 0xc0000000
+				  0x2000000 0x0 0xc0000000
+				  0x0 0x20000000
+
+				  0x1000000 0x0 0x0
+				  0x1000000 0x0 0x0
+				  0x0 0x100000>;
+			reg = <0x0 0x0 0x0 0x0 0x0>;
+			#interrupt-cells = <1>;
+			#size-cells = <2>;
+			#address-cells = <3>;
+			device_type = "pci";
+			interrupts = <26 2 0 0>;
+			interrupt-map-mask = <0xf800 0x0 0x0 0x7>;
+			interrupt-map = <
+				0000 0x0 0x0 0x1 &mpic 0x0 0x1 0x0 0x0
+				0000 0x0 0x0 0x2 &mpic 0x1 0x1 0x0 0x0
+				0000 0x0 0x0 0x3 &mpic 0x2 0x1 0x0 0x0
+				0000 0x0 0x0 0x4 &mpic 0x3 0x1 0x0 0x0>;
+		};
+	};
+};

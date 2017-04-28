@@ -1,0 +1,119 @@
+/*
+ * Copyright (C) 2015 Meraki, Inc.
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ */
+/dts-v1/;
+
+/include/ "skeleton.dtsi"
+
+/ {
+	model = "Meraki Cyclops";
+	compatible = "meraki,cyclops";
+
+	memory {
+		device_type = "memory";
+		/* linux,usable-memory takes priority over reg. reg is either
+			specified here in the DTS or copied from the mem tag in ATAGS
+			by the kernel decompressor. This is important during kexec.
+			One of these two should be specified */
+		/*linux,usable-memory = <0x200000 0x27800000>;*/
+		reg = <0x0 0x0>; /* specified in ATAGS by bootloader */
+	};
+
+	ambarella {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		/* These are specified in ATAGS by bootloader */
+		bsb-reg = <0x0 0x0>;
+		bst-reg = <0x0 0x0>;
+		dsp-reg = <0x0 0x0>;
+		hal-reg = <0x0 0x0 0x0>;
+		board-id = <0x0>;
+	};
+
+	nand {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "ambarella,nand-ambarella";
+
+		partition@0 {
+			label = "bst";                /* Bootstrap */
+			reg = <0x00000000 0x20000>;   /* 1 128k block */
+		};
+
+		partition@1 {
+			label = "ptb";                /* Partition table block */
+			reg = <0x00020000 0x20000>;   /* 1 128k block */
+		};
+
+		partition@2 {
+			label = "bld";                /* Boot Loader */
+			reg = <0x00040000 0x80000>;   /* 4 128k blocks */
+		};
+
+		partition@3 {
+			label = "hal";                /* Hardware Abstraction Layer */
+			reg = <0x000C0000 0x20000>;   /* 1 128k block */
+		};
+
+		partition@4 {
+			label = "bootkernel1";
+			reg = <0xDC00000 0x500000>;   /* 40 128k blocks: 5Mb */
+		};
+
+		partition@5 {
+			label = "bootkernel2";
+			reg = <0xC800000 0x500000>;   /* 40 128k blocks: 5Mb */
+		};
+
+		partition@6 {
+			label = "ubi";                /* 16 MB offset */
+			reg = <0x1000000 0x6000000>;  /* 768 128k blocks: 96MB */
+		};
+	};
+
+	gpiochip0: gpio-0 {                 /* GPIOs 0 - 31   */
+		#gpio-cells = <2>;
+		compatible = "ambarella,ambarella-gpio-0";
+		gpio-controller;
+	};
+
+	gpiochip1: gpio-1 {                 /* GPIOs 32 - 63  */
+		#gpio-cells = <2>;
+		compatible = "ambarella,ambarella-gpio-1";
+		gpio-controller;
+	};
+
+	leds {
+		compatible = "gpio-leds";
+		orange {
+			label = "power:orange";
+			gpios = <&gpiochip0 7 1>;
+			default-state = "on";
+		};
+		green {
+			label = "power:green";
+			gpios = <&gpiochip0 10 1>;
+		};
+		blue {
+			label = "power:blue";
+			gpios = <&gpiochip0 18 1>;
+		};
+	};
+
+	gpio-buttons {
+		compatible = "gpio-keys-polled";
+		autorepeat;
+		poll-interval = <20>;
+		button@1 {
+			label = "soft_reset";
+			linux,code = <0x198>;     // EV_RESTART
+			linux,input-type = <1>;   // EV_KEY
+			debounce-interval = <60>;
+			gpios = <&gpiochip1 20 1>; // gpio 52
+		};
+	};
+};

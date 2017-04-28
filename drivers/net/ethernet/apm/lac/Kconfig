@@ -1,0 +1,10 @@
+config APM_LAC
+        tristate "APM86xxx Look aside Clasifier driver"
+        select APM_NET
+        default n
+        ---help---
+          This is the Look aside Clasifier driver for APM86xxx SoC.
+	  
+	  To compile this driver as a module, choose M here. This module will
+	  be called apm_lac.
+

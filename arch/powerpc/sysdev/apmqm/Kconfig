@@ -1,0 +1,27 @@
+# For a description of the syntax of this configuration file,
+# see Documentation/kbuild/kconfig-language.txt.
+#
+
+config APMQM
+        tristate "APM 86xxx QM driver"
+        default n
+        help
+          This option enables APM86xxx Queue Manager (QM) driver support 
+          requires for APM86xxx DMA, Ethernet, and security hardware.
+
+if APMQM
+config	QM_IRQ_COALECING
+	tristate "APM 86xxx QM driver interrupt coalescing"
+	default n
+	help
+	  This option enables interrupt coalescing for APM86xxx Queue Manager.
+
+config APMQM_CFG
+        tristate "APM 86xxx QM Configuration Driver"
+	depends on APMQM
+        default y 
+        help
+          This option enables APM86xxx Queue Manager (QM) configuration
+	  driver.
+endif
+

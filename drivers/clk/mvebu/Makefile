@@ -1,0 +1,17 @@
+obj-$(CONFIG_MVEBU_CLK_COMMON)	+= common.o
+obj-$(CONFIG_MVEBU_CLK_CPU) 	+= clk-cpu.o
+obj-$(CONFIG_MVEBU_CLK_COREDIV)	+= clk-corediv.o
+obj-$(CONFIG_ARMADA_370_CLK)	+= armada-370.o
+obj-$(CONFIG_ARMADA_375_CLK)	+= armada-375.o
+obj-$(CONFIG_ARMADA_38X_CLK)	+= armada-38x.o
+obj-$(CONFIG_ARMADA_39X_CLK)	+= armada-39x.o
+obj-$(CONFIG_ARMADA_3700_CLK)	+= armada-3700.o
+obj-$(CONFIG_MSYS_CLK)	+= msys.o
+obj-$(CONFIG_ARMADA_AP806_SYSCON) += ap806-system-controller.o
+obj-$(CONFIG_ARMADA_AP806_CORE_CLK) += ap806-core.o
+obj-$(CONFIG_ARMADA_AP806_RING_CLK) += ap806-ring.o
+obj-$(CONFIG_ARMADA_CP110_CLK)  += cp110.o
+obj-$(CONFIG_ARMADA_XP_CLK)	+= armada-xp.o
+obj-$(CONFIG_DOVE_CLK)		+= dove.o
+obj-$(CONFIG_KIRKWOOD_CLK)	+= kirkwood.o
+obj-$(CONFIG_ORION_CLK)		+= orion.o

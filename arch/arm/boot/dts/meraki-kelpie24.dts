@@ -1,0 +1,15 @@
+/*
+ * Device Tree file for Meraki MS120/GS110 24-port models.
+ *
+ * Copyright (C) 2016,2018 Cisco Systems
+ *
+ */
+
+/dts-v1/;
+
+#include "meraki-kelpie.dtsi"
+
+/ {
+        model = "Meraki MS120-24 or GS110-24";
+
+};

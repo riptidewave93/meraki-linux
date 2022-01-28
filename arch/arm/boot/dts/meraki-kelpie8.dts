@@ -1,0 +1,39 @@
+/*
+ * Device Tree file for Meraki MS120/GS110 8-port board, based on the
+ * Marvell AlleyCat3 SoC.
+ *
+ * Copyright (C) 2016,2018 Cisco Systems
+ *
+ */
+
+/dts-v1/;
+
+#include "meraki-kelpie.dtsi"
+
+/ {
+        model = "Meraki MS120-8 or GS110-8";
+
+        usb@50000 {
+                status = "okay";
+        };
+};
+
+&sfp3 {
+        status = "disabled";
+};
+
+&sfp4 {
+        status = "disabled";
+};
+
+&i2c_sfp3 {
+        status = "disabled";
+};
+
+&i2c_sfp4 {
+        status = "disabled";
+};
+
+&hwmon0 {
+        status = "disabled";
+};

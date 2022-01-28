@@ -1,0 +1,227 @@
+/include/ "fsl/p1022si-pre.dtsi"
+
+// Mostly copied from p1022ds_32b.dts
+/ {
+    model = "fsl,P1022DS";
+    compatible = "fsl,P1022DS";
+
+    memory {
+        device_type = "memory";
+    };
+
+    reserved-memory {
+        #address-cells = <1>;
+        #size-cells = <1>;
+        ranges;
+
+        pstore: pstore@0xff00000 {
+            reg = <0xff00000 0x100000>;
+        };
+    };
+
+    lbc: localbus@ffe05000 {
+        ranges = <0x0 0x0 0x0 0xe8000000 0x08000000
+                  0x1 0x0 0x0 0xe0000000 0x08000000
+                  0x2 0x0 0x0 0xff800000 0x00040000
+                  0x3 0x0 0x0 0xffdf0000 0x00008000>;
+        reg = <0x0 0xffe05000 0 0x1000>;
+    };
+
+    soc: soc@ffe00000 {
+        ranges = <0x0 0x0 0xffe00000 0x100000>;
+    };
+
+    pci0: pcie@ffe09000 {
+        ranges = <0x2000000 0x0 0xe0000000 0 0xa0000000 0x0 0x20000000
+                  0x1000000 0x0 0x00000000 0 0xffc10000 0x0 0x10000>;
+        reg = <0x0 0xffe09000 0 0x1000>;
+        pcie@0 {
+            ranges = <0x2000000 0x0 0xe0000000
+                      0x2000000 0x0 0xe0000000
+                      0x0 0x20000000
+
+                      0x1000000 0x0 0x0
+                      0x1000000 0x0 0x0
+                      0x0 0x100000>;
+        };
+    };
+
+    pci1: pcie@ffe0a000 {
+        ranges = <0x2000000 0x0 0xe0000000 0 0xc0000000 0x0 0x20000000
+                  0x1000000 0x0 0x00000000 0 0xffc20000 0x0 0x10000>;
+        reg = <0 0xffe0a000 0 0x1000>;
+        pcie@0 {
+            ranges = <0x2000000 0x0 0xe0000000
+                      0x2000000 0x0 0xe0000000
+                      0x0 0x20000000
+
+                      0x1000000 0x0 0x0
+                      0x1000000 0x0 0x0
+                      0x0 0x100000>;
+        };
+    };
+
+    pci2: pcie@ffe0b000 {
+        ranges = <0x2000000 0x0 0xe0000000 0 0x80000000 0x0 0x20000000
+                  0x1000000 0x0 0x00000000 0 0xffc00000 0x0 0x10000>;
+        reg = <0 0xffe0b000 0 0x1000>;
+        pcie@0 {
+            ranges = <0x2000000 0x0 0xe0000000
+                      0x2000000 0x0 0xe0000000
+                      0x0 0x20000000
+
+                      0x1000000 0x0 0x0
+                      0x1000000 0x0 0x0
+                      0x0 0x100000>;
+        };
+    };
+};
+
+&lbc {
+    nand@2,0 {
+        #address-cells = <1>;
+        #size-cells = <1>;
+        compatible = "fsl,elbc-fcm-nand";
+        reg = <0x2 0x0 0x40000>;
+
+        partition@0 {
+            label = "firmware";
+            reg   = <0x00000000 0x00100000>;
+        };
+        partition@180000 {
+            label = "factory";
+            reg   = <0x00100000 0x00100000>;
+        };
+        partition@200000 {
+            label = "ubi";
+            reg   = <0x00200000 0x07e00000>;
+        };
+        all {
+            label = "all";
+            reg   = <0x00000000 0x08000000>;
+        };
+    };
+};
+
+&soc {
+    i2c@3000 {
+        ina2xx@45 {
+            compatible = "ina219";
+            config = <0x219F>;
+            calibration = <0x99BA>;
+            power_lsb = <2082>;
+            reg = <0x45>;
+        };
+    };
+
+    i2c@3100 {
+        status = "disabled";
+    };
+
+    serial@4600 {
+        status = "disabled";
+    };
+
+    spi@7000 {
+        status = "disabled";
+    };
+
+    mdio@24000 {
+        phy0: ethernet-phy@0 {
+            interrupts = <3 1 0 0>;
+            reg = <0x0>;
+        };
+    };
+
+    mdio@25000 {
+        status = "disabled";
+    };
+
+    ethernet@b0000 {
+        phy-handle = <&phy0>;
+        phy-connection-type = "rgmii-id";
+    };
+
+    ethernet@b1000 {
+        status = "disabled";
+    };
+};
+
+// LED devices
+/ {
+    gpio-devices {
+        // simple-bus tells mpc85xx_common_publish_devices() to probe
+        // for platform devices on this node
+        compatible = "simple-bus";
+
+        gpio-leds {
+            compatible = "gpio-leds";
+            power-orange {
+                label = "power:orange";
+                gpios = <&gpio 8 0>;
+                default-state = "on";
+            };
+            power-white {
+                label = "power:white";
+                gpios = <&gpio 5 0>;
+            };
+        };
+
+        tricolor-led {
+            compatible = "numen,leds-nu801";
+            controller1 {
+                label = "tricolor";
+                cki = <&gpio 19 0>;
+                sdi = <&gpio 17 0>;
+                lei = <&gpio 20 0>;
+                ndelay  = <50>;
+                num_leds = <1>;
+                led_color0 {
+                    label = "blue";
+                    state = "off";
+                };
+                led_color1 {
+                    label = "green";
+                    state = "off";
+                };
+                led_color2 {
+                    label = "red";
+                    state = "off";
+                };
+            };
+        };
+    };
+};
+
+/include/ "fsl/p1022si-post.dtsi"
+
+&soc {
+    // Correct GPIO controller address
+    gpio: gpio-controller@fc00 {
+        reg = <0xf000 0x100>;
+    };
+
+    gpio_keys_polled {
+        compatible = "gpio-keys-polled";
+        #address-cells = <1>;
+        #size-cells = <0>;
+        poll-interval = <60>;       /* 3 * 20 = 60ms */
+        autorepeat;
+        button@1 {
+           label = "soft_reset";
+           linux,code = <0x198>;     /* EV_RESTART    */
+           linux,input-type = <1>;   /* EV_KEY        */
+           gpios = <&gpio 28 1>;
+        };
+    };
+
+    ramoops {
+        compatible = "ramoops";
+        memory-region = <&pstore>;
+        record-size = <0x80000>;
+        console-size = <0>;
+        ftrace-size = <0>;
+        pmsg-size = <0>;
+        ecc-size = <0>;
+    };
+};

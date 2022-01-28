@@ -1,0 +1,346 @@
+/*
+ * Copyright (C) 2016 Marvell Technology Group Ltd.
+ *
+ * This file is dual-licensed: you can use it either under the terms
+ * of the GPLv2 or the X11 license, at your option. Note that this dual
+ * licensing only applies to this file, and not this project as a
+ * whole.
+ *
+ *  a) This library is free software; you can redistribute it and/or
+ *     modify it under the terms of the GNU General Public License as
+ *     published by the Free Software Foundation; either version 2 of the
+ *     License, or (at your option) any later version.
+ *
+ *     This library is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ * Or, alternatively,
+ *
+ *  b) Permission is hereby granted, free of charge, to any person
+ *     obtaining a copy of this software and associated documentation
+ *     files (the "Software"), to deal in the Software without
+ *     restriction, including without limitation the rights to use,
+ *     copy, modify, merge, publish, distribute, sublicense, and/or
+ *     sell copies of the Software, and to permit persons to whom the
+ *     Software is furnished to do so, subject to the following
+ *     conditions:
+ *
+ *     The above copyright notice and this permission notice shall be
+ *     included in all copies or substantial portions of the Software.
+ *
+ *     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ *     EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ *     OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ *     NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ *     HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ *     WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ *     FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ *     OTHER DEALINGS IN THE SOFTWARE.
+ */
+
+/*
+ * Device Tree file for Marvell Armada AP806.
+ */
+
+#include "armada-ap806.dtsi"
+
+/ {
+	model = "Marvell Armada AP806 Quad";
+	compatible = "marvell,armada-ap806-quad", "marvell,armada-ap806";
+
+	cpus {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		cpu0: cpu@000 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a72", "arm,armv8";
+			reg = <0x000>;
+			enable-method = "psci";
+		};
+		cpu1: cpu@001 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a72", "arm,armv8";
+			reg = <0x001>;
+			enable-method = "psci";
+		};
+		cpu2: cpu@100 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a72", "arm,armv8";
+			reg = <0x100>;
+			enable-method = "psci";
+		};
+		cpu3: cpu@101 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a72", "arm,armv8";
+			reg = <0x101>;
+			enable-method = "psci";
+		};
+	};
+
+	ap806 {
+		config-space {
+			etm0@c40000 {
+				compatible = "arm,coresight-etm4x", "arm,primecell";
+				reg = <0xc40000 0x1000>;
+
+				cpu = <&cpu0>;
+				clocks = <&syscon 3>;
+				clock-names = "apb_pclk";
+				port {
+					etm0_out: endpoint {
+						remote-endpoint = <&etf0_in>;
+					};
+				};
+			};
+
+			etm1@d40000 {
+				compatible = "arm,coresight-etm4x", "arm,primecell";
+				reg = <0xd40000 0x1000>;
+
+				cpu = <&cpu1>;
+				clocks = <&syscon 3>;
+				clock-names = "apb_pclk";
+				port {
+					etm1_out: endpoint {
+						remote-endpoint = <&etf1_in>;
+					};
+				};
+			};
+
+			etm2@e40000 {
+				compatible = "arm,coresight-etm4x", "arm,primecell";
+				reg = <0xe40000 0x1000>;
+
+				cpu = <&cpu2>;
+				clocks = <&syscon 3>;
+				clock-names = "apb_pclk";
+				port {
+					etm2_out: endpoint {
+						remote-endpoint = <&etf2_in>;
+					};
+				};
+			};
+
+			etm3@f40000 {
+				compatible = "arm,coresight-etm4x", "arm,primecell";
+				reg = <0xf40000 0x1000>;
+
+				cpu = <&cpu3>;
+				clocks = <&syscon 3>;
+				clock-names = "apb_pclk";
+				port {
+					etm3_out: endpoint {
+						remote-endpoint = <&etf3_in>;
+					};
+				};
+			};
+
+			etf0@809000 {
+				compatible = "arm,coresight-tmc", "arm,primecell";
+				reg = <0x809000 0x1000>;
+				clocks = <&syscon 3>;
+				clock-names = "apb_pclk";
+
+				ports {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					port@0 {
+						reg = <0>;
+						etf0_in: endpoint {
+							slave-mode;
+							remote-endpoint = <&etm0_out>;
+						};
+					};
+
+					port@1 {
+						reg = <0>;
+						etf0_out: endpoint {
+							remote-endpoint = <&funnel_in_0>;
+						};
+					};
+				};
+			};
+
+			etf1@80a000 {
+				compatible = "arm,coresight-tmc", "arm,primecell";
+				reg = <0x80a000 0x1000>;
+				clocks = <&syscon 3>;
+				clock-names = "apb_pclk";
+
+				ports {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					port@0 {
+						reg = <0>;
+						etf1_in: endpoint {
+							slave-mode;
+							remote-endpoint = <&etm1_out>;
+						};
+					};
+
+					port@1 {
+						reg = <0>;
+						etf1_out: endpoint {
+							remote-endpoint = <&funnel_in_1>;
+						};
+					};
+				};
+			};
+
+			etf2@80b000 {
+				compatible = "arm,coresight-tmc", "arm,primecell";
+				reg = <0x80b000 0x1000>;
+				clocks = <&syscon 3>;
+				clock-names = "apb_pclk";
+
+				ports {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					port@0 {
+						reg = <0>;
+						etf2_in: endpoint {
+							slave-mode;
+							remote-endpoint = <&etm2_out>;
+						};
+					};
+
+					port@1 {
+						reg = <0>;
+						etf2_out: endpoint {
+							remote-endpoint = <&funnel_in_2>;
+						};
+					};
+				};
+			};
+
+			etf3@80c000 {
+				compatible = "arm,coresight-tmc", "arm,primecell";
+				reg = <0x80c000 0x1000>;
+				clocks = <&syscon 3>;
+				clock-names = "apb_pclk";
+
+				ports {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					port@0 {
+						reg = <0>;
+						etf3_in: endpoint {
+							slave-mode;
+							remote-endpoint = <&etm3_out>;
+						};
+					};
+
+					port@1 {
+						reg = <0>;
+						etf3_out: endpoint {
+							remote-endpoint = <&funnel_in_3>;
+						};
+					};
+				};
+			};
+
+			funnel@810000 {
+				compatible = "arm,coresight-funnel", "arm,primecell";
+				reg = <0x810000 0x1000>;
+				clocks = <&syscon 3>;
+				clock-names = "apb_pclk";
+
+				ports {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					/* funnel output port */
+					port@0 {
+						reg = <0>;
+						funnel_out: endpoint {
+							remote-endpoint = <&etf5_in>;
+						};
+					};
+
+					/* funnel input ports */
+					port@1 {
+						reg = <0>;
+						funnel_in_0: endpoint {
+							slave-mode;
+							remote-endpoint = <&etf0_out>;
+						};
+					};
+
+					port@2 {
+						reg = <1>;
+						funnel_in_1: endpoint {
+							slave-mode;
+							remote-endpoint = <&etf1_out>;
+						};
+					};
+
+					port@3 {
+						reg = <2>;
+						funnel_in_2: endpoint {
+							slave-mode;
+							remote-endpoint = <&etf2_out>;
+						};
+					};
+
+					port@4 {
+						reg = <3>;
+						funnel_in_3: endpoint {
+							slave-mode;
+							remote-endpoint = <&etf3_out>;
+						};
+					};
+				};
+			};
+
+			etf5@811000 {
+				compatible = "arm,coresight-tmc", "arm,primecell";
+				reg = <0x811000 0x1000>;
+				clocks = <&syscon 3>;
+				clock-names = "apb_pclk";
+
+				ports {
+					#address-cells = <1>;
+					#size-cells = <0>;
+
+					port@0 {
+						reg = <0>;
+						etf5_in: endpoint {
+							slave-mode;
+							remote-endpoint = <&funnel_out>;
+						};
+					};
+
+					port@1 {
+						reg = <0>;
+						etf5_out: endpoint {
+							remote-endpoint = <&etr_in>;
+						};
+					};
+				};
+			};
+
+
+			etr@812000 {
+				compatible = "arm,coresight-tmc", "arm,primecell";
+				reg = <0x812000 0x1000>;
+				clocks = <&syscon 3>;
+				clock-names = "apb_pclk";
+
+				port {
+					etr_in: endpoint {
+						slave-mode;
+						remote-endpoint = <&etf5_out>;
+					};
+				};
+			};
+		};
+	};
+};
+

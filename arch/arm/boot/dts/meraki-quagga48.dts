@@ -1,0 +1,22 @@
+/*
+ * Device Tree file for Meraki MS125-48
+ *
+ * Copyright (C) 2016,2018 Cisco Systems
+ *
+ */
+
+/dts-v1/;
+
+#include "meraki-kelpie.dtsi"
+
+/ {
+        model = "Meraki MS120-24";
+
+        usb@50000 {
+                status = "okay";
+        };
+};
+
+&led0 {
+        compatible = "ti,lp5562";
+};

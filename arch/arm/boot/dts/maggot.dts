@@ -1,0 +1,7 @@
+#include "qcom-ipq4019-ap.dk04.1.dtsi"
+#include "underdog.dtsi"
+
+/ {
+	model = "Meraki Maggot";
+	compatible = "qcom,ipq4019","meraki,maggot";
+};

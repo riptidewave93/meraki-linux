@@ -1,0 +1,126 @@
+#include "qcom-ipq4019-ap.dk04.1.dtsi"
+
+/ {
+	model = "Meraki MR30H";
+	compatible = "qcom,ipq4019","meraki,mr30h";
+
+	soc {
+		gpio_keys {
+			button@1 {
+				gpios = <&tlmm 18 GPIO_ACTIVE_LOW>;
+			};
+		};
+
+		leds {
+			// ethernet port leds
+			lan1_orange {
+				label = "port0:orange";
+				gpios = <&tlmm 33 GPIO_ACTIVE_LOW>;
+				default-state = "off";
+			};
+
+			lan2_orange {
+				label = "port1:orange";
+				gpios = <&tlmm 27 GPIO_ACTIVE_HIGH>;
+				default-state = "off";
+			};
+
+			lan3_orange {
+				label = "port2:orange";
+				gpios = <&tlmm 25 GPIO_ACTIVE_LOW>;
+				default-state = "off";
+			};
+
+			lan4_orange {
+				label = "port3:orange";
+				gpios = <&tlmm 23 GPIO_ACTIVE_LOW>;
+				default-state = "off";
+			};
+
+			lan1_green {
+				label = "port0:green";
+				gpios = <&tlmm 32 GPIO_ACTIVE_LOW>;
+				default-state = "off";
+			};
+
+			lan2_green {
+				label = "port1:green";
+				gpios = <&tlmm 26 GPIO_ACTIVE_LOW>;
+				default-state = "off";
+			};
+
+			lan3_green {
+				label = "port2:green";
+				gpios = <&tlmm 24 GPIO_ACTIVE_LOW>;
+				default-state = "off";
+			};
+
+			lan4_green {
+				label = "port3:green";
+				gpios = <&tlmm 22 GPIO_ACTIVE_LOW>;
+				default-state = "off";
+			};
+		};
+
+		i2c_1: i2c@78b8000 {
+			ina226@40 {
+				compatible = "ti,ina226";
+				reg = <0x40>;
+				shunt-resistor = <12500>;
+			};
+
+			lp5562 {
+				enable-gpio = <&tlmm 48 GPIO_ACTIVE_HIGH>;
+				chan0 {
+					 chan-name = "tricolor0:red";
+				};
+				chan1 {
+					 chan-name = "tricolor0:green";
+				};
+				chan2 {
+					 chan-name = "tricolor0:blue";
+				};
+			};
+		};
+
+		ess-switch@c000000 {
+			switch_mac_mode = <0x0>; /* mac mode for PSGMII */
+			switch_lan_bmp = <0x1e>; /* lan port bitmap */
+			switch_wan_bmp = <0x20>; /* wan port bitmap */
+		};
+
+		ess_tcsr: ess_tcsr@1953000 {
+			ipq,ess-interface-select = <TCSR_ESS_PSGMII>;
+		};
+
+		edma@c080000 {
+			qcom,self_test;
+			qcom,num-gmac = <5>;
+			gmac0 {
+				qcom,phy-mdio-addr = <4>;
+				vlan-tag = <0 0x20>;
+				qcom,poll-required = <1>;
+			};
+			gmac1 {
+				qcom,phy-mdio-addr = <3>;
+				vlan-tag = <0 0x10>;
+				qcom,poll-required = <1>;
+			};
+			gmac2 {
+				qcom,phy-mdio-addr = <2>;
+				vlan-tag = <0 0x08>;
+				qcom,poll-required = <1>;
+			};
+			gmac3 {
+				qcom,phy-mdio-addr = <1>;
+				vlan-tag = <0 0x04>;
+				qcom,poll-required = <1>;
+			};
+			gmac4 {
+				qcom,phy-mdio-addr = <0>;
+				vlan-tag = <0 0x02>;
+				qcom,poll-required = <1>;
+			};
+		};
+	};
+};

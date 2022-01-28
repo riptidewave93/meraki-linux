@@ -1,0 +1,37 @@
+#include "qcom-ipq4019-ap.dk04.1.dtsi"
+
+/ {
+	model = "Meraki MR33";
+	compatible = "qcom,ipq4019","meraki,mr33";
+
+	soc {
+		gpio_keys {
+			button@1 {
+				gpios = <&tlmm 18 GPIO_ACTIVE_LOW>;
+			};
+		};
+
+		i2c_1: i2c@78b8000 {
+			lp5562 {
+				enable-gpio = <&tlmm 48 GPIO_ACTIVE_HIGH>;
+			};
+		};
+
+		edma@c080000 {
+			qcom,num-gmac = <1>;
+			gmac0 {
+				qcom,phy-mdio-addr = <1>;
+			};
+		};
+
+		ess-switch@c000000 {
+			switch_mac_mode = <0x3>; /* mac mode for RGMII RMII */
+			switch_lan_bmp = <0x0>; /* lan port bitmap */
+			switch_wan_bmp = <0x10>; /* wan port bitmap */
+		};
+
+		ess_tcsr: ess_tcsr@1953000 {
+			ipq,ess-interface-select = <TCSR_ESS_PSGMII_RGMII5>;
+		};
+	};
+};

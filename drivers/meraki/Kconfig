@@ -1,0 +1,80 @@
+menu "Meraki devices"
+
+config MERAKI_CONFIG
+	tristate "Meraki Board Data support"
+	depends on I2C
+	help
+	  This option enables support for the meraki-config device, which
+	  proxies the content of the board ID EEPROM to a known location.
+
+	  It also provides kernel access to the Meraki product type.
+
+	  If your board has a board ID EEPROM on it, say Y here.
+
+config CISCO_MPS
+    bool "Cisco MPS Support"
+    depends on POWER_SUPPLY
+    help
+      This is a driver for an I2C-connected MPS device
+
+config MERAKI_SFP_USER
+       bool "Meraki SFP/SFP+ Socket Support (user-mode)"
+       depends on I2C && GPIOLIB
+       help
+         This is a proxy driver for an I2C-connected SFP/SFP+/QSFP socket.
+         The actual driving of the socket will be performed in userspace.
+
+config MERAKI_MS420_PSU
+        tristate "Cisco Meraki MS420 field-replaceable power supply"
+        depends on I2C && SENSORS_PMBUS
+        default n
+        help
+          If you say yes here you get hardware monitoring support for the
+          field-replaceable power supplies provided with the Cisco Meraki
+          MS420 series switches.
+
+          This driver can also be built as a module. If so, the module will
+          be called ms420_psu.
+
+config CISCO_ACT2
+       bool "Cisco ACT2 support"
+       default n
+       help
+         This is a driver to communicate with the Cisco ACT2 security chip.
+         The device is used for various types of encryption. It has on-board,
+         protected EEPROM so it can generate and securely store keys.
+
+config CISCO_ACT2_I2C
+	bool "Cisco ACT2 I2C support"
+	depends on I2C && CISCO_ACT2
+	default n
+	help
+         This is a driver to communicate with the Cisco ACT2 security chip.
+         The device is used for various types of encryption. It has on-board,
+         protected EEPROM so it can generate and securely store keys.
+
+         This is an I2C-connected device.
+
+config CISCO_ACT2_SPI
+	bool "Cisco ACT2 SPI support"
+	depends on SPI && CISCO_ACT2
+	default n
+	help
+         This is a driver to communicate with the Cisco ACT2 security chip.
+         The device is used for various types of encryption. It has on-board,
+         protected EEPROM so it can generate and securely store keys.
+
+         This is an SPI-connected device.
+
+config CISCO_ACT2_LPC
+	bool "Cisco ACT2 LPC support"
+	depends on CISCO_ACT2
+	default n
+	help
+         This is a driver to communicate with the Cisco ACT2 security chip.
+         The device is used for various types of encryption. It has on-board,
+         protected EEPROM so it can generate and securely store keys.
+
+         This is an LPC-connected device.
+
+endmenu

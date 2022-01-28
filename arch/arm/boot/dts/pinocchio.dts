@@ -1,0 +1,94 @@
+/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ *
+ */
+
+#include "mothership.dtsi"
+
+/ {
+	model = "Meraki Pinocchio";
+	compatible = "qcom,ipq4019","meraki,pinocchio";
+
+	soc {
+		i2c_1: i2c@78b8000 {
+		   lp5562 {
+			   status = "disabled";
+	      };
+		};
+
+		i2c_0: i2c@78b7000 { /* BLSP1 QUP2 */
+			config_eeprom: at24@50 {
+				reg = <0x50>;
+			};
+
+			lp5562_0 {
+				compatible = "ti,lp5562";
+				clock-mode = /bits/8 <2>;
+				reg = <0x30>;
+				enable-gpio = <&tlmm 48 GPIO_ACTIVE_HIGH>;
+
+				chan0 {
+					 chan-name = "tricolor0:red";
+					 led-cur = /bits/ 8 <0x20>;
+					 max-cur = /bits/ 8 <0x60>;
+				};
+
+				chan1 {
+					 chan-name = "tricolor0:green";
+					 led-cur = /bits/ 8 <0x20>;
+					 max-cur = /bits/ 8 <0x60>;
+				};
+
+				chan2 {
+					 chan-name = "tricolor0:blue";
+					 led-cur = /bits/ 8 <0x20>;
+					 max-cur = /bits/ 8 <0x60>;
+				};
+
+				chan3 {
+					 chan-name = "power:white";
+					 led-cur = /bits/ 8 <0x20>;
+					 max-cur = /bits/ 8 <0x60>;
+				};
+			};
+		};
+
+		pcie0: pci@40000000 {
+			status = "disabled";
+		};
+
+		wifi0: wifi@a000000 {
+			status = "disabled";
+		};
+
+		wifi1: wifi@a800000 {
+			status = "disabled";
+		};
+
+		edma@c080000 {
+			qcom,self_test;
+			qcom,num-gmac = <2>;
+			gmac0 {
+				qcom,phy-mdio-addr = <3>;
+				vlan-tag = <0 0x10>;
+				qcom,poll_required = <1>;
+			};
+			gmac1 {
+				qcom,phy-mdio-addr = <4>;
+				vlan-tag = <0 0x20>;
+				qcom,poll_required = <1>;
+			};
+		};
+	};
+};

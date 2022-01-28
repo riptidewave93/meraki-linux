@@ -1,0 +1,6 @@
+#include "dungbeetle.dtsi"
+
+/ {
+	model = "Meraki Dungbeetle Omni";
+	compatible = "qcom,ipq4019","meraki,dungbeetle";
+};

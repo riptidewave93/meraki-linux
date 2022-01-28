@@ -1,0 +1,13 @@
+/dts-v1/;
+
+#include "qcom-ipq807x-axe.dtsi"
+
+/ {
+	model = "Meraki MR45";
+};
+
+&i2c_0 {
+	current_mon: ina2xx@40 {
+		shunt-resistor = <30000>;
+	};
+};

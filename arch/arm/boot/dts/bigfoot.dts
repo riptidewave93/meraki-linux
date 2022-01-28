@@ -1,0 +1,72 @@
+/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ *
+ */
+
+#include "qcom-ipq8064-v1.0.dtsi"
+#include "qcom-ipq8064-ap160.dtsi"
+#include "cryptid.dtsi"
+#include "cryptid-wired-leds.dtsi"
+
+/ {
+	compatible = "qcom,ipq8064-ap160", "meraki,mr52";
+	model = "Meraki MR52";
+
+	soc {
+
+		gmac0: ethernet@37400000 {
+			device_type = "network";
+			compatible = "qcom,nss-gmac";
+			reg = <0x37400000 0x200000>;
+			interrupts = <GIC_SPI 226 IRQ_TYPE_LEVEL_HIGH>;
+			phy-mode = "sgmii";
+			qcom,id = <2>;
+			qcom,pcs-chanid = <2>;
+			qcom,phy-mdio-addr = <0>;
+			qcom,poll-required = <1>;
+			qcom,rgmii-delay = <0>;
+			qcom,emulation = <0>;
+			qcom,forced-speed = <0>;
+			qcom,forced-duplex = <0xFF>;
+			qcom,socver = <0>;
+			local-mac-address = [00180A000102];
+			mdiobus = <&mdio0>;
+		};
+
+		gmac1: ethernet@37600000 {
+			device_type = "network";
+			compatible = "qcom,nss-gmac";
+			reg = <0x37600000 0x200000>;
+			interrupts = <GIC_SPI 229 IRQ_TYPE_LEVEL_HIGH>;
+			phy-mode = "sgmii";
+			qcom,id = <3>;
+			qcom,pcs-chanid = <3>;
+			qcom,phy-mdio-addr = <4>;
+			qcom,poll-required = <1>;
+			qcom,rgmii-delay = <0>;
+			qcom,emulation = <0>;
+			qcom,forced-speed = <0>;
+			qcom,forced-duplex = <0xFF>;
+			qcom,socver = <0>;
+			local-mac-address = [00180A000102];
+			mdiobus = <&mdio0>;
+		};
+
+		i2c@1 {
+			current_mon: ina2xx@45 {
+				shunt-resistor = <80000>;
+			};
+		};
+	};
+};

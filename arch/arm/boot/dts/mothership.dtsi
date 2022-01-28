@@ -1,0 +1,85 @@
+/* Copyright (c) 2015, The Linux Foundation. All rights reserved.
+ *
+ * Permission to use, copy, modify, and/or distribute this software for any
+ * purpose with or without fee is hereby granted, provided that the above
+ * copyright notice and this permission notice appear in all copies.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+ * WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+ * MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+ * ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+ * WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+ * ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+ * OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+ *
+ */
+
+#include "qcom-ipq4019-ap.dk04.1.dtsi"
+#include <dt-bindings/meraki/tam.h>
+
+/ {
+	memory {
+		reg = <0x80000000 0x20000000>; /* 512 MiB */
+		linux,usable-memory = <0x80000000 0xFF00000>;
+	};
+
+	soc {
+		gpio_keys {
+			button@1 {
+				gpios = <&tlmm 18 GPIO_ACTIVE_LOW>;
+			};
+		};
+	
+		i2c_0: i2c@78b7000 { /* BLSP1 QUP2 */
+			act2@70 {
+				compatible = "cisco,act-i2c";
+				reg = <0x70>;
+				write_buf_size = /bits/ 16 <259>;
+				reset = <&tlmm 40 GPIO_ACTIVE_LOW>;
+				chip_family = <TAM_FAMILY_ACT2>;
+			};
+		};
+
+		ess-switch@c000000 {
+			switch_mac_mode = <0x0>; /* mac mode for PSGMII */
+			switch_lan_bmp = <0x0e>; /* lan port bitmap */
+			switch_wan_bmp = <0x30>; /* wan port bitmap */
+		};
+	
+		ess_tcsr: ess_tcsr@1953000 {
+			qcom,ess-interface-select = <TCSR_ESS_PSGMII>;
+		};
+	
+		spi_0: spi@78b5000 {
+			status = "disabled";
+		};
+	
+		qcom: ledc@1937000  {
+			status = "disabled";
+		};
+	
+		usb3_ss_phy: ssphy@0 {
+			status = "ok";
+		};
+	
+		dummy_ss_phy: ssphy@1 {
+			status = "ok";
+		};
+	
+		usb3_hs_phy: hsphy@a6000 {
+			status = "ok";
+		};
+	
+		usb2_hs_phy: hsphy@a8000 {
+			status = "ok";
+		};
+	
+		usb3: usb3@8a00000 {
+			status = "ok";
+		};
+	
+		usb2: usb2@6000000 {
+			status = "ok";
+		};
+	};
+};

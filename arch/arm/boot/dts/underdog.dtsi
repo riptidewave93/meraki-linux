@@ -1,0 +1,93 @@
+#include <dt-bindings/meraki/tam.h>
+
+/ {
+	soc {
+		qcom,nand@7980000 {
+			status = "ok";
+		};
+
+		qcom,msm_qpic@7980000 {
+			status = "ok";
+		};
+
+		gpio_keys {
+			button@1 {
+				gpios = <&tlmm 18 GPIO_ACTIVE_LOW>;
+			};
+		};
+
+		i2c_1: i2c@78b8000 {
+			status = "disabled";
+		};
+
+		serial@78b0000 {
+			status = "disabled";
+		};
+
+		pcie0: pci@40000000 {
+			status = "disabled";
+		};
+
+		i2c_0: i2c@78b7000 {
+			pinctrl-0 = <&i2c_2_pins>;
+			pinctrl-names = "default";
+			status = "ok";
+			config_eeprom: at24@50 {
+				reg = <0x56>;
+			};
+
+			act2: act@70 {
+				reg = <0x70>;
+				compatible = "cisco,act-i2c";
+				write-buf-size = /bits/ 16 <259>;
+				reset-gpios = <&tlmm 19 GPIO_ACTIVE_LOW>;
+				chip_family = <TAM_FAMILY_ACT2>;
+			};
+		};
+
+		leds {
+			pinctrl-name = "led_1_pins";
+			pinctrl-0 = "default";
+
+			orange {
+				gpios = <&tlmm 49 GPIO_ACTIVE_HIGH>;
+			};
+
+			green {
+				label = "tricolor0:green";
+				gpios = <&tlmm 34 GPIO_ACTIVE_HIGH>;
+				default-state = "off";
+			};
+
+			blue {
+				label = "tricolor0:blue";
+				gpios = <&tlmm 35 GPIO_ACTIVE_HIGH>;
+				default-state = "off";
+			};
+
+			red {
+				label = "tricolor0:red";
+				gpios = <&tlmm 8 GPIO_ACTIVE_LOW>;
+				default-state = "off";
+			};
+		};
+
+		edma@c080000 {
+			qcom,extra_phy_reset;
+			qcom,num-gmac = <1>;
+			gmac0 {
+				qcom,phy-mdio-addr = <0>;
+			};
+		};
+
+		ess-switch@c000000 {
+			switch_mac_mode = <0x3>;
+			switch_lan_bmp = <0x0>;
+			switch_wan_bmp = <0x10>;
+		};
+
+		ess_tcsr: ess_tcsr@1953000 {
+			ipq,ess-interface-select = <TCSR_ESS_PSGMII_RGMII5>;
+		};
+	};
+};

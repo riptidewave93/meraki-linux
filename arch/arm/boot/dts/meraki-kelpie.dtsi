@@ -1,0 +1,342 @@
+/*
+ * Device Tree base file for Meraki GS110/MS120/MS125, based on the
+ * Marvell AlleyCat3 SoC. Derived from msys-ac3-db.dts.
+ *
+ * Copyright (C) 2016 Cisco Systems
+ *
+ */
+
+#include <dt-bindings/gpio/gpio.h>
+#include <dt-bindings/input/input.h>
+#include <dt-bindings/meraki/tam.h>
+#include "msys-ac3.dtsi"
+
+/ {
+	model = "Meraki Kelpie";
+	compatible = "meraki,kelpie";
+
+	memory {
+		device_type = "memory";
+		reg = <0x00000000 0x00000000 0x00000000 0x20000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <2>;
+		#size-cells = <2>;
+		ranges;
+
+		pstore_reserved: pstore@0x1FFF0000 {
+			reg = <0 0x1FFF0000 0 0x10000>;
+		};
+	};
+
+	ramoops {
+		compatible = "ramoops";
+		memory-region = <&pstore_reserved>;
+		record-size = <0x10000>;
+		console-size = <0>;
+		ftrace-size = <0>;
+		pmsg-size = <0>;
+		ecc-size = <0>;
+	};
+
+	/* Toggle GPIO 9 to reset the system. This
+	 * will trigger an FPGA upgrade if valid images
+	 * are written to eSPI.
+	 */
+	gpio_restart {
+		compatible = "gpio-restart";
+		gpios = <&gpio0 9 GPIO_ACTIVE_LOW>;
+		priority = <200>;
+	};
+
+	/*
+	 * Virtual (software defined) devices
+	 */
+	sfp-bus {
+		compatible = "simple-bus";
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		gpio2: gpio-controller@0 {
+			compatible = "meraki,fpga-to-gpio";
+			#gpio-cells = <2>;
+			reg = <0x10000>;
+			gpio-controller;
+			ngpios = <0x4>;
+			reg-size = <0x8>;
+			fpga-parent = <&act0>;
+		};
+		gpio-buttons {
+			compatible = "gpio-keys-polled";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			poll-interval = <250>;
+			autorepeat;
+			button@1 {
+				label = "soft_reset";
+				linux,code = <KEY_RESTART>;
+				gpios = <&gpio2 3 GPIO_ACTIVE_LOW>;
+			};
+		};
+		gpio3: gpio-controller@14 {
+			compatible = "meraki,fpga-to-gpio";
+			#gpio-cells = <2>;
+			reg = <0x10014>;
+			gpio-controller;
+			ngpios = <0x4>;
+			reg-size = <0x8>;
+			fpga-parent = <&act0>;
+		};
+		gpio4: gpio-controller@18 {
+			compatible = "meraki,fpga-to-gpio";
+			#gpio-cells = <2>;
+			reg = <0x10018>;
+			gpio-controller;
+			ngpios = <0x4>;
+			reg-size = <0x8>;
+			fpga-parent = <&act0>;
+		};
+		gpio5: gpio-controller@c {
+			compatible = "meraki,fpga-to-gpio";
+			#gpio-cells = <2>;
+			reg = <0x1000c>;
+			gpio-controller;
+			ngpios = <0x4>;
+			reg-size = <0x8>;
+			fpga-parent = <&act0>;
+		};
+		gpio6: gpio-controller@10 {
+			compatible = "meraki,fpga-to-gpio";
+			#gpio-cells = <2>;
+			reg = <0x10010>;
+			ngpios = <0x4>;
+			reg-size = <0x8>;
+			fpga-parent = <&act0>;
+		};
+		gpio7: gpio-controller@4 {
+			compatible = "meraki,fpga-to-gpio";
+			#gpio-cells = <2>;
+			reg = <0x10004>;
+			ngpios = <7>;
+			reg-size = <0x8>;
+			fpga-parent = <&act0>;
+		};
+		sfp1: fp@1 {
+			compatible = "meraki,sfp-user";
+			id = <1>;
+			mod-abs = <&gpio3 0 GPIO_ACTIVE_HIGH>;
+			tx-dis = <&gpio6 0 GPIO_ACTIVE_HIGH>;
+			rx-los = <&gpio4 0 GPIO_ACTIVE_HIGH>;
+			i2c = <&i2c_sfp1>;
+		};
+		sfp2: sfp@2 {
+			compatible = "meraki,sfp-user";
+			id = <2>;
+			mod-abs = <&gpio3 1 GPIO_ACTIVE_HIGH>;
+			tx-dis = <&gpio6 1 GPIO_ACTIVE_HIGH>;
+			rx-los = <&gpio4 1 GPIO_ACTIVE_HIGH>;
+			i2c = <&i2c_sfp2>;
+		};
+		sfp3: sfp@3 {
+			compatible = "meraki,sfp-user";
+			id = <3>;
+			mod-abs = <&gpio3 2 GPIO_ACTIVE_HIGH>;
+			tx-dis = <&gpio6 2 GPIO_ACTIVE_HIGH>;
+			rx-los = <&gpio4 2 GPIO_ACTIVE_HIGH>;
+			i2c = <&i2c_sfp3>;
+		};
+		sfp4: sfp@4 {
+			compatible = "meraki,sfp-user";
+			id = <4>;
+			mod-abs = <&gpio3 3 GPIO_ACTIVE_HIGH>;
+			tx-dis = <&gpio6 3 GPIO_ACTIVE_HIGH>;
+			rx-los = <&gpio4 3 GPIO_ACTIVE_HIGH>;
+			i2c = <&i2c_sfp4>;
+		};
+	};
+
+	soc {
+		ranges = <MBUS_ID(0xf0, 0x01) 0 0 0xf1000000 0x100000
+			  MBUS_ID(0x01, 0x1d) 0 0 0xfff00000 0x100000
+			  MBUS_ID(0x01, 0x2f) 0 0 0xf0000000 0x1000000
+			  MBUS_ID(0x03, 0x00) 0 0 0xf8000000 0x4000000	/* switch */
+			  MBUS_ID(0x08, 0x00) 0 0 0xfc000000 0x100000	/* dfx */
+			  MBUS_ID(0x0a, 0x00) 0 0 0x80000000 0x8000000>; /* Dragonite */
+
+		pcie-controller {
+			status = "okay";
+
+			pcie@1,0 {
+				pinctrl-names = "default";
+				pinctrl-0 = <&pex_pin>;
+				status = "okay";
+			};
+		};
+
+		internal-regs {
+			serial@12000 {
+				status = "okay";
+			};
+			ethernet@70000 {
+				status = "okay";
+				compatible = "marvell,armada-xp-neta";
+				phy-mode = "sgmii";
+				fixed-link {
+					speed = <1000>;
+					full-duplex;
+				};
+			};
+			spi0: spi@10600 {
+				status = "okay";
+				pinctrl-0 = <&spi_pins>;
+				pinctrl-names = "default";
+
+				act0: act@0 {
+					compatible = "cisco,act-spi";
+					spi-max-frequency = <1000000>;
+					write-buf-size = /bits/ 16 <1792>;
+					bus-select-gpios = <&gpio0 5 GPIO_ACTIVE_HIGH>;
+					multiboot = <0x10004 0x80 0>;
+					reg = <0>;
+					chip_family = <TAM_FAMILY_FPGA>;
+				};
+			};
+			i2c0: i2c@11000 {
+				pinctrl-names = "default";
+				pinctrl-0 = <&i2c0_pins>;
+
+				config_eeprom: eeprom@57 {
+					compatible = "24c64";
+					reg = <0x57>;
+					pagesize = <32>;
+				};
+				hwmon0: hwmon@2e {
+					compatible = "adi,adt7476";
+					reg = <0x2e>;
+				};
+				led0: led_controller@32 {
+					compatible = "national,lp5521";
+					reg = <0x32>;
+					clock-mode = /bits/ 8 <1>;
+					cp-mode = /bits/ 8 <0x1>;
+					pwrsave-dis;
+					log-pwm-dis;
+					exec = /bits/ 8 <0>;
+
+					chan0 {
+					      chan-name = "tricolor0:red";
+					      led-cur = /bits/ 8 <0xaf>;
+					      max-cur = /bits/ 8 <0xff>;
+					};
+
+					chan1 {
+					      chan-name = "tricolor0:green";
+					      led-cur = /bits/ 8 <0xaf>;
+					      max-cur = /bits/ 8 <0xff>;
+					};
+
+					chan2 {
+					      chan-name = "tricolor0:blue";
+					      led-cur = /bits/ 8 <0xaf>;
+					      max-cur = /bits/ 8 <0xff>;
+					};
+				};
+			};
+			nand@d0000 {
+				status = "okay";
+				num-cs = <1>;
+				marvell,nand-keep-config;
+				marvell,nand-enable-arbiter;
+				nand-on-flash-bbt;
+
+				partitions {
+					compatible = "fixed-partitions";
+					#address-cells = <1>;
+					#size-cells = <1>;
+
+					partition@0 {
+						label = "sig0";
+						reg = <0 0x20000>;
+					};
+					partition@20000 {
+						label = "ddrInit0";
+						reg = <0x20000 0x100000>;
+					};
+					partition@120000 {
+						label = "uboot0";
+						reg = <0x120000 0x200000>;
+					};
+					partition@320000 {
+						label = "ddrInit1";
+						reg = <0x320000 0x100000>;
+					};
+					partition@420000 {
+						label = "uboot1";
+						reg = <0x420000 0x200000>;
+					};
+					partition@700000 {
+						label = "sig1";
+						reg = <0x700000 0x20000>;
+					};
+					partition@800000 {
+						label = "ubi";
+						reg = <0x800000 0xf800000>;
+					};
+				};
+			};
+		};
+	};
+
+	leds {
+		compatible = "gpio-leds";
+
+		power-orange {
+			label = "power:orange";
+			gpios = <&gpio0 8 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+		};
+
+		power-white {
+			label = "power:white";
+			gpios = <&gpio0 7 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+	};
+
+	i2c-mux {
+		compatible = "i2c-mux-gpio";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		mux-gpios = <&gpio5 0 GPIO_ACTIVE_HIGH
+			     &gpio5 1 GPIO_ACTIVE_HIGH
+			     &gpio5 2 GPIO_ACTIVE_HIGH
+			     &gpio5 3 GPIO_ACTIVE_HIGH>;
+		i2c-parent = <&i2c0>;
+		i2c_sfp1: i2c@0 {
+			reg = <1>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+		i2c_sfp2: i2c@1 {
+			reg = <2>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+		i2c_sfp3: i2c@2 {
+			reg = <4>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+		i2c_sfp4: i2c@3 {
+			reg = <8>;
+			#address-cells = <1>;
+			#size-cells = <0>;
+		};
+	};
+
+	board-data {
+		compatible = "meraki,meraki-config";
+		i2c-eeprom = <&config_eeprom>;
+	};
+};
